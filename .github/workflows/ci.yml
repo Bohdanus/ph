@@ -141,8 +141,8 @@ jobs:
         # makes a SUPERSESSION a cancellation, so `!cancelled()` is false in exactly
         # the case that throws evidence away.
         #
-        # Not a gate. vitest.config.ts declares no `thresholds`, so this step can
-        # only fail by finding no report at all.
+        # The blocking coverage thresholds are enforced by the Test step above;
+        # this step preserves that run's report for diagnosis and fails if none exists.
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:

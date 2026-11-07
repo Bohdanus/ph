@@ -14,13 +14,18 @@ import {
   type TextToolArgs,
 } from '../../tools/text.ts';
 import { useRect } from '../../hooks/useRect.ts';
-import { calculateNewRect } from '../../util/rect.ts';
+import { calculateNewRect, canvasRectToLocal, sortRect, sortedRectToPos } from '../../util/rect.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
-import { isPointInLayer } from '../../contexts/affine-transform.ts';
-import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { getLayerAffineTransform, isPointInLayer } from '../../contexts/affine-transform.ts';
+import {
+  canvasToDocumentPoint,
+  canvasToDocumentPos,
+  documentFrameFromSize,
+  documentToCanvasPos,
+} from '../../contexts/document-frame.ts';
 import { isTextLayerSource, textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 import type { Ctx2D, RectXY, RectXYSorted } from '../../contexts/general-types.ts';
 
@@ -32,14 +37,23 @@ type TextToolAreaProps = {
 export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) => {
   const [{ containerRef, toolOverlayRef, totalSize, layers, activeLayerId, documentFrame: currentFrame }] = useStore();
   const { toolArgs, setToolArgs, requestTextEditFocus } = useCurrentTool();
-  const { commitDirtyTool, setActiveLayer, beginTextLayerEdit } = useLayers();
+  const {
+    commitDirtyTool,
+    setActiveLayer,
+    beginTextLayerEdit,
+    publishSmallCapsTextDraftPreview,
+    clearSmallCapsTextDraftPreview,
+  } = useLayers();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
 
   const args = toolArgs as TextToolArgs;
   const argsRef = useRef(args);
   useEffect(() => {
     argsRef.current = args;
-  }, [args]);
+    if (!args.text || !args.rect || !args.smallCaps || args.allCaps) {
+      clearSmallCapsTextDraftPreview(args.editingLayerId);
+    }
+  }, [args, clearSmallCapsTextDraftPreview]);
 
   // The press and the release in CLIENT pixels, which is the space `POINT_TYPE_MAX_DRAG_PX` is
   // defined in — CSS px, unscaled by the contain fit. `useRect` reports document px, which
@@ -272,10 +286,11 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
    * Repaint the draft's box chrome and Small Caps preview.
    *
    * The editor remains the DOM contenteditable for typing, selection and caret behavior. Small
-   * Caps ink is painted with the same Canvas renderer used at commit time so a platform's DOM
-   * small-caps synthesis cannot change the draft's glyphs or advances. `renderText` also paints the
-   * paragraph overflow indicator when requested; other styles keep their DOM preview and ask
-   * `layoutText` only for the overflow state.
+   * Caps ink is painted into the document layer compositor with the same Canvas renderer and
+   * source bounds used at commit time, so the browser does not composite a second transparent
+   * overlay differently from committed text. `renderText` also paints the paragraph overflow
+   * indicator when requested; other styles keep their DOM preview and ask `layoutText` only for
+   * the overflow state.
    */
   function redrawDraftChrome(rect: RectXY) {
     const currentArgs = argsRef.current;
@@ -286,8 +301,39 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     if (!ctx) return;
 
     if (currentArgs.smallCaps && !currentArgs.allCaps) {
-      renderText(ctx as Ctx2D, { ...currentArgs, rect: rect as RectXYSorted }, { overflowIndicator: true });
-      return;
+      const published = publishSmallCapsTextDraftPreview(currentArgs, rect);
+      if (!published) {
+        const editingLayer = currentArgs.editingLayerId ? layers[currentArgs.editingLayerId] : undefined;
+        if (editingLayer) {
+          const fallbackRect = sortRect(rect);
+          const measuredRect =
+            calculateNewRect({ ...currentArgs, rect: fallbackRect }, toolOverlayRef, totalSize) ?? fallbackRect;
+          const position = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
+          const canvasPos = documentToCanvasPos(position, documentFrame);
+          const localRect = sortRect(canvasRectToLocal(measuredRect, position, documentFrame));
+          const affine = getLayerAffineTransform(editingLayer);
+          ctx.save();
+          try {
+            ctx.translate(canvasPos.x, canvasPos.y);
+            ctx.transform(affine.a, affine.b, affine.c, affine.d, affine.e, affine.f);
+            renderText(
+              ctx as Ctx2D,
+              {
+                ...currentArgs,
+                rect: localRect,
+              },
+              { overflowIndicator: true }
+            );
+          } finally {
+            ctx.restore();
+          }
+        } else {
+          renderText(ctx as Ctx2D, { ...currentArgs, rect: rect as RectXYSorted }, { overflowIndicator: true });
+        }
+        return;
+      }
+    } else {
+      clearSmallCapsTextDraftPreview(currentArgs.editingLayerId);
     }
 
     const style = resolveTextStyle(currentArgs);

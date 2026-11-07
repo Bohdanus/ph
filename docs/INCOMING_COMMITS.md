@@ -518,3 +518,26 @@ Local `main` at `ebb27af3286b5f2ca2ea113179314135a91c5a9f` and fetched `origin/m
 
 - 99b46dd7 (99b46dd7d101639de511ed489dea2e2ca9f0594c) "Merge origin/main into sync candidate" — Test
 - 8c3acd6a (8c3acd6a970a0c30e37ebfc25a4513d804366d40) "Merge sync/core-remote-bba53-20261106 into main" — bohdan
+
+## 2026-11-07 — origin/main (fetch + merge into local main)
+
+Local `main` at `5924024c527122cd8766431fab0bbf0fb1b0fbf2` and fetched `origin/main` at `e24fc2add4cfad7885861a847a44a021f08bcd74` shared merge base `8c3acd6a970a0c30e37ebfc25a4513d804366d40`. This landing imports the 18 remote-only commits not already on local `main`:
+
+- eb6271fe (eb6271feb70467eb9d38302c18354b473165e546) "Redact SigV4 signatures in shared text sanitization" — Bohdan Kalynovskyi (Dan)
+- 6aae328a (6aae328a791f15ff8580616bd992b71a851310ec) "Preserve safe SigV4 URL query context" — Bohdan Kalynovskyi (Dan)
+- b8e64366 (b8e64366bc88571cdd0263111ad3a2b268e55a6f) "Redact unknown URL parameters around SigV4 keys" — Bohdan Kalynovskyi (Dan)
+- 163c9cd1 (163c9cd1e2673feff37a2514c7ff10c22f9c7339) "Merge audit/overnight-hardening-20261106 into main" — Bohdan Kalynovskyi (Dan)
+- e3d00d45 (e3d00d4573c19fb2a70430e8c00eb7a45cfdc225) "feat(move): add arrow-key layer nudging" — Bohdan Kalynovskyi (Dan)
+- 085d8e1e (085d8e1e81f09654c6aca22a4813947dcd419ae6) "test(move): attach input in nudge guard test" — Bohdan Kalynovskyi (Dan)
+- 7d2b31dc (7d2b31dc31a1331d383f0a1ffc8ca756815228c2) "test(move): harden nudge shortcut guards" — Bohdan Kalynovskyi (Dan)
+- 0f5fa22f (0f5fa22f037208d046c26c23465418008ff86604) "test(move): cover repeated nudge state" — Bohdan Kalynovskyi (Dan)
+- c765494f (c765494f0273b7ed26a1a14fb2dfb0defa97b18f) "fix(move): accumulate rapid layer nudges" — Bohdan Kalynovskyi (Dan)
+- ebb27af3 (ebb27af3286b5f2ca2ea113179314135a91c5a9f) "Merge task/move-arrow-nudge-codex-20261106 into main" — Bohdan Kalynovskyi (Dan)
+- b7305d9b (b7305d9bbb4eef60c7711e44e30dc5ca8733dd09) "Sync origin/main into local candidate" — Bohdan Kalynovskyi (Dan)
+- 8670e04c (8670e04c0e6ca9fbf05bab9d1305d39d8be21317) "Merge sync/origin-main-20261106 into main" — Bohdan Kalynovskyi (Dan)
+- 1007111e (1007111e59c7ee813390b45ac102418e30e62d93) "fix(logging): harden shared secret sanitization" — Bohdan Kalynovskyi (Dan)
+- 720046df (720046df497f93d127e89f46ec49d618f9d0d95b) "test: enforce measured coverage floors" — Bohdan Kalynovskyi (Dan)
+- e9a5d279 (e9a5d279961854015c98ec7e3a24bb1f8483992c) "feat(text): preview Small Caps through the layer compositor" — Bohdan Kalynovskyi (Dan)
+- 6e99240a (6e99240a0358cab54291b1337e98dc169034abe8) "merge: harden CI coverage, secrets, and Small Caps preview" — Bohdan Kalynovskyi (Dan)
+- 5a70a672 (5a70a672eaae167aac80e4ff48c529b40a3a4dd7) "test(e2e): harden selection history assertions" — Bohdan Kalynovskyi (Dan)
+- e24fc2ad (e24fc2add4cfad7885861a847a44a021f08bcd74) "merge: harden selection history E2E coverage" — Bohdan Kalynovskyi (Dan)

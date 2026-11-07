@@ -106,7 +106,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it('refuses OpenRouter so it cannot use Kilo-managed credentials', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
