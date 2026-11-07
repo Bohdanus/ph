@@ -573,7 +573,7 @@ describe('provider rate-limit diagnostics', () => {
     expect(JSON.parse(completionCalls[1][1].body).model).toBe('r2:free');
   });
 
-  it('skips the next candidate when Retry-After grows above the bounded wait', async () => {
+  it('skips OpenRouter for the run when a subsequent Retry-After exceeds the bounded wait', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi
       .fn()
@@ -639,7 +639,7 @@ describe('provider rate-limit diagnostics', () => {
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
-  it('continues after a rotated OpenRouter model returns malformed completion JSON', async () => {
+  it('reports malformed completion JSON after rotating to another OpenRouter model', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi
       .fn()
