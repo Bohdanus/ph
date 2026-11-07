@@ -498,8 +498,7 @@ export function retryAfterDelayMs(response, now = Date.now()) {
   }
   if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value)) return null;
 
-  const parsedHttpDate = parseHttpDateTimestamp(value, now);
-  const retryAt = parsedHttpDate === undefined ? Date.parse(value) : parsedHttpDate;
+  const retryAt = parseHttpDateTimestamp(value, now);
   return Number.isFinite(retryAt) ? Math.max(0, retryAt - now) : null;
 }
 

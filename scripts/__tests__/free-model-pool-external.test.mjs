@@ -730,12 +730,12 @@ describe('provider rate-limit diagnostics', () => {
     expect(retryAfterDelayMs(new Response(null, { headers: { 'retry-after': 'Sat Nov  7 00:00:30 2026' } }), now)).toBe(
       30_000
     );
-    expect(
-      retryAfterDelayMs(new Response(null, { headers: { 'retry-after': 'Sat, 07 Nov 2026 00:00:30 +0000' } }), now)
-    ).toBe(30_000);
     expect(retryAfterDelayMs(new Response(null, { headers: { 'retry-after': '0' } }), now)).toBe(0);
     expect(retryAfterDelayMs(new Response(null, { headers: { 'retry-after': '-1' } }), now)).toBeNull();
     expect(retryAfterDelayMs(new Response(null, { headers: { 'retry-after': '1.5' } }), now)).toBeNull();
+    expect(
+      retryAfterDelayMs(new Response(null, { headers: { 'retry-after': '2026-11-07T00:00:30Z' } }), now)
+    ).toBeNull();
     expect(
       retryAfterDelayMs(new Response(null, { headers: { 'retry-after': 'Fri, 06 Nov 2026 23:59:59 GMT' } }), now)
     ).toBe(0);
