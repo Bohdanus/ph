@@ -82,10 +82,6 @@ vi.mock('../../../contexts/presentation-evaluator.ts', () => ({
   processorPresentationBounds: vi.fn((layer) => layer?.pos ?? null),
 }));
 
-vi.mock('../../../util/layer-space.ts', () => ({
-  documentPointToLayerLocal: vi.fn((point) => point),
-}));
-
 const renderArea = () => {
   const container = document.createElement('div');
   container.style.width = '200px';
@@ -284,17 +280,6 @@ describe('PatchToolArea', () => {
         }),
       });
     });
-
-    it('uses layer origin when present', () => {
-      state.layers['layer-1'].pos = { x: 10, y: 5, width: 200, height: 200 };
-      const { area } = renderArea();
-
-      fireEvent.pointerDown(area, { button: 0, pointerId: 1, clientX: 60, clientY: 60 });
-      fireEvent.pointerMove(area, { pointerId: 1, clientX: 70, clientY: 70 });
-
-      // donorPoint should be documentPointToLayerLocal called with the calculated point
-      expect(state.tempUpdateLayer).toHaveBeenCalled();
-    });
   });
 
   describe('buildArgs function', () => {
@@ -443,8 +428,10 @@ describe('PatchToolArea', () => {
       fireEvent.pointerDown(area, { button: 0, pointerId: 1, clientX: 60, clientY: 60 });
       fireEvent.pointerMove(area, { pointerId: 1, clientX: 70, clientY: 70 });
 
-      // donorPoint should be documentPointToLayerLocal called with the calculated point
-      expect(state.tempUpdateLayer).toHaveBeenCalled();
+      expect(state.tempUpdateLayer).toHaveBeenCalledWith({
+        id: 'layer-1',
+        toolArgs: expect.objectContaining({ donorPoint: { x: 50, y: 55 } }),
+      });
     });
   });
 
