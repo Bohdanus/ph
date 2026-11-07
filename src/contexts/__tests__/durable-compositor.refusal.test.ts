@@ -144,6 +144,7 @@ function request(registry: AssetRegistry): MaterializationRequest {
 afterEach(() => {
   overrideCanvasFilterSupport(null);
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   recordingContexts.length = 0;
   recordingCanvases.length = 0;
 });
