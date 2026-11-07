@@ -907,6 +907,15 @@ export async function completeWithFreeModel(
 
     if (!hasNextCandidate) return 0;
 
+    const retryAfterMs = retryAfterDelayMs(response);
+    if (retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
+      exhausted.add('openrouter');
+      stderr.write(
+        `OpenRouter returned HTTP ${status} with Retry-After above ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this source for the run.\n`
+      );
+      return null;
+    }
+
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
@@ -930,15 +939,7 @@ export async function completeWithFreeModel(
       );
     }
 
-    const retryAfterMs = retryAfterDelayMs(response);
     if (retryAfterMs === null || retryAfterMs === 0) return 0;
-    if (retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
-      exhausted.add('openrouter');
-      stderr.write(
-        `OpenRouter returned HTTP ${status} with Retry-After above ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this source for the run.\n`
-      );
-      return null;
-    }
     stderr.write(`Honoring OpenRouter Retry-After (${Math.ceil(retryAfterMs / 1000)}s) before trying another model.\n`);
     return retryAfterMs;
   };

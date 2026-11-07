@@ -235,6 +235,8 @@ describe('OpenRouter quota probe', () => {
   it('rejects malformed quota fields instead of treating them as capacity', async () => {
     for (const info of [
       { used: 1, limit: 50, remaining: -1 },
+      { used: 10, limit: 50 },
+      { used: 10, limit: 50, remaining: null },
       { used: -1, limit: 50, remaining: 1 },
       { used: 0, limit: 0, remaining: 0 },
       { used: 'unknown', limit: 50, remaining: 50 },
@@ -598,7 +600,29 @@ describe('provider rate-limit diagnostics', () => {
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
   });
 
-  it('honors Retry-After when the daily quota response payload is invalid', async () => {
+  it.each([
+    ['missing quota object', () => ({ ok: true, json: async () => ({ data: {} }) })],
+    [
+      'missing remaining',
+      () => ({ ok: true, json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50 } } }) }),
+    ],
+    [
+      'null remaining',
+      () => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: null } } }),
+      }),
+    ],
+    [
+      'quota JSON rejects',
+      () => ({
+        ok: true,
+        json: async () => {
+          throw new SyntaxError('invalid quota JSON');
+        },
+      }),
+    ],
+  ])('honors Retry-After when quota is unknown (%s)', async (_label, keyInfo) => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi
       .fn()
@@ -620,7 +644,7 @@ describe('provider rate-limit diagnostics', () => {
     const fetchImpl = catalogFetch({
       kilo: [],
       openrouter: [openRouterRow('r1'), openRouterRow('r2')],
-      keyInfo: () => ({ ok: true, json: async () => ({ data: {} }) }),
+      keyInfo,
       chat,
     });
 
@@ -897,31 +921,35 @@ describe('provider rate-limit diagnostics', () => {
     expect(waitForRetryAfter).not.toHaveBeenCalled();
   });
 
-  it('skips OpenRouter for the run when Retry-After exceeds its bounded wait', async () => {
-    const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
-    const chat = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
-        status: 429,
-        headers: { 'retry-after': '61', 'content-type': 'application/json' },
-      })
-    );
-    const fetchImpl = catalogFetch({
-      kilo: [],
-      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
-      keyInfo: () => ({
-        ok: true,
-        json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
-      }),
-      chat,
-    });
+  it.each([429, 503])(
+    'skips OpenRouter for the run when HTTP %i Retry-After exceeds its bounded wait',
+    async (status) => {
+      const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+      const chat = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
+          status,
+          headers: { 'retry-after': '61', 'content-type': 'application/json' },
+        })
+      );
+      const fetchImpl = catalogFetch({
+        kilo: [],
+        openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+        keyInfo: () => ({
+          ok: true,
+          json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+        }),
+        chat,
+      });
 
-    await expect(completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })).rejects.toThrow(
-      /No free model completed/
-    );
+      await expect(
+        completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })
+      ).rejects.toThrow(/No free model completed/);
 
-    expect(chat).toHaveBeenCalledTimes(1);
-    expect(waitForRetryAfter).not.toHaveBeenCalled();
-  });
+      expect(chat).toHaveBeenCalledTimes(1);
+      expect(waitForRetryAfter).not.toHaveBeenCalled();
+      expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(0);
+    }
+  );
 
   it('parses Retry-After seconds and HTTP dates', () => {
     const now = Date.parse('2026-11-07T00:00:00.000Z');
