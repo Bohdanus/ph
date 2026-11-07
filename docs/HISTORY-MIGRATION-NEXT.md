@@ -219,16 +219,44 @@ priority or dependency. They may be pursued in either order or in parallel.
 
 ## Validation Evidence
 
-Validation for the current candidate is recorded after synchronization to `e034982b` and the final
-read-only reviews. Evidence must distinguish the tested local browser/platform from Linux and Windows
-mirror results. Exact fixture success does not establish the wider frame matrix or Photoshop pixel
-parity.
+The implementation candidate `ee589dbcad31946134013b57869ce4144478804d` (tree
+`78a91e0d7721914167750a6cfecf5c82d0d4271e`) was validated on the local macOS checkout after rebasing
+onto `main` at `3a1d4ad37fa35fca88979803fe3d3be1d42054e1`.
+
+- Focused durable export/projection unit tests: 4 files, 68 passed.
+- `npm run test:e2e:unit`: 22 files, 1,564 passed and 12 expected failures.
+- Focused Chrome E2E: 2 passed (recovered fractional frame transitions and affine raster opacity/blend),
+  run `2026-11-07T01-42-15-549Z-99230`.
+- `npm run tsc`, `npm run build`, `npm run lint:check`, and `git diff --check` passed. Lint reported
+  78 warnings and no errors; the changed implementation and E2E files pass focused ESLint checks.
+- No Linux or Windows mirror run was performed. Local browser results do not prove cross-platform or
+  Photoshop pixel parity, and the wider frame matrix remains open.
 
 ## Review Findings and Dispositions
 
-Record the current candidate's Luna and free-model review scopes, exact reviewed commit/tree, and any
-verified findings here. Do not count incomplete, rate-limited, truncated, or policy-blocked model
-responses as review evidence. Keep frame parity and source-backed ownership independent.
+Reviews covered implementation commit `ee589dbcad31946134013b57869ce4144478804d` and tree
+`78a91e0d7721914167750a6cfecf5c82d0d4271e`:
+
+- The prior Luna 6 review found that export checked replay layers individually but did not require an
+  exact replay/legacy layer set. This was fixed before the reviewed commit: export now falls back when
+  either set has a missing or extra layer, with PNG and PSD regression cases. Luna's fresh follow-up
+  found no further actionable issue and confirmed the bounds and hidden-layer PSD fallbacks.
+- Four complete exact-zero OpenRouter completions gave focused review coverage: Nemotron 3 Ultra
+  checked export admission; Liquid LFM 2.5 checked export and E2E/docs; Cohere North Mini Code checked
+  runtime/export freshness and resource release. All returned `finish_reason=stop` and reported
+  `$0` cost. Length-ended, empty, and rate-limited attempts were discarded and are not counted.
+- The free reviews proposed possible hidden-layer loss, a bounds-test mismatch, and composite leak or
+  double-release paths. Source and tests show these are blocked: PSD with hidden replay layers uses
+  legacy records, replay/legacy visibility and metadata mismatches refuse admission, the bounds test
+  starts with matching legacy/materialized bounds before changing the composite, and the save handler
+  releases composites in `finally` with idempotent release guards. The E2E/docs review restated the
+  intentionally open runtime/export and wider frame-matrix proof; those remain explicit next steps.
+- Codex had no Kilo CLI or verifiable free subagent launcher in this session, so the free reviews used
+  the repository's tool-free completion runner rather than tool-using Kilo subagents. Incomplete model
+  responses were not review evidence.
+
+The actionable export layer-set finding is resolved. Keep the transformed-raster runtime/PNG/PSD
+parity proof, broader frame matrix, and source-backed ownership as independent remaining gates.
 
 ## Chat-history reconciliation
 
