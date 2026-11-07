@@ -4,14 +4,16 @@ import {
   drawLine,
   getWorkspaceCanvas,
   hasDarkPixels,
+  hasRedPixels,
   LINE_END_X,
   LINE_START_X,
   LINE_START_Y,
 } from './helpers/canvas-helpers';
 import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { clickToolButton, navigateAndSelectInFlyout, openToolFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { committedAntsOutline, waitForCommittedAnts, waitForNoCommittedAnts } from './helpers/selection-ants';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot) => !(await hasDarkPixels(screenshot));
@@ -37,6 +39,9 @@ const drawRows = (page: Page): Locator => historyRows(page).filter({ hasText: /^
 
 const disableButton = (row: Locator): Locator => row.getByTitle('Disable history item');
 const enableButton = (row: Locator): Locator => row.getByTitle('Enable history item');
+
+/** Rows for selection entries. Currently all labeled "selection" (lowercase, CSS capitalize only affects visual) per HANDOFF item 32. */
+const selectionRows = (page: Page): Locator => historyRows(page).filter({ hasText: /selection/ });
 
 test.describe('History panel', () => {
   test.beforeEach(async ({ page }) => {
@@ -166,5 +171,174 @@ test.describe('History panel', () => {
     await expect(page.getByTestId('undo-button'), 'a new document starts with nothing to undo').toBeDisabled();
     await expect(page.getByTestId('redo-button')).toBeDisabled();
     await waitForCanvasPixels(page, strokeClip, hasNoDarkPixels, { description: "the first document's stroke" });
+  });
+
+  test.describe('HANDOFF item 32: selection rows in History panel', () => {
+    test.beforeEach(() => {
+      test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    });
+
+    test('rectangular selection creates a SELECTION_ACTION row', async ({ page }) => {
+      const box = await canvasBox(page);
+      await openToolFlyout(page, 'rectangular-selection');
+      await navigateAndSelectInFlyout(page, 'rectangular-selection', 'Rectangular Marquee Tool');
+      // Drag a rectangle selection
+      await page.mouse.move(box.x + 100, box.y + 100);
+      await page.mouse.down();
+      await page.mouse.move(box.x + 200, box.y + 200);
+      await page.mouse.up();
+      // Wait for selection to be committed
+      await waitForCommittedAnts(page, 'the selection to be created');
+      // Verify selection row appears
+      await expect(selectionRows(page)).toHaveCount(1);
+      await expect(selectionRows(page).first()).toContainText('selection');
+      await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
+    });
+
+    test('magic wand selection creates a SELECTION_ACTION row', async ({ page }) => {
+      const box = await canvasBox(page);
+      // First draw something to select
+      await clickToolButton(page, 'draw');
+      await setForegroundColor(page, '#cc0000', true);
+      await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y);
+      await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'the stroke to select' });
+
+      await openToolFlyout(page, 'magic-wand');
+      await navigateAndSelectInFlyout(page, 'magic-wand', 'Magic Wand Tool');
+      await page.mouse.click(box.x + (LINE_START_X + LINE_END_X) / 2, box.y + LINE_START_Y);
+      // Wait for selection to be committed
+      await waitForCommittedAnts(page, 'the magic wand selection to be created');
+      // Verify selection row appears
+      await expect(selectionRows(page)).toHaveCount(1);
+      await expect(selectionRows(page).first()).toContainText('selection');
+      await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
+    });
+
+    test('tool switch deselect creates a SELECTION_ACTION row', async ({ page }) => {
+      const box = await canvasBox(page);
+      // Create a selection
+      await openToolFlyout(page, 'rectangular-selection');
+      await navigateAndSelectInFlyout(page, 'rectangular-selection', 'Rectangular Marquee Tool');
+      await page.mouse.move(box.x + 100, box.y + 100);
+      await page.mouse.down();
+      await page.mouse.move(box.x + 200, box.y + 200);
+      await page.mouse.up();
+      await waitForCommittedAnts(page, 'the selection to be created');
+      await expect(selectionRows(page)).toHaveCount(1);
+      await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
+
+      // Switch tool (should deselect and create SELECTION_ACTION row)
+      await clickToolButton(page, 'draw');
+      // Wait for selection clear to be committed
+      await waitForNoCommittedAnts(page, 'the selection to be cleared');
+      // Verify new selection row appears (the deselect)
+      await expect(selectionRows(page)).toHaveCount(2);
+      await expect(selectionRows(page).first()).toContainText('selection');
+      await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
+    });
+
+    test('clear/deselect control creates a SELECTION_ACTION row', async ({ page }) => {
+      const box = await canvasBox(page);
+      await openToolFlyout(page, 'rectangular-selection');
+      await navigateAndSelectInFlyout(page, 'rectangular-selection', 'Rectangular Marquee Tool');
+      await page.mouse.move(box.x + 100, box.y + 100);
+      await page.mouse.down();
+      await page.mouse.move(box.x + 200, box.y + 200);
+      await page.mouse.up();
+      await waitForCommittedAnts(page, 'the selection to be created');
+      await expect(selectionRows(page)).toHaveCount(1);
+      await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
+
+      // Click the Deselect button in the options bar
+      await page.getByRole('button', { name: 'Deselect' }).click();
+      await waitForNoCommittedAnts(page, 'the selection to be cleared');
+      // Verify new selection row appears (the clear)
+      await expect(selectionRows(page)).toHaveCount(2);
+      await expect(selectionRows(page).first()).toContainText('selection');
+      await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
+    });
+  });
+
+  test.describe('HANDOFF item 31: selection baseline restore on undo/redo', () => {
+    test.beforeEach(() => {
+      test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    });
+
+    test('selection restore on undo after selection clear', async ({ page }) => {
+      const box = await canvasBox(page);
+      // Create a rectangular selection
+      await openToolFlyout(page, 'rectangular-selection');
+      await navigateAndSelectInFlyout(page, 'rectangular-selection', 'Rectangular Marquee Tool');
+      await page.mouse.move(box.x + 100, box.y + 100);
+      await page.mouse.down();
+      await page.mouse.move(box.x + 200, box.y + 200);
+      await page.mouse.up();
+      await waitForCommittedAnts(page, 'the selection to be created');
+      await expect(selectionRows(page)).toHaveCount(1);
+      await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
+      const selectionOutline = await committedAntsOutline(page);
+      expect(selectionOutline).not.toBeNull();
+
+      // Click the Deselect button in the options bar (creates SELECTION_ACTION clear entry)
+      await page.getByRole('button', { name: 'Deselect' }).click();
+      await waitForNoCommittedAnts(page, 'the selection to be cleared');
+      await expect(selectionRows(page)).toHaveCount(2);
+      await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
+
+      // Undo should restore the selection
+      await expect(page.getByTestId('undo-button')).toBeEnabled();
+      await page.getByTestId('undo-button').click();
+      await waitForCommittedAnts(page, 'the selection to be restored');
+      await expect(selectionRows(page)).toHaveCount(2);
+      await expect(selectionRows(page).last().getByTitle('Current state')).toBeVisible();
+      const restoredOutline = await committedAntsOutline(page);
+      expect(restoredOutline).not.toBeNull();
+      expect(restoredOutline).toEqual(selectionOutline);
+    });
+
+    test('selection move creates separate SELECTION_ACTION row and restores on undo', async ({ page }) => {
+      const box = await canvasBox(page);
+      // Create a rectangular selection
+      await openToolFlyout(page, 'rectangular-selection');
+      await navigateAndSelectInFlyout(page, 'rectangular-selection', 'Rectangular Marquee Tool');
+      await page.mouse.move(box.x + 100, box.y + 100);
+      await page.mouse.down();
+      await page.mouse.move(box.x + 200, box.y + 200);
+      await page.mouse.up();
+      await waitForCommittedAnts(page, 'the selection to be created');
+      const initialOutline = await committedAntsOutline(page);
+      expect(initialOutline).not.toBeNull();
+
+      // Move the selection (drag from inside)
+      await page.mouse.move(box.x + 150, box.y + 150);
+      await page.mouse.down();
+      await page.mouse.move(box.x + 250, box.y + 250);
+      await page.mouse.up();
+      await waitForCommittedAnts(page, 'the selection to be moved');
+      const movedOutline = await committedAntsOutline(page);
+      expect(movedOutline).not.toBeNull();
+      expect(movedOutline).not.toEqual(initialOutline);
+      await expect(selectionRows(page)).toHaveCount(2);
+      await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
+
+      // Undo should restore the selection to original position
+      await expect(page.getByTestId('undo-button')).toBeEnabled();
+      await page.getByTestId('undo-button').click();
+      await waitForCommittedAnts(page, 'the selection to be restored');
+      await expect(selectionRows(page)).toHaveCount(2);
+      await expect(selectionRows(page).last().getByTitle('Current state')).toBeVisible();
+      const restoredOutline = await committedAntsOutline(page);
+      expect(restoredOutline).not.toBeNull();
+      expect(restoredOutline).toEqual(initialOutline);
+
+      // Redo must restore the moved selection recorded by the second history row.
+      await expect(page.getByTestId('redo-button')).toBeEnabled();
+      await page.getByTestId('redo-button').click();
+      await waitForCommittedAnts(page, 'the moved selection to be restored by redo');
+      await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
+      const redoneOutline = await committedAntsOutline(page);
+      expect(redoneOutline).not.toBeNull();
+      expect(redoneOutline).toEqual(movedOutline);
+    });
   });
 });

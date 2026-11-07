@@ -155,7 +155,7 @@ describe('useLayers createLayerFromTool rect validation', () => {
 });
 
 describe('useLayers beginTextLayerEdit', () => {
-  it('starts an edit session on a text layer by clearing its raster preview', () => {
+  it('hides the retained source while starting a text edit preview', () => {
     const raster = new OffscreenCanvas(40, 20);
     const processor = vi
       .spyOn(toolProcessors.text, 'imageProcessor')
@@ -190,9 +190,48 @@ describe('useLayers beginTextLayerEdit', () => {
     const preview = result.current.store.previewLayers.current[textLayer!.id];
     expect(preview).toBeDefined();
     expect(preview?.layer.id).toBe(textLayer!.id);
+    expect(preview?.layer.visible).toBe(false);
     expect(preview?.layer.bitmap).toBeNull();
     expect(preview?.layer.tmpCanvas).toBeNull();
     expect(preview?.toolArgs).toBeUndefined();
+    processor.mockRestore();
+  });
+
+  it('does not publish the transient hidden visibility override when committing previews', () => {
+    const processor = vi
+      .spyOn(toolProcessors.text, 'imageProcessor')
+      .mockReturnValue(() => [new OffscreenCanvas(40, 20)] as unknown as ToolResult);
+    const { result } = setup();
+    const textArgs = {
+      toolName: 'text',
+      align: 'left' as const,
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 64,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'Hello',
+      rect: { x1: 0, y1: 0, x2: 40, y2: 20 },
+    } as ToolArgs;
+
+    let created: Layer | null = null;
+    act(() => {
+      created = result.current.layers.createLayerFromTool({ args: textArgs });
+    });
+    const textLayer = created as Layer | null;
+    if (!textLayer) throw new Error('text layer was not created');
+
+    act(() => result.current.layers.beginTextLayerEdit(textLayer.id));
+    expect(result.current.store.previewLayers.current[textLayer.id]?.layer.visible).toBe(false);
+
+    act(() => {
+      result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'shape' });
+    });
+    act(() => result.current.layers.commitDirtyTool());
+
+    expect(result.current.store.layers[textLayer.id]?.visible).toBe(true);
+    expect(result.current.store.previewLayers.current[textLayer.id]).toBeUndefined();
     processor.mockRestore();
   });
 });
