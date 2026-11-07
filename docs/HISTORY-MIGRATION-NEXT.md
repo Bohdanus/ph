@@ -2,9 +2,8 @@
 
 This is the restart guide for the durable-history migration. `docs/HISTORY-MIGRATION.md` remains the
 architecture map; this file records the live gates and the next bounded proof slice. The status
-contract and subsequent renderer work have already landed on `main`, so the original migration
-branch's landing instructions and validation counts are historical. The validation evidence below
-is for this review closeout.
+contract and subsequent renderer work have already landed on `main`; the checkpoint below records
+the main drift and the new evidence from this continuation.
 
 ## Current Contract
 
@@ -61,6 +60,41 @@ transparent baseline, visible rectangle, PNG, and PSD composite/layer pixels aga
 pixel oracle, then checks exact undo/redo; redo reports `ownership-unproven`. This pins the gate,
 not vector eligibility.
 
+## Current-main drift and new renderer evidence
+
+At the 2026-11-07 checkpoint, local `main` was `3a1d4ad3`; `origin/main` and `mirror/main` were
+`e24fc2ad`. The local main advanced through a toolbar-fit merge and then a free-compute/chat-history
+documentation merge. The tree diff from `e24fc2ad` to `3a1d4ad3` changes toolbar files, free-compute
+policy docs, a selection-tool description, and removes an unrelated resolved handoff entry; it does
+not change history replay, compositor, renderer, export, or the crop-history fixture. This task
+branch still starts at `e24fc2ad` and must be synchronized to the live local `main` before final
+review and landing.
+
+The historical `7cf69dca` affine-parity commit is not an ancestor of current main. Its behavior has
+evolved in the current compositor: `3ccccba0` introduced direct affine raster composition and
+`6f9aaf53` extended that route to raster and vector sources with bitmap cleanup. The exact recovered
+fractional mixed-source fixture now passes byte-identical composites at all three transitions in
+the tested browser environment. It uses angles `37`, `0`, and `-17` with fractional frames
+`{x:4.25,y:4.5,width:55.75,height:55.5}`,
+`{x:5.125,y:6.25,width:53.5,height:51.875}`, and
+`{x:6.75,y:6.125,width:49.875,height:49.5}`. The old first-transition mismatch at `(5, 26)` with
+legacy red/alpha `188/122` and durable `190/121` is not reproduced for this recovered fixture. Mark
+that observation resolved only for these inputs and this environment; the root cause, other frame
+matrices, and cross-platform parity remain unproven.
+
+The transformed-raster opacity/blend fixture uses opacity `0.58` and `multiply`. Its raw tight
+bitmap bytes, premultiplied tight pixels, bounds, dimensions, opacity, and blend metadata match in
+the HTML and OffscreenCanvas comparisons at the affine and fractional-frame cursors. The direct
+durable composite also matches the legacy composite exactly. However, the runtime durable
+projection and durable PNG/PSD record path differ from legacy rendering by 42 channel bytes at the
+affine cursor and 46 after the fractional frame when composed over the opaque test backdrop. The
+earlier 146-byte isolated-layer comparison over transparency is not a valid blend-mode oracle.
+Retained operations therefore remain outside the renderer parity gate. The export candidate now
+uses the same conservative eligibility check and keeps legacy records for any unsupported source,
+retained operation, metadata mismatch, missing legacy layer, or changed bounds; it checks hidden
+layers too because PSD preserves their pixels. This does not admit frame-changing commits or alter
+logical history authority.
+
 ## Loose Ends
 
 1. **Authority cutover.** Legacy `HistoryItem[]` remains logical authority. Durable navigation is a
@@ -77,25 +111,15 @@ not vector eligibility.
    Live previews also keep the complete legacy layer base until they clear;
    the preview tests pin that interleaving behavior but do not make preview a durable authority
    surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
-2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
-   covers two retained affine layer transforms across two successive non-quarter frame transforms
-   with fractional origins and extents. It keeps exact per-layer bounds and allows at most two
-   differing pixels per frame raster at partial-alpha boundaries and per tight raster at alpha
-   boundaries with identical RGB values. A transparent/one-alpha pair also needs adjacent samples
-   of the same color in both rasters. Composites remain byte-identical at each tested cursor, and
-   the frame-only
-   control remains byte-identical. A styled, bold-italic serif paragraph passes through a retained
-   affine and a two-frame sequence with exact premultiplied tight-raster pixels and exact alpha,
-   frame, and composite pixels. A three-transition mixed-source frame sequence applies two sequential
-   retained affines to an opaque blank, one retained affine to a 45%-opacity blank, and one each to
-   vector, paint, and point text, preserving exact bounds and bitmap dimensions at all six affine
-   cursors and after each frame transition. These
-   fixtures close only their listed combinations: other transform combinations, angles, text
-   styling/rotation variants, other blank opacity values, and exact fractional
-   bounds across the wider source matrix remain open. An exploratory mixed-source fractional-frame
-   variant passed per-layer checks but its first composite transition differed at canvas pixel
-   (5, 26), with legacy red/alpha 188/122 and durable 190/121. Do not publish
-   frame-changing commits durably until the full frame gate is explicit.
+2. **Presentation parity.** Keep runtime and export byte-parity admission conservative. The recovered
+   fractional mixed-source fixture passes exact per-layer checks and exact composites at its three
+   transitions; it closes only those inputs and does not establish the cause of the older `(5, 26)`
+   mismatch or the wider frame matrix. The transformed raster with opacity `0.58` and `multiply`
+   retains exact raw materialized pixels and metadata, and its direct durable composite is exact,
+   but the runtime projection and durable export path differ from legacy over the opaque backdrop.
+   Keep retained operations out of both gates until the next proof slice establishes exact parity
+   through runtime projection, PNG, and PSD. Do not promote `SET_DOCUMENT_FRAME_ACTION` to durable
+   publication.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
 4. **Status UI coverage.** Dev status, ErrorBoundary fallback, and structured diagnostics now
@@ -113,24 +137,24 @@ priority or dependency. They may be pursued in either order or in parallel.
    layer base while append composition is pending or accepted, then reveal the durable base only
    after the preview clears; `useLayer.render.test.tsx` pins accepted and refused append cases, and
    `e2e/undo-redo.spec.ts` pins live Brush preview pixels while durable status is current.
-3. Continue parity-only frame work. The raster fixture in `e2e/crop-history.spec.ts` covers two
-   retained affine layer transforms and two successive non-quarter frame transforms with fractional
-   origins and extents. It asserts exact per-layer bounds, at most two partial-alpha boundary pixels
-   in frame comparisons, at most two internal-alpha-gradient pixels in tight comparisons, and
-   byte-identical composites at each cursor and frame-only control. A styled paragraph-text fixture
-   covers its retained affine cursor plus a two-frame sequence with exact premultiplied tight-raster
-   pixels, alpha, frame pixels, and composites. The
-   mixed-source three-transition fixture applies two sequential retained affines to an opaque blank,
-   one retained affine to a 45%-opacity blank, and one each to vector, paint, and point text, then
-   checks per-layer bounds and bitmap dimensions at all six affine cursors and after each frame
-   transition, with exact premultiplied tight pixels and exact frame pixels. A fractional-frame
-   probe of this mix preserved per-layer parity but found a one-pixel
-   composite mismatch at the first transition; investigate it before broadening fractional coverage.
-   These fixtures close only their listed combinations. Next cover the
-   open angles, additional retained-affine combinations, other text styling/rotation, blank opacity
-   variants, and exact fractional materialized bounds across the wider source matrix. Keep
-   `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that matrix is explicit; add
-   cursor checks without changing publication, cursor, or lease ownership.
+3. Continue parity-only work with the transformed raster opacity/blend discrepancy as the next
+   bounded slice. At the affine cursor and after the fractional frame, compare legacy rendering,
+   `projectDurableRender()`, `renderExportCanvas()` using `durableExportRecords()`, and PSD layer plus
+   composite pixels over the same opaque backdrop. Keep separate assertions for raw source pixels,
+   tight bitmap bounds/dimensions, alpha and premultiplication, opacity/blend metadata, and the
+   composed output; do not use a transparent multiply result as the oracle. Require exact byte
+   equality with no tolerance. Trace any difference to materialization, retained-affine composition,
+   or the standard layer/export renderer before changing production code. Preserve bitmap leases and
+   release assertions. The current fallback must continue selecting legacy records for retained
+   operations, including hidden PSD layers.
+
+   Once that slice is exact, broaden the fractional frame matrix across open angles, additional
+   retained-affine combinations, text styling/rotation, blank opacity variants, and fractional
+   materialized bounds for each source family. Keep `SET_DOCUMENT_FRAME_ACTION` out of durable
+   publication until that matrix is explicit; add cursor checks without changing publication, cursor,
+   or lease ownership. Frame parity and source-backed import/replacement ownership remain independent
+   gates.
+
 4. Keep the image/blank create exception scoped to the current append. It may request background
    composition after asset finalization only when the preceding active cursor prefix passes the
    ownership and frame gates. The create's own navigation cursor and later appends remain on the
@@ -189,67 +213,34 @@ priority or dependency. They may be pursued in either order or in parallel.
 
 ## Validation Evidence
 
-- The original `fix/history-migration-20261014` validation counts are not current-main evidence and
-  are omitted here.
-- `npm run tsc` passed after the review follow-up.
-- `npm run lint:check` passed; it reported 64 warnings outside the changed files.
-- The targeted headless E2E `a retained layer transform matches legacy before and after a later frame
-transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-control assertion.
-- No durable publication or logical authority behavior changed in this branch. A passing parity
-  test closes only the fixture's listed cursors and inputs; it does not close the general frame or
-  source-ownership gates.
+Validation for the current candidate is recorded after synchronization to `e034982b` and the final
+read-only reviews. Evidence must distinguish the tested local browser/platform from Linux and Windows
+mirror results. Exact fixture success does not establish the wider frame matrix or Photoshop pixel
+parity.
 
 ## Review Findings and Dispositions
 
-- Cross-system Kilo, Codex, and Copilot history scans found no additional migration step or ordering
-  decision. The relevant Kilo history confirms preview and refused-draw evidence is test coverage;
-  it does not change logical authority. Keep the frame matrix and source-ownership gate independent.
-- Review coverage: Luna 6 read-only review and follow-up, plus three focused review passes using
-  the then-preferred free model through Kilo's completion-only fallback. This Codex host has no
-  verified free tool-using subagent route, so those three passes were not tool-using subagents.
-- A review found the parity checks could pass if both renderers dropped the affine transform. The
-  fixture now compares each renderer against the untransformed baseline at the transform cursor and
-  checks that each final render differs from its frame-only control.
-- Luna's re-review found that the control's durable frame was not asserted before comparing pixels.
-  The fixture now requires the control's durable frame to match the transformed case's legacy frame.
-- Review noted that numbering the frame and source-ownership gates implied an order despite the docs
-  saying they were independent. Steps 3 and 4 below are now explicitly unordered and may proceed in
-  either order or in parallel.
-- Luna's final follow-up found no remaining actionable issues in the fixture or updated sequence.
-- Reports that composite release was missing or that replay cursors were offset did not reproduce
-  when checked against the shared `finally` block and inclusive `replayHistory` cursor loop.
-- Exact fractional bounds across the wider frame and source matrix remain unproven. The mixed-source
-  fixture pins exact bounds for its listed integer-origin frame cases; a fractional-frame probe keeps
-  per-layer bounds and pixels exact but differs in its first composite transition by one pixel. The
-  raster and styled paragraph-text fixtures cover fractional frame origins and extents.
+Record the current candidate's Luna and free-model review scopes, exact reviewed commit/tree, and any
+verified findings here. Do not count incomplete, rate-limited, truncated, or policy-blocked model
+responses as review evidence. Keep frame parity and source-backed ownership independent.
+
+## Chat-history reconciliation
+
+The local Kilo, Codex, and Copilot history scan found no additional migration step or authority-order
+decision. Codex's exact prompt and controlled experiment records distinguish an earlier one-alpha
+materialization discrepancy at `(36, 26)`—addressed by shared frame-surface reuse—from the later
+mixed-source composite observation at `(5, 26)`. The verified-free Kilo Nemotron search did not
+establish that later case's root cause; focused Kilo SQLite results corroborate that the earlier
+`(36, 26)` result is a different issue. Copilot Chronicle contained no usable exact transcript for
+this case; the candidate session had 23 local turns marked failed, so that scan is not evidence that
+no discussion occurred. The current implementation work therefore verifies the recovered
+fractional fixture directly and keeps the opacity/blend export gap as the next bounded proof.
 
 ## Current continuation plan
 
-The source of truth for this migration's implementation slices and acceptance gates is
-[the durable history continuation plan](../.kilo/plans/history-migration-continuation-20261027.md).
-The `976a201e` sync and `3ccccba0` main pin above describe the 2026-10-28 checkpoint. Slice 1
-landed on `main` on 2026-10-29 as `f723394b`, after the full unit suite, source-backed E2E,
-typecheck, build, lint and read-only reviews passed. The latest plan checkpoint records its exact
-parents/tree and the History-panel proof based on that landed pin. The headless E2E now proves one
-bounded route: disable the default blank `NEW_LAYER_ACTION` row, then paste one supported raster
-through the UI and publish its append cursor with durable presentation. It checks the empty
-transparent state, exact composite and layer pixels, PNG and PSD output, then exact undo/redo pixels
-while the root stays disabled. A DEV-only canvas marker is written after the renderer succeeds, so
-the E2E confirms the durable and legacy repaint sources before reading their pixels. Redo correctly
-takes the legacy fallback with `ownership-unproven`. This does not widen production eligibility or finish history migration;
-`HistoryItem[]` and `replayHistory()` remain authoritative. Recheck live worktree ownership before
-selecting Slice 2A or one Slice 2B family, as recorded in the plan.
-
-The tablet blank-layer case extends the same disabled-root route through the mobile Layers drawer.
-It requires a successful durable paint at cursor 1, exact transparent canvas/PNG pixels, exact PSD
-composite and blank-layer pixels/bounds, then exact undo/redo pixels with the root still disabled.
-The existing raster case covers deterministic clipboard paste on the same prefix. Both check the
-DEV-only paint source/cursor after renderer completion; redo remains the complete
-`ownership-unproven` legacy fallback. These tests demonstrate only this reachable prefix and do not
-change any production publication gate.
-
-At the latest sync, actual local `main` was `ce1aedec0ddc619ea92414444377f1b243bc29b9`; this
-candidate contains it through merge `9f84f7eaa8942e2c340d340771fde6f0b509ff13`. After syncing, the
-focused browser suite (4 tests), E2E helper suite (21 files), typecheck, production build, and lint
-all passed. Before the pinned landing, recheck live main and `repo:state`; sync and rerun the focused
-gates if main has moved.
+The immediate implementation target is transformed-raster opacity/blend output parity and the
+legacy export fallback described above. After exact PNG, PSD, and runtime proof for that fixture,
+continue the broader fractional-frame matrix and source-backed import/replacement ownership as
+separate gates. Only after every presentation surface has explicit identity, coverage, freshness,
+lease, preview, and fallback proofs should durable replay be considered for logical undo/redo
+authority. The current `HistoryItem[]` and `replayHistory()` authority remains unchanged.

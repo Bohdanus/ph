@@ -943,6 +943,12 @@ type CropParityLayerComparison = Readonly<{
     legacy: Readonly<{ x: number; y: number; width: number; height: number }>;
     durable: Readonly<{ x: number; y: number; width: number; height: number }>;
   }>;
+  compositing: Readonly<{
+    legacyOpacity: number;
+    durableOpacity: number;
+    legacyBlendMode: GlobalCompositeOperation;
+    durableBlendMode: GlobalCompositeOperation;
+  }>;
   affineTransforms: Readonly<{
     legacy: readonly CropParityAffineTransform[];
     durable: readonly CropParityAffineTransform[];
@@ -958,6 +964,10 @@ type CropParityLayerComparison = Readonly<{
   offscreenFrameNonEdgeDifferingPixels: number;
   frameDifferingSamples: readonly CropParityFramePixelSample[];
   offscreenFrameDifferingSamples: readonly CropParityFramePixelSample[];
+  tightBitmapRawDifferingBytes: number;
+  tightBitmapRawDifferingSamples: readonly CropParityFramePixelSample[];
+  offscreenTightBitmapRawDifferingBytes: number;
+  offscreenTightBitmapRawDifferingSamples: readonly CropParityFramePixelSample[];
   tightBitmapPremultipliedDifferingBytes: number;
   tightBitmapDifferingPixels: number;
   tightBitmapNonEdgeDifferingPixels: number;
@@ -1729,6 +1739,35 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               legacyOffscreenRawFramePixels
             );
             // The tight raster uses frame-grid pixels inside the frame and bounded pixels outside it.
+            const compareRawPixels = (expected: Uint8ClampedArray, actual: Uint8ClampedArray) => {
+              let differingBytes = 0;
+              const differingSamples: CropParityFramePixelSample[] = [];
+              for (let byte = 0; byte < Math.max(expected.length, actual.length); byte += 1) {
+                const legacy = expected[byte] ?? null;
+                const durable = actual[byte] ?? null;
+                if (legacy === durable) continue;
+                differingBytes += 1;
+                if (differingSamples.length >= 8) continue;
+                const pixel = Math.floor(byte / 4);
+                const x = pixel % expectedBounds.width;
+                const y = Math.floor(pixel / expectedBounds.width);
+                differingSamples.push({
+                  x,
+                  y,
+                  documentX: expectedBounds.x + x,
+                  documentY: expectedBounds.y + y,
+                  channel: frameChannels[byte % 4],
+                  legacy,
+                  durable,
+                });
+              }
+              return { differingBytes, differingSamples };
+            };
+            const tightBitmapRawComparison = compareRawPixels(legacyHybridTightPixels, durableTightPixels);
+            const offscreenTightBitmapRawComparison = compareRawPixels(
+              legacyOffscreenHybridTightPixels,
+              durableOffscreenTightPixels
+            );
             const tightBitmapComparison = compareTightPixels(legacyHybridTightPixels, durableTightPixels);
             const offscreenTightBitmapComparison = compareTightPixels(
               legacyOffscreenHybridTightPixels,
@@ -1817,6 +1856,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 legacy: legacyLayer.pos,
                 durable: durableLayer.snapshot.pos,
               },
+              compositing: {
+                legacyOpacity: legacyLayer.opacity,
+                durableOpacity: materializedLayer.opacity,
+                legacyBlendMode: legacyLayer.blendMode,
+                durableBlendMode: materializedLayer.blendMode,
+              },
               affineTransforms: {
                 legacy: legacyLayer.operations
                   .filter(
@@ -1845,6 +1890,10 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               offscreenFrameNonEdgeDifferingPixels,
               frameDifferingSamples,
               offscreenFrameDifferingSamples,
+              tightBitmapRawDifferingBytes: tightBitmapRawComparison.differingBytes,
+              tightBitmapRawDifferingSamples: tightBitmapRawComparison.differingSamples,
+              offscreenTightBitmapRawDifferingBytes: offscreenTightBitmapRawComparison.differingBytes,
+              offscreenTightBitmapRawDifferingSamples: offscreenTightBitmapRawComparison.differingSamples,
               tightBitmapPremultipliedDifferingBytes: tightBitmapComparison.differingBytes,
               tightBitmapDifferingPixels: tightBitmapComparison.differingPixels,
               tightBitmapNonEdgeDifferingPixels: tightBitmapComparison.nonEdgeDifferingPixels,
@@ -3860,12 +3909,13 @@ test.describe('Crop history', () => {
       expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'foreground']);
     });
 
-    test('an affine raster preserves combined layer opacity and blend mode exactly', async ({ page }) => {
+    test('an affine raster keeps composite opacity and blend mode exact', async ({ page }) => {
       await openDocument(page);
 
       const fixture: CropParityFixture = {
         caseName: 'affine raster opacity and multiply blend',
         documentId: 'affine-raster-opacity-multiply-parity',
+        materializedLayerIds: ['foreground'],
         layerTransforms: [
           {
             id: 'affine-opacity-multiply',
@@ -3918,12 +3968,58 @@ test.describe('Crop history', () => {
 
       expect(result.layerTransformResults).toHaveLength(1);
       const transformed = result.layerTransformResults[0];
+      const assertForegroundMaterialization = (comparisons: readonly CropParityLayerComparison[], stage: string) => {
+        expect(comparisons, stage + ' materialized foreground count').toHaveLength(1);
+        const comparison = comparisons[0];
+        if (!comparison) throw new Error(stage + ' has no foreground materialization comparison');
+        expect(comparison.layerId).toBe('foreground');
+        expect(comparison.materializedBounds, stage + ' materialized bounds').toEqual(comparison.expectedBounds);
+        expect(comparison.bitmapSize, stage + ' bitmap dimensions').toEqual({
+          width: comparison.expectedBounds.width,
+          height: comparison.expectedBounds.height,
+        });
+        expect(comparison.compositing, stage + ' opacity and blend metadata').toEqual({
+          legacyOpacity: 0.58,
+          durableOpacity: 0.58,
+          legacyBlendMode: 'multiply',
+          durableBlendMode: 'multiply',
+        });
+        expect(
+          comparison.tightBitmapRawDifferingBytes,
+          stage +
+            ' isolated tight bitmap raw bytes differ at ' +
+            JSON.stringify(comparison.tightBitmapRawDifferingSamples)
+        ).toBe(0);
+        expect(
+          comparison.offscreenTightBitmapRawDifferingBytes,
+          stage +
+            ' OffscreenCanvas tight bitmap raw bytes differ at ' +
+            JSON.stringify(comparison.offscreenTightBitmapRawDifferingSamples)
+        ).toBe(0);
+        expect(
+          comparison.tightBitmapPremultipliedDifferingBytes,
+          stage + ' isolated tight bitmap differs at ' + JSON.stringify(comparison.tightBitmapDifferingSamples)
+        ).toBe(0);
+        expect(
+          comparison.offscreenTightBitmapPremultipliedDifferingBytes,
+          stage +
+            ' OffscreenCanvas tight bitmap differs at ' +
+            JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)
+        ).toBe(0);
+      };
       expect(transformed?.differingBytes, 'affine composite must preserve opacity and blend byte-for-byte').toBe(0);
+      if (transformed) {
+        assertForegroundMaterialization(transformed.materializedLayerComparisons, 'affine cursor');
+      }
       expect(transformed?.legacyDiffersFromUntransformed).toBe(true);
       expect(transformed?.durableDiffersFromUntransformed).toBe(true);
 
       expect(result.transitionResults).toHaveLength(1);
       expect(result.transitionResults[0]?.differingBytes, 'frame composite must remain byte-identical').toBe(0);
+      const frameTransition = result.transitionResults[0];
+      if (frameTransition) {
+        assertForegroundMaterialization(frameTransition.materializedLayerComparisons, 'frame transition');
+      }
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(result.transitionResults[0]?.legacyPixels).not.toEqual(normalComposite.transitionResults[0]?.legacyPixels);
       expect(result.transitionResults[0]?.durablePixels).not.toEqual(
@@ -4280,7 +4376,7 @@ test.describe('Crop history', () => {
     }) => {
       await openDocument(page);
 
-      const result = await compareCropRenderers(page, {
+      const fixture: CropParityFixture = {
         caseName: 'multi-step mixed-source crop',
         documentId: 'multi-step-mixed-source-crop-pixel-parity',
         materializedLayerIds: ['blank', 'blank-semi', 'vector', 'paint', 'text'],
@@ -4453,7 +4549,8 @@ test.describe('Crop history', () => {
             },
           },
         ],
-      });
+      };
+      const integerResult = await compareCropRenderers(page, fixture);
 
       const assertMixedLayerParity = (comparisons: readonly CropParityLayerComparison[], stage: string) => {
         expect(comparisons, `${stage} materialized layer count`).toHaveLength(5);
@@ -4486,33 +4583,61 @@ test.describe('Crop history', () => {
         }
       };
 
-      expect(result.layerTransformResults).toHaveLength(6);
-      for (const transform of result.layerTransformResults) {
-        assertMixedLayerParity(transform.materializedLayerComparisons, `retained affine ${transform.id}`);
-        expect(transform.differingBytes, `retained affine ${transform.id} composite parity`).toBe(0);
-        expect(transform.legacyDiffersFromUntransformed).toBe(true);
-        expect(transform.durableDiffersFromUntransformed).toBe(true);
-        expect(transform.legacyDiffersFromPrevious).toBe(true);
-        expect(transform.durableDiffersFromPrevious).toBe(true);
-      }
-      expect(result.transitionResults).toHaveLength(3);
-      for (const transition of result.transitionResults) {
-        expect(transition.durableFrame).toEqual(transition.frame);
-        const frameSize = getDocumentFrameSize(transition.frame);
-        expect(transition.legacyByteLength).toBe(frameSize.width * frameSize.height * 4);
-        expect(transition.durableByteLength).toBe(transition.legacyByteLength);
-        assertMixedLayerParity(transition.materializedLayerComparisons, `frame transition ${transition.index}`);
-        expect(
-          transition.differingBytes,
-          `frame transition ${transition.index} must match byte-for-byte; ${pixelDifferenceSummary(transition)}`
-        ).toBe(0);
-      }
-      for (const [color, presence] of Object.entries(result.colorPresence)) {
-        expect(presence.legacy, `legacy mixed-source crop should contain ${color}`).toBe(true);
-        expect(presence.durable, `durable mixed-source crop should contain ${color}`).toBe(true);
-      }
-      expect(result.durablePixels).toEqual(result.legacyPixels);
-      expect(Object.keys(result.materializedBounds).sort()).toEqual(['blank', 'blank-semi', 'paint', 'text', 'vector']);
+      const assertMixedSourceParity = (result: Awaited<ReturnType<typeof compareCropRenderers>>, context: string) => {
+        expect(result.layerTransformResults, context + ' retained affine count').toHaveLength(6);
+        for (const transform of result.layerTransformResults) {
+          assertMixedLayerParity(transform.materializedLayerComparisons, context + ' retained affine ' + transform.id);
+          expect(transform.differingBytes, context + ' retained affine ' + transform.id + ' composite parity').toBe(0);
+          expect(transform.legacyDiffersFromUntransformed).toBe(true);
+          expect(transform.durableDiffersFromUntransformed).toBe(true);
+          expect(transform.legacyDiffersFromPrevious).toBe(true);
+          expect(transform.durableDiffersFromPrevious).toBe(true);
+        }
+        expect(result.transitionResults, context + ' frame transition count').toHaveLength(3);
+        for (const transition of result.transitionResults) {
+          expect(transition.durableFrame).toEqual(transition.frame);
+          const frameSize = getDocumentFrameSize(transition.frame);
+          expect(transition.legacyByteLength).toBe(frameSize.width * frameSize.height * 4);
+          expect(transition.durableByteLength).toBe(transition.legacyByteLength);
+          assertMixedLayerParity(
+            transition.materializedLayerComparisons,
+            context + ' frame transition ' + transition.index
+          );
+          expect(
+            transition.differingBytes,
+            context +
+              ' frame transition ' +
+              transition.index +
+              ' must match byte-for-byte; ' +
+              pixelDifferenceSummary(transition)
+          ).toBe(0);
+        }
+        for (const [color, presence] of Object.entries(result.colorPresence)) {
+          expect(presence.legacy, context + ' legacy mixed-source crop should contain ' + color).toBe(true);
+          expect(presence.durable, context + ' durable mixed-source crop should contain ' + color).toBe(true);
+        }
+        expect(result.durablePixels, context + ' final composite').toEqual(result.legacyPixels);
+        expect(Object.keys(result.materializedBounds).sort()).toEqual([
+          'blank',
+          'blank-semi',
+          'paint',
+          'text',
+          'vector',
+        ]);
+      };
+
+      assertMixedSourceParity(integerResult, 'integer frame fixture');
+      const fractionalResult = await compareCropRenderers(page, {
+        ...fixture,
+        caseName: 'fractional multi-step mixed-source crop',
+        documentId: 'fractional-multi-step-mixed-source-crop-pixel-parity',
+        transitions: [
+          { angleDegrees: 37, nextFrame: { x: 4.25, y: 4.5, width: 55.75, height: 55.5 } },
+          { angleDegrees: 0, nextFrame: { x: 5.125, y: 6.25, width: 53.5, height: 51.875 } },
+          { angleDegrees: -17, nextFrame: { x: 6.75, y: 6.125, width: 49.875, height: 49.5 } },
+        ],
+      });
+      assertMixedSourceParity(fractionalResult, 'fractional frame fixture');
     });
   });
 });

@@ -19,6 +19,7 @@ import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
 import type { NewDocumentBlankParams } from './tool-types.ts';
 import { stripOutputFileExtension } from '../constants/imageFormats.ts';
 import { useOptionalStore } from './StoreContext.tsx';
+import { durableLayerPresentationMismatch } from './durable-render-projection.ts';
 import { composeDurableDocument } from './durable-compositor.ts';
 import { replayDurableAtCursor } from './durable-replay.ts';
 import { getAssetRegistry } from './asset-registry.ts';
@@ -166,28 +167,39 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       ) {
         try {
           const replay = replayDurableAtCursor(current.durableDocument, current.durableDocument.cursor);
-          durableComposite = await composeDurableDocument(replay, {
-            documentId: current.documentId,
-            baselineAssetGeneration: getAssetRegistry().getDocumentGeneration(current.documentId),
-            operationSetRevision: current.durableDocument.durableRevision,
-            assetRegistry: getAssetRegistry(),
+          // PSD preserves hidden layer pixels too, so every replay layer must pass
+          // the renderer gate before the shared durable export adapter is used.
+          const pixelApprovedForExport = Object.values(replay.layers).every((replayLayer) => {
+            const existing = layers[replayLayer.snapshot.id];
+            return (
+              existing !== undefined &&
+              durableLayerPresentationMismatch(replayLayer, existing, replayLayer.snapshot.pos) === null
+            );
           });
-          const records = durableExportRecords(replay, durableComposite);
-          const latest = latestStoreRef.current;
-          if (
-            !latest ||
-            latest.durableStatus !== 'current' ||
-            latest.durableDocument?.durableRevision !== current.durableDocument.durableRevision ||
-            latest.historyIndex !== current.historyIndex ||
-            latest.documentRevision !== current.documentRevision ||
-            latest.branchRevision !== current.branchRevision
-          ) {
-            durableComposite.release();
-            durableComposite = undefined;
-          } else {
-            exportLayers = records.layers;
-            exportSize = records.size;
-            exportFrame = records.frame;
+          if (pixelApprovedForExport) {
+            durableComposite = await composeDurableDocument(replay, {
+              documentId: current.documentId,
+              baselineAssetGeneration: getAssetRegistry().getDocumentGeneration(current.documentId),
+              operationSetRevision: current.durableDocument.durableRevision,
+              assetRegistry: getAssetRegistry(),
+            });
+            const records = durableExportRecords(replay, durableComposite);
+            const latest = latestStoreRef.current;
+            if (
+              !latest ||
+              latest.durableStatus !== 'current' ||
+              latest.durableDocument?.durableRevision !== current.durableDocument.durableRevision ||
+              latest.historyIndex !== current.historyIndex ||
+              latest.documentRevision !== current.documentRevision ||
+              latest.branchRevision !== current.branchRevision
+            ) {
+              durableComposite.release();
+              durableComposite = undefined;
+            } else {
+              exportLayers = records.layers;
+              exportSize = records.size;
+              exportFrame = records.frame;
+            }
           }
         } catch {
           durableComposite?.release();
