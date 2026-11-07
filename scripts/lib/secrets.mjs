@@ -23,7 +23,7 @@ const SECRET_PATTERNS = [
 
 const REDACTED_MARKER = '***REDACTED***';
 const SECRET_ASSIGNMENT_KEY_SOURCE =
-  '(?:(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|passphrase|password|passwd|secret|signature|sigv4|token)(?:[_-][A-Za-z0-9]+)*|(?:[A-Za-z0-9]+[_-])*(?:sig|hmac|key|key[_-]?id|access[_-]?key(?:[_-]?id)?|private[_-]?key))';
+  '(?:(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|passphrase|password|passwd|secret|signature|sigv4|token)(?:[_-][A-Za-z0-9]+)*|(?:[A-Za-z0-9]+[_-])*(?:sig|hmac|key|key[_-]?id|access[_-]?key(?:[_-]?id)?|private[_-]?key)(?:(?:[_-][A-Za-z0-9]+)|[0-9]+)*)';
 const SECRET_ASSIGNMENT_KEY_PATTERN = new RegExp(`^(?:${SECRET_ASSIGNMENT_KEY_SOURCE})$`, 'i');
 const SECRET_ASSIGNMENT_PATTERN = new RegExp(
   `(?<![\\w])(["']?(?:${SECRET_ASSIGNMENT_KEY_SOURCE})["']?\\s*[:=]\\s*)("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|[^\\s,;{}]+)`,
