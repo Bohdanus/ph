@@ -3,6 +3,8 @@ import { createToolbarFitStore, planFor } from './toolbar-fit-store.ts';
 import type { ToolbarOverflowPlan, ToolbarSlot } from './toolbar-overflow.ts';
 
 export type ToolbarOverflow = {
+  containerName: string;
+  scopeId: string;
   /**
    * Ref callbacks for the slot and the tools box.
    *
@@ -15,6 +17,10 @@ export type ToolbarOverflow = {
   attachTools: (element: HTMLElement | null) => void;
   /** Which groups have to move into the three-dots tile at the rail's current height. */
   plan: ToolbarOverflowPlan;
+  /** Current plan and version read from the measured slot when opening the overflow menu. */
+  getCurrentFit(): { version: number; plan: ToolbarOverflowPlan };
+  /** Store version, used to keep an open menu in sync with resize-driven fit changes. */
+  version: number;
 };
 
 /**
@@ -25,24 +31,10 @@ export type ToolbarOverflow = {
  * every render, so a rail that only learns its height after layout is refitted in the same commit
  * rather than a frame later.
  *
- * **THE FIRST PAINT DEPENDS ON REACT'S PASSIVE-EFFECT SCHEDULING, AND MEASUREMENT SAYS IT HAS
- * NOT FAILED YET.** React subscribes to an external store in a PASSIVE effect, so a ref callback
- * that measures during commit has nobody to notify, and `setSlots` — a layout effect, so still
- * inside the commit — publishes into the same empty listener set. The committed tree therefore
- * holds the plan from BEFORE the measurement, and an unmeasured rail shows every tool: fifteen
- * tiles in a slot that fits seven at 720, corrected on the next commit.
- *
- * That next commit has been arriving before the browser paints. A `MutationObserver` installed
- * before the app's own script, whose callbacks are microtasks and therefore run before the paint
- * the mutation enables, recorded the FIRST rail it ever saw as already fitted — seven tiles at
- * 720 — with no code doing anything about it. Chrome flushes React's passive effects inside the
- * mounting task, so this is what happens in practice rather than what React promises.
- *
- * **It IS NOT PROMISED, AND CLOSING IT IS CURRENTLY BLOCKED.** The obvious fix — a layout effect
- * that re-renders when the snapshot has moved ahead of the render — is refused by
- * `react-hooks/set-state-in-effect` ("Calling setState synchronously within an effect can trigger
- * cascading renders"), which is the repository's rule and not this file's. `HANDOFF.md` carries
- * the finding with the measurement; the rule is not suppressed to make the warning go away.
+ * The first-paint fit is CSS-driven. The store writes container-query rules from the measured
+ * row model and dimensions during layout, so the browser hides the collapsed suffix and shows
+ * the overflow tile from the slot's own height without waiting for React's external-store
+ * subscription. React still tracks the plan for menu contents and resize-driven state changes.
  *
  * The snapshot is a version number and the plan is memoised on it, so the rail re-renders when the
  * PLAN changes and not on every frame of a window drag: `publish` measures each observation,
@@ -72,11 +64,20 @@ export const useToolbarOverflow = (slots: readonly ToolbarSlot[]): ToolbarOverfl
   useLayoutEffect(() => {
     store.setSlots(slots);
   }, [store, slots]);
+  useLayoutEffect(() => () => store.dispose(), [store]);
 
   const version = useSyncExternalStore(store.subscribe, store.getSnapshot, () => 0);
   // `metricsFor` hands back the SAME object for a given version, which is what makes this
   // memo hold across renders that did not move the measurement.
   const plan = useMemo(() => planFor(slots, store.metricsFor(version)), [store, slots, version]);
 
-  return { attachSlot, attachTools, plan };
+  return {
+    attachSlot,
+    attachTools,
+    containerName: store.containerName,
+    getCurrentFit: store.getCurrentFit,
+    plan,
+    scopeId: store.scopeId,
+    version,
+  };
 };

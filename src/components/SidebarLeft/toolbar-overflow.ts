@@ -200,3 +200,33 @@ export const planToolbarOverflow = (
     fittedThrough,
   };
 };
+
+/**
+ * The smallest integer slot height at which each row can remain visible.
+ *
+ * CSS container queries use these boundaries to hide the same suffix the planner would move
+ * into the three-dots menu. Deriving them from the planner keeps section gaps, the reserved
+ * overflow row, and its one-row collapse edge in one source of truth.
+ */
+export const toolbarFitThresholds = (slots: readonly ToolbarSlot[], metrics: ToolbarRowMetrics): number[] => {
+  if (slots.length === 0) return [];
+
+  const naturalHeight = planToolbarOverflow(slots, {
+    ...metrics,
+    availableHeight: Number.MAX_SAFE_INTEGER,
+  }).naturalHeight;
+
+  return slots.map((_slot, rowIndex) => {
+    // At exactly zero the planner deliberately treats geometry as unmeasured and shows every
+    // row. CSS should do the same, so the first measurable height is one pixel.
+    let low = 1;
+    let high = Math.ceil(naturalHeight);
+    while (low < high) {
+      const height = Math.floor((low + high) / 2);
+      const plan = planToolbarOverflow(slots, { ...metrics, availableHeight: height });
+      if (plan.fittedThrough > rowIndex) high = height;
+      else low = height + 1;
+    }
+    return low;
+  });
+};
