@@ -54,6 +54,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { resolveCommandShim } from './lib/windows-command-shim.mjs';
 
 /** Files ESLint owns. No JS config covers `.js`, and none is wanted: see below. */
 const ESLINT_GLOBS = ['*.ts', '*.tsx'];
@@ -81,6 +82,8 @@ const PRETTIER_GLOBS = [
   '*.yml',
   '*.yaml',
 ];
+// Leave headroom below cmd.exe's 8,191-character /c command limit.
+const MAX_WINDOWS_COMMAND_CHARS = 12_000;
 
 /**
  * `git ls-files -z` so a path with a space or a glob metacharacter survives.
@@ -104,19 +107,50 @@ function tracked(globs) {
   return result.stdout.split('\0').filter((file) => file !== '' && existsSync(file));
 }
 
-function run(command, args) {
-  const result = spawnSync(command, args, { stdio: 'inherit' });
-  if (result.error) throw result.error;
-  return result.status === 0 ? 0 : 1;
+function fileBatches(prefixArgs, files) {
+  if (process.platform !== 'win32') return [files];
+
+  const fixedChars = prefixArgs.reduce((total, arg) => total + String(arg).length * 2 + 2, 1024);
+  const batches = [];
+  let batch = [];
+  let chars = fixedChars;
+  for (const file of files) {
+    const fileChars = String(file).length * 2 + 2;
+    if (batch.length > 0 && chars + fileChars > MAX_WINDOWS_COMMAND_CHARS) {
+      batches.push(batch);
+      batch = [];
+      chars = fixedChars;
+    }
+    batch.push(file);
+    chars += fileChars;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+
+function run(command, prefixArgs, files) {
+  let failed = 0;
+  for (const batch of fileBatches(prefixArgs, files)) {
+    const invocation = resolveCommandShim(command, [...prefixArgs, ...batch], {
+      env: process.env,
+      cwd: process.cwd(),
+    });
+    const result = spawnSync(invocation.command, invocation.args, {
+      stdio: 'inherit',
+      shell: false,
+      ...invocation.spawnOptions,
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0) failed = 1;
+  }
+  return failed;
 }
 
 /**
- * Every tracked file is passed as an argument rather than piped. The tracked
- * set is a few hundred paths at around 90 characters each, which is a few tens
- * of KB of argv — well inside macOS `ARG_MAX` of 1 MB and Linux's 2 MB. If the
- * repository grows enough for that to stop being true, the fix is to chunk,
- * not to reach for xargs: xargs' argument limit is the thing being avoided
- * here.
+ * Every tracked file is passed as an argument rather than piped. Windows batches
+ * those paths below its command-line limit; POSIX keeps one invocation, well
+ * inside macOS `ARG_MAX` of 1 MB and Linux's 2 MB. We avoid xargs because its
+ * own argument limit is the thing being avoided here.
  */
 function main() {
   const flags = new Set(process.argv.slice(2));
@@ -131,13 +165,13 @@ function main() {
   if (!prettierOnly) {
     const files = tracked(ESLINT_GLOBS);
     if (files.length === 0) throw new Error('no tracked ESLint files; refusing to pass an empty list');
-    failed |= run('eslint', [...cache, ...(flags.has('--fix') ? ['--fix'] : []), ...files]);
+    failed |= run('eslint', [...cache, ...(flags.has('--fix') ? ['--fix'] : [])], files);
   }
 
   if (!eslintOnly) {
     const files = tracked(PRETTIER_GLOBS);
     if (files.length === 0) throw new Error('no tracked Prettier files; refusing to pass an empty list');
-    failed |= run('prettier', [prettierOnly ? '--write' : '--check', ...files]);
+    failed |= run('prettier', [prettierOnly ? '--write' : '--check'], files);
   }
 
   process.exitCode = failed;

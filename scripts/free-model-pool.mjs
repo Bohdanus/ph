@@ -31,6 +31,7 @@ const MAX_ATTEMPTS_PER_SOURCE = 3;
 const MAX_PROMPT_CHARS = 120_000;
 const MAX_PROMPT_FILE_BYTES = 480 * 1024;
 const MAX_OPENCODE_OUTPUT_BYTES = 1024 * 1024;
+const MAX_OPENCODE_TIMEOUT_MS = COMPLETION_TIMEOUT_MS;
 export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
 const NEMOTRON_3_ULTRA_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
@@ -42,6 +43,75 @@ const PREFERRED_OPENROUTER_MODELS = [NEMOTRON_3_ULTRA_MODEL, XINGCHEN_XING4_MODE
 const GROQ_FREE_MODEL = 'openai/gpt-oss-120b';
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
+
+function runWindowsCommand(command, args, timeoutMs = 7_000) {
+  return new Promise((resolve) => {
+    let child;
+    let timer;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    try {
+      child = spawn(command, args, { stdio: 'ignore', windowsHide: true });
+    } catch (error) {
+      finish({ error });
+      return;
+    }
+    child.once('error', (error) => finish({ error }));
+    child.once('close', (code, signal) => finish({ code, signal }));
+    timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {}
+      finish({ error: new Error(`${command} timed out after ${timeoutMs}ms`) });
+    }, timeoutMs);
+  });
+}
+
+async function terminateWindowsProcessTree(pid) {
+  const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
+  const taskkill = await runWindowsCommand(join(systemRoot, 'System32', 'taskkill.exe'), [
+    '/PID',
+    String(pid),
+    '/T',
+    '/F',
+  ]);
+  if (taskkill.code === 0) return;
+
+  const script = [
+    '$ErrorActionPreference = "Stop"',
+    `$rootPid = ${pid}`,
+    '$knownIds = @($rootPid)',
+    '$deadline = [DateTime]::UtcNow.AddSeconds(5)',
+    'do {',
+    '  $processes = @(Get-CimInstance Win32_Process)',
+    '  do {',
+    '    $previousCount = $knownIds.Count',
+    '    foreach ($process in $processes) {',
+    '      if (($knownIds -contains [int]$process.ParentProcessId) -and ($knownIds -notcontains [int]$process.ProcessId)) { $knownIds += [int]$process.ProcessId }',
+    '    }',
+    '  } while ($knownIds.Count -gt $previousCount)',
+    '  for ($index = $knownIds.Count - 1; $index -ge 0; $index--) { Stop-Process -Id $knownIds[$index] -Force -ErrorAction SilentlyContinue }',
+    '  Start-Sleep -Milliseconds 100',
+    '  $current = @(Get-CimInstance Win32_Process)',
+    '  $remaining = @($current | Where-Object { $knownIds -contains [int]$_.ProcessId -or $knownIds -contains [int]$_.ParentProcessId })',
+    '} while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)',
+    'if ($remaining.Count -gt 0) { exit 1 }',
+  ].join('\n');
+  const powerShell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const fallback = await runWindowsCommand(powerShell, ['-NoProfile', '-NonInteractive', '-Command', script]);
+  if (fallback.code === 0) return;
+
+  const describeFailure = (name, result) =>
+    `${name}: ${result.error?.message ?? `exited ${result.code ?? result.signal}`}`;
+  throw new Error(
+    `Windows process-tree termination failed (${describeFailure('taskkill', taskkill)}; ${describeFailure('PowerShell fallback', fallback)})`
+  );
+}
 
 // Reject unknown override conditions instead of guessing whether a paid price applies.
 const PRICING_OVERRIDE_CONDITIONS = new Set(['min_prompt_tokens', 'utc_days', 'utc_end', 'utc_start']);
@@ -572,12 +642,21 @@ const OPENCODE_TOOL_DENY_CONFIG = JSON.stringify({
   policies: [{ action: 'tool.use', resource: '*', effect: 'deny' }],
 });
 
-export async function runOpenCodeCompletion({ command = 'opencode', model, prompt, maxTokens = 1200 }) {
+export async function runOpenCodeCompletion({
+  command = 'opencode',
+  model,
+  prompt,
+  maxTokens = 1200,
+  timeoutMs = MAX_OPENCODE_TIMEOUT_MS,
+}) {
   if (typeof model !== 'string' || !/^[A-Za-z0-9._/-]+-free$/.test(model)) {
     return { error: 'OpenCode model is not an eligible free catalog ID' };
   }
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
     return { error: 'Invalid token limit' };
+  }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_OPENCODE_TIMEOUT_MS) {
+    return { error: 'Invalid OpenCode timeout' };
   }
   const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-'));
   const promptPath = join(directory, 'request.txt');
@@ -602,26 +681,67 @@ export async function runOpenCodeCompletion({ command = 'opencode', model, promp
         promptPath,
         `Answer the attached request concisely (about ${maxTokens} tokens or fewer). Do not use tools.`,
       ];
-      const commandShim = resolveCommandShim(command, args);
+      const commandShim = resolveCommandShim(command, args, { env, cwd: directory });
       const child = spawn(commandShim.command, commandShim.args, {
         cwd: directory,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,
+        detached: process.platform !== 'win32',
+        windowsHide: true,
         ...commandShim.spawnOptions,
       });
       const chunks = [];
       let outputBytes = 0;
+      let stopping = false;
+      let timedOut = false;
+      let outputExceeded = false;
+      let terminationError = null;
       let killTimer;
+      let killPromise = Promise.resolve();
       const stopChild = () => {
-        child.kill('SIGTERM');
-        killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+        if (stopping) return killPromise;
+        stopping = true;
+        if (process.platform === 'win32') {
+          killPromise = terminateWindowsProcessTree(child.pid).catch((error) => {
+            terminationError = error;
+            try {
+              child.kill('SIGKILL');
+            } catch {}
+            clearTimeout(timer);
+            reject(new Error(`OpenCode process termination failed: ${terminationError.message}`));
+          });
+          return killPromise;
+        }
+        try {
+          process.kill(-child.pid, 'SIGTERM');
+        } catch (error) {
+          if (error?.code !== 'ESRCH') terminationError = error;
+        }
+        killPromise = new Promise((resolveKill) => {
+          killTimer = setTimeout(() => {
+            try {
+              process.kill(-child.pid, 'SIGKILL');
+            } catch (error) {
+              if (error?.code !== 'ESRCH') terminationError = error;
+            }
+            resolveKill();
+          }, 2_000);
+        });
+        return killPromise;
       };
-      const timer = setTimeout(stopChild, COMPLETION_TIMEOUT_MS);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        void stopChild();
+      }, timeoutMs);
       child.stdout.on('data', (chunk) => {
         outputBytes += chunk.byteLength;
-        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) stopChild();
-        else chunks.push(chunk);
+        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) {
+          outputExceeded = true;
+          void stopChild();
+        } else {
+          chunks.push(chunk);
+        }
       });
       child.stderr.on('data', () => {});
       child.once('error', (error) => {
@@ -631,34 +751,35 @@ export async function runOpenCodeCompletion({ command = 'opencode', model, promp
       });
       child.once('close', (code, signal) => {
         clearTimeout(timer);
-        clearTimeout(killTimer);
-        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) {
-          reject(new Error(`OpenCode output exceeded ${MAX_OPENCODE_OUTPUT_BYTES} bytes`));
-          return;
-        }
-        let parsed;
-        try {
-          parsed = Buffer.concat(chunks)
-            .toString('utf8')
-            .split(/\r?\n/)
-            .filter(Boolean)
-            .map((line) => JSON.parse(line));
-        } catch {
-          reject(new Error('OpenCode returned malformed JSONL output'));
-          return;
-        }
-        if (code !== 0) {
-          const providerError = parsed.find((event) => event.type === 'error')?.error;
-          const type =
-            typeof providerError?.type === 'string' && /^[a-z0-9._-]+$/i.test(providerError.type)
-              ? providerError.type
-              : '';
-          const status = Number(providerError?.status);
-          const statusText = Number.isInteger(status) && status >= 100 && status <= 599 ? ` (HTTP ${status})` : '';
-          reject(new Error(`OpenCode exited ${code ?? signal}${type ? `: ${type}${statusText}` : ''}`));
-          return;
-        }
-        resolve(parsed);
+        void (async () => {
+          if (stopping) await killPromise;
+          clearTimeout(killTimer);
+          if (terminationError) throw new Error(`OpenCode process termination failed: ${terminationError.message}`);
+          if (timedOut) throw new Error(`OpenCode timed out after ${timeoutMs}ms`);
+          if (outputExceeded) throw new Error(`OpenCode output exceeded ${MAX_OPENCODE_OUTPUT_BYTES} bytes`);
+
+          let parsed;
+          try {
+            parsed = Buffer.concat(chunks)
+              .toString('utf8')
+              .split(/\r?\n/)
+              .filter(Boolean)
+              .map((line) => JSON.parse(line));
+          } catch {
+            throw new Error('OpenCode returned malformed JSONL output');
+          }
+          if (code !== 0) {
+            const providerError = parsed.find((event) => event.type === 'error')?.error;
+            const type =
+              typeof providerError?.type === 'string' && /^[a-z0-9._-]+$/i.test(providerError.type)
+                ? providerError.type
+                : '';
+            const status = Number(providerError?.status);
+            const statusText = Number.isInteger(status) && status >= 100 && status <= 599 ? ` (HTTP ${status})` : '';
+            throw new Error(`OpenCode exited ${code ?? signal}${type ? `: ${type}${statusText}` : ''}`);
+          }
+          return parsed;
+        })().then(resolve, reject);
       });
     });
     if (

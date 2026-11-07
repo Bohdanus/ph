@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveCommandShim } from './lib/windows-command-shim.mjs';
 
 const GIT_REPOSITORY_CONTEXT = [
   'GIT_DIR',
@@ -15,40 +14,26 @@ const GIT_REPOSITORY_CONTEXT = [
   'GIT_ALTERNATE_OBJECT_DIRECTORIES',
 ];
 
-// On Windows, commands like `npm` are exposed as `npm.cmd` shims on PATH.
-// Node's spawn does not resolve bare names the way a shell does, so a bare
-// `npm` produces ENOENT. We detect whether the command is a .cmd/.bat shim on
-// PATH and, if so, let cmd.exe launch it. .exe/.com commands (including
-// process.execPath in tests) stay shell-less to preserve exit-code propagation.
-function needsShell(command) {
-  if (process.platform !== 'win32' || path.extname(command)) {
-    return false;
-  }
-  const dirs = (process.env.PATH || '').split(path.delimiter);
-  const extensions = ['.cmd', '.bat'];
-  for (const dir of dirs) {
-    if (!dir) continue;
-    for (const ext of extensions) {
-      if (existsSync(path.join(dir, command + ext))) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 export function runQuiet(command, args, { cwd = process.cwd(), env = process.env } = {}) {
   return new Promise((resolve) => {
     const childEnv = { ...env };
     for (const key of GIT_REPOSITORY_CONTEXT) delete childEnv[key];
 
     // Git exports these for hooks; nested test repositories must resolve their own git dirs and indexes.
-    const useShell = needsShell(command);
-    const child = spawn(command, args, {
+    let invocation;
+    try {
+      invocation = resolveCommandShim(command, args, { env: childEnv, cwd });
+    } catch (error) {
+      process.stderr.write(`quiet-command: ${error.message}\n`);
+      resolve(2);
+      return;
+    }
+    const child = spawn(invocation.command, invocation.args, {
       cwd,
       env: childEnv,
       stdio: ['inherit', 'pipe', 'pipe'],
-      shell: useShell,
+      shell: false,
+      ...invocation.spawnOptions,
     });
     const chunks = [];
     let finished = false;

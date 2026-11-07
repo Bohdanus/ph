@@ -1,4 +1,6 @@
 import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -92,6 +94,39 @@ describe('quiet-command', () => {
     const result = run('this-command-does-not-exist-xyz');
 
     expect(result.status).toBe(1);
+  });
+
+  it.skipIf(process.platform !== 'win32')('preserves .cmd argument boundaries without enabling shell parsing', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'quiet command (test)-'));
+    const command = join(directory, 'fake.cmd');
+    const script = join(directory, 'fake.cjs');
+    const args = ['argument with spaces', 'C:\\tmp\\'];
+    writeFileSync(script, `process.stdout.write(JSON.stringify(process.argv.slice(2))); process.exit(7);\n`);
+    writeFileSync(command, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+
+    try {
+      const result = run(command, ...args);
+      expect(result.status).toBe(7);
+      expect(result.stderr.toString()).toContain(JSON.stringify(args));
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'win32')('rejects shell metacharacters before a .cmd shim can run', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'quiet command injection-'));
+    const command = join(directory, 'fake.cmd');
+    const marker = join(directory, 'launched.txt');
+    writeFileSync(command, `@echo off\r\necho launched > "${marker}"\r\n`);
+
+    try {
+      const result = run(command, '& echo injected');
+      expect(result.status).toBe(2);
+      expect(result.stderr.toString()).toContain('cannot be passed safely');
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('routes failure output to stderr and leaves stdout empty', () => {
