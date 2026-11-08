@@ -250,6 +250,23 @@ describe('fetchUrl', () => {
     const fetchImpl = vi.fn().mockResolvedValue(htmlResponse('not found', { status: 404 }));
     await expect(fetchUrl('https://missing.example.com', { fetchImpl })).rejects.toThrow('HTTP 404');
   });
+
+  it('stops retrying permanent HTTP errors and retries transient server errors', async () => {
+    const missing = vi.fn().mockResolvedValue(htmlResponse('not found', { status: 404 }));
+    await expect(
+      fetchUrl('https://missing.example.com', { fetchImpl: missing, maxAttempts: 3, baseBackoffMs: 100 })
+    ).rejects.toMatchObject({ message: 'HTTP 404', status: 404 });
+    expect(missing).toHaveBeenCalledTimes(1);
+
+    const available = vi
+      .fn()
+      .mockResolvedValueOnce(htmlResponse('temporary failure', { status: 503 }))
+      .mockResolvedValueOnce(htmlResponse('available', { contentType: 'text/plain' }));
+    await expect(
+      fetchUrl('https://example.com/available', { fetchImpl: available, maxAttempts: 2, baseBackoffMs: 100 })
+    ).resolves.toBe('available');
+    expect(available).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('createPinnedFetcher', () => {

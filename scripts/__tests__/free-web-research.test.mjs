@@ -279,6 +279,41 @@ describe('CLI: integration with mocked deps', () => {
     expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Fetch failed'));
   });
 
+  it('does not retry permanent HTTP errors', async () => {
+    const stderr = { write: vi.fn() };
+    const fetchUrlImpl = vi.fn().mockRejectedValue(new Error('HTTP 404'));
+    const code = await main(['https://example.com/missing', '--json'], { fetchUrlImpl, stderr });
+
+    expect(code).toBe(3);
+    expect(fetchUrlImpl).toHaveBeenCalledTimes(1);
+    expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Fetch failed after 1 attempt'));
+  });
+
+  it('retries transient HTTP server errors', async () => {
+    const stdout = { write: vi.fn() };
+    const stderr = { write: vi.fn() };
+    const fetchUrlImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('HTTP 503'))
+      .mockResolvedValueOnce('Example domain content for testing');
+    const completeImpl = vi.fn().mockResolvedValue({
+      source: 'kilo',
+      model: 'test-free-model',
+      content: 'This is a test summary.',
+      finishReason: 'stop',
+      usage: null,
+    });
+    const code = await main(['https://example.com', '--json'], {
+      fetchUrlImpl,
+      completeImpl,
+      stdout,
+      stderr,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchUrlImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('returns exit code 3 when page has no content', async () => {
     const stderr = { write: vi.fn() };
     const fetchUrlImpl = vi.fn().mockResolvedValue('');

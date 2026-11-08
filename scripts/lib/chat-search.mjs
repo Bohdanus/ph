@@ -632,7 +632,8 @@ export async function searchCodexRollouts(codexHome, terms, sinceMs, limit = DEF
   const files = collectRolloutFiles(sessionDir);
   for (const filePath of files) {
     if (filePath.endsWith('.jsonl.zst')) continue;
-    const match = await matchCodexRollout(filePath, terms, sinceEpochSec, { readRolloutFileImpl });
+    if (!validateCodexRolloutPath(filePath, codexHome)) continue;
+    const match = await matchCodexRollout(filePath, terms, sinceEpochSec, { readRolloutFileImpl, codexHome });
     if (match) results.push(match);
   }
 
@@ -665,10 +666,10 @@ function collectRolloutFiles(dir) {
  * `readRolloutFileImpl` is injectable for testing.
  */
 export async function matchCodexRollout(filePath, terms, sinceEpoch, options = {}) {
-  const { readRolloutFileImpl = readRolloutFile } = options;
+  const { readRolloutFileImpl = readRolloutFile, codexHome } = options;
   let text;
   try {
-    text = await readRolloutFileImpl(filePath);
+    text = await readRolloutFileImpl(filePath, { codexHome });
   } catch {
     return null;
   }

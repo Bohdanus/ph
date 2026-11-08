@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { completeWithFreeModel } from './free-model-pool.mjs';
 import {
   fetchUrl,
+  isRetryableResearchError,
   validateResearchUrl,
   FETCH_TIMEOUT_MS,
   MAX_ALLOWED_TIMEOUT_MS,
@@ -254,8 +255,10 @@ export async function main(
       });
       break;
     } catch (error) {
-      if (fetchAttempt === maxFetchAttempts) {
-        stderr.write(`Fetch failed after ${maxFetchAttempts} attempts: ${sanitizeErrorMessage(error.message)}\n`);
+      if (fetchAttempt === maxFetchAttempts || !isRetryableResearchError(error)) {
+        stderr.write(
+          `Fetch failed after ${fetchAttempt} attempt${fetchAttempt === 1 ? '' : 's'}: ${sanitizeErrorMessage(error.message)}\n`
+        );
         return 3;
       }
       const backoffMs = Math.min(1000 * Math.pow(2, fetchAttempt - 1), 5000) + Math.random() * 200;

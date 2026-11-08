@@ -16,8 +16,8 @@ const REVIEWED = {
   },
   'chat-search.test.mjs': {
     scope:
-      'Search fixtures use per-test temporary directories and test-owned databases, including symlink path guards.',
-    patterns: `database-open:DatabaseSync:write-capable=8 filesystem-write:mkdtempSync=17 filesystem-write:mkdirSync=3 filesystem-write:rmSync=17 filesystem-write:symlinkSync=1 filesystem-write:writeFileSync=3`,
+      'Search fixtures use per-test temporary directories and test-owned databases, including Codex rollout symlink guards.',
+    patterns: `database-open:DatabaseSync:write-capable=8 filesystem-write:mkdtempSync=18 filesystem-write:mkdirSync=5 filesystem-write:rmSync=18 filesystem-write:symlinkSync=2 filesystem-write:writeFileSync=4`,
   },
   'dispose-worktree.test.mjs': {
     scope:

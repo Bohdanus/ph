@@ -574,6 +574,23 @@ async function discardResponseBody(response) {
   }
 }
 
+export function isRetryableResearchError(error) {
+  if (error?.retryable === false) return false;
+  const message = typeof error?.message === 'string' ? error.message : '';
+  const statusText = message.startsWith('HTTP ') ? Number(message.slice(5)) : NaN;
+  const status = Number.isInteger(error?.status) ? error.status : Number.isInteger(statusText) ? statusText : null;
+  if (status !== null) return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
+  return ![
+    'Invalid research URL',
+    'Research URLs must',
+    'Internationalized hostnames',
+    'Research hostname resolved',
+    'Too many redirects',
+    'Redirect response has no Location header',
+    'Unsupported research response content',
+  ].some((prefix) => message.startsWith(prefix));
+}
+
 export async function fetchUrl(
   url,
   {
@@ -631,7 +648,9 @@ export async function fetchUrl(
       }
       if (!response.ok) {
         await discardResponseBody(response);
-        throw new Error(`HTTP ${response.status}`);
+        const error = new Error(`HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
       }
 
       if (BODYLESS_STATUSES.has(response.status) || response.body === null) {
@@ -666,7 +685,7 @@ export async function fetchUrl(
       return markers.length > 0 ? `${content} [${markers.join('; ')}]` : content;
     } catch (error) {
       lastError = error;
-      if (attempt === maxAttempts) break;
+      if (attempt === maxAttempts || !isRetryableResearchError(error)) break;
       const backoffMs = Math.min(baseBackoffMs * Math.pow(2, attempt - 1), 5000) + Math.random() * 200;
       await new Promise((r) => setTimeout(r, backoffMs));
     }

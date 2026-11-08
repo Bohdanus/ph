@@ -16,6 +16,7 @@ import {
   validatePath,
   validateCodexRolloutPath,
   validateOpencodeCommand,
+  searchCodexRollouts,
 } from '../lib/chat-search.mjs';
 
 /* ---------- helpers ---------- */
@@ -238,6 +239,28 @@ describe('path validation', () => {
       expect(validatePath(join(link, 'secret.jsonl'), [allowed])).toBe(false);
       expect(validateCodexRolloutPath(join(`${allowed}-escape`, 'rollout.jsonl'), allowed)).toBe(false);
       expect(validateCodexRolloutPath(join(link, 'secret.jsonl'), allowed)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects fallback rollout files reached through a sessions symlink outside Codex home', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'chat-search-rollout-boundary-'));
+    const codexHome = join(dir, 'codex');
+    const outside = join(dir, 'outside');
+    const sessions = join(codexHome, 'sessions');
+    const rollout = join(outside, 'rollout-2026-11-08-thread-1.jsonl');
+
+    try {
+      mkdirSync(codexHome);
+      mkdirSync(outside);
+      writeFileSync(
+        rollout,
+        JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: 'needle' } })
+      );
+      symlinkSync(outside, sessions, 'dir');
+
+      await expect(searchCodexRollouts(codexHome, ['needle'], 0)).resolves.toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
