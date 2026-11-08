@@ -15,6 +15,7 @@ import { readQuarantineState } from '../lib/free-model-quarantine.mjs';
 
 const completeWithFreeModel = async (prompt, options = {}) => {
   const temporaryDirectory = options.quarantineFile ? null : await mkdtemp(join(tmpdir(), 'free-model-pool-test-'));
+  const quarantineFile = options.quarantineFile ?? join(temporaryDirectory, 'quarantine.json');
   try {
     return await completeWithFreeModelImplementation(prompt, {
       kiloCommand: '',
@@ -23,7 +24,8 @@ const completeWithFreeModel = async (prompt, options = {}) => {
       groqApiKeys: [],
       groqFreePlan: false,
       opencodeCommand: '',
-      quarantineFile: options.quarantineFile ?? join(temporaryDirectory, 'quarantine.json'),
+      quarantineFile,
+      poolStateFile: options.poolStateFile ?? `${quarantineFile}.pool-state.json`,
       ...options,
       initializeLegacyQuarantine: false,
     });
@@ -159,10 +161,18 @@ describe('unverifiable free routers', () => {
 });
 
 async function responseWithReadableBody(response) {
-  if (response instanceof Response) return response;
+  if (response instanceof Response) {
+    if (response.status !== 429 || response.headers.has('x-ratelimit-remaining')) return response;
+    const clone = response.clone();
+    const headers = new Headers(clone.headers);
+    headers.set('x-ratelimit-remaining', '100');
+    return new Response(await clone.arrayBuffer(), { status: clone.status, headers });
+  }
   const payload = typeof response?.json === 'function' ? await response.json() : undefined;
   const status = response?.status ?? (response?.ok === false ? 500 : 200);
-  return new Response(payload === undefined ? '' : JSON.stringify(payload), { status });
+  const headers = new Headers(response?.headers);
+  if (status === 429 && !headers.has('x-ratelimit-remaining')) headers.set('x-ratelimit-remaining', '100');
+  return new Response(payload === undefined ? '' : JSON.stringify(payload), { status, headers });
 }
 
 function readableFetch(fetchImpl) {
@@ -175,7 +185,14 @@ function catalogFetch({ kilo = [], openrouter = [], keyInfo, chat }) {
       return { ok: true, json: async () => ({ data: openrouter }) };
     }
     if (url.endsWith('/models')) return { ok: true, json: async () => kilo };
-    if (url.includes('api/v1/key')) return keyInfo();
+    if (url.includes('api/v1/key')) {
+      return (
+        keyInfo?.() ?? {
+          ok: true,
+          json: async () => ({ data: { free_model_daily_requests: { used: 0, limit: 1000, remaining: 1000 } } }),
+        }
+      );
+    }
     return chat(url, options);
   });
 }
@@ -335,8 +352,8 @@ describe('OpenRouter quota status command', () => {
   });
 });
 
-describe('OpenRouter pre-routing quota check', () => {
-  it('does not probe quota unless the caller opts in', async () => {
+describe('lazy OpenRouter quota preflight', () => {
+  it('probes quota only when the ordered route reaches OpenRouter', async () => {
     const chat = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -360,13 +377,13 @@ describe('OpenRouter pre-routing quota check', () => {
       source: 'openrouter',
       model: 'o1:free',
     });
-    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('api/v1/key'))).toBe(false);
+    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('api/v1/key'))).toBe(true);
   });
 
   it('skips OpenRouter when the daily quota is exhausted and never calls its chat endpoint', async () => {
     const chat = vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
     const fetchImpl = catalogFetch({
-      kilo: [kiloRow('k1')],
+      kilo: [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')],
       openrouter: [openRouterRow('o1')],
       keyInfo: () => ({
         ok: true,
@@ -415,9 +432,9 @@ describe('OpenRouter pre-routing quota check', () => {
     expect(onOpenRouterQuota).toHaveBeenCalledWith({ used: 10, limit: 50, remaining: 40, reason: 'ok' });
   });
 
-  it('does not probe when OpenRouter is not in the catalog', async () => {
+  it('does not probe when a higher-priority Kilo Nemotron route completes', async () => {
     const chat = vi.fn();
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], chat });
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')], chat });
     const result = await completeWithFreeModel('prompt', {
       fetchImpl,
       openRouterKey: 'rk',
@@ -520,22 +537,24 @@ describe('Reasoning parameter is not sent to any provider', () => {
 
   it('does not send reasoning for Kilo requests', async () => {
     const chat = vi.fn();
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], chat });
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({ kilo: [kiloRow(model)], chat });
     const runKilo = vi.fn().mockResolvedValue({ content: 'done', finishReason: 'stop' });
     await completeWithFreeModel('prompt', { fetchImpl, kiloCommand: '/fake-kilo', runKilo });
     expect(runKilo).toHaveBeenCalledWith({
       command: '/fake-kilo',
       source: 'kilo',
-      model: 'k1',
+      model,
       prompt: 'prompt',
-      maxTokens: 1200,
+      maxTokens: 4000,
+      timeoutMs: 12 * 60 * 1000,
     });
     expect(chat).not.toHaveBeenCalled();
   });
 });
 
 describe('provider rate-limit diagnostics', () => {
-  it('honors Retry-After before rotating to another OpenRouter model on 429', async () => {
+  it('retries the same OpenRouter route once after an attributable 429', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi
       .fn()
@@ -566,11 +585,11 @@ describe('provider rate-limit diagnostics', () => {
     const result = await completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter });
     expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'rotated' });
     expect(waitForRetryAfter).toHaveBeenCalledWith(30_000);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
     const completionCalls = fetchImpl.mock.calls.filter(([url]) => String(url).includes('openrouter.ai/api/v1/chat'));
     expect(completionCalls).toHaveLength(2);
     expect(JSON.parse(completionCalls[0][1].body).model).toBe('r1:free');
-    expect(JSON.parse(completionCalls[1][1].body).model).toBe('r2:free');
+    expect(JSON.parse(completionCalls[1][1].body).model).toBe('r1:free');
   });
 
   it('skips OpenRouter for the run when a subsequent Retry-After exceeds the bounded wait', async () => {
@@ -605,10 +624,10 @@ describe('provider rate-limit diagnostics', () => {
 
     expect(chat).toHaveBeenCalledTimes(2);
     expect(waitForRetryAfter.mock.calls).toEqual([[30_000]]);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(3);
   });
 
-  it('honors Retry-After only while another OpenRouter candidate remains', async () => {
+  it('uses at most one OpenRouter retry even when more catalog candidates remain', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const response = () =>
       new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
@@ -634,9 +653,9 @@ describe('provider rate-limit diagnostics', () => {
       /No free model completed/
     );
 
-    expect(chat).toHaveBeenCalledTimes(3);
-    expect(waitForRetryAfter.mock.calls).toEqual([[30_000], [30_000]]);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(waitForRetryAfter.mock.calls).toEqual([[30_000]]);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(3);
   });
 
   it('reports malformed completion JSON after rotating to another OpenRouter model', async () => {
@@ -649,8 +668,15 @@ describe('provider rate-limit diagnostics', () => {
           headers: { 'retry-after': '30', 'content-type': 'application/json' },
         })
       )
+      .mockResolvedValueOnce(new Response('not-json', { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(
-        new Response('not-json', { status: 200, headers: { 'content-type': 'application/json' } })
+        new Response(
+          JSON.stringify({
+            model: 'r2:free',
+            choices: [{ message: { content: 'recovered' }, finish_reason: 'stop' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
       );
     const fetchImpl = catalogFetch({
       kilo: [],
@@ -662,13 +688,12 @@ describe('provider rate-limit diagnostics', () => {
       chat,
     });
 
-    await expect(completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })).rejects.toThrow(
-      /Model response is not valid JSON/
-    );
+    const result = await completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter });
 
-    expect(chat).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'recovered' });
+    expect(chat).toHaveBeenCalledTimes(3);
     expect(waitForRetryAfter).toHaveBeenCalledWith(30_000);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
   it('continues to another OpenRouter model after malformed completion JSON on a non-final candidate', async () => {
@@ -706,10 +731,10 @@ describe('provider rate-limit diagnostics', () => {
     expect(result).toMatchObject({ source: 'openrouter', model: 'r3:free', content: 'recovered' });
     expect(chat).toHaveBeenCalledTimes(3);
     expect(waitForRetryAfter.mock.calls).toEqual([[30_000]]);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
-  it('honors Retry-After when the daily quota counter is unavailable', async () => {
+  it('does not retry a rate-limited route when the daily quota remains unknown', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi
       .fn()
@@ -735,11 +760,41 @@ describe('provider rate-limit diagnostics', () => {
       chat,
     });
 
-    const result = await completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter });
+    await expect(completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })).rejects.toThrow(
+      /No free model completed/
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(waitForRetryAfter).not.toHaveBeenCalled();
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
+  });
 
-    expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'recovered' });
-    expect(waitForRetryAfter).toHaveBeenCalledWith(30_000);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+  it('limits an initially unknown preflight to one attempt even if the post-failure probe succeeds', async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: { message: 'upstream rate limited' } }), { status: 429 })
+      );
+    const keyInfo = vi
+      .fn()
+      .mockReturnValueOnce({ ok: false, status: 503 })
+      .mockReturnValueOnce({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 1, limit: 100, remaining: 99 } } }),
+      });
+    const fetchImpl = catalogFetch({
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      chat,
+      keyInfo,
+    });
+    const waitForRetryAfter = vi.fn();
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })
+    ).rejects.toThrow(/No free model completed/);
+
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(keyInfo).toHaveBeenCalledTimes(2);
+    expect(waitForRetryAfter).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -764,7 +819,7 @@ describe('provider rate-limit diagnostics', () => {
         },
       }),
     ],
-  ])('honors Retry-After when quota is unknown (%s)', async (_label, keyInfo) => {
+  ])('allows only one inference request when quota is unknown (%s)', async (_label, keyInfo) => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi
       .fn()
@@ -790,11 +845,12 @@ describe('provider rate-limit diagnostics', () => {
       chat,
     });
 
-    const result = await completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter });
-
-    expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'recovered' });
-    expect(waitForRetryAfter).toHaveBeenCalledWith(30_000);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+    await expect(completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })).rejects.toThrow(
+      /No free model completed/
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(waitForRetryAfter).not.toHaveBeenCalled();
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
   it('does not retry OpenRouter when platform rate-limit headers report zero remaining', async () => {
@@ -817,10 +873,10 @@ describe('provider rate-limit diagnostics', () => {
 
     expect(chat).toHaveBeenCalledTimes(1);
     expect(waitForRetryAfter).not.toHaveBeenCalled();
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(0);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
-  it('rechecks daily quota and honors a 60-second Retry-After on OpenRouter 503', async () => {
+  it('honors a 60-second Retry-After on OpenRouter 503 after the lazy quota probe', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi
       .fn()
@@ -969,7 +1025,7 @@ describe('provider rate-limit diagnostics', () => {
     }
   });
 
-  it('rotates without an extra Retry-After wait when the HTTP date is in the past', async () => {
+  it('retries without waiting when the HTTP-date Retry-After is in the past', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const retryAfter = new Date(Date.now() - 60_000).toUTCString();
     const chat = vi
@@ -1004,7 +1060,7 @@ describe('provider rate-limit diagnostics', () => {
     expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'recovered' });
     expect(chat).toHaveBeenCalledTimes(2);
     expect(waitForRetryAfter).not.toHaveBeenCalled();
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
   it.each([
@@ -1049,7 +1105,7 @@ describe('provider rate-limit diagnostics', () => {
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
   });
 
-  it.each([429, 503])('does not query quota or wait when HTTP %i has no next OpenRouter candidate', async (status) => {
+  it.each([429, 503])('allows one same-route retry after HTTP %i without another catalog candidate', async (status) => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: { message: 'temporarily unavailable' } }), {
@@ -1071,9 +1127,11 @@ describe('provider rate-limit diagnostics', () => {
       /No free model completed/
     );
 
-    expect(waitForRetryAfter).not.toHaveBeenCalled();
-    expect(chat).toHaveBeenCalledTimes(1);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(0);
+    expect(waitForRetryAfter).toHaveBeenCalledWith(30_000);
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(
+      status === 429 ? 3 : 1
+    );
   });
 
   it('does not rotate after an OpenRouter 503 when the daily quota is exhausted', async () => {
@@ -1098,7 +1156,7 @@ describe('provider rate-limit diagnostics', () => {
       /No free model completed/
     );
 
-    expect(chat).toHaveBeenCalledTimes(1);
+    expect(chat).toHaveBeenCalledTimes(0);
     expect(waitForRetryAfter).not.toHaveBeenCalled();
   });
 
@@ -1124,7 +1182,7 @@ describe('provider rate-limit diagnostics', () => {
       /No free model completed/
     );
 
-    expect(chat).toHaveBeenCalledTimes(1);
+    expect(chat).toHaveBeenCalledTimes(0);
     expect(waitForRetryAfter).not.toHaveBeenCalled();
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
   });
@@ -1155,7 +1213,9 @@ describe('provider rate-limit diagnostics', () => {
 
       expect(chat).toHaveBeenCalledTimes(1);
       expect(waitForRetryAfter).not.toHaveBeenCalled();
-      expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(0);
+      expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(
+        status === 429 ? 2 : 1
+      );
     }
   );
 
@@ -1263,7 +1323,7 @@ describe('provider rate-limit diagnostics', () => {
     expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'recovered' });
     expect(result.requestCounts.openrouter).toBe(2);
     expect(onOpenRouterQuota).toHaveBeenCalledWith({ used: 999, limit: 1000, remaining: 1, reason: 'ok' });
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
   it('stops rotating OpenRouter models when a model 429 exhausts the daily quota', async () => {
@@ -1286,10 +1346,10 @@ describe('provider rate-limit diagnostics', () => {
     await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
       /No free model completed/
     );
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/chat/completions'))).toHaveLength(1);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/chat/completions'))).toHaveLength(0);
   });
 
-  it('rotates after a model 429 when the daily quota probe returns an unknown result', async () => {
+  it('does not retry a model 429 when the daily quota probe returns an unknown result', async () => {
     const chat = vi
       .fn()
       .mockResolvedValueOnce(
@@ -1313,14 +1373,14 @@ describe('provider rate-limit diagnostics', () => {
       keyInfo: () => ({ ok: false, status: 429 }),
       chat,
     });
-    const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' });
-
-    expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'recovered' });
-    expect(result.requestCounts.openrouter).toBe(2);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
+      /No free model completed/
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
-  it('caps model rotation at three attempts when the daily quota remains unknown', async () => {
+  it('allows at most one OpenRouter inference attempt when quota remains unknown', async () => {
     const chat = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: { message: 'upstream unavailable' } }), {
         status: 429,
@@ -1335,9 +1395,9 @@ describe('provider rate-limit diagnostics', () => {
     });
 
     await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
-      /Requests attempted: \{"kilo":0,"openrouter":3\}/
+      /Requests attempted: \{"kilo":0,"openrouter":1\}/
     );
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/chat/completions'))).toHaveLength(3);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/chat/completions'))).toHaveLength(1);
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
@@ -1356,7 +1416,7 @@ describe('provider rate-limit diagnostics', () => {
     await expect(completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })).rejects.toThrow(
       /Model response is not valid JSON \(Retry-After: 45\)/
     );
-    expect(waitForRetryAfter).not.toHaveBeenCalled();
+    expect(waitForRetryAfter).toHaveBeenCalledWith(45_000);
   });
 
   it('handles transport failures without a response or Retry-After header', async () => {

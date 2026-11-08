@@ -40,7 +40,7 @@ describe('free-model quarantine lifecycle', () => {
     );
   });
 
-  it('migrates legacy hard-coded quarantines once with a three-day expiry', async () => {
+  it('migrates legacy and newly identified models once with a seven-day expiry', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-migration-'));
     const filePath = join(directory, 'state.json');
     const now = Date.parse('2026-10-26T12:00:00.000Z');
@@ -52,13 +52,58 @@ describe('free-model quarantine lifecycle', () => {
       ]);
       expect(concurrentLoad).toEqual(state);
       expect(Object.keys(state.entries)).toEqual([
+        'openrouter:thinkingmachines/inkling-small:free',
+        'openrouter:google/gemma-4-31b-it:free',
+        'openrouter:xingchen-agi/xing4.0-29b-a4b:free',
+        'openrouter:google/gemma-4-26b-a4b-it:free',
         'kilo:kilo-auto/free',
         'kilo:nvidia/nemotron-3.5-super-vl:free',
         'kilo:recursive/flint-v1.0:free',
       ]);
-      expect(activeQuarantineKeys(state, now).size).toBe(3);
+      expect(state.migration_v2).toBe(true);
+      expect(activeQuarantineKeys(state, now).size).toBe(7);
+      expect(state.entries['openrouter:thinkingmachines/inkling-small:free'].reason).toBe('model_unavailable');
       expect(activeQuarantineKeys(state, now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).size).toBe(0);
       expect(await readQuarantineState(filePath)).toEqual(state);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates existing state without overwriting unrelated entries and never reseeds after expiry', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-existing-migration-'));
+    const filePath = join(directory, 'state.json');
+    const now = Date.parse('2026-10-26T12:00:00.000Z');
+    const state = { schemaVersion: 1, entries: {} };
+    upsertQuarantine(state, {
+      source: 'kilo',
+      model: 'kilo-auto/free',
+      reason: 'poor_performance',
+      hours: 72,
+      now: now - 24 * 60 * 60 * 1000,
+    });
+    const unrelatedKey = upsertQuarantine(state, {
+      source: 'groq',
+      model: 'openai/gpt-oss-120b',
+      reason: 'rate_limit',
+      hours: 6,
+      now,
+    });
+
+    try {
+      await writeQuarantineState(state, filePath);
+      const migrated = await loadQuarantineState(filePath, now);
+      expect(migrated.migration_v2).toBe(true);
+      expect(migrated.entries[unrelatedKey]).toEqual(state.entries[unrelatedKey]);
+      expect(migrated.entries['kilo:kilo-auto/free'].expiresAt).toBe(
+        new Date(now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).toISOString()
+      );
+
+      const afterExpiry = await loadQuarantineState(filePath, now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000 + 1);
+      expect(activeQuarantineKeys(afterExpiry, now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000 + 1).size).toBe(0);
+      expect(afterExpiry.entries['kilo:kilo-auto/free'].expiresAt).toBe(
+        migrated.entries['kilo:kilo-auto/free'].expiresAt
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -69,7 +114,7 @@ describe('free-model quarantine lifecycle', () => {
     const filePath = join(directory, 'state.json');
 
     try {
-      const emptyState = { schemaVersion: 1, entries: {} };
+      const emptyState = { schemaVersion: 1, migration_v2: true, entries: {} };
       await writeQuarantineState(emptyState, filePath);
       expect(await loadQuarantineState(filePath)).toEqual(emptyState);
     } finally {
@@ -89,7 +134,7 @@ describe('free-model quarantine lifecycle', () => {
             model: 'long:free',
             reason: 'rate_limit',
             quarantinedAt: '2026-10-26T12:00:00.000Z',
-            expiresAt: '2026-10-30T12:00:00.000Z',
+            expiresAt: '2026-11-03T12:00:00.000Z',
           },
         },
       })
@@ -117,7 +162,7 @@ describe('free-model quarantine lifecycle', () => {
     ).toThrow(/finite epoch milliseconds/);
   });
 
-  it('sets a six-hour default expiry and refuses a quarantine beyond three days', () => {
+  it('sets a six-hour default expiry and refuses a quarantine beyond seven days', () => {
     const state = { schemaVersion: 1, entries: {} };
     const now = Date.parse('2026-10-26T12:00:00.000Z');
     const key = upsertQuarantine(state, {
@@ -136,7 +181,7 @@ describe('free-model quarantine lifecycle', () => {
         hours: MAX_QUARANTINE_HOURS + 1,
         now,
       })
-    ).toThrow(/no more than 72/);
+    ).toThrow(/no more than 168/);
     expect(() =>
       upsertQuarantine(state, { source: 'openrouter', model: 'x:free', reason: 'context_exhausted', now })
     ).toThrow(/supported quarantine reason/);
@@ -213,7 +258,7 @@ describe('free-model quarantine lifecycle', () => {
   it('supports list, add, release, and prune against an injected state path', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-cli-'));
     const filePath = join(directory, 'state.json');
-    const emptyState = { schemaVersion: 1, entries: {} };
+    const emptyState = { schemaVersion: 1, migration_v2: true, entries: {} };
     await writeQuarantineState(emptyState, filePath);
     const output = { stdout: { value: '' }, stderr: { value: '' } };
     output.stdout.write = (text) => {
@@ -243,7 +288,7 @@ describe('free-model quarantine lifecycle', () => {
         })
       ).toBe(0);
 
-      const expiredState = { schemaVersion: 1, entries: {} };
+      const expiredState = { schemaVersion: 1, migration_v2: true, entries: {} };
       upsertQuarantine(expiredState, {
         source: 'kilo',
         model: 'expired:free',

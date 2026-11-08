@@ -3,9 +3,9 @@ import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
-export const MAX_QUARANTINE_HOURS = 72;
+export const MAX_QUARANTINE_HOURS = 168;
 export const DEFAULT_QUARANTINE_HOURS = 6;
-export const QUARANTINE_SOURCES = new Set(['kilo', 'openrouter', 'groq']);
+export const QUARANTINE_SOURCES = new Set(['kilo', 'openrouter', 'groq', 'opencode']);
 export const QUARANTINE_REASONS = new Set([
   'rate_limit',
   'provider_outage',
@@ -22,10 +22,14 @@ const DEFAULT_FILE = resolve(
   process.env.FREE_MODEL_QUARANTINE_FILE || `${PROJECT_ROOT}/.kilo/free-model-quarantine.json`
 );
 const EMPTY_STATE = () => ({ schemaVersion: 1, entries: {} });
-const LEGACY_QUARANTINES = [
-  { source: 'kilo', model: 'kilo-auto/free' },
-  { source: 'kilo', model: 'nvidia/nemotron-3.5-super-vl:free' },
-  { source: 'kilo', model: 'recursive/flint-v1.0:free' },
+const INITIAL_QUARANTINES = [
+  { source: 'openrouter', model: 'thinkingmachines/inkling-small:free', reason: 'model_unavailable' },
+  { source: 'openrouter', model: 'google/gemma-4-31b-it:free', reason: 'rate_limit' },
+  { source: 'openrouter', model: 'xingchen-agi/xing4.0-29b-a4b:free', reason: 'rate_limit' },
+  { source: 'openrouter', model: 'google/gemma-4-26b-a4b-it:free', reason: 'rate_limit' },
+  { source: 'kilo', model: 'kilo-auto/free', reason: 'poor_performance' },
+  { source: 'kilo', model: 'nvidia/nemotron-3.5-super-vl:free', reason: 'poor_performance' },
+  { source: 'kilo', model: 'recursive/flint-v1.0:free', reason: 'poor_performance' },
 ];
 
 export function quarantineKey(source, model) {
@@ -42,6 +46,9 @@ export function validateQuarantineState(state) {
   }
   if (!state.entries || typeof state.entries !== 'object' || Array.isArray(state.entries)) {
     throw new Error('Free-model quarantine entries must be an object');
+  }
+  if (state.migration_v2 !== undefined && typeof state.migration_v2 !== 'boolean') {
+    throw new Error('Free-model quarantine migration marker must be boolean');
   }
   for (const [key, entry] of Object.entries(state.entries)) {
     if (
@@ -84,17 +91,55 @@ export async function loadQuarantineState(filePath = DEFAULT_FILE, now = Date.no
   validateEpochMilliseconds(now);
   try {
     await stat(filePath);
-    return await readQuarantineState(filePath);
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
+    const state = EMPTY_STATE();
+    for (const { source, model, reason } of INITIAL_QUARANTINES) {
+      upsertQuarantine(state, { source, model, reason, hours: MAX_QUARANTINE_HOURS, now });
+    }
+    state.migration_v2 = true;
+    await writeQuarantineStateIfAbsent(state, filePath);
+    return readQuarantineState(filePath);
   }
+  return withQuarantineWriteLock(filePath, async (saveState) => {
+    const state = await readQuarantineState(filePath);
+    if (state.migration_v2 === true) return state;
+    for (const { source, model, reason } of INITIAL_QUARANTINES) {
+      upsertQuarantine(state, { source, model, reason, hours: MAX_QUARANTINE_HOURS, now });
+    }
+    state.migration_v2 = true;
+    await saveState(state);
+    return state;
+  });
+}
 
-  const state = EMPTY_STATE();
-  for (const { source, model } of LEGACY_QUARANTINES) {
-    upsertQuarantine(state, { source, model, reason: 'poor_performance', hours: MAX_QUARANTINE_HOURS, now });
+async function writeQuarantineStateIfAbsent(state, filePath) {
+  validateQuarantineState(state);
+  await mkdir(dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    try {
+      await link(tempPath, filePath);
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+  } finally {
+    await rm(tempPath, { force: true }).catch(() => {});
   }
-  await writeQuarantineStateIfAbsent(state, filePath);
-  return readQuarantineState(filePath);
+}
+
+// Caller must hold withQuarantineWriteLock for this file path.
+export async function loadQuarantineStateLocked(filePath = DEFAULT_FILE, now = Date.now()) {
+  validateEpochMilliseconds(now);
+  const state = await readQuarantineState(filePath);
+  if (state.migration_v2 === true) return state;
+  for (const { source, model, reason } of INITIAL_QUARANTINES) {
+    upsertQuarantine(state, { source, model, reason, hours: MAX_QUARANTINE_HOURS, now });
+  }
+  state.migration_v2 = true;
+  await writeQuarantineStateUnlocked(state, filePath);
+  return state;
 }
 
 export function activeQuarantineKeys(state, now = Date.now()) {
@@ -242,23 +287,6 @@ async function readLockOwner(lockPath) {
   } catch (error) {
     if (error?.code === 'ESRCH') return `process ${pid}, which is not running (stale candidate)`;
     return `process ${pid}, whose status cannot be verified`;
-  }
-}
-
-async function writeQuarantineStateIfAbsent(state, filePath) {
-  validateQuarantineState(state);
-  await mkdir(dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
-    try {
-      // Atomic create-if-absent prevents a concurrent first-use migration overwriting state.
-      await link(tempPath, filePath);
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error;
-    }
-  } finally {
-    await rm(tempPath, { force: true }).catch(() => {});
   }
 }
 
