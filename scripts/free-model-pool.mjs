@@ -344,6 +344,19 @@ function isExactZero(value) {
   return typeof value === 'string' && /^0+(?:\.0+)?$/.test(value);
 }
 
+function isNemotron3UltraCandidate(candidate) {
+  return /\bnemotron[\s.-]+3(?![\d.])[\s.-]+ultra\b/i.test(`${candidate.model} ${candidate.name ?? ''}`);
+}
+
+function prioritizeCandidatesByModel(candidates) {
+  const nemotron3Ultra = [];
+  const remaining = [];
+  for (const candidate of candidates) {
+    (isNemotron3UltraCandidate(candidate) ? nemotron3Ultra : remaining).push(candidate);
+  }
+  return [...nemotron3Ultra, ...remaining];
+}
+
 export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
   const rows = Array.isArray(data) ? data : (data?.data ?? []);
   const candidates = rows
@@ -392,10 +405,12 @@ export async function loadCatalogs({
     ? await loadQuarantineState(quarantineFile)
     : await readQuarantineState(quarantineFile);
   const quarantinedKeys = activeQuarantineKeys(quarantineState);
-  const sources = [{ source: 'kilo', url: KILO_MODELS }];
+  const sources = [
+    { source: 'opencode', url: OPENCODE_MODELS },
+    { source: 'kilo', url: KILO_MODELS },
+  ];
   if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
   if (groqKeys.length > 0 || includeGroq) sources.push({ source: 'groq', url: GROQ_MODELS, groqKeys });
-  sources.push({ source: 'opencode', url: OPENCODE_MODELS });
   const results = await Promise.allSettled(
     sources.map(async ({ source, url, groqKeys: sourceGroqKeys }) => {
       const headers = {};
@@ -450,11 +465,12 @@ export async function loadCatalogs({
       );
     })
   );
-  return results.flatMap((result, index) => {
+  const candidates = results.flatMap((result, index) => {
     if (result.status === 'fulfilled') return result.value;
     onCatalogError(sources[index].source, result.reason);
     return [];
   });
+  return prioritizeCandidatesByModel(candidates);
 }
 
 export async function probeOpenRouterQuota({
