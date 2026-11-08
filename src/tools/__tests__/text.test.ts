@@ -274,8 +274,8 @@ class RecordingOffscreenCanvas {
   readonly ctx: CanvasRenderingContext2D;
 
   constructor(width: number, height: number) {
-    this.width = Math.max(1, Math.ceil(width));
-    this.height = Math.max(1, Math.ceil(height));
+    this.width = Math.trunc(width);
+    this.height = Math.trunc(height);
     this.ctx = makeMockCtx({
       canvas: this as unknown as HTMLCanvasElement,
       measureText: vi.fn(widthOnlyMeasure),
@@ -1726,6 +1726,15 @@ describe('text processor', () => {
     expect(result).toBe(canvas as unknown as OffscreenCanvas);
   });
 
+  it('ceils fractional layer bounds before allocating the committed raster', () => {
+    const [result] = text({ size: { width: 72.25, height: 31.75 } })(baseArgs);
+
+    const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
+    expect(canvas.width).toBe(73);
+    expect(canvas.height).toBe(32);
+    expect(result).toBe(canvas as unknown as OffscreenCanvas);
+  });
+
   it('returns a full-size canvas even when the default empty text renders nothing', () => {
     // A text layer is created before anything is typed, so the empty draft must still produce a
     // canvas of the document's size. Returning nothing here would make the layer unconstructible.
@@ -1742,14 +1751,14 @@ describe('text processor', () => {
   });
 
   it('survives a degenerate document size and still returns one canvas', () => {
-    // The clamp to a 1px axis is the STUB's, mirroring what a real `OffscreenCanvas` does with a
-    // zero dimension; what this pins is that the creator neither throws nor returns an empty list
-    // for a degenerate size, which is the part that belongs to the tool.
+    // Zero is a valid OffscreenCanvas dimension. This pins that the creator still returns a raster
+    // rather than throwing or returning an empty list for a degenerate size; layer creation rejects
+    // zero bounds separately.
     const [result] = text({ size: { width: 0, height: 0 } })(baseArgs);
 
     const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
-    expect(canvas.width).toBe(1);
-    expect(canvas.height).toBe(1);
+    expect(canvas.width).toBe(0);
+    expect(canvas.height).toBe(0);
     expect(result).toBeTruthy();
   });
 

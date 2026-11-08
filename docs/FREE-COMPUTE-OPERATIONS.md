@@ -5,9 +5,10 @@ Current operating instructions for the free-model runner. Historical measurement
 
 ## Model preferences
 
-The runner prefers NVIDIA Nemotron 3 Ultra when it is present in the live catalog at exact-zero
-pricing. This is an ordering preference, not a benchmark claim. The available free models change;
-use `npm run free:models -- --list` to see the current provider/model pairs before a run.
+The runner tries every eligible NVIDIA Nemotron 3 Ultra candidate first across OpenCode, Kilo, and
+OpenRouter. If they fail, it tries remaining candidates in this order: OpenCode, Kilo, OpenRouter,
+then Groq. This is an operator routing preference, not a benchmark claim. The available free models
+change; use `npm run free:models -- --list` to see current provider/model pairs before a run.
 
 ## Find credentials safely
 
@@ -153,9 +154,10 @@ node scripts/free-model-pool.mjs --openrouter-quota
 node scripts/free-research.mjs --prompt-file ./prompt.txt --url-list ./urls.txt --output-file ./summary.md --max-tokens 1500
 ```
 
-The inference fallback order is Kilo, OpenRouter, Groq, then OpenCode; catalog checks can run in
-parallel, but completions are attempted in that order. The pool tries at most three eligible
-models per provider and never falls back to paid models. Kilo stops for the run on a reported
+The pool tries all eligible Nemotron 3 Ultra candidates before weaker models. Within each priority
+tier, source order is OpenCode, Kilo, OpenRouter, then Groq. Catalog checks can run in parallel, but
+completions are attempted sequentially. The pool tries at most three eligible models per provider
+and never falls back to paid models. Kilo stops for the run on a reported
 401/402/429; other completion errors may move to another eligible model. Groq retires a supplied key
 on 401/402/429 and stops when all supplied keys are exhausted. OpenRouter 401/402 exhausts the
 source; on 429, zero platform remaining requests or a zero daily counter exhausts it, and otherwise
@@ -186,16 +188,17 @@ npm run free:chat-search -- --prompt-file ./query.txt --since 2026-10-21 --local
 
 Kilo Nemotron 3 Ultra uses the Kilo CLI's `high` variant. The CLI has no provider-side
 `--max-tokens` option, so the runner uses the requested value only as a response-length instruction.
-For OpenRouter, the preferred Nemotron 3 Ultra model receives at least 1,024 completion tokens so
+For OpenRouter, the runner requests at least 1,024 completion tokens for Nemotron 3 Ultra so
 reasoning has room to finish; other models use the requested token limit. GPT-OSS models on Groq
 are also clamped to 1,024 tokens to account for hidden reasoning tokens.
 
 ### Catalog ordering
 
-Within each provider, the runner sorts live candidates by its configured preference. Nemotron 3
-Ultra is first when the provider currently lists it at exact-zero cost. Other candidates retain the
-provider's catalog order; disabled model families are filtered before ordering. Do not assume a
-named alternative remains available: refresh the catalog for each run.
+The runner first ranks Nemotron 3 Ultra candidates ahead of every other model, regardless of source.
+Within each priority tier, candidates retain the source order above; Kilo and OpenRouter also put
+their configured preferred models first within their own catalogs. Disabled model families are
+filtered before ordering. Do not assume a named alternative remains available: refresh the catalog
+for each run.
 
 ### Report-only failure sweep
 
