@@ -102,20 +102,26 @@ affine on a 45%-opacity blank, and one each on vector, paint, and point text, at
 and after each frame transition. The retained-affine raster
 fixture checks two transformed layers through two successive non-quarter frame transforms
 with fractional origins and extents, including composite parity and exact per-layer bounds. Tight
-per-layer comparisons allow at most two tight-bitmap alpha-boundary pixels with identical RGB
-values. The transparent/one-alpha case also needs adjacent same-color samples in both rasters.
-Frame comparisons allow at most two partial-alpha boundary pixels. Both limits are separate from
-the byte-identical composites and frame-only control.
+per-layer and frame comparisons now require exact pixel equality, including alpha-boundary pixels.
+The transparent/one-alpha case also needs adjacent same-color samples in both rasters. These
+assertions are separate from the byte-identical composites and frame-only control.
 A second fixture applies a retained affine to a bold-italic serif
 paragraph text layer through a two-frame sequence, with exact per-layer
 comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
 combinations; other retained-affine operation combinations and angles, blank opacity variants, other
 text styling/rotation, and exact fractional bounds across the wider source matrix remain unproven.
 The three-transition mixed-source fixture pins composite pixels byte-for-byte after every frame
-transition. Do not infer exact per-layer or export parity from that gate: a separate transformed
-raster with layer opacity 0.58 and `multiply` blend mode had 146 differing bytes in its isolated
-materialized-layer comparison while its legacy and durable composites matched exactly. Keep
-per-layer and export parity open for non-default layer opacity and blend combinations.
+transition. Do not infer exact per-layer or export parity from that gate. A separate transformed
+raster with layer opacity 0.58 and `multiply` blend mode has exact raw materialization and direct
+composite parity. Its normal admission check refuses retained operations, so the product continues
+to use legacy rendering and export. A local Chrome diagnostic that manually invokes the refused
+runtime/export adapters records 42 differing channel bytes at the affine cursor and 46 after the
+fractional frame in runtime, export-canvas, and decoded PNG pixels. PSD has zero composite/layer
+differences at the affine cursor; after the fractional frame, the composite differs by 8 bytes, the
+background layer by 7, and the foreground layer by zero. These refused-adapter results are not proof
+of a current product-output defect; their cause remains unknown. The earlier 146-byte isolated-layer
+comparison over transparency is not a valid blend-mode oracle. Keep retained-operation admission
+closed and follow the isolation steps in `docs/HISTORY-MIGRATION-NEXT.md` before changing the gate.
 Do not add `SET_DOCUMENT_FRAME_ACTION` to background
 presentation until the full frame gate is explicit.
 The UI test intentionally continues to observe legacy presentation on commit and
@@ -140,15 +146,15 @@ Windows had exact 800x600 preview/commit backing pixels, while the 974x583 CSS s
 at 834 pixels by at most one channel value. Keep the exact backing-pixel assertion as the document
 gate and do not treat screenshot-resampling deltas as document-raster differences.
 These are preview-interleaving and rollback proofs; they do not move previews to durable authority or permit removal of legacy logical replay. The
-retained-affine/frame differentials now establish exact layer bounds and composite parity for two
-raster layers across successive fractional frame transforms, with the bounded identical-RGB
-alpha-boundary exception in per-layer tight bitmaps, and exact per-layer bounds and pixel parity for
-a styled paragraph-text layer across two frame transforms. A three-transition mixed-source
+retained-affine/frame differentials establish exact layer bounds, tight pixels, and composite parity
+for two raster layers across successive fractional frame transforms, and exact per-layer bounds and
+pixels for a styled paragraph-text layer across two frame transforms. A three-transition mixed-source
 differential also checks exact per-layer bounds
 and pixels after two sequential affines on an opaque blank, one affine on a 45%-opacity blank, and one
 each on vector, paint, and point text, at all six affine cursors and after each frame transition. A
-separate raster differential also pins the composite with non-default layer opacity and `multiply`
-blend mode, but not its isolated materialization. Next expand the frame matrix across open angles,
+separate raster differential pins exact raw materialization and direct composite output at opacity
+0.58 with `multiply`; refused-adapter runtime/export/PNG and fractional-frame PSD differences remain
+diagnostic-only while legacy fallback is active. Next expand the frame matrix across open angles,
 other affine combinations, other blank opacity values, and other text styling/rotation before
 claiming broader exact fractional bounds. Establish
 source-backed import/replacement ownership as a separate gate. The frame matrix and ownership gate
