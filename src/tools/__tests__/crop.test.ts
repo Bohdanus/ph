@@ -27,6 +27,11 @@ class RecordingOffscreenCanvas {
   private readonly context: {
     drawImage: ReturnType<typeof vi.fn>;
     rotate: ReturnType<typeof vi.fn>;
+    save: ReturnType<typeof vi.fn>;
+    restore: ReturnType<typeof vi.fn>;
+    translate: ReturnType<typeof vi.fn>;
+    transform: ReturnType<typeof vi.fn>;
+    setTransform: ReturnType<typeof vi.fn>;
   };
 
   constructor(width: number, height: number) {
@@ -40,6 +45,11 @@ class RecordingOffscreenCanvas {
         this.drawImageCalls.push(args);
       }),
       rotate: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      transform: vi.fn(),
+      setTransform: vi.fn(),
     };
 
     RecordingOffscreenCanvas.instances.push(this);
@@ -48,6 +58,11 @@ class RecordingOffscreenCanvas {
   getContext(): {
     drawImage: ReturnType<typeof vi.fn>;
     rotate: ReturnType<typeof vi.fn>;
+    save: ReturnType<typeof vi.fn>;
+    restore: ReturnType<typeof vi.fn>;
+    translate: ReturnType<typeof vi.fn>;
+    transform: ReturnType<typeof vi.fn>;
+    setTransform: ReturnType<typeof vi.fn>;
   } {
     return this.context;
   }
@@ -232,6 +247,21 @@ describe('crop processor', () => {
     expect((canvas as unknown as RecordingOffscreenCanvas).drawImageCalls[0][0]).toBe(customBitmap);
   });
 
+  it('returns the bitmap unchanged when context.getContext returns null', () => {
+    class NullContextCanvas extends RecordingOffscreenCanvas {
+      override getContext() {
+        return null as unknown as ReturnType<RecordingOffscreenCanvas['getContext']>;
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', NullContextCanvas as unknown as typeof OffscreenCanvas);
+
+    const rect = { x1: 100, y1: 50, x2: 400, y2: 300 };
+    const result = crop({ bitmap: BITMAP, size: DOCUMENT_SIZE })({ rect, toolName: 'crop' });
+
+    expect(result[0]).toBe(BITMAP);
+    expect(result[1]).toBeUndefined();
+  });
+
   /*
    * `crop.ts`'s `hasFiniteRect()` is the replay safety net for hand-edited or stale records: a
    * rect that is null/undefined, carries a non-finite coordinate, or has an undefined field
@@ -346,6 +376,42 @@ describe('crop processor', () => {
       expect(canvas.width).toBe(700);
       expect(canvas.height).toBe(550);
       expect(canvas.drawImageCalls[0]).toEqual([BITMAP, 100, 50, 700, 550, 0, 0, 700, 550]);
+    });
+  });
+
+  describe('trimRect zero-dimension fast path', () => {
+    it('returns the bitmap when trimRect yields zero width', () => {
+      // x1 == x2 after clamping -> width 0
+      const rect = { x1: 100, y1: 50, x2: 100, y2: 300 };
+
+      const result = runCropWithResult(rect);
+
+      expect(result[0]).toBe(BITMAP);
+      expect(result[1]).toBeUndefined();
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
+    });
+
+    it('returns the bitmap when trimRect yields zero height', () => {
+      // y1 == y2 after clamping -> height 0
+      const rect = { x1: 100, y1: 50, x2: 400, y2: 50 };
+
+      const result = runCropWithResult(rect);
+
+      expect(result[0]).toBe(BITMAP);
+      expect(result[1]).toBeUndefined();
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
+    });
+
+    it('returns the bitmap when trimRect yields zero width after clamping', () => {
+      // A rect clamped to zero width: x1=x2=100, y1=50, y2=300
+      // After trimRect sorts and clamps, width becomes 0
+      const rect = { x1: 100, y1: 50, x2: 100, y2: 300 };
+
+      const result = runCropWithResult(rect);
+
+      expect(result[0]).toBe(BITMAP);
+      expect(result[1]).toBeUndefined();
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
     });
   });
 

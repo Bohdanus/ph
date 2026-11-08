@@ -242,7 +242,14 @@ describe('source-backed create presentation', () => {
       pending.resolve(composite);
       await pending.promise;
     });
-    expect(probe.store().renderSelector.source, JSON.stringify(probe.store().durablePresentation)).toBe('durable');
+    const store = probe.store();
+    const projectedLayerIds = Object.keys(store.durableRenderProjection?.layers ?? {})
+      .sort()
+      .join(',');
+    expect(
+      store.renderSelector.source,
+      `durableStatus=${store.durableStatus}; projectedLayerIds=${projectedLayerIds}`
+    ).toBe('durable');
     expect(Object.keys(probe.store().durableRenderProjection!.layers).sort()).toEqual(['added', 'base']);
     expect(probe.store().layers.added.source).toBe(layer.source);
     expect(composite.release).toHaveBeenCalledTimes(1);
