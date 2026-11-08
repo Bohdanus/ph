@@ -485,7 +485,7 @@ describe('e2e-run: the own-server guarantee', () => {
     // a concurrent run into a false red as well as destroying its record.
     const record = JSON.parse(readFileSync(runRecordPath(), 'utf8'));
     expect(record.port, 'the port that served this run').toBe(suite.calls[0].env.PLAYWRIGHT_PORT);
-    expect(record.baseUrl).toBe(`http://localhost:${suite.calls[0].env.PLAYWRIGHT_PORT}`);
+    expect(record.baseUrl).toBe(`http://127.0.0.1:${suite.calls[0].env.PLAYWRIGHT_PORT}`);
     expect(record.outputDir).toContain('test-results');
     expect(record.queued, 'and whether it had the queue, which is diagnostic not load-bearing').toBe(true);
     // The record is closed when the run finishes, so "died at startup" is

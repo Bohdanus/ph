@@ -42,6 +42,16 @@ const ALL_GROUPS: readonly { name: string; tools: readonly ToolbarTool[] }[] = t
   section.map((group) => ({ name: group[0].name, tools: group }))
 );
 
+type FirstToolbarFrame = {
+  slotHeight: number;
+  firstGroupDisplay: string;
+  overflowListDisplay: string;
+  overflowTileVisible: boolean;
+  allVisibleTilesFit: boolean;
+};
+
+type FirstToolbarFrameWindow = Window & { __firstToolbarFrame?: FirstToolbarFrame | null };
+
 /**
  * Window heights spanning "everything fits" to "almost nothing fits".
  *
@@ -220,6 +230,83 @@ const row = (m: Measured) =>
   `sep=${m.sectionBreakHeight} next=${m.nextRowCost} tools=${m.toolCount}/${ALL_GROUPS.length} overflow=${m.hasOverflowTile ? 'Y' : 'n'}`;
 
 test.describe('Toolbar fit', () => {
+  test('the first constrained frame already fits the toolbar rail', async ({ page }) => {
+    await page.addInitScript(() => {
+      const probeWindow = window as FirstToolbarFrameWindow;
+      probeWindow.__firstToolbarFrame = null;
+      const observer = new MutationObserver(() => {
+        const slot = document.querySelector<HTMLElement>('[data-testid="left-toolbar-slot"]');
+        const tools = document.querySelector<HTMLElement>('[data-testid="left-toolbar-tools"]');
+        const firstGroup = tools?.querySelector<HTMLElement>('[data-toolbar-fit-key]');
+        const overflowList = tools?.querySelector<HTMLElement>('[data-toolbar-fit-overflow-list]');
+        if (!slot || !tools || !firstGroup || !overflowList) return;
+
+        observer.disconnect();
+        requestAnimationFrame(() => {
+          const slotRect = slot.getBoundingClientRect();
+          const overflowTile = overflowList.querySelector<HTMLElement>('[data-testid="tool-overflow-tile"]');
+          const visibleTiles = [...tools.querySelectorAll<HTMLElement>('[data-toolbar-tile]')].filter(
+            (tile) => tile.getBoundingClientRect().height > 0
+          );
+          probeWindow.__firstToolbarFrame = {
+            slotHeight: slotRect.height,
+            firstGroupDisplay: getComputedStyle(firstGroup).display,
+            overflowListDisplay: getComputedStyle(overflowList).display,
+            overflowTileVisible: overflowTile !== null && overflowTile.getBoundingClientRect().height > 0,
+            allVisibleTilesFit: visibleTiles.every((tile) => {
+              const rect = tile.getBoundingClientRect();
+              return rect.top >= slotRect.top && rect.bottom <= slotRect.bottom;
+            }),
+          };
+        });
+      });
+      observer.observe(document, { childList: true, subtree: true });
+    });
+
+    await open(page, 320);
+    await expect
+      .poll(() => page.evaluate(() => (window as FirstToolbarFrameWindow).__firstToolbarFrame ?? null))
+      .not.toBeNull();
+    const firstFrame = await page.evaluate(() => (window as FirstToolbarFrameWindow).__firstToolbarFrame ?? null);
+    if (firstFrame === null) throw new Error('the initial toolbar frame was not captured');
+    expect(firstFrame.slotHeight, 'the viewport constrained the initial rail').toBeLessThan(93);
+    expect(firstFrame.firstGroupDisplay, 'CSS hides the first tool group in the initial constrained frame').toBe(
+      'none'
+    );
+    expect(firstFrame.overflowListDisplay, 'CSS shows the overflow list in the initial constrained frame').toBe('grid');
+    expect(firstFrame.overflowTileVisible, 'the overflow tile itself is visible in the initial constrained frame').toBe(
+      true
+    );
+    expect(firstFrame.allVisibleTilesFit, 'every visible tool tile stays inside the first-frame rail slot').toBe(true);
+  });
+
+  test('CSS responds to a constrained slot before React receives its resize notification', async ({ page }) => {
+    await open(page, 720);
+
+    const fit = await page.evaluate(() => {
+      const slot = document.querySelector<HTMLElement>('[data-testid="left-toolbar-slot"]');
+      const tools = document.querySelector<HTMLElement>('[data-testid="left-toolbar-tools"]');
+      const firstGroup = tools?.querySelector<HTMLElement>('[data-toolbar-fit-key]');
+      const overflowList = tools?.querySelector<HTMLElement>('[data-toolbar-fit-overflow-list]');
+      const firstButton = firstGroup?.querySelector<HTMLButtonElement>('[data-toolbar-tile]');
+      if (!slot || !firstGroup || !overflowList || !firstButton) {
+        throw new Error('The toolbar fit probe could not find its rendered controls');
+      }
+
+      slot.style.flex = 'none';
+      slot.style.height = '50px';
+      return {
+        firstGroupDisplay: getComputedStyle(firstGroup).display,
+        overflowListDisplay: getComputedStyle(overflowList).display,
+        firstButtonPlan: firstButton.dataset.toolbarFitPlanVisible,
+      };
+    });
+
+    expect(fit.firstGroupDisplay, 'the CSS query hides the group at the short height').toBe('none');
+    expect(fit.overflowListDisplay, 'CSS reveals the overflow tile without a React render').toBe('grid');
+    expect(fit.firstButtonPlan, 'React still has the previous tall-rail plan').toBe('true');
+  });
+
   test('the rail fits at the initial viewport before any resize', async ({ page }) => {
     // `open` sets this viewport before navigation. The first measured rail is therefore the
     // one mounted into the constrained slot; this test never resizes a toolbar after load.

@@ -13,7 +13,12 @@ import {
   type ViewportClip,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
-import { committedAntsOutline, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
+import {
+  committedAntsOutline,
+  readAntRuns,
+  waitForCommittedAnts,
+  waitForNoCommittedAnts,
+} from './helpers/selection-ants';
 import {
   clickToolButton,
   openToolFlyoutViaRightClick,
@@ -833,6 +838,27 @@ test.describe('Selection tools', () => {
     expect(outline.bottom, 'selection outline reaches the bottom side of the enclosed region').toBeGreaterThanOrEqual(
       expectedInside.y + expectedInside.height - 12
     );
+
+    const report = page.getByText(/\d[\d,]*\s+matching pixels/);
+    await expect(report).toBeVisible();
+    expect(Number.parseInt((await report.innerText()).replace(/\D/g, ''), 10)).toBeGreaterThan(0);
+
+    await page.getByRole('button', { name: 'Deselect', exact: true }).click();
+    await waitForNoCommittedAnts(page, 'Deselect to clear the closed-loop selection');
+  });
+
+  test('magic wand selects the blank document from its background', async ({ page }) => {
+    const document = await documentBox(page);
+    await clickToolButton(page, 'magic-wand');
+    await expect(page.locator('#magic-wand-tolerance')).toBeVisible();
+    await expectMoveTransformBoxHidden(page);
+    await page.mouse.click(document.x + document.width / 2, document.y + document.height / 2);
+    await waitForCommittedAnts(page, 'the full blank document selected by the Magic Wand');
+    expectOutlineAround(await committedAntsOutline(page), ORIGIN_CLIP, document);
+
+    const report = page.getByText(/\d[\d,]*\s+matching pixels/);
+    await expect(report).toBeVisible();
+    expect(Number.parseInt((await report.innerText()).replace(/\D/g, ''), 10)).toBeGreaterThan(0);
   });
 
   test('Enter closes a polygonal lasso and strokes its final edge', async ({ page }) => {

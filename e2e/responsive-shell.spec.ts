@@ -86,8 +86,9 @@ async function selectFreeTransform(page: Page) {
 }
 const railWidth = async (page: Page) => await leftRail(page).evaluate((el) => el.getBoundingClientRect().width);
 
-/** The rail's section lists: one per entry of `toolbarMap` in one column, a single one in two. */
-const sectionListCount = async (page: Page) => await page.locator('[data-testid="left-toolbar-tools"] > ul').count();
+/** Counts toolbar section lists without the hidden overflow template list. */
+const sectionListCount = async (page: Page) =>
+  await page.locator('[data-testid="left-toolbar-tools"] > ul:not([data-toolbar-fit-overflow-list])').count();
 
 /**
  * Drive the rail into the two-column desktop preference, whichever way the default points.
