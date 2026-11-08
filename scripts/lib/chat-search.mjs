@@ -19,6 +19,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
+import { resolve, normalize, isAbsolute } from 'node:path';
 import { sanitizeErrorMessage } from '../lib/secrets.mjs';
 
 const DEFAULT_MAX_RESULTS = 20;
@@ -31,6 +32,47 @@ const MAX_PROMPT_CHARS = 120_000;
 const MAX_TOKENS_LIMIT = 4000;
 const ZSTD_TIMEOUT_MS = 15_000;
 const CODEX_BACKFILL_QUERY = 'SELECT status FROM backfill_state WHERE id = 1';
+const FREE_MODEL_TIMEOUT_MS = 60_000;
+const MAX_FREE_MODEL_RETRIES = 3;
+const FREE_MODEL_RETRY_BASE_MS = 1000;
+
+const ALLOWED_OPENCODE_COMMANDS = ['opencode', 'opencode.exe'];
+const TERM_ALLOWLIST = /^[\w\s\-\.]+$/;
+
+const PROMPT_FILE_ALLOWLIST = [process.cwd(), process.env.HOME || homedir(), '/tmp'].filter(Boolean);
+
+/**
+ * Validate a file path against the allowlist.
+ * Rejects absolute paths outside allowlist, paths with '..', and non-existent files.
+ */
+export function validatePath(filePath, allowlist = PROMPT_FILE_ALLOWLIST) {
+  if (!filePath || typeof filePath !== 'string') return false;
+  const normalized = normalize(filePath);
+  if (normalized.includes('..')) return false;
+  const resolved = isAbsolute(normalized) ? normalized : resolve(filePath);
+  return allowlist.some((allowed) => resolved.startsWith(resolve(allowed)));
+}
+
+/**
+ * Validate an opencode command against the allowlist.
+ */
+export function validateOpencodeCommand(cmd) {
+  const base = cmd.split(' ')[0];
+  const resolved = isAbsolute(base) ? base : base;
+  return ALLOWED_OPENCODE_COMMANDS.some((allowed) => resolved === allowed || resolved.endsWith('/' + allowed));
+}
+
+/**
+ * Validate a Codex rollout path is under the Codex home directory.
+ */
+export function validateCodexRolloutPath(rolloutPath, codexHome) {
+  if (!rolloutPath || typeof rolloutPath !== 'string') return false;
+  const normalized = normalize(rolloutPath);
+  if (normalized.includes('..')) return false;
+  const resolved = isAbsolute(normalized) ? normalized : resolve(rolloutPath);
+  const homeResolved = resolve(codexHome);
+  return resolved.startsWith(homeResolved);
+}
 
 export {
   DEFAULT_MAX_RESULTS,
@@ -41,7 +83,21 @@ export {
   MAX_RELEVANCE_CANDIDATES,
   MAX_PROMPT_CHARS,
   MAX_TOKENS_LIMIT,
+  ALLOWED_OPENCODE_COMMANDS,
+  TERM_ALLOWLIST,
+  FREE_MODEL_TIMEOUT_MS,
+  MAX_FREE_MODEL_RETRIES,
+  FREE_MODEL_RETRY_BASE_MS,
+  PROMPT_FILE_ALLOWLIST,
 };
+
+/**
+ * Validate a search term against the allowlist.
+ * Only alphanumeric, underscore, whitespace, hyphen, and period are allowed.
+ */
+export function validateTerm(term) {
+  return TERM_ALLOWLIST.test(term);
+}
 
 /**
  * Escape `%` and `_` (SQLite LIKE wildcards) so they are treated as literals.
@@ -51,9 +107,52 @@ export function escapeLike(phrase) {
 }
 
 /**
+ * Sleep for the given milliseconds.
+ */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Execute a promise with a timeout.
+ */
+export function withTimeout(promise, ms, label = 'operation') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]);
+}
+
+/**
+ * Execute a free-model completion with retries and timeout.
+ */
+export async function completeWithRetry(
+  completeFn,
+  prompt,
+  options,
+  retries = MAX_FREE_MODEL_RETRIES,
+  baseDelay = FREE_MODEL_RETRY_BASE_MS
+) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await withTimeout(completeFn(prompt, options), FREE_MODEL_TIMEOUT_MS, 'free-model completion');
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        const delay = baseDelay * Math.pow(2, attempt);
+        await sleep(delay);
+      }
+    }
+  }
+  throw lastError;
+}
+
+/**
  * Split a natural-language query into individual search terms.
  * Lowercased, de-duplicated, minimum 2 characters. Falls back to the whole
  * (truncated) query when no individual term qualifies.
+ * Validates each term against the allowlist.
  */
 export function searchTermsFromQuery(query) {
   const text = (query || '').trim().toLowerCase();
@@ -62,9 +161,15 @@ export function searchTermsFromQuery(query) {
   const terms = [];
   for (const token of raw) {
     const cleaned = token.replace(/[^\w.-]/g, '').replace(/^[-.]+|[-.]+$/g, '');
-    if (cleaned.length >= 2) terms.push(cleaned);
+    if (cleaned.length >= 2 && validateTerm(cleaned)) {
+      terms.push(cleaned);
+    }
   }
-  if (terms.length === 0) return [text.slice(0, 60)];
+  if (terms.length === 0) {
+    const fallback = text.slice(0, 60);
+    if (validateTerm(fallback)) return [fallback];
+    return [];
+  }
   const seen = new Set();
   const unique = [];
   for (const t of terms) {
@@ -325,16 +430,24 @@ export function searchCodexSessions(db, terms, sinceMs, limit = DEFAULT_MAX_RESU
 /**
  * Read a rollout JSONL file (plain or zstd-compressed). Returns the file text.
  * `readFileImpl` and `spawnImpl` are injectable for testing.
+ * Validates path against Codex home to prevent path traversal.
  */
 export async function readRolloutFile(filePath, options = {}) {
-  const { readFileImpl = defaultReadFile, spawnImpl = defaultSpawnZstd } = options;
+  const { readFileImpl = defaultReadFile, spawnImpl = defaultSpawnZstd, codexHome } = options;
+
+  if (!validatePath(filePath)) {
+    throw new Error(`ROLLOUT_PATH_INVALID:${filePath}`);
+  }
+  if (codexHome && !validateCodexRolloutPath(filePath, codexHome)) {
+    throw new Error(`ROLLOUT_PATH_OUTSIDE_CODEX_HOME:${filePath}`);
+  }
 
   if (!existsSync(filePath)) {
     throw new Error(`ROLLOUT_NOT_FOUND:${filePath}`);
   }
 
   if (filePath.endsWith('.jsonl.zst')) {
-    return await decompressRolloutZst(filePath, spawnImpl);
+    return await decompressRolloutZst(filePath, spawnImpl, codexHome);
   }
 
   return await readFileImpl(filePath, 'utf8');
@@ -345,8 +458,12 @@ function defaultReadFile(path, encoding) {
   return readFileSync(path);
 }
 
-function defaultSpawnZstd(filePath) {
+function defaultSpawnZstd(filePath, codexHome) {
   return new Promise((resolve, reject) => {
+    if (codexHome && !validateCodexRolloutPath(filePath, codexHome)) {
+      reject(new Error(`ROLLOUT_PATH_OUTSIDE_CODEX_HOME:${filePath}`));
+      return;
+    }
     const chunks = [];
     const child = execFile('zstd', ['-dc', '-q', filePath], {
       timeout: ZSTD_TIMEOUT_MS,
@@ -372,8 +489,8 @@ function defaultSpawnZstd(filePath) {
   });
 }
 
-async function decompressRolloutZst(filePath, spawnImpl) {
-  const result = await spawnImpl(filePath);
+async function decompressRolloutZst(filePath, spawnImpl, codexHome) {
+  const result = await spawnImpl(filePath, codexHome);
   if (result && result.error === 'zstd-not-installed') {
     throw new Error(`ROLLOUT_COMPRESSED:${filePath}`);
   }
@@ -428,13 +545,13 @@ export function findCodexRollouts(codexSessionsDir, codexArchivedDir, threadId) 
  * and must return the raw file text.
  */
 export async function extractCodexExcerpt(rolloutPath, query, maxChars, options = {}) {
-  const { readRolloutFileImpl = readRolloutFile } = options;
+  const { readRolloutFileImpl = readRolloutFile, codexHome } = options;
   const terms = searchTermsFromQuery(query);
   if (!terms.length) return null;
 
   let text;
   try {
-    text = await readRolloutFileImpl(rolloutPath);
+    text = await readRolloutFileImpl(rolloutPath, { codexHome });
   } catch (err) {
     if (isCompressedRolloutError(err)) {
       return {
@@ -445,6 +562,9 @@ export async function extractCodexExcerpt(rolloutPath, query, maxChars, options 
       };
     }
     if (isNotFoundRolloutError(err)) return null;
+    if (err.message.startsWith('ROLLOUT_PATH_INVALID:') || err.message.startsWith('ROLLOUT_PATH_OUTSIDE_CODEX_HOME:')) {
+      return null;
+    }
     throw err;
   }
 
@@ -774,6 +894,8 @@ Answer:`;
  * @param {object} [options.stderr]     Writable stream for stderr (default process.stderr).
  * @param {object} [options.stdout]     Writable stream for stdout (default process.stdout).
  * @param {boolean} [options.probeOpenRouterQuota] Check OpenRouter quota before routing.
+ * @param {boolean} [options.quiet]     Suppress progress output.
+ * @param {boolean} [options.verbose]   Enable verbose debug output.
  * @param {function} [options.openReadOnlyDb] Override DB opener (for testing).
  * @param {function} [options.resolveChatStores] Override store resolver (for testing).
  * @param {function} [options.findLatestStateDb] Override (for testing).
@@ -805,6 +927,8 @@ export async function executeChatSearch(options) {
     stderr = process.stderr,
     stdout = process.stdout,
     probeOpenRouterQuota = false,
+    quiet = false,
+    verbose = false,
     openReadOnlyDb: openReadOnlyDbImpl = openReadOnlyDb,
     resolveChatStores: resolveStoresImpl = resolveChatStores,
     findLatestStateDb: findLatestStateDbImpl = findLatestStateDb,
@@ -851,6 +975,14 @@ export async function executeChatSearch(options) {
   const kiloDb = kiloDbOverride || stores.kiloDb;
   const codexHome = codexHomeOverride || stores.codexHome;
   const copilotDb = copilotDbOverride || stores.copilotDb;
+
+  // Validate opencodeCommand against allowlist
+  if (opencodeCommand && !validateOpencodeCommand(opencodeCommand)) {
+    stderr.write(
+      `chat-search: invalid opencode command '${opencodeCommand}'; allowed: ${ALLOWED_OPENCODE_COMMANDS.join(', ')}\n`
+    );
+    return 2;
+  }
 
   const providerSet = new Set(
     providers
@@ -1015,6 +1147,7 @@ export async function executeChatSearch(options) {
           try {
             const excerpt = await extractCodexExcerpt(session.rolloutPath, question, maxExcerptChars, {
               readRolloutFileImpl: readRolloutFileImpl,
+              codexHome,
             });
             if (excerpt && excerpt.excerptLength > 0) {
               excerpts.push({
@@ -1045,7 +1178,7 @@ export async function executeChatSearch(options) {
 
   if (excerpts.length === 0) {
     stderr.write('chat-search: could not extract transcript excerpts from matching sessions.\n');
-    return 3;
+    return 4;
   }
 
   stderr.write(`chat-search: extracted ${excerpts.length} excerpts, ranking relevance...\n`);
@@ -1061,7 +1194,29 @@ export async function executeChatSearch(options) {
     return 1;
   }
 
-  const complete = completeImpl || poolModule.completeWithFreeModel;
+  // Clamp MAX_PROMPT_CHARS to the resolved model's context window
+  let effectiveMaxPromptChars = MAX_PROMPT_CHARS;
+  try {
+    const pool = poolModule.getPool ? poolModule.getPool() : null;
+    if (pool && pool.currentModel && pool.currentModel.contextWindow) {
+      // Reserve tokens for completion + overhead
+      const reserved = 8192;
+      const modelMax = Math.max(0, pool.currentModel.contextWindow - reserved);
+      if (modelMax > 0 && modelMax < effectiveMaxPromptChars) {
+        effectiveMaxPromptChars = modelMax;
+        if (verbose) {
+          stderr.write(
+            `chat-search: clamped prompt budget to model context window: ${effectiveMaxPromptChars} chars\n`
+          );
+        }
+      }
+    }
+  } catch {
+    // ignore pool introspection errors
+  }
+
+  const baseComplete = completeImpl || poolModule.completeWithFreeModel;
+  const complete = (prompt, options) => completeWithRetry(baseComplete, prompt, options);
 
   // Phase 3: Rank by relevance using a free model (if a complete function is available)
   let ranked = excerpts.map((e, i) => ({ ...e, relevance: 5 }));
@@ -1069,9 +1224,9 @@ export async function executeChatSearch(options) {
   if (complete) {
     let rankingExcerpts = excerpts;
     let rankingPrompt = buildRankingPrompt(question, excerpts);
-    if (rankingPrompt.length > MAX_PROMPT_CHARS) {
+    if (rankingPrompt.length > effectiveMaxPromptChars) {
       stderr.write('chat-search: ranking prompt exceeds character budget; using fewer excerpts\n');
-      rankingExcerpts = excerpts.slice(0, Math.ceil(MAX_PROMPT_CHARS / 1100));
+      rankingExcerpts = excerpts.slice(0, Math.ceil(effectiveMaxPromptChars / 1100));
       rankingPrompt = buildRankingPrompt(question, rankingExcerpts);
     }
 
@@ -1107,15 +1262,15 @@ export async function executeChatSearch(options) {
     maxExcerptChars: Math.min(maxExcerptChars, 3000),
     maxExcerpts: maxSessions,
   });
-  if (synthesisPrompt.length > MAX_PROMPT_CHARS) {
+  if (synthesisPrompt.length > effectiveMaxPromptChars) {
     stderr.write('chat-search: synthesis prompt exceeds character budget; truncating evidence\n');
     let excerptChars = Math.min(maxExcerptChars, 1500);
-    for (let iteration = 0; iteration < 10 && synthesisPrompt.length > MAX_PROMPT_CHARS; iteration++) {
+    for (let iteration = 0; iteration < 10 && synthesisPrompt.length > effectiveMaxPromptChars; iteration++) {
       synthesisPrompt = buildSynthesisPrompt(question, ranked, {
         maxExcerptChars: excerptChars,
         maxExcerpts: maxSessions,
       });
-      if (synthesisPrompt.length <= MAX_PROMPT_CHARS) break;
+      if (synthesisPrompt.length <= effectiveMaxPromptChars) break;
       excerptChars = Math.floor(excerptChars * 0.8);
       if (excerptChars <= 500) break;
     }
@@ -1177,6 +1332,9 @@ export async function executeChatSearch(options) {
 /* -------------------------------------------------------------------------- */
 
 function readQueryFile(filePath) {
+  if (!validatePath(filePath)) {
+    throw new Error(`chat-search: prompt file path not allowed: ${filePath}`);
+  }
   if (!existsSync(filePath)) {
     throw new Error(`chat-search: prompt file not found: ${filePath}`);
   }

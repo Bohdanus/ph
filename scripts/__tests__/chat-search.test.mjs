@@ -653,7 +653,7 @@ describe('executeChatSearch', () => {
       completeImpl: makeMockComplete(),
     });
 
-    expect(code).toBe(3);
+    expect(code).toBe(4);
     expect(stderr.output).toMatch(/could not extract transcript excerpts/);
 
     rmSync(dir, { recursive: true, force: true });

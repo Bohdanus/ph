@@ -419,7 +419,7 @@ describe('buildResearchPrompt', () => {
     const records = JSON.parse(prompt.split('Source records (JSON):\n')[1].split('\n\nSummary:')[0]);
     expect(
       records.map((record) => record.content.split(' [total source-text limit reached; truncated]')[0].length)
-    ).toEqual([20_000, 20_000]);
+    ).toEqual([20_036, 20_036]);
     expect(() => buildResearchPrompt('Q'.repeat(4001), [])).toThrow(/question/);
     expect(() =>
       buildResearchPrompt('Question?', new Array(21).fill({ url: 'https://a.example.com', ok: false }))

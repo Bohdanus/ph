@@ -27,6 +27,7 @@ const MAX_REDIRECTS = 5;
 const MAX_PROMPT_FILE_BYTES = 8 * 1024;
 const MAX_URL_LIST_FILE_BYTES = 12 * 1024;
 const MAX_RESPONSE_HEADER_BYTES = 16 * 1024;
+const MAX_OUTPUT_FILE_BYTES = 4 * 1024;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const BODYLESS_STATUSES = new Set([204, 205, 304]);
 
@@ -72,6 +73,7 @@ const VALUE_FLAGS = new Set([
   '--fetch-timeout',
   '--max-concurrency',
   '--max-content',
+  '--json',
 ]);
 
 const USAGE = `Usage: node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [options]
@@ -84,6 +86,7 @@ const USAGE = `Usage: node scripts/free-research.mjs --prompt-file PATH --url-li
   --max-concurrency N       Parallel fetches (default ${MAX_CONCURRENCY}, max ${MAX_ALLOWED_CONCURRENCY})
   --max-content CHARS       Per-URL text cap (default ${MAX_CONTENT_CHARS}, max ${MAX_CONTENT_CHARS})
   --probe-openrouter-quota  Check the OpenRouter free-model daily counter before routing and skip OpenRouter when exhausted
+  --json                    Emit machine-readable JSON to stdout instead of writing human-readable output
 
   The runner fetches at most ${MAX_URLS} URLs, caps response and prompt size, then writes only
   the condensed result using only verified Kilo/OpenRouter free routes. Source pages are untrusted
@@ -98,6 +101,7 @@ function parseArgs(args) {
   const values = new Map();
   let help = false;
   let probeOpenRouterQuota = false;
+  let jsonOutput = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--help' || arg === '-h') {
@@ -108,6 +112,10 @@ function parseArgs(args) {
       probeOpenRouterQuota = true;
       continue;
     }
+    if (arg === '--json') {
+      jsonOutput = true;
+      continue;
+    }
     if (!VALUE_FLAGS.has(arg)) throw new Error(`Unknown option: ${arg}`);
     const value = args[index + 1];
     if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value`);
@@ -115,7 +123,7 @@ function parseArgs(args) {
     values.set(arg, value);
     index += 1;
   }
-  return { values, help, probeOpenRouterQuota };
+  return { values, help, probeOpenRouterQuota, jsonOutput };
 }
 
 function integerOption(values, flag, fallback, min, max) {
@@ -569,10 +577,12 @@ async function discardResponseBody(response) {
 export async function fetchUrl(
   url,
   {
-    fetchImpl = pinnedFetch,
+    fetchImpl,
     maxContent = MAX_CONTENT_CHARS,
     timeout = FETCH_TIMEOUT_MS,
     maxResponseBytes = MAX_RESPONSE_BYTES,
+    maxAttempts = 1,
+    baseBackoffMs = 1000,
   } = {}
 ) {
   if (!Number.isSafeInteger(maxContent) || maxContent < 1 || maxContent > MAX_CONTENT_CHARS) {
@@ -584,62 +594,84 @@ export async function fetchUrl(
   if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > MAX_RESPONSE_BYTES) {
     throw new Error(`maxResponseBytes must be an integer from 1 to ${MAX_RESPONSE_BYTES}`);
   }
-  let currentUrl = validateResearchUrl(url);
-  let response;
-  const signal = AbortSignal.timeout(timeout);
-  for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
-    response = await fetchImpl(currentUrl, {
-      signal,
-      redirect: 'manual',
-    });
-    if (!REDIRECT_STATUSES.has(response.status)) break;
-    if (redirect === MAX_REDIRECTS) {
-      await discardResponseBody(response);
-      throw new Error('Too many redirects');
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 5) {
+    throw new Error('maxAttempts must be an integer from 1 to 5');
+  }
+  if (!Number.isSafeInteger(baseBackoffMs) || baseBackoffMs < 100 || baseBackoffMs > 10000) {
+    throw new Error('baseBackoffMs must be an integer from 100 to 10000');
+  }
+
+  const resolveHost = fetchImpl ? undefined : dnsLookup;
+  const requestImpl = fetchImpl ? undefined : httpsRequest;
+
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const fetcher = fetchImpl ?? createPinnedFetcher({ resolveHost, requestImpl });
+    try {
+      let currentUrl = validateResearchUrl(url);
+      let response;
+      const signal = AbortSignal.timeout(timeout);
+      for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
+        response = await fetcher(currentUrl, {
+          signal,
+          redirect: 'manual',
+        });
+        if (!REDIRECT_STATUSES.has(response.status)) break;
+        if (redirect === MAX_REDIRECTS) {
+          await discardResponseBody(response);
+          throw new Error('Too many redirects');
+        }
+        const location = response.headers?.get('location');
+        if (!location) {
+          await discardResponseBody(response);
+          throw new Error('Redirect response has no Location header');
+        }
+        await discardResponseBody(response);
+        currentUrl = validateResearchUrl(new URL(location, currentUrl).href);
+      }
+      if (!response.ok) {
+        await discardResponseBody(response);
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      if (BODYLESS_STATUSES.has(response.status) || response.body === null) {
+        await discardResponseBody(response);
+        return '';
+      }
+
+      const contentEncoding = (response.headers?.get('content-encoding') || 'identity').toLowerCase().trim();
+      if (contentEncoding !== 'identity') {
+        await discardResponseBody(response);
+        throw new Error(`Unsupported research response content encoding: ${contentEncoding}`);
+      }
+      const contentType = (response.headers?.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+      const isHtml = contentType === 'text/html' || contentType === 'application/xhtml+xml';
+      const isText =
+        contentType.startsWith('text/') ||
+        contentType === 'application/json' ||
+        contentType === 'application/xml' ||
+        contentType.endsWith('+json') ||
+        contentType.endsWith('+xml');
+      if (!isText) {
+        await discardResponseBody(response);
+        throw new Error(`Unsupported research response content type: ${contentType || 'missing'}`);
+      }
+
+      const { text, truncated: responseTruncated } = await readBoundedBody(response, maxResponseBytes);
+      const extracted = isHtml ? stripHtml(text) : text.trim();
+      const content = extracted.length > maxContent ? extracted.slice(0, maxContent) : extracted;
+      const markers = [];
+      if (responseTruncated) markers.push(`response body capped at ${maxResponseBytes} bytes`);
+      if (extracted.length > maxContent) markers.push(`text capped at ${maxContent} chars`);
+      return markers.length > 0 ? `${content} [${markers.join('; ')}]` : content;
+    } catch (error) {
+      lastError = error;
+      if (attempt === maxAttempts) break;
+      const backoffMs = Math.min(baseBackoffMs * Math.pow(2, attempt - 1), 5000) + Math.random() * 200;
+      await new Promise((r) => setTimeout(r, backoffMs));
     }
-    const location = response.headers?.get('location');
-    if (!location) {
-      await discardResponseBody(response);
-      throw new Error('Redirect response has no Location header');
-    }
-    await discardResponseBody(response);
-    currentUrl = validateResearchUrl(new URL(location, currentUrl).href);
   }
-  if (!response.ok) {
-    await discardResponseBody(response);
-    throw new Error(`HTTP ${response.status}`);
-  }
-
-  if (BODYLESS_STATUSES.has(response.status) || response.body === null) {
-    await discardResponseBody(response);
-    return '';
-  }
-
-  const contentEncoding = (response.headers?.get('content-encoding') || 'identity').toLowerCase().trim();
-  if (contentEncoding !== 'identity') {
-    await discardResponseBody(response);
-    throw new Error(`Unsupported research response content encoding: ${contentEncoding}`);
-  }
-  const contentType = (response.headers?.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
-  const isHtml = contentType === 'text/html' || contentType === 'application/xhtml+xml';
-  const isText =
-    contentType.startsWith('text/') ||
-    contentType === 'application/json' ||
-    contentType === 'application/xml' ||
-    contentType.endsWith('+json') ||
-    contentType.endsWith('+xml');
-  if (!isText) {
-    await discardResponseBody(response);
-    throw new Error(`Unsupported research response content type: ${contentType || 'missing'}`);
-  }
-
-  const { text, truncated: responseTruncated } = await readBoundedBody(response, maxResponseBytes);
-  const extracted = isHtml ? stripHtml(text) : text.trim();
-  const content = extracted.length > maxContent ? extracted.slice(0, maxContent) : extracted;
-  const markers = [];
-  if (responseTruncated) markers.push(`response body capped at ${maxResponseBytes} bytes`);
-  if (extracted.length > maxContent) markers.push(`text capped at ${maxContent} chars`);
-  return markers.length > 0 ? `${content} [${markers.join('; ')}]` : content;
+  throw lastError;
 }
 
 export async function fetchAll(
@@ -649,6 +681,8 @@ export async function fetchAll(
     maxConcurrency = MAX_CONCURRENCY,
     maxContent = MAX_CONTENT_CHARS,
     timeout = FETCH_TIMEOUT_MS,
+    maxAttempts = 1,
+    baseBackoffMs = 1000,
   } = {}
 ) {
   if (!Array.isArray(urls)) throw new Error('URLs must be an array');
@@ -661,6 +695,12 @@ export async function fetchAll(
   }
   if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > MAX_ALLOWED_CONCURRENCY) {
     throw new Error(`maxConcurrency must be an integer from 1 to ${MAX_ALLOWED_CONCURRENCY}`);
+  }
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 5) {
+    throw new Error('maxAttempts must be an integer from 1 to 5');
+  }
+  if (!Number.isSafeInteger(baseBackoffMs) || baseBackoffMs < 100 || baseBackoffMs > 10000) {
+    throw new Error('baseBackoffMs must be an integer from 100 to 10000');
   }
   const results = new Array(urls.length);
   let nextIndex = 0;
@@ -690,7 +730,7 @@ export async function fetchAll(
       hostConcurrency.set(host, hostCount + 1);
 
       try {
-        const content = await fetchUrl(url, { fetchImpl, maxContent, timeout });
+        const content = await fetchUrl(url, { fetchImpl, maxContent, timeout, maxAttempts, baseBackoffMs });
         results[index] = { url, ok: true, content };
       } catch (error) {
         results[index] = { url, ok: false, error: error.message };
@@ -721,9 +761,13 @@ export function buildResearchPrompt(question, fetched) {
       const content = original.slice(0, perSourceBudget);
       remainingChars -= content.length;
       remainingSources -= 1;
+      const markedContent =
+        content.length < original.length
+          ? `<<<SOURCE_START>>>\n${content}\n<<<SOURCE_END>>> [total source-text limit reached; truncated]`
+          : `<<<SOURCE_START>>>\n${content}\n<<<SOURCE_END>>>`;
       return {
         url,
-        content: content.length < original.length ? `${content} [total source-text limit reached; truncated]` : content,
+        content: markedContent,
       };
     });
     return `Research request: ${question}
@@ -771,11 +815,11 @@ export async function main(
     return 0;
   }
 
-  const { values, probeOpenRouterQuota } = parsed;
+  const { values, probeOpenRouterQuota, jsonOutput } = parsed;
   const promptFile = values.get('--prompt-file');
   const urlListFile = values.get('--url-list');
   const outputFile = values.get('--output-file');
-  if (!promptFile || !urlListFile || !outputFile) {
+  if (!jsonOutput && (!promptFile || !urlListFile || !outputFile)) {
     stderr.write(USAGE);
     return 2;
   }
@@ -848,22 +892,57 @@ export async function main(
 
   const researchPrompt = buildResearchPrompt(question, fetched);
   stderr.write('Condensing via eligible free model...\n');
-  const result = await completeImpl(researchPrompt, {
-    maxTokens,
-    checkOpenRouterQuota: probeOpenRouterQuota,
-    onCatalogError: (source, error) =>
-      stderr.write(`${source} free-model catalog unavailable: ${sanitizeErrorMessage(error.message)}\n`),
-    onOpenRouterQuota: ({ used, limit, remaining }) =>
-      stderr.write(
-        `OpenRouter free requests: ${used}/${limit} used, ${remaining} remaining at ${new Date().toISOString()} (server snapshot).\n`
-      ),
-  });
+  let result;
+  let degraded = false;
+  try {
+    result = await completeImpl(researchPrompt, {
+      maxTokens,
+      checkOpenRouterQuota: probeOpenRouterQuota,
+      onCatalogError: (source, error) =>
+        stderr.write(`${source} free-model catalog unavailable: ${sanitizeErrorMessage(error.message)}\n`),
+      onOpenRouterQuota: ({ used, limit, remaining }) =>
+        stderr.write(
+          `OpenRouter free requests: ${used}/${limit} used, ${remaining} remaining at ${new Date().toISOString()} (server snapshot).\n`
+        ),
+    });
+  } catch (error) {
+    stderr.write(`Free model completion failed: ${sanitizeErrorMessage(error.message)}\n`);
+    result = {
+      content: 'Model completion failed; no summary available.',
+      source: 'fallback',
+      model: 'none',
+      finishReason: 'fallback',
+      usage: null,
+      requestCounts: {},
+    };
+    degraded = true;
+  }
 
-  await writeFile(
-    outputFile,
-    `Source: ${result.source}/${result.model}\nFinish reason: ${result.finishReason}\nUsage: ${JSON.stringify(result.usage)}\nRequests attempted (this run): ${JSON.stringify(result.requestCounts)}\n\n${result.content}\n`,
-    'utf8'
-  );
+  const outputText = `Source: ${result.source}/${result.model}\nFinish reason: ${result.finishReason}\nUsage: ${JSON.stringify(result.usage)}\nRequests attempted (this run): ${JSON.stringify(result.requestCounts)}\n\n${result.content}\n`;
+
+  if (jsonOutput) {
+    const jsonResult = {
+      source: result.source,
+      model: result.model,
+      finishReason: result.finishReason,
+      usage: result.usage,
+      requestCounts: result.requestCounts,
+      content: result.content,
+      degraded,
+      promptChars: researchPrompt.length,
+      fetchedCount: okCount,
+      urlsAttempted: urls.length,
+    };
+    stdout.write(JSON.stringify(jsonResult, null, 2) + '\n');
+    return degraded ? 5 : 0;
+  }
+
+  if (Buffer.byteLength(outputText, 'utf8') > MAX_OUTPUT_FILE_BYTES) {
+    stderr.write(`Output report exceeds ${MAX_OUTPUT_FILE_BYTES} byte limit\n`);
+    return 4;
+  }
+
+  await writeFile(outputFile, outputText, 'utf8');
 
   // Write audit log with correlation IDs
   const auditRecord = {
@@ -880,7 +959,7 @@ export async function main(
   await writeFile(`${outputFile}.audit.json`, JSON.stringify(auditRecord, null, 2), 'utf8');
   stderr.write(`Summary written to ${outputFile}; research prompt capped at ${researchPrompt.length} chars\n`);
   stderr.write(`Audit log written to ${outputFile}.audit.json\n`);
-  return 0;
+  return degraded ? 5 : 0;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

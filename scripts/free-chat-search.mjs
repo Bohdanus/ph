@@ -6,6 +6,54 @@ import { pathToFileURL } from 'node:url';
 import { completeWithFreeModel } from './free-model-pool.mjs';
 import { redactSensitiveText, sanitizeErrorMessage } from './lib/secrets.mjs';
 
+/**
+ * @typedef {Object} SearchSession
+ * @property {string} session_id - Unique session identifier
+ * @property {string} title - Session title or truncated ID
+ * @property {string} directory - Workspace directory
+ * @property {string} source - Chat store source ('kilo' | 'codex')
+ * @property {string} updated - ISO-8601 timestamp of last update
+ * @property {string} snippet - Text snippet from matching message
+ */
+
+/**
+ * @typedef {Object} SearchResult
+ * @property {SearchSession[]} results - Matching sessions
+ * @property {string[]} dbPaths - Database paths that were queried
+ */
+
+/**
+ * @typedef {Object} ParsedArgs
+ * @property {string} [rawPrompt] - Inline search query
+ * @property {string} [promptFile] - Path to file containing search query
+ * @property {string} [outputFile] - Path to write results
+ * @property {string} [dbPath] - Override database path
+ * @property {number} maxSessions - Max sessions to search per source
+ * @property {number} maxSummaryTokens - Max tokens for model summary
+ * @property {number} offset - Session offset for pagination
+ * @property {number} [sinceMs] - Milliseconds since epoch for --since filter
+ * @property {string} [since] - Original --since value
+ * @property {string} [directory] - Workspace directory filter
+ * @property {string} source - Search source ('all' | 'kilo' | 'codex')
+ * @property {boolean} verbose - Include diagnostic fields
+ * @property {boolean} noSummarize - Skip model inference
+ * @property {boolean} localOnly - Alias for noSummarize
+ * @property {boolean} probeOpenRouterQuota - Check OpenRouter quota
+ * @property {boolean} help - Show help
+ * @property {boolean} version - Show version
+ * @property {string} [error] - Parse error message
+ */
+
+/**
+ * @typedef {Object} CompleteOptions
+ * @property {typeof fetch} [fetchImpl] - Fetch implementation
+ * @property {string} [openRouterKey] - OpenRouter API key
+ * @property {string} [groqApiKey] - Groq API key
+ * @property {boolean} [groqFreePlan] - Use Groq free plan
+ * @property {boolean} [checkOpenRouterQuota] - Check OpenRouter quota
+ * @property {Function} [onCatalogError] - Catalog error callback
+ */
+
 export { redactSensitiveText };
 
 const MAX_PROMPT_CHARS = 2000;
@@ -29,6 +77,7 @@ const DEFAULT_SUMMARY_TOKENS = 400;
 const SQLITE_TIMEOUT_MS = 15_000;
 const MAX_SQLITE_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_RAW_RESULTS_JSON_CHARS = 8_000;
+const BACKSLASH_CHAR = '\\';
 
 const STOP_WORDS = new Set([
   'the',
@@ -102,6 +151,17 @@ function escapeSqlValue(value) {
   return String(value).replace(/'/g, "''");
 }
 
+/**
+ * Resolves candidate paths for the Kilo SQLite database.
+ * @param {Object} options
+ * @param {string} [options.kiloDbPath] - Explicit database path
+ * @param {string} [options.homeDir] - Home directory override
+ * @param {string} [options.xdgDataHome] - XDG data home override
+ * @param {string} [options.appData] - Windows AppData override
+ * @param {string} [options.localAppData] - Windows LocalAppData override
+ * @param {string} [options.platform] - Platform override
+ * @returns {string[]} Candidate database paths in priority order
+ */
 export function resolveKiloDbCandidates({
   kiloDbPath,
   homeDir,
@@ -128,11 +188,39 @@ export function resolveKiloDbCandidates({
     if (runtimePlatform === 'darwin') {
       candidates.push(`${home}/Library/Application Support/kilo/kilo.db`);
     }
+    // WSL: if running on Linux and /mnt/c exists, add Windows paths under /mnt/c/Users/...
+    if (runtimePlatform === 'linux') {
+      const mntCUsers = '/mnt/c/Users';
+      try {
+        const { statSync } = require('node:fs');
+        if (statSync(mntCUsers).isDirectory()) {
+          const winHome = process.env.USERPROFILE || '';
+          if (winHome) {
+            // Convert C:\Users\name to /mnt/c/Users/name
+            const wslHome = winHome
+              .replace(/^[A-Za-z]:[\\/]/, '/mnt/')
+              .replace(/\\/g, '/')
+              .toLowerCase();
+            candidates.push(`${wslHome}/AppData/Roaming/kilo/kilo.db`);
+            candidates.push(`${wslHome}/AppData/Local/kilo/kilo.db`);
+          }
+        }
+      } catch {
+        // /mnt/c not accessible, ignore
+      }
+    }
   }
   if (candidates.length === 0) candidates.push('/tmp/kilo/kilo.db');
   return candidates;
 }
 
+/**
+ * Finds an existing Kilo database file from candidate paths.
+ * @param {Object} [options] - Options passed to resolveKiloDbCandidates
+ * @param {Object} [deps] - Dependency injections for testing
+ * @param {Function} [deps.statFn] - stat function override
+ * @returns {Promise<string>} Path to existing database or first candidate
+ */
 export async function findExistingDbPath(options = {}, { statFn = stat } = {}) {
   if (options.kiloDbPath) return options.kiloDbPath;
   const candidates = resolveKiloDbCandidates(options);
@@ -147,6 +235,14 @@ export async function findExistingDbPath(options = {}, { statFn = stat } = {}) {
   return candidates[0];
 }
 
+/**
+ * Resolves candidate paths for the Codex/Copilot Chat SQLite database.
+ * @param {Object} options
+ * @param {string} [options.codexDbPath] - Explicit database path
+ * @param {string} [options.homeDir] - Home directory override
+ * @param {string} [options.platform] - Platform override
+ * @returns {string[]} Candidate database paths in priority order
+ */
 export function resolveCodexDbCandidates({ codexDbPath, homeDir, platform: plat } = {}) {
   if (codexDbPath) return [codexDbPath];
   const home = (homeDir ?? process.env.HOME) || process.env.USERPROFILE || '';
@@ -165,6 +261,13 @@ export function resolveCodexDbCandidates({ codexDbPath, homeDir, platform: plat 
   return candidates;
 }
 
+/**
+ * Finds an existing Codex database file from candidate paths.
+ * @param {Object} [options] - Options passed to resolveCodexDbCandidates
+ * @param {Object} [deps] - Dependency injections for testing
+ * @param {Function} [deps.statFn] - stat function override
+ * @returns {Promise<string>} Path to existing database or first candidate
+ */
 export async function findExistingCodexDbPath(options = {}, { statFn = stat } = {}) {
   if (options.codexDbPath) return options.codexDbPath;
   const candidates = resolveCodexDbCandidates(options);
@@ -179,6 +282,17 @@ export async function findExistingCodexDbPath(options = {}, { statFn = stat } = 
   return candidates[0];
 }
 
+/**
+ * Builds a SQL query for searching Kilo chat history.
+ * @param {string[]} terms - Search terms
+ * @param {Object} options
+ * @param {number} [options.maxMatches] - Max total matches
+ * @param {number} [options.maxSessions] - Max sessions to search
+ * @param {number} [options.offset] - Session offset
+ * @param {number} [options.sinceMs] - Filter sessions updated after this timestamp
+ * @param {string} [options.directory] - Workspace directory filter
+ * @returns {string|null} SQL query or null if no valid terms
+ */
 export function buildSearchQuery(
   terms,
   { maxMatches = MAX_MATCHES_PER_QUERY, maxSessions = DEFAULT_SEARCH_SESSIONS, offset = 0, sinceMs, directory } = {}
@@ -228,6 +342,17 @@ LIMIT ${limit};
   `.trim();
 }
 
+/**
+ * Builds a SQL query for searching Codex/Copilot chat history.
+ * @param {string[]} terms - Search terms
+ * @param {Object} options
+ * @param {number} [options.maxMatches] - Max total matches
+ * @param {number} [options.maxSessions] - Max sessions to search
+ * @param {number} [options.offset] - Session offset
+ * @param {number} [options.sinceMs] - Filter sessions updated after this timestamp
+ * @param {string} [options.directory] - Workspace directory filter
+ * @returns {string|null} SQL query or null if no valid terms
+ */
 export function buildCodexSearchQuery(
   terms,
   { maxMatches = MAX_MATCHES_PER_QUERY, maxSessions = DEFAULT_SEARCH_SESSIONS, offset = 0, sinceMs, directory } = {}
@@ -293,7 +418,7 @@ function buildSessionScope(updatedColumn, directoryColumn, { sinceMs, directory,
     }
     const escaped = escapeSqlValue(normalized);
     const escapedPrefix = escapeSqlValue(normalized.endsWith('/') ? normalized : `${normalized}/`);
-    const normalizedDirectory = `replace(coalesce(${directoryColumn}, ''), char(92), '/')`;
+    const normalizedDirectory = `replace(coalesce(${directoryColumn}, ''), '${BACKSLASH_CHAR}', '/')`;
     conditions.push(
       `(${normalizedDirectory} = '${escaped}' OR substr(${normalizedDirectory}, 1, length('${escapedPrefix}')) = '${escapedPrefix}')`
     );
@@ -301,18 +426,34 @@ function buildSessionScope(updatedColumn, directoryColumn, { sinceMs, directory,
   return conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
 }
 
+/**
+ * Parses a --since value into milliseconds since epoch.
+ * Accepts YYYY-MM-DD (calendar date) or ISO-8601 timestamp (timezone optional, treated as UTC if omitted).
+ * @param {string} value - Date or timestamp string
+ * @returns {number} Milliseconds since epoch
+ * @throws {Error} If value is not a valid date/timestamp
+ */
 export function parseSince(value) {
   const datePart = value.slice(0, 10);
   const isCalendarDate = /^\d{4}-\d{2}-\d{2}$/.test(value);
-  const isTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value);
-  if (!isCalendarDate && !isTimestamp) {
-    throw new Error('--since must be YYYY-MM-DD or an ISO-8601 timestamp with timezone');
+  const isTimestampWithTz = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value);
+  const isTimestampNoTz = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)$/.test(value);
+  if (!isCalendarDate && !isTimestampWithTz && !isTimestampNoTz) {
+    throw new Error(
+      '--since must be YYYY-MM-DD or an ISO-8601 timestamp (timezone optional, treated as UTC if omitted)'
+    );
   }
   const calendarDate = new Date(`${datePart}T00:00:00.000Z`);
   if (!Number.isFinite(calendarDate.getTime()) || calendarDate.toISOString().slice(0, 10) !== datePart) {
     throw new Error('--since must be a valid calendar date');
   }
-  const date = new Date(value);
+  let date;
+  if (isTimestampNoTz) {
+    // Treat timestamps without timezone as UTC
+    date = new Date(`${value}Z`);
+  } else {
+    date = new Date(value);
+  }
   if (!Number.isFinite(date.getTime())) throw new Error('--since must be a valid ISO-8601 date or timestamp');
   return date.getTime();
 }
@@ -521,6 +662,20 @@ export async function queryKiloDb(
   throw lastError;
 }
 
+/**
+ * Searches a single chat history database (Kilo or Codex).
+ * @param {string} dbPath - Path to SQLite database
+ * @param {string[]} terms - Search terms
+ * @param {Object} options
+ * @param {Function} [options.queryDb] - Query function override
+ * @param {number} [options.maxMatches] - Max total matches
+ * @param {number} [options.maxSessions] - Max sessions to search
+ * @param {number} [options.offset] - Session offset
+ * @param {number} [options.sinceMs] - Filter sessions updated after this timestamp
+ * @param {string} [options.directory] - Workspace directory filter
+ * @param {string} [options.source] - Source identifier ('kilo' | 'codex')
+ * @returns {Promise<SearchSession[]>} Matching sessions
+ */
 export async function searchChatHistory(
   dbPath,
   terms,
@@ -543,6 +698,24 @@ export async function searchChatHistory(
   return deduplicateSessions(rows, { source });
 }
 
+/**
+ * Searches all available chat history sources (Kilo and Codex).
+ * @param {string[]} terms - Search terms
+ * @param {Object} options
+ * @param {Function} [options.queryDb] - Query function override
+ * @param {Function} [options.statFn] - stat function override
+ * @param {string} [options.homeDir] - Home directory override
+ * @param {string} [options.xdgDataHome] - XDG data home override
+ * @param {string} [options.platform] - Platform override
+ * @param {number} [options.maxMatches] - Max total matches per source
+ * @param {number} [options.maxSessions] - Max sessions to search per source
+ * @param {number} [options.offset] - Session offset
+ * @param {number} [options.sinceMs] - Filter sessions updated after this timestamp
+ * @param {string} [options.directory] - Workspace directory filter
+ * @param {Function} [options.onInfo] - Info callback
+ * @param {Object} [options.stderr] - stderr stream for errors
+ * @returns {Promise<SearchResult>} Combined results and queried DB paths
+ */
 export async function searchAllSources(
   terms,
   {
@@ -575,16 +748,21 @@ export async function searchAllSources(
     kiloDbExists = false;
   }
   if (kiloDbExists) {
-    const sql = buildSearchQuery(terms, { maxMatches, maxSessions, offset, sinceMs, directory });
-    if (sql) {
-      try {
-        const rows = await queryDb(kiloDbPath, sql);
-        allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_KILO }));
-        successfulQueries += 1;
-      } catch (error) {
-        queryErrors.push(error);
-        stderr.write?.(`Kilo DB query failed: ${sanitizeErrorMessage(error.message)}\n`);
-      }
+    try {
+      const sessions = await searchChatHistory(kiloDbPath, terms, {
+        queryDb,
+        maxMatches,
+        maxSessions,
+        offset,
+        sinceMs,
+        directory,
+        source: CHAT_STORE_KILO,
+      });
+      allResults.push(...sessions);
+      successfulQueries += 1;
+    } catch (error) {
+      queryErrors.push(error);
+      stderr.write?.(`Kilo DB query failed: ${sanitizeErrorMessage(error.message)}\n`);
     }
   } else {
     onInfo(`Skipping Kilo source: DB not found at ${kiloDbPath}`);
@@ -600,16 +778,21 @@ export async function searchAllSources(
     codexDbExists = false;
   }
   if (codexDbExists) {
-    const sql = buildCodexSearchQuery(terms, { maxMatches, maxSessions, offset, sinceMs, directory });
-    if (sql) {
-      try {
-        const rows = await queryDb(codexDbPath, sql);
-        allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_CODEX }));
-        successfulQueries += 1;
-      } catch (error) {
-        queryErrors.push(error);
-        stderr.write?.(`Codex DB query failed: ${sanitizeErrorMessage(error.message)}\n`);
-      }
+    try {
+      const sessions = await searchChatHistory(codexDbPath, terms, {
+        queryDb,
+        maxMatches,
+        maxSessions,
+        offset,
+        sinceMs,
+        directory,
+        source: CHAT_STORE_CODEX,
+      });
+      allResults.push(...sessions);
+      successfulQueries += 1;
+    } catch (error) {
+      queryErrors.push(error);
+      stderr.write?.(`Codex DB query failed: ${sanitizeErrorMessage(error.message)}\n`);
     }
   } else {
     onInfo(`Skipping Codex source: DB not found at ${codexDbPath}`);
@@ -641,6 +824,19 @@ export function fallbackSummary(sessions, terms) {
   return lines.join('\n');
 }
 
+/**
+ * Summarizes search results using a free model.
+ * @param {string} prompt - Original search query
+ * @param {SearchSession[]} sessions - Matching sessions
+ * @param {Object} options
+ * @param {Function} [options.completeImpl] - Completion function override
+ * @param {number} [options.maxTokens] - Max tokens for summary
+ * @param {Function} [options.onError] - Error callback
+ * @param {Function} [options.onCatalogError] - Catalog error callback
+ * @param {string[]} [options.terms] - Search terms used
+ * @param {CompleteOptions} [...completeOpts] - Additional completion options
+ * @returns {Promise<string>} Summary text or fallback summary
+ */
 export async function summarizeSearchResults(
   prompt,
   sessions,
@@ -663,9 +859,12 @@ export async function summarizeSearchResults(
   }));
   let included = candidates;
   let snippets;
+  const maxPromptTokens = maxTokens * 3;
   do {
     snippets = JSON.stringify({ results: included, omitted: candidates.length - included.length }, null, 2);
-    if (snippets.length <= MAX_RAW_RESULTS_JSON_CHARS || included.length === 0) break;
+    // Rough token estimation: 1 token ≈ 4 chars. Reserve space for the prompt template and completion.
+    const estimatedTokens = Math.ceil(snippets.length / 4);
+    if (estimatedTokens <= maxPromptTokens || included.length === 0) break;
     included = included.slice(0, -1);
   } while (true);
   const filled = SUMMARIZE_PROMPT.replace('{PROMPT}', sanitizedQuery.slice(0, MAX_PROMPT_CHARS)).replace(
@@ -696,7 +895,13 @@ const VALUE_FLAGS = new Set([
   '--directory',
   '--offset',
 ]);
+const VERSION = '1.0.0';
 
+/**
+ * Parses command-line arguments.
+ * @param {string[]} args - Command-line arguments (process.argv.slice(2))
+ * @returns {ParsedArgs} Parsed arguments or error object
+ */
 export function parseArgs(args) {
   const values = new Map();
   let rawPrompt = null;
@@ -729,7 +934,8 @@ export function parseArgs(args) {
       arg === '--help' ||
       arg === '-h' ||
       arg === '--verbose' ||
-      arg === '-v'
+      arg === '-v' ||
+      arg === '--version'
     ) {
       values.set(arg, 'true');
     } else {
@@ -739,6 +945,9 @@ export function parseArgs(args) {
   if (errors.length > 0) return { error: errors.join('\n') };
   if (values.get('--help') === 'true' || values.get('-h') === 'true') {
     return { help: true };
+  }
+  if (values.get('--version') === 'true') {
+    return { version: true };
   }
 
   const promptFile = values.get('--prompt-file') || null;
@@ -829,6 +1038,7 @@ function usage() {
     '  --no-summarize           Skip model inference; return raw JSON results\n' +
     '  --local-only             Alias for --no-summarize\n' +
     '  --probe-openrouter-quota Check OpenRouter daily free counter before routing\n' +
+    '  --version                Show version and exit\n' +
     '\n' +
     'Discovers the Kilo SQLite DB (kilo db path or ~/.local/share/kilo/kilo.db),\n' +
     'extracts search terms via a free model (with fallback), queries session/message parts,\n' +
@@ -895,6 +1105,10 @@ export async function main(
   const parsed = parseArgs(args);
   if (parsed.help) {
     stdout.write(usage() + '\n');
+    return 0;
+  }
+  if (parsed.version) {
+    stdout.write(`free-chat-search v${VERSION}\n`);
     return 0;
   }
   if (parsed.error) {
