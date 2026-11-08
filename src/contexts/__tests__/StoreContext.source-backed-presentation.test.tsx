@@ -27,7 +27,7 @@ function added(kind: 'image' | 'blank', id = 'added', order = 1): Layer {
   const pos = { x: 22, y: 28, width: 24, height: 18 };
   const bitmap = kind === 'image' ? createMockImageBitmap(pos.width, pos.height) : null;
   return {
-    ...createMockLayer({ id, pos, order, name: `Layer ${order + 1}` }),
+    ...createMockLayer({ id, pos, order, name: `${kind === 'image' ? 'Image' : 'Blank'} ${order}` }),
     bitmap,
     source: bitmap
       ? { kind: 'image', bitmap, pos, isBedrock: false }
@@ -242,7 +242,14 @@ describe('source-backed create presentation', () => {
       pending.resolve(composite);
       await pending.promise;
     });
-    expect(probe.store().renderSelector.source).toBe('durable');
+    const store = probe.store();
+    const projectedLayerIds = Object.keys(store.durableRenderProjection?.layers ?? {})
+      .sort()
+      .join(',');
+    expect(
+      store.renderSelector.source,
+      `durableStatus=${store.durableStatus}; projectedLayerIds=${projectedLayerIds}`
+    ).toBe('durable');
     expect(Object.keys(probe.store().durableRenderProjection!.layers).sort()).toEqual(['added', 'base']);
     expect(probe.store().layers.added.source).toBe(layer.source);
     expect(composite.release).toHaveBeenCalledTimes(1);

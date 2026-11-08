@@ -16,6 +16,7 @@ import {
   fieldOf,
   luminanceOf,
   pixelAt,
+  bitmapFrom,
   stubPixelOffscreenCanvas,
   type PixelCanvas,
 } from '../../../__tests__/fixtures/pixelCanvas.ts';
@@ -30,10 +31,12 @@ const storeState = vi.hoisted(
   } => ({ color: '#ff0000', layers: {}, activeLayerId: null })
 );
 
-const toolState = vi.hoisted((): { toolArgs: Record<string, unknown>; patches: unknown[] } => ({
-  toolArgs: {},
-  patches: [],
-}));
+const toolState = vi.hoisted(
+  (): { toolArgs: Record<string, unknown>; patches: Array<{ toolName: string; patch: Record<string, unknown> }> } => ({
+    toolArgs: {},
+    patches: [],
+  })
+);
 
 /** The `updateLayerByTool` calls the area made, each with the canvas the real processor returned. */
 const committed = vi.hoisted((): Array<{ toolArgs: Record<string, unknown>; canvas: PixelCanvas | null }> => []);
@@ -79,7 +82,7 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs: toolState.toolArgs,
     patchToolArgs: (toolName: string, patch: unknown) => {
-      toolState.patches.push({ toolName, patch });
+      toolState.patches.push({ toolName, patch: patch as Record<string, unknown> });
       if (toolName === 'color-replacement' && patch && typeof patch === 'object') {
         toolState.toolArgs = { ...toolState.toolArgs, ...(patch as Record<string, unknown>) };
       }
@@ -309,7 +312,7 @@ describe('ColorReplacementToolArea', () => {
     expect(r).toBeGreaterThan(b + 30);
   });
 
-  it('commits the points in the ACTIVE LAYER’s own coordinates', () => {
+  it("commits the points in the ACTIVE LAYER's own coordinates", () => {
     const layer = layerWith([200, 200, 10]);
     layer.pos = { x: 2, y: 3, width: SIZE, height: SIZE };
     setLayer(layer);
@@ -478,5 +481,518 @@ describe('ColorReplacementToolArea', () => {
 
     expect(askingClass).not.toContain('cursor-crosshair');
     expect(armedClass).toContain('cursor-crosshair');
+  });
+
+  // === NEW TESTS FOR MISSING COVERAGE ===
+
+  describe('handlePointerMove during replace gesture', () => {
+    it('accumulates points during a replace drag', () => {
+      setLayer(layerWith([200, 200, 10]));
+      argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 }, lineWidth: 4, smoothness: 0 });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      // First press starts the replace gesture
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      // Move accumulates points
+      fireEvent.pointerMove(area, { clientX: 5, clientY: 4 });
+      fireEvent.pointerMove(area, { clientX: 6, clientY: 4 });
+      // Up commits
+      fireEvent.pointerUp(area, { clientX: 6, clientY: 4 });
+
+      expect(committed).toHaveLength(1);
+      expect(committed[0].toolArgs.points).toEqual([
+        { x: 4, y: 4 },
+        { x: 5, y: 4 },
+        { x: 6, y: 4 },
+      ]);
+    });
+
+    it('does nothing when gestureMode is not replace', () => {
+      setLayer(layerWith([200, 200, 10]));
+      argsWith({ sampleColor: null }); // No sample = idle mode
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerMove(area, { clientX: 5, clientY: 4 });
+
+      // Should not have committed anything, just sampled
+      expect(committed).toHaveLength(0);
+    });
+
+    it('does nothing when sampleColor is not set', () => {
+      setLayer(layerWith([200, 200, 10]));
+      argsWith({ sampleColor: undefined });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerMove(area, { clientX: 5, clientY: 4 });
+
+      expect(committed).toHaveLength(0);
+    });
+
+    it('does nothing when not mouse down', () => {
+      setLayer(layerWith([200, 200, 10]));
+      argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 } });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      // Move without prior down
+      fireEvent.pointerMove(area, { clientX: 5, clientY: 4 });
+
+      expect(committed).toHaveLength(0);
+      expect(toolState.patches).toEqual([]);
+    });
+  });
+
+  describe('handlePointerUp edge cases', () => {
+    it('returns early when alpha <= 0', () => {
+      setLayer(layerWith([200, 200, 10]));
+      argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 }, alpha: 0 });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerUp(area, { clientX: 4, clientY: 4 });
+
+      expect(committed).toHaveLength(0);
+    });
+
+    it('returns early when activeLayer is null', () => {
+      setLayer(layerWith([200, 200, 10]));
+      argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 } });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      // Simulate layer being removed during gesture
+      storeState.activeLayerId = null;
+      fireEvent.pointerUp(area, { clientX: 4, clientY: 4 });
+
+      expect(committed).toHaveLength(0);
+    });
+
+    it('returns early when layer has no bitmap', () => {
+      const layer = layerWith([200, 200, 10]);
+      layer.tmpCanvas = null;
+      layer.bitmap = null;
+      setLayer(layer);
+      argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 } });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerUp(area, { clientX: 4, clientY: 4 });
+
+      expect(committed).toHaveLength(0);
+    });
+
+    it('returns early when hasReplacementPlan returns false (staged is null)', () => {
+      // Over-budget layer causes staging to fail
+      const allocations: Array<{ width: number; height: number }> = [];
+      class AllocationCountingCanvas {
+        constructor(width: number, height: number) {
+          allocations.push({ width, height });
+        }
+        getContext() {
+          return { drawImage: vi.fn(), getImageData: vi.fn(() => null) };
+        }
+      }
+      vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+      const layer = layerWith([200, 200, 10]);
+      layer.pos = { x: 0, y: 0, width: 3000, height: 3000 };
+      if (!layer.bitmap) throw new Error('Expected a test bitmap');
+      Object.assign(layer.bitmap, { width: 3000, height: 3000 });
+      setLayer(layer);
+      argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 } });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerUp(area, { clientX: 4, clientY: 4 });
+
+      expect(committed).toHaveLength(0);
+    });
+
+    it('returns early when hasReplacementPlan returns false (imageData is null)', () => {
+      class ThrowingReadbackCanvas {
+        width: number;
+        height: number;
+        constructor(width: number, height: number) {
+          this.width = width;
+          this.height = height;
+        }
+        getContext() {
+          return { drawImage: vi.fn(), getImageData: vi.fn(() => null) };
+        }
+      }
+      vi.stubGlobal('OffscreenCanvas', ThrowingReadbackCanvas);
+      setLayer(layerWith([200, 200, 10]));
+      argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 } });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerUp(area, { clientX: 4, clientY: 4 });
+
+      expect(committed).toHaveLength(0);
+    });
+
+    it('adds final point if different from last move', () => {
+      setLayer(layerWith([200, 200, 10]));
+      argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 }, lineWidth: 4 });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerMove(area, { clientX: 5, clientY: 4 });
+      // Up at a different position
+      fireEvent.pointerUp(area, { clientX: 6, clientY: 5 });
+
+      expect(committed).toHaveLength(1);
+      expect(committed[0].toolArgs.points).toEqual([
+        { x: 4, y: 4 },
+        { x: 5, y: 4 },
+        { x: 6, y: 5 },
+      ]);
+    });
+
+    it('does not add duplicate final point when same as last move', () => {
+      setLayer(layerWith([200, 200, 10]));
+      argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 }, lineWidth: 4 });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerMove(area, { clientX: 5, clientY: 4 });
+      // Up at SAME position as last move
+      fireEvent.pointerUp(area, { clientX: 5, clientY: 4 });
+
+      expect(committed).toHaveLength(1);
+      const points = committed[0].toolArgs.points as { x: number; y: number }[];
+      // Should not duplicate the last point
+      const uniquePoints = new Set(points.map((p) => `${p.x},${p.y}`));
+      expect(uniquePoints.size).toBe(points.length);
+    });
+  });
+
+  describe('cursor styles', () => {
+    it('uses cursor-cell when no sampleColor', () => {
+      setLayer(layerWith([200, 200, 10]));
+      argsWith({ sampleColor: null });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+      expect(area).toHaveClass('cursor-cell');
+      expect(area).not.toHaveClass('cursor-crosshair');
+    });
+
+    it('uses cursor-crosshair when sampleColor is set', () => {
+      setLayer(layerWith([200, 200, 10]));
+      argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 } });
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+      expect(area).toHaveClass('cursor-crosshair');
+      expect(area).not.toHaveClass('cursor-cell');
+    });
+  });
+
+  describe('toolName filtering', () => {
+    it('does nothing when toolName is not color-replacement', () => {
+      setLayer(layerWith([200, 200, 10]));
+      toolState.toolArgs = { ...defaultSettings['color-replacement'], toolName: 'brush', sampleColor: null };
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerUp(area, { clientX: 4, clientY: 4 });
+
+      expect(committed).toHaveLength(0);
+      expect(toolState.patches).toEqual([]);
+    });
+  });
+
+  describe('activeLayer and rasterBounds', () => {
+    it('returns early when no active layer', () => {
+      setLayer(null);
+      toolState.toolArgs = { ...defaultSettings['color-replacement'], sampleColor: { r: 200, g: 200, b: 10, a: 255 } };
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerUp(area, { clientX: 4, clientY: 4 });
+
+      expect(committed).toHaveLength(0);
+      expect(toolState.patches).toEqual([]);
+    });
+
+    it('uses tmpCanvas when available for sampling', () => {
+      const layer = layerWith([200, 200, 10]);
+      layer.tmpCanvas = bitmapFrom(fieldOf(SIZE, [100, 100, 100]));
+      setLayer(layer);
+      toolState.toolArgs = { ...defaultSettings['color-replacement'], sampleColor: null };
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerUp(area, { clientX: 4, clientY: 4 });
+
+      expect(toolState.patches.length).toBe(1);
+      const patch = toolState.patches[0].patch as Record<string, unknown>;
+      expect(patch).toHaveProperty('sampleColor');
+    });
+
+    it('falls back to bitmap when tmpCanvas is null', () => {
+      const layer = layerWith([200, 200, 10]);
+      layer.tmpCanvas = null;
+      setLayer(layer);
+      toolState.toolArgs = { ...defaultSettings['color-replacement'], sampleColor: null };
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerUp(area, { clientX: 4, clientY: 4 });
+
+      expect(toolState.patches.length).toBe(1);
+    });
+
+    it('errors when layer has no bitmap at all', () => {
+      const layer = layerWith([200, 200, 10]);
+      layer.tmpCanvas = null;
+      layer.bitmap = null;
+      setLayer(layer);
+      toolState.toolArgs = { ...defaultSettings['color-replacement'], sampleColor: null };
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+      const area = container.firstElementChild as HTMLElement;
+
+      fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerUp(area, { clientX: 4, clientY: 4 });
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        COLOR_REPLACEMENT_NO_LAYER_PIXELS,
+        expect.stringContaining('no bitmap to sample')
+      );
+    });
+  });
+
+  describe('rasterBounds and toLayerPoint', () => {
+    it('uses processorPresentationBounds when layer has pos', () => {
+      const layer = layerWith([200, 200, 10]);
+      layer.pos = { x: 2, y: 3, width: SIZE, height: SIZE };
+      setLayer(layer);
+      toolState.toolArgs = {
+        ...defaultSettings['color-replacement'],
+        sampleColor: { r: 200, g: 200, b: 10, a: 255 },
+        lineWidth: 2,
+        smoothness: 0,
+      };
+      const { container } = render(<ColorReplacementToolArea className="area" />);
+
+      drag(container, { x: 4, y: 4 });
+
+      expect(committed).toHaveLength(1);
+      // Document point (4,4) minus layer pos (2,3) = local (2,1)
+      expect(committed[0].toolArgs.points).toEqual([
+        { x: 2, y: 1 },
+        { x: 2, y: 1 },
+      ]);
+    });
+  });
+});
+
+describe('stageLayerPresentation', () => {
+  it('returns null and logs error when staging fails', () => {
+    const allocations: Array<{ width: number; height: number }> = [];
+    class AllocationCountingCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+      }
+      getContext() {
+        return { drawImage: vi.fn(), getImageData: vi.fn(() => null) };
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+    const layer = layerWith([200, 200, 10]);
+    layer.pos = { x: 0, y: 0, width: 3000, height: 3000 };
+    if (!layer.bitmap) throw new Error('Expected a test bitmap');
+    Object.assign(layer.bitmap, { width: 3000, height: 3000 });
+    setLayer(layer);
+    toolState.toolArgs = { ...defaultSettings['color-replacement'], sampleColor: { r: 200, g: 200, b: 10, a: 255 } };
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+
+    drag(container, { x: 4, y: 4 });
+
+    expect(allocations).toEqual([]);
+    expect(committed).toHaveLength(0);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      COLOR_REPLACEMENT_PRESENTATION_UNAVAILABLE,
+      expect.any(String),
+      expect.objectContaining({ message: expect.stringMatching(/pixel staging budget/) })
+    );
+  });
+});
+
+describe('readLayerImageData and samplePixelAt', () => {
+  it('turns a thrown pixel readback into a loud no-sample refusal', () => {
+    class ThrowingReadbackCanvas {
+      width: number;
+      height: number;
+
+      constructor(width: number, height: number) {
+        this.width = width;
+        this.height = height;
+      }
+
+      getContext() {
+        return {
+          drawImage: () => {
+            throw new DOMException('Pixel access was denied', 'SecurityError');
+          },
+          getImageData: vi.fn(),
+        };
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', ThrowingReadbackCanvas);
+    setLayer(layerWith([200, 200, 10]));
+    toolState.toolArgs = { ...defaultSettings['color-replacement'], sampleColor: null };
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+
+    drag(container, { x: 4, y: 4 });
+
+    expect(toolState.patches).toEqual([]);
+    expect(committed).toHaveLength(0);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      COLOR_REPLACEMENT_READBACK_UNAVAILABLE,
+      expect.stringContaining('cannot read')
+    );
+  });
+
+  it('refuses to sample a fully transparent pixel', () => {
+    const layer = layerWith([200, 200, 10]);
+    (layer.bitmap as unknown as { pixels: Uint8ClampedArray }).pixels.fill(0);
+    setLayer(layer);
+    toolState.toolArgs = { ...defaultSettings['color-replacement'], sampleColor: null };
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+
+    drag(container, { x: 4, y: 4 });
+
+    expect(toolState.patches).toEqual([]);
+    expect(committed).toHaveLength(0);
+  });
+
+  it('returns false from hasReplacementPlan when createColorReplacementPlan returns null', () => {
+    // Sample is blue; layer is magenta; tolerance 1 means nothing matches
+    setLayer(layerWith([255, 0, 255]));
+    toolState.toolArgs = {
+      ...defaultSettings['color-replacement'],
+      sampleColor: { r: 200, g: 200, b: 10, a: 255 },
+      lineWidth: 4,
+      tolerance: 1,
+      smoothness: 0,
+    };
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+
+    drag(container, { x: 4, y: 4 });
+
+    expect(committed).toHaveLength(0);
+  });
+
+  it('returns false from hasReplacementPlan when alpha <= 0', () => {
+    const allocations: Array<{ width: number; height: number }> = [];
+    class AllocationCountingCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+    setLayer(layerWith([200, 200, 10]));
+    toolState.toolArgs = {
+      ...defaultSettings['color-replacement'],
+      sampleColor: { r: 200, g: 200, b: 10, a: 255 },
+      alpha: 0,
+    };
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+
+    drag(container, { x: 4, y: 4 });
+
+    expect(allocations).toEqual([]);
+    expect(committed).toHaveLength(0);
+  });
+});
+
+describe('gestureModeRef and pointsRef', () => {
+  it('starts in idle mode and transitions to sample on click without sampleColor', () => {
+    setLayer(layerWith([200, 200, 10]));
+    toolState.toolArgs = { ...defaultSettings['color-replacement'], sampleColor: null };
+    const { container, rerender } = render(<ColorReplacementToolArea className="area" />);
+    const area = container.firstElementChild as HTMLElement;
+
+    fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+    rerender(<ColorReplacementToolArea className="area" />);
+    fireEvent.pointerMove(area, { clientX: 6, clientY: 4 });
+    fireEvent.pointerUp(area, { clientX: 6, clientY: 4 });
+
+    expect(toolState.patches).toEqual([
+      { toolName: 'color-replacement', patch: { sampleColor: { r: 200, g: 200, b: 10, a: 255 } } },
+    ]);
+    expect(committed).toHaveLength(0);
+  });
+
+  it('transitions to replace mode when sampleColor is already set', () => {
+    setLayer(layerWith([200, 200, 10]));
+    toolState.toolArgs = {
+      ...defaultSettings['color-replacement'],
+      sampleColor: { r: 200, g: 200, b: 10, a: 255 },
+      lineWidth: 4,
+      smoothness: 0,
+    };
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+    const area = container.firstElementChild as HTMLElement;
+
+    fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+    fireEvent.pointerMove(area, { clientX: 5, clientY: 4 });
+    fireEvent.pointerUp(area, { clientX: 6, clientY: 4 });
+
+    expect(committed).toHaveLength(1);
+  });
+
+  it('does nothing when gestureMode is not replace', () => {
+    setLayer(layerWith([200, 200, 10]));
+    toolState.toolArgs = { ...defaultSettings['color-replacement'], sampleColor: null };
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+    const area = container.firstElementChild as HTMLElement;
+
+    fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+    fireEvent.pointerMove(area, { clientX: 5, clientY: 4 });
+
+    expect(committed).toHaveLength(0);
+  });
+
+  it('does nothing when sampleColor is not set', () => {
+    setLayer(layerWith([200, 200, 10]));
+    toolState.toolArgs = { ...defaultSettings['color-replacement'], sampleColor: undefined };
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+    const area = container.firstElementChild as HTMLElement;
+
+    fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+    fireEvent.pointerMove(area, { clientX: 5, clientY: 4 });
+
+    expect(committed).toHaveLength(0);
+  });
+
+  it('does nothing when not mouse down', () => {
+    setLayer(layerWith([200, 200, 10]));
+    toolState.toolArgs = { ...defaultSettings['color-replacement'], sampleColor: { r: 200, g: 200, b: 10, a: 255 } };
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+    const area = container.firstElementChild as HTMLElement;
+
+    fireEvent.pointerMove(area, { clientX: 5, clientY: 4 });
+
+    expect(committed).toHaveLength(0);
+    expect(toolState.patches).toEqual([]);
   });
 });

@@ -1,3 +1,4 @@
+import { isEqual } from 'lodash-es';
 import type { DocumentFrame } from './document-frame.ts';
 import { requireVisibleLayerCoverage } from './durable-compositor.ts';
 import type { MaterializedLayer } from './materialization.ts';
@@ -24,6 +25,56 @@ export type DurableRenderProjectionInput = Readonly<{
   status: DurableRenderProjection['status'];
   materializedLayers?: Readonly<Record<string, MaterializedLayer>>;
 }>;
+
+/**
+ * The current durable presentation/export adapter is approved only when a layer's
+ * source, operations, logical metadata and materialized bounds match the legacy
+ * renderer contract. Retained operations need separate parity proof before admission.
+ */
+export function durableLayerPresentationMismatch(
+  replayLayer: DurableReplayResult['layers'][string],
+  existing: Layer,
+  bounds: Layer['pos']
+): string | null {
+  const { snapshot } = replayLayer;
+  const sourceSupported =
+    snapshot.source.kind === 'raster' || snapshot.source.kind === 'blank' || snapshot.source.kind === 'vector';
+  if (!sourceSupported) return `source kind ${snapshot.source.kind} is unsupported`;
+  if (replayLayer.operations.length > 0) {
+    return `durable layer operations are not pixel-parity approved (${replayLayer.operations
+      .map(({ kind }) => kind)
+      .join(', ')})`;
+  }
+  if (
+    !isEqual(
+      {
+        id: snapshot.id,
+        name: snapshot.name,
+        isBedrock: snapshot.isBedrock,
+        visible: snapshot.visible,
+        opacity: snapshot.opacity,
+        locked: snapshot.locked,
+        blendMode: snapshot.blendMode,
+        order: snapshot.order,
+        pos: snapshot.pos,
+      },
+      {
+        id: existing.id,
+        name: existing.name,
+        isBedrock: existing.isBedrock,
+        visible: existing.visible,
+        opacity: existing.opacity,
+        locked: existing.locked,
+        blendMode: existing.blendMode,
+        order: existing.order,
+        pos: existing.pos,
+      }
+    )
+  ) {
+    return 'durable layer metadata differs from the legacy layer record';
+  }
+  return isEqual(bounds, existing.pos) ? null : 'materialized bounds differ from the untransformed layer position';
+}
 
 function runtimeLayer(
   snapshot: DurableReplayResult['layers'][string]['snapshot'],

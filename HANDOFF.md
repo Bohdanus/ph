@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 124-138, 140-142, 144-145, 147, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 219-220, 222, 224-227, 229-232 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 124-138, 140-142, 144-145, 147-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 219-220, 222, 224-227, 229-232 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -102,20 +102,26 @@ affine on a 45%-opacity blank, and one each on vector, paint, and point text, at
 and after each frame transition. The retained-affine raster
 fixture checks two transformed layers through two successive non-quarter frame transforms
 with fractional origins and extents, including composite parity and exact per-layer bounds. Tight
-per-layer comparisons allow at most two tight-bitmap alpha-boundary pixels with identical RGB
-values. The transparent/one-alpha case also needs adjacent same-color samples in both rasters.
-Frame comparisons allow at most two partial-alpha boundary pixels. Both limits are separate from
-the byte-identical composites and frame-only control.
+per-layer and frame comparisons now require exact pixel equality, including alpha-boundary pixels.
+The transparent/one-alpha case also needs adjacent same-color samples in both rasters. These
+assertions are separate from the byte-identical composites and frame-only control.
 A second fixture applies a retained affine to a bold-italic serif
 paragraph text layer through a two-frame sequence, with exact per-layer
 comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
 combinations; other retained-affine operation combinations and angles, blank opacity variants, other
 text styling/rotation, and exact fractional bounds across the wider source matrix remain unproven.
 The three-transition mixed-source fixture pins composite pixels byte-for-byte after every frame
-transition. Do not infer exact per-layer or export parity from that gate: a separate transformed
-raster with layer opacity 0.58 and `multiply` blend mode had 146 differing bytes in its isolated
-materialized-layer comparison while its legacy and durable composites matched exactly. Keep
-per-layer and export parity open for non-default layer opacity and blend combinations.
+transition. Do not infer exact per-layer or export parity from that gate. A separate transformed
+raster with layer opacity 0.58 and `multiply` blend mode has exact raw materialization and direct
+composite parity. Its normal admission check refuses retained operations, so the product continues
+to use legacy rendering and export. A local Chrome diagnostic that manually invokes the refused
+runtime/export adapters records 42 differing channel bytes at the affine cursor and 46 after the
+fractional frame in runtime, export-canvas, and decoded PNG pixels. PSD has zero composite/layer
+differences at the affine cursor; after the fractional frame, the composite differs by 8 bytes, the
+background layer by 7, and the foreground layer by zero. These refused-adapter results are not proof
+of a current product-output defect; their cause remains unknown. The earlier 146-byte isolated-layer
+comparison over transparency is not a valid blend-mode oracle. Keep retained-operation admission
+closed and follow the isolation steps in `docs/HISTORY-MIGRATION-NEXT.md` before changing the gate.
 Do not add `SET_DOCUMENT_FRAME_ACTION` to background
 presentation until the full frame gate is explicit.
 The UI test intentionally continues to observe legacy presentation on commit and
@@ -140,15 +146,15 @@ Windows had exact 800x600 preview/commit backing pixels, while the 974x583 CSS s
 at 834 pixels by at most one channel value. Keep the exact backing-pixel assertion as the document
 gate and do not treat screenshot-resampling deltas as document-raster differences.
 These are preview-interleaving and rollback proofs; they do not move previews to durable authority or permit removal of legacy logical replay. The
-retained-affine/frame differentials now establish exact layer bounds and composite parity for two
-raster layers across successive fractional frame transforms, with the bounded identical-RGB
-alpha-boundary exception in per-layer tight bitmaps, and exact per-layer bounds and pixel parity for
-a styled paragraph-text layer across two frame transforms. A three-transition mixed-source
+retained-affine/frame differentials establish exact layer bounds, tight pixels, and composite parity
+for two raster layers across successive fractional frame transforms, and exact per-layer bounds and
+pixels for a styled paragraph-text layer across two frame transforms. A three-transition mixed-source
 differential also checks exact per-layer bounds
 and pixels after two sequential affines on an opaque blank, one affine on a 45%-opacity blank, and one
 each on vector, paint, and point text, at all six affine cursors and after each frame transition. A
-separate raster differential also pins the composite with non-default layer opacity and `multiply`
-blend mode, but not its isolated materialization. Next expand the frame matrix across open angles,
+separate raster differential pins exact raw materialization and direct composite output at opacity
+0.58 with `multiply`; refused-adapter runtime/export/PNG and fractional-frame PSD differences remain
+diagnostic-only while legacy fallback is active. Next expand the frame matrix across open angles,
 other affine combinations, other blank opacity values, and other text styling/rotation before
 claiming broader exact fractional bounds. Establish
 source-backed import/replacement ownership as a separate gate. The frame matrix and ownership gate
@@ -1252,59 +1258,6 @@ the commit until the user chooses, which is worse and is not recommended.
 `SPONGE_MODE_DEFAULT` and `SPONGE_FLOW_DEFAULT`;
 `src/tools/descriptions/focus.ts` §sponge `appNotes`;
 `src/tools/descriptions/focus.notes.md` §Sponge Tool and items 15-16
-
-## 148. The rail's fit depends on React flushing passive effects before the first paint, and the fix is refused by a lint rule
-
-**Problem.** `useToolbarOverflow` (`src/components/SidebarLeft/use-toolbar-overflow.ts`) measures the
-rail from a ref callback, which runs during commit. React subscribes to an external store in a
-**passive** effect, so at that moment there is no listener to notify, and the `setSlots` layout
-effect publishes into the same empty set. The committed tree therefore holds the plan from _before_
-the measurement, and `planToolbarOverflow`'s own answer to an unmeasurable rail is
-`everythingVisible` — so the first committed rail is **every tool on screen**, fifteen tiles in a
-slot that fits eight at 1280x720, corrected on a later commit. `SidebarLeft` returns above the
-`<aside>` when there is no document while this hook sits above that check, so the hook survives and
-the sequence repeats on **every document close and open**, not only on the first page load.
-
-**It has not been observed failing, and that is measured rather than assumed.** A
-`MutationObserver` installed by `page.addInitScript` — before the app's own script, and with
-microtask callbacks, which run before the paint the mutation enables — recorded the first rail it
-ever saw as already fitted: eight tiles at 720. Chrome flushes React's passive effects inside the
-mounting task, so the refit lands before the first frame in practice. **In practice is not a
-promise**, and the promise is what a load-time flash of a full rail would rest on.
-
-**The obvious fix is refused by the repository's own rule.** A layout effect that re-renders when
-the snapshot has moved ahead of the render is exactly what closes the window, and
-`react-hooks/set-state-in-effect` rejects it: _"Calling setState synchronously within an effect can
-trigger cascading renders"_. That rule is right in general and the effect is a cascading render, so
-it was **not** suppressed to make the warning disappear. No gate was weakened and the rail behaves
-as it is measured to behave.
-
-**There is a lint-compliant alternative, but it is not a settled fix.** The codebase already uses
-`useState` setters as callback refs (`SidebarLeft` for the rail element, `ToolTooltip` for its
-anchor). A stable callback ref could compare the store snapshot before/after `store.attach()` and
-force an update when measurement changed. That update would run from a ref callback, not an effect,
-so it avoids `set-state-in-effect`; it also avoids reading a mutable `ref.current`. However, it relies
-on React processing that ref-triggered update before paint, and there is no meaningful test oracle:
-the existing browser test observes a fitted rail even without the fix because the browser never
-paints the transient tree.
-
-**What would close it.** A decision, and this entry is the finding rather than the decision: choose
-between the callback-ref update (small but timing-dependent and not regression-testable), a
-CSS-driven fit (`@container` queries or CSS overflow arithmetic, the structural solution but a
-subsystem rewrite), or an explicit `OVERRIDES.md` exception for the effect rule. Do not treat the
-callback-ref alternative as already approved merely because the lint rule permits it.
-
-**Why there is no test.** A pin that could not fail was written, measured, and removed: the
-`MutationObserver` assertion above passes identically with and without the fix, because the browser
-never paints the unrefitted tree here. `e2e/toolbar-fit.spec.ts` deliberately has **no** test for
-this, and that absence is the honest state — if one is added it must be able to go red when the
-scheduling changes, or it is a tripwire for a defect that cannot occur.
-
-**Files.** `src/components/SidebarLeft/use-toolbar-overflow.ts`,
-`src/components/SidebarLeft/SidebarLeft.tsx` — `twoColumnEntries` and the rail-element callback ref;
-`src/components/Common/ToolTooltip.tsx` — the callback-ref pattern;
-`react-dom` `mountSyncExternalStore` (a **passive** `mountEffect`, and a consistency check that only
-runs on a concurrent render that yielded — neither is a pre-paint refit).
 
 ---
 

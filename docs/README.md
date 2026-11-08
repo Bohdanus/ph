@@ -7,16 +7,17 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 
 ## Read this first
 
-|                                                          |                                                                                            |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [`DOCUMENTATION.md`](DOCUMENTATION.md)                   | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
-| [`OVERRIDES.md`](OVERRIDES.md)                           | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
-| [`FEATURES.md`](FEATURES.md)                             | What the app can and cannot do, system-wide, against Photoshop                             |
-| [`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)                 | Supported desktop/tablet/Retina boundary; handheld phones are out of scope                 |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)                     | What the code is and how it fits together                                                  |
-| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)           | Durable-history requirements, sequencing, and operator gates                               |
-| [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md) | Restart guide: current status contract, loose ends, and next migration sequence            |
-| [`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md)     | Fetched Adobe evidence and processed Layers/History panel summary                          |
+|                                                                              |                                                                                            |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`DOCUMENTATION.md`](DOCUMENTATION.md)                                       | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
+| [`OVERRIDES.md`](OVERRIDES.md)                                               | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
+| [`FEATURES.md`](FEATURES.md)                                                 | What the app can and cannot do, system-wide, against Photoshop                             |
+| [`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)                                     | Supported desktop/tablet/Retina boundary; handheld phones are out of scope                 |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                                         | What the code is and how it fits together                                                  |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)                               | Durable-history requirements, sequencing, and operator gates                               |
+| [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md)                     | Restart guide: current status contract, loose ends, and next migration sequence            |
+| [`HISTORY-MIGRATION-AUDIT-20261107.md`](HISTORY-MIGRATION-AUDIT-20261107.md) | Point-in-time audit of durable-history migration gates and open parity evidence            |
+| [`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md)                         | Fetched Adobe evidence and processed Layers/History panel summary                          |
 
 The ladder is **operator → Adobe → this repository → judgement**, and the rule belongs to
 [`DOCUMENTATION.md`](DOCUMENTATION.md). `AGENTS.md` carries the short form for agents; this page
@@ -62,7 +63,6 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`../MODELS.md`](../MODELS.md)                                                                         | Everyday model/provider policy, safe routing, budget checks, and token-saving research               |
 | [`ORCHESTRATION.md`](ORCHESTRATION.md)                                                                 | Worktrees, delegation, the swarm board, dead-agent recovery                                          |
 | [`CODEX-ORCHESTRATION.md`](CODEX-ORCHESTRATION.md)                                                     | Codex subagent tools, context, model routing, cost, and shared-worktree rules                        |
-
 | [`CHAT-ID.md`](CHAT-ID.md)                                                                             | Resolving the host-native chat ID used in commit trailers                                            |
 | [`KILO.md`](KILO.md)                                                                                   | The agent-facing Kilo config, including the parts no tracked file holds                              |
 | [`CODE-REVIEW.md`](CODE-REVIEW.md)                                                                     | The verbatim prompt and rules for the code review subagent                                           |
@@ -141,7 +141,8 @@ Three homes for an open defect, split by what broke. A defect goes in one of the
 
 Eight root-level files are point-in-time reports: an investigation of one tree on
 one date, or a disposition record for documents that were stashed and recovered.
-The hardening harvest handoff is another dated report. These documents are **not
+The hardening harvest handoff and the dated history audit below are additional
+point-in-time reports. These documents are **not
 current**, nothing in the live set depends on them, and they are not part of this
 hierarchy.
 
@@ -151,6 +152,7 @@ hierarchy.
 | `../AUDIT-STASHED-DOCS.md`               | Disposition record for three recovered stashed documents. Its two `docs/*.md` subjects are itself obsolete   |
 | `../FOCUSED-REVIEW-2026-09-28.md`        | A dated four-subsystem review, recorded rather than fixed                                                    |
 | `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them               |
+| `HISTORY-MIGRATION-AUDIT-20261107.md`    | Read-only history migration audit at main `659ca8e`; findings are a dated snapshot, not current contract     |
 | `../MERGE-INTEGRITY-AUDIT.md`            | What concurrent-branch work left unresolved: open merges, colliding handoff numbers, gates that miss a class |
 | `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
 | `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |

@@ -251,45 +251,56 @@ function readAlert(paths, minutes) {
   }
 }
 
-function claimAlert(paths, owner, minutes) {
-  const file = alertMarker(paths, minutes);
-  const existing = readAlert(paths, minutes);
-  if (existing?.status === 'sent') return false;
-  if (existing?.status === 'pending') {
-    const reporter = {
-      host: existing.host,
-      platform: existing.platform,
-      pid: existing.pid,
-    };
-    if (sameRuntime(reporter)) {
-      if (pidExists(reporter.pid) !== false) return false;
-    } else {
-      const pendingSince = Date.parse(existing.startedAt ?? '');
-      if (!Number.isFinite(pendingSince) || Date.now() - pendingSince < 60_000) return false;
-    }
-    try {
-      rmSync(file, { force: true });
-    } catch {
-      return false;
-    }
+export function claimAlert(paths, owner, minutes) {
+  let controlLock;
+  try {
+    controlLock = acquireRecoveryControl(paths, owner);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('main landing owner-control lock')) return false;
+    throw error;
   }
   try {
-    writeFileSync(
-      file,
-      JSON.stringify({
-        status: 'pending',
-        leaseId: owner.leaseId,
-        host: hostname(),
-        platform: process.platform,
-        pid: process.pid,
-        startedAt: new Date().toISOString(),
-      }),
-      { flag: 'wx', mode: 0o600 }
-    );
-    return true;
-  } catch (error) {
-    if (error?.code === 'EEXIST') return false;
-    throw error;
+    const file = alertMarker(paths, minutes);
+    const existing = readAlert(paths, minutes);
+    if (existing?.status === 'sent') return false;
+    if (existing?.status === 'pending') {
+      const reporter = {
+        host: existing.host,
+        platform: existing.platform,
+        pid: existing.pid,
+      };
+      if (sameRuntime(reporter)) {
+        if (pidExists(reporter.pid) !== false) return false;
+      } else {
+        const pendingSince = Date.parse(existing.startedAt ?? '');
+        if (!Number.isFinite(pendingSince) || Date.now() - pendingSince < 60_000) return false;
+      }
+      try {
+        rmSync(file, { force: true });
+      } catch {
+        return false;
+      }
+    }
+    try {
+      writeFileSync(
+        file,
+        JSON.stringify({
+          status: 'pending',
+          leaseId: owner.leaseId,
+          host: hostname(),
+          platform: process.platform,
+          pid: process.pid,
+          startedAt: new Date().toISOString(),
+        }),
+        { flag: 'wx', mode: 0o600 }
+      );
+      return true;
+    } catch (error) {
+      if (error?.code === 'EEXIST') return false;
+      throw error;
+    }
+  } finally {
+    rmSync(controlLock, { force: true });
   }
 }
 

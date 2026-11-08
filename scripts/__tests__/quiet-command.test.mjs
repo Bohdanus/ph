@@ -11,7 +11,7 @@ vi.setConfig({ testTimeout: 15_000 });
 function run(command, ...args) {
   return spawnSync(process.execPath, [SCRIPT, command, ...args], {
     encoding: 'buffer',
-    maxBuffer: 1024 * 1024,
+    maxBuffer: 3 * 1024 * 1024,
   });
 }
 
@@ -42,6 +42,22 @@ describe('quiet-command', () => {
     expect(result.stdout.toString()).toBe('');
     expect(result.stderr.toString()).toContain('out');
     expect(result.stderr.toString()).toContain('err');
+  });
+
+  it('bounds combined failure output and reports when it is truncated', () => {
+    const maxCaptureBytes = 1024 * 1024;
+    const code =
+      'process.stdout.write(Buffer.alloc(600 * 1024, 97)); ' +
+      'process.stderr.write(Buffer.alloc(600 * 1024, 98)); ' +
+      'process.exitCode = 1;';
+    const result = run(process.execPath, '-e', code);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toEqual(Buffer.alloc(0));
+    expect(result.stderr.byteLength).toBeLessThanOrEqual(maxCaptureBytes + 100);
+    expect(result.stderr.toString('utf8')).toContain(
+      `[quiet-command: output truncated after ${maxCaptureBytes} bytes]`
+    );
   });
 
   it('replays failure diagnostics with byte-exact UTF-8', () => {

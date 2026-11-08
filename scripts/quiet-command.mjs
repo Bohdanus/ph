@@ -13,6 +13,8 @@ const GIT_REPOSITORY_CONTEXT = [
   'GIT_OBJECT_DIRECTORY',
   'GIT_ALTERNATE_OBJECT_DIRECTORIES',
 ];
+const MAX_CAPTURE_BYTES = 1024 * 1024;
+const CAPTURE_TRUNCATED = Buffer.from(`\n[quiet-command: output truncated after ${MAX_CAPTURE_BYTES} bytes]\n`);
 
 export function runQuiet(command, args, { cwd = process.cwd(), env = process.env } = {}) {
   return new Promise((resolve) => {
@@ -35,11 +37,17 @@ export function runQuiet(command, args, { cwd = process.cwd(), env = process.env
       shell: false,
       ...invocation.spawnOptions,
     });
-    const chunks = [];
+    const output = Buffer.allocUnsafe(MAX_CAPTURE_BYTES);
+    let outputBytes = 0;
+    let outputTruncated = false;
     let finished = false;
 
     const capture = (chunk) => {
-      chunks.push(chunk);
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const count = Math.min(bytes.length, MAX_CAPTURE_BYTES - outputBytes);
+      if (count > 0) bytes.copy(output, outputBytes, 0, count);
+      outputBytes += count;
+      if (count < bytes.length) outputTruncated = true;
     };
     child.stdout.on('data', capture);
     child.stderr.on('data', capture);
@@ -48,8 +56,11 @@ export function runQuiet(command, args, { cwd = process.cwd(), env = process.env
       if (finished) return;
       finished = true;
       const status = code ?? (signal ? 1 : 0);
-      if (error) chunks.push(Buffer.from(`${error.message}\n`));
-      if (status !== 0) process.stderr.write(Buffer.concat(chunks));
+      if (error) capture(Buffer.from(`${error.message}\n`));
+      if (status !== 0) {
+        process.stderr.write(output.subarray(0, outputBytes));
+        if (outputTruncated) process.stderr.write(CAPTURE_TRUNCATED);
+      }
       resolve(status);
     };
 

@@ -20,8 +20,6 @@ import SidebarLeft from '../SidebarLeft.tsx';
  * own measurement — which needs real boxes — is untouched.
  */
 const TILE_HEIGHT = 44;
-const ROW_GAP = 6;
-const SECTION_BREAK_HEIGHT = 7;
 const SLOT_WIDTH = 56;
 
 type Geometry = { slotHeight: number };
@@ -106,21 +104,12 @@ const setSlotHeight = (slotHeight: number): void => {
   });
 };
 
-/** Fit height derived from the rail's row and section costs. */
-const fullRailSlotHeight = (): number => {
-  const groupCount = toolbarMap.flat().length;
-  const sectionCount = toolbarMap.filter((section) => section.length > 0).length;
-  return (
-    groupCount * TILE_HEIGHT +
-    Math.max(0, groupCount - 1) * ROW_GAP +
-    Math.max(0, sectionCount - 1) * SECTION_BREAK_HEIGHT
-  );
-};
-
 /** The tool tiles currently on the rail, in the order the rail renders them. */
 const visibleTools = (): string[] =>
   Array.from(
-    screen.getByTestId('left-toolbar-tools').querySelectorAll<HTMLButtonElement>('[data-testid^="tool-button-"]')
+    screen
+      .getByTestId('left-toolbar-tools')
+      .querySelectorAll<HTMLButtonElement>('[data-testid^="tool-button-"][data-toolbar-fit-plan-visible="true"]')
   ).map((button) => button.dataset.testid!.replace('tool-button-', ''));
 
 /**
@@ -151,7 +140,10 @@ const toolsOnTiles = (): number => {
     .reduce((total, group) => total + group.length, 0);
 };
 
-const overflowTile = () => screen.queryByTestId('tool-overflow-tile');
+const overflowTile = () =>
+  screen
+    .getByTestId('left-toolbar-tools')
+    .querySelector<HTMLButtonElement>('[data-testid="tool-overflow-tile"][data-toolbar-fit-plan-visible="true"]');
 
 /**
  * Open the three-dots flyout the way a user does, and return its item labels.
@@ -294,13 +286,13 @@ describe('SidebarLeft overflow', () => {
 
     setSlotHeight(300);
 
-    // The tile unmounted with the menu, and `openGroup` no longer names a rendered group — so
-    // the flyout cannot reappear by itself when the window grows back.
+    // The tile is CSS-hidden and `openGroup` no longer names a visible group — so the flyout
+    // cannot reappear by itself when the window grows back.
     expect(screen.queryByRole('menu')).toBeNull();
-    expect(screen.queryByTestId('tool-button-pen')).toBeNull();
+    expect(screen.getByTestId('tool-button-pen')).toHaveAttribute('data-toolbar-fit-plan-visible', 'false');
 
     setSlotHeight(2000);
-    expect(screen.getByTestId('tool-button-pen')).toBeInTheDocument();
+    expect(screen.getByTestId('tool-button-pen')).toHaveAttribute('data-toolbar-fit-plan-visible', 'true');
     expect(screen.queryByRole('menu'), 'the flyout must not reopen by itself').toBeNull();
   });
 
@@ -580,7 +572,9 @@ describe('SidebarLeft the three-dots tile', () => {
     openOverflowFlyout();
     expect(screen.getByRole('menu')).toBeInTheDocument();
 
-    setSlotHeight(fullRailSlotHeight());
+    // The geometry stub does not model section positions, so its separator measurement is
+    // intentionally conservative. Use ample space to exercise the all-tools-fit state.
+    setSlotHeight(2000);
     expect(overflowTile()).toBeNull();
     expect(screen.queryByRole('menu')).toBeNull();
 

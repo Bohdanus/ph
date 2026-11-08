@@ -44,10 +44,12 @@ import { registerMainWorktree } from '../main-worktree-guard.mjs';
 vi.setConfig({ testTimeout: 60_000 });
 
 let dir;
+let activeTestHooksPath;
 const WHERE_GIT = process.platform === 'win32' ? 'where.exe' : 'which';
 const GUARD_PATH = realpathSync(join(import.meta.dirname, '../merge-takeover-guard.mjs'));
 const MAIN_GUARD_PATH = realpathSync(join(import.meta.dirname, '../main-worktree-guard.mjs'));
 const LANDING_COMMIT_PATH = realpathSync(join(import.meta.dirname, '../commit-reviewed-landing.mjs'));
+const LANDING_WRAPPER_PATH = realpathSync(join(import.meta.dirname, '../main-landing.mjs'));
 const LANDING_MESSAGE_GUARD_PATH = realpathSync(
   join(import.meta.dirname, '../commit-reviewed-landing-message-guard.mjs')
 );
@@ -117,8 +119,9 @@ function installPreMergeGuard() {
   git(['config', 'core.hooksPath', hooks]);
 }
 
-function installPinnedPreCommitGuards({ afterChecks = '' } = {}) {
-  const hooks = join(dir, 'hooks');
+function installPinnedPreCommitGuards({ afterChecks = '', gitDirHooks = false } = {}) {
+  const hooks = join(dir, gitDirHooks ? '.git/test-hooks' : 'hooks');
+  activeTestHooksPath = hooks;
   mkdirSync(hooks, { recursive: true });
   const hook = join(hooks, 'pre-commit');
   writeFileSync(
@@ -134,6 +137,7 @@ function installPinnedPreCommitGuards({ afterChecks = '' } = {}) {
 
 function installMainWorktreeCommitGuards() {
   const hooks = join(dir, 'hooks');
+  activeTestHooksPath = hooks;
   mkdirSync(hooks, { recursive: true });
   const hook = join(hooks, 'pre-commit');
   writeFileSync(hook, `#!/bin/sh\nset -e\nnode "${MAIN_GUARD_PATH}"\n`);
@@ -146,7 +150,8 @@ function installMainWorktreeCommitGuards() {
 
 function removePreMergeGuard() {
   git(['config', '--unset', 'core.hooksPath']);
-  rmSync(join(dir, 'hooks'), { recursive: true, force: true });
+  rmSync(activeTestHooksPath ?? join(dir, 'hooks'), { recursive: true, force: true });
+  activeTestHooksPath = undefined;
 }
 
 function withExpectedLanding({ main, incoming, tree, branch = 'feat', chat = 'test-session' }, run) {
@@ -212,12 +217,48 @@ function commitReviewedLanding(message) {
   }).trim();
 }
 
+function commitThroughMainLanding() {
+  registerMainWorktree(dir, { required: true });
+  execFileSync(
+    process.execPath,
+    [
+      LANDING_WRAPPER_PATH,
+      'land',
+      '--main-sha',
+      process.env.KILO_EXPECTED_MAIN_SHA ?? '',
+      '--incoming-sha',
+      process.env.KILO_EXPECTED_INCOMING_SHA ?? '',
+      '--tree-sha',
+      process.env.KILO_EXPECTED_TREE_SHA ?? '',
+      '--branch',
+      process.env.KILO_EXPECTED_BRANCH ?? '',
+      '--chat',
+      process.env.KILO_EXPECTED_CHAT_ID ?? '',
+    ],
+    {
+      cwd: dir,
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  );
+  return git(['rev-parse', 'HEAD']);
+}
+
 function recordPreparedMergeState(cwd, phase = 'before') {
   const result = spawnSync(process.execPath, [LANDING_MESSAGE_GUARD_PATH, `--record-prepared-merge-${phase}`], {
     cwd,
     encoding: 'utf8',
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function prepareMainLandingFixture() {
+  mkdirSync(join(dir, '.kilo'), { recursive: true });
+  writeFileSync(join(dir, 'AGENTS.md'), '# temporary main worktree\n');
+  writeFileSync(join(dir, '.kilo', 'test-marker'), 'test project root\n');
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  writeFileSync(join(dir, 'scripts', 'install-git-hooks.js'), 'process.exit(0);\n');
 }
 
 /** Commit the index as it stands. A gitlink has no worktree path, so `git add -A` removes
@@ -291,6 +332,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (dir) rmSync(dir, { recursive: true, force: true });
+  activeTestHooksPath = undefined;
 });
 
 describe('project main worktree detection', () => {
@@ -1923,63 +1965,16 @@ describe('pinned main landing', () => {
     expect(git(['status', '--porcelain'])).toBe('');
   });
 
-  it('accepts the exact main and incoming SHAs from actual MERGE_HEAD state', () => {
+  it('refuses direct use of the commit helper even when the landing pins are present', () => {
+    prepareMainLandingFixture();
     const refs = prepareDisjointMerge();
-    installPinnedPreCommitGuards();
-
-    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
-      git(['merge', '--no-commit', '--no-ff', 'feat']);
-      expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
-      commitReviewedLanding('pinned merge\n\nBranch: feat\nChat: test-session');
-    });
-
-    const parents = git(['rev-list', '--parents', '-n', '1', 'HEAD']).split(' ');
-    expect(parents[1]).toBe(refs.main);
-    expect(parents[2]).toBe(refs.incoming);
-  });
-
-  it('commits the reviewed snapshot while preserving later staging in the shared index', () => {
-    const refs = prepareDisjointMerge();
-    const sharedPath = 'staged-after-hook.txt';
-    write(sharedPath, 'another main-worktree writer staged this after the guards\n');
-    installPinnedPreCommitGuards({ afterChecks: `unset GIT_INDEX_FILE\ngit add ${sharedPath}` });
-
-    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
-      git(['merge', '--no-commit', '--no-ff', 'feat']);
-      commitReviewedLanding('isolated pinned merge\n\nBranch: feat\nChat: test-session');
-    });
-
-    expect(git(['rev-parse', 'HEAD^{tree}'])).toBe(refs.incomingTree);
-    expect(gitOk(['cat-file', '-e', `HEAD:${sharedPath}`]).ok).toBe(false);
-    expect(git(['status', '--porcelain'])).toContain(`A  ${sharedPath}`);
-    removePreMergeGuard();
-  });
-
-  it('binds the source branch and chat trailers to the reviewed candidate', () => {
-    const refs = prepareDisjointMerge();
-    git(['branch', 'wrong-feat', refs.base]);
+    registerMainWorktree(dir, { required: true });
     git(['merge', '--no-commit', '--no-ff', 'feat']);
 
-    const messages = [
-      'wrong branch\n\nBranch: wrong-feat\nChat: test-session',
-      'wrong chat\n\nBranch: feat\nChat: another-session',
-      'duplicate branch\n\nBranch: feat\nBranch: feat\nChat: test-session',
-      'duplicate chat\n\nBranch: feat\nChat: test-session\nChat: test-session',
-      'missing chat\n\nBranch: feat',
-    ];
     withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
-      for (const message of messages) {
-        let failure;
-        try {
-          commitReviewedLanding(message);
-        } catch (error) {
-          failure = error;
-        }
-        expect(failure).toBeDefined();
-        expect(String(failure.stderr)).toContain(
-          'merge message must have exactly one Branch: feat and Chat: test-session trailer'
-        );
-      }
+      expect(() => commitReviewedLanding('direct call\n\nBranch: feat\nChat: test-session')).toThrow(
+        /use `npm run main:landing -- land/
+      );
     });
 
     expect(sha()).toBe(refs.main);
@@ -1988,10 +1983,65 @@ describe('pinned main landing', () => {
     expect(git(['status', '--porcelain'])).toBe('');
   });
 
-  it('refuses a prepare-commit-msg hook that changes the reviewed Chat trailer', () => {
+  it('accepts the exact main and incoming SHAs from actual MERGE_HEAD state', () => {
+    prepareMainLandingFixture();
     const refs = prepareDisjointMerge();
-    installPinnedPreCommitGuards();
-    const prepareHook = join(dir, 'hooks', 'prepare-commit-msg');
+    installPinnedPreCommitGuards({ gitDirHooks: true });
+
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      commitThroughMainLanding();
+    });
+
+    const parents = git(['rev-list', '--parents', '-n', '1', 'HEAD']).split(' ');
+    expect(parents[1]).toBe(refs.main);
+    expect(parents[2]).toBe(refs.incoming);
+  });
+
+  it('commits the reviewed snapshot while preserving later staging in the shared index', () => {
+    prepareMainLandingFixture();
+    const refs = prepareDisjointMerge();
+    const sharedPath = 'staged-after-hook.txt';
+    installPinnedPreCommitGuards({
+      afterChecks: `unset GIT_INDEX_FILE\nprintf 'another main-worktree writer staged this after the guards\\n' > ${sharedPath}\ngit add ${sharedPath}`,
+      gitDirHooks: true,
+    });
+
+    let failure;
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      try {
+        commitThroughMainLanding();
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('landing commit returned, but main is not clean');
+    expect(git(['rev-parse', 'HEAD^{tree}'])).toBe(refs.incomingTree);
+    expect(gitOk(['cat-file', '-e', `HEAD:${sharedPath}`]).ok).toBe(false);
+    expect(git(['status', '--porcelain'])).toContain(`A  ${sharedPath}`);
+    removePreMergeGuard();
+  });
+
+  it('writes the reviewed source branch and chat trailers into the landing commit', () => {
+    prepareMainLandingFixture();
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards({ gitDirHooks: true });
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      commitThroughMainLanding();
+    });
+
+    expect(git(['show', '-s', '--format=%B', 'HEAD']).trim()).toBe(
+      'Merge feat into main\n\nBranch: feat\nChat: test-session'
+    );
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses a prepare-commit-msg hook that changes the reviewed Chat trailer', () => {
+    prepareMainLandingFixture();
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards({ gitDirHooks: true });
+    const prepareHook = join(dir, '.git', 'test-hooks', 'prepare-commit-msg');
     writeFileSync(
       prepareHook,
       `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: test-session","Chat: altered-session"));' "$1"\n`
@@ -2000,9 +2050,8 @@ describe('pinned main landing', () => {
     let failure;
 
     withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
-      git(['merge', '--no-commit', '--no-ff', 'feat']);
       try {
-        commitReviewedLanding('pinned merge\n\nBranch: feat\nChat: test-session');
+        commitThroughMainLanding();
       } catch (error) {
         failure = error;
       }
@@ -2018,9 +2067,10 @@ describe('pinned main landing', () => {
   });
 
   it('refuses a prepare-commit-msg hook that removes MERGE_HEAD during a reviewed landing', () => {
+    prepareMainLandingFixture();
     const refs = prepareDisjointMerge();
-    installPinnedPreCommitGuards();
-    const prepareHook = join(dir, 'hooks', 'prepare-commit-msg');
+    installPinnedPreCommitGuards({ gitDirHooks: true });
+    const prepareHook = join(dir, '.git', 'test-hooks', 'prepare-commit-msg');
     writeFileSync(
       prepareHook,
       `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: test-session","Chat: altered-session"));' "$1"\nrm -f "$(git rev-parse --git-path MERGE_HEAD)"\n`
@@ -2029,9 +2079,8 @@ describe('pinned main landing', () => {
     let failure;
 
     withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
-      git(['merge', '--no-commit', '--no-ff', 'feat']);
       try {
-        commitReviewedLanding('pinned merge\n\nBranch: feat\nChat: test-session');
+        commitThroughMainLanding();
       } catch (error) {
         failure = error;
       }
@@ -2049,10 +2098,11 @@ describe('pinned main landing', () => {
   });
 
   it('refuses a prepare-commit-msg hook that changes symbolic HEAD during a reviewed landing', () => {
+    prepareMainLandingFixture();
     const refs = prepareDisjointMerge();
     git(['branch', 'attacker']);
-    installPinnedPreCommitGuards();
-    const prepareHook = join(dir, 'hooks', 'prepare-commit-msg');
+    installPinnedPreCommitGuards({ gitDirHooks: true });
+    const prepareHook = join(dir, '.git', 'test-hooks', 'prepare-commit-msg');
     writeFileSync(
       prepareHook,
       `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: test-session","Chat: altered-session"));' "$1"\ngit symbolic-ref HEAD refs/heads/attacker\n`
@@ -2061,9 +2111,8 @@ describe('pinned main landing', () => {
     let failure;
 
     withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
-      git(['merge', '--no-commit', '--no-ff', 'feat']);
       try {
-        commitReviewedLanding('pinned merge\n\nBranch: feat\nChat: test-session');
+        commitThroughMainLanding();
       } catch (error) {
         failure = error;
       }
@@ -2582,16 +2631,17 @@ describe('pinned main landing', () => {
   });
 
   it('requires the reviewed source branch ref to point at the incoming candidate', () => {
+    prepareMainLandingFixture();
     const refs = prepareDisjointMerge();
     git(['branch', 'wrong-feat', refs.base]);
-    git(['merge', '--no-commit', '--no-ff', 'feat']);
+    installPinnedPreCommitGuards({ gitDirHooks: true });
     let failure;
 
     withExpectedLanding(
       { main: refs.main, incoming: refs.incoming, tree: refs.incomingTree, branch: 'wrong-feat' },
       () => {
         try {
-          commitReviewedLanding('wrong source ref\n\nBranch: wrong-feat\nChat: test-session');
+          commitThroughMainLanding();
         } catch (error) {
           failure = error;
         }
@@ -2599,66 +2649,52 @@ describe('pinned main landing', () => {
     );
 
     expect(failure).toBeDefined();
-    expect(String(failure.stderr)).toContain(
-      'expected source branch does not point to the reviewed incoming candidate'
-    );
+    expect(String(failure.stderr)).toContain('source branch no longer points to the reviewed candidate');
     expect(sha()).toBe(refs.main);
-    git(['merge', '--abort']);
     expect(git(['status', '--porcelain'])).toBe('');
   });
 
-  it('refuses octopus merges in both the landing helper and pre-commit guard', () => {
+  it('refuses an octopus merge marker changed after wrapper preflight', () => {
+    prepareMainLandingFixture();
     const refs = prepareDisjointMerge();
     git(['checkout', '-qb', 'feat-two', refs.base]);
     write('second-feature.txt', 'second candidate\n');
     commit('second feature change');
     const secondIncoming = sha();
     git(['checkout', '-q', 'main']);
-    installPinnedPreCommitGuards();
-    git(['merge', '--no-commit', '--no-ff', 'feat', 'feat-two']);
-    const preparedTree = git(['write-tree']);
+    installPinnedPreCommitGuards({ gitDirHooks: true });
+    const prepareHook = join(dir, '.git', 'test-hooks', 'prepare-commit-msg');
+    const mergeHeadPath = resolve(dir, git(['rev-parse', '--git-path', 'MERGE_HEAD']));
+    writeFileSync(
+      prepareHook,
+      `#!/bin/sh\nnode -e 'require("node:fs").appendFileSync(process.argv[1], process.argv[2] + "\\n")' "${mergeHeadPath}" "${secondIncoming}"\n`
+    );
+    chmodSync(prepareHook, 0o755);
 
-    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: preparedTree }, () => {
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
       let helperFailure;
       try {
-        commitReviewedLanding('octopus landing\n\nBranch: feat\nChat: test-session');
+        commitThroughMainLanding();
       } catch (error) {
         helperFailure = error;
       }
       expect(helperFailure).toBeDefined();
       expect(String(helperFailure.stderr)).toContain('refusing an octopus merge');
-
-      const isolatedIndex = join(dir, 'isolated-index');
-      copyFileSync(join(dir, '.git', 'index'), isolatedIndex);
-      let hookFailure;
-      try {
-        execFileSync('git', ['commit', '-m', 'octopus landing\n\nBranch: feat\nChat: test-session'], {
-          cwd: dir,
-          env: { ...process.env, GIT_INDEX_FILE: isolatedIndex },
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-      } catch (error) {
-        hookFailure = error;
-      } finally {
-        rmSync(isolatedIndex, { force: true });
-      }
-      expect(hookFailure).toBeDefined();
-      expect(String(hookFailure.stderr)).toContain('refusing an octopus merge');
     });
 
     expect(sha()).toBe(refs.main);
-    const mergeHeadPath = resolve(dir, git(['rev-parse', '--git-path', 'MERGE_HEAD']));
-    expect(readFileSync(mergeHeadPath, 'utf8').trim().split('\n')).toEqual([refs.incoming, secondIncoming]);
+    const preparedMergeHeadPath = resolve(dir, git(['rev-parse', '--git-path', 'MERGE_HEAD']));
+    expect(readFileSync(preparedMergeHeadPath, 'utf8').trim().split('\n')).toEqual([refs.incoming, secondIncoming]);
     git(['merge', '--abort']);
     removePreMergeGuard();
     expect(git(['status', '--porcelain'])).toBe('');
   });
 
   it('finds its reviewed landing if main advances before the helper returns', () => {
+    prepareMainLandingFixture();
     const refs = prepareDisjointMerge();
-    installPinnedPreCommitGuards();
-    const postCommit = join(dir, 'hooks', 'post-commit');
+    installPinnedPreCommitGuards({ gitDirHooks: true });
+    const postCommit = join(dir, '.git', 'test-hooks', 'post-commit');
     writeFileSync(
       postCommit,
       '#!/bin/sh\nunset GIT_INDEX_FILE\nprintf "later main work\\n" > later-main.txt\ngit add later-main.txt\ngit -c core.hooksPath=/dev/null commit -m "next main commit" >/dev/null\n'
@@ -2666,8 +2702,7 @@ describe('pinned main landing', () => {
     chmodSync(postCommit, 0o755);
 
     withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
-      git(['merge', '--no-commit', '--no-ff', 'feat']);
-      commitReviewedLanding('pinned merge with concurrent advance\n\nBranch: feat\nChat: test-session');
+      commitThroughMainLanding();
     });
 
     const firstParentCommits = git(['rev-list', '--first-parent', '--reverse', `${refs.main}..HEAD`]).split('\n');

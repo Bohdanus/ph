@@ -42,18 +42,15 @@ const ALL_GROUPS: readonly { name: string; tools: readonly ToolbarTool[] }[] = t
   section.map((group) => ({ name: group[0].name, tools: group }))
 );
 
-/**
- * What a section boundary costs on top of a row gap, which bounds how much of the slot a
- * filled rail can leave behind.
- *
- * `mt-1.5 border-t pt-1.5` at the default 16px root is 6 + 1 + 6 = 13, and the row that does
- * not fit is a section's FIRST row whenever the leftover is this big rather than half of it —
- * which is why the maximality bound below is a row, a gap AND this, and not a row and a gap.
- * It is a constant here for the same reason `44` and `6` are asserted as literals further
- * down: it is the rail's class strings, and the sweep pins that the DOM agrees with it by
- * measuring the separator as 7 (`13 - 6`) at the heights where one is visible.
- */
-const SECTION_SEPARATOR_COST = 13;
+type FirstToolbarFrame = {
+  slotHeight: number;
+  firstGroupDisplay: string;
+  overflowListDisplay: string;
+  overflowTileVisible: boolean;
+  allVisibleTilesFit: boolean;
+};
+
+type FirstToolbarFrameWindow = Window & { __firstToolbarFrame?: FirstToolbarFrame | null };
 
 /**
  * Window heights spanning "everything fits" to "almost nothing fits".
@@ -91,6 +88,8 @@ type Measured = {
   tileHeight: number;
   rowGap: number;
   sectionBreakHeight: number;
+  /** Extra height needed to reveal the next collapsed row, measured from its actual section. */
+  nextRowCost: number;
   /** Tool tiles only — the three-dots tile is counted separately. */
   toolCount: number;
   tileCount: number;
@@ -113,25 +112,34 @@ const measure = (page: Page): Promise<Measured | null> =>
     const available = slot.getBoundingClientRect().height - toolsChrome;
 
     const lists = [...tools.querySelectorAll<HTMLElement>(':scope > ul')];
-    const nonEmpty = lists.filter((list) => list.childElementCount > 0);
-    const firstTile = nonEmpty[0]?.querySelector<HTMLElement>('[data-toolbar-tile]') ?? null;
-    const lastList = nonEmpty[nonEmpty.length - 1] ?? null;
-    // From the top of the first visible tile to the bottom of the last non-empty list: the grid
-    // as the user sees it, including every section separator between them.
+    const sectionLists = lists.filter((list) => !list.hasAttribute('data-toolbar-fit-overflow-list'));
+    const visibleLists = lists.filter(
+      (list) =>
+        getComputedStyle(list).display !== 'none' &&
+        [...list.querySelectorAll<HTMLElement>('[data-toolbar-tile]')].some(
+          (tile) => tile.getBoundingClientRect().height > 0
+        )
+    );
+    const firstTile = visibleLists[0]?.querySelector<HTMLElement>('[data-toolbar-tile]') ?? null;
+    const lastList = visibleLists[visibleLists.length - 1] ?? null;
+    // From the top of the first visible tile to the bottom of the last visible list: the grid
+    // as the user sees it, including the separately rendered overflow row.
     const contentHeight =
       firstTile && lastList ? lastList.getBoundingClientRect().bottom - firstTile.getBoundingClientRect().top : 0;
 
     // The separator the same way the app measures it: the distance from the previous list's
     // bottom to this section's FIRST TILE, minus the row gap. Read independently here so the
     // assertion is not the app agreeing with itself.
-    const rowGap = lists.length > 0 ? len(getComputedStyle(lists[0]).rowGap) : 0;
+    const rowGap = sectionLists.length > 0 ? len(getComputedStyle(sectionLists[0]).rowGap) : 0;
     let sectionBreakHeight = 0;
-    for (let i = 1; i < lists.length; i += 1) {
-      const tile = lists[i].firstElementChild as HTMLElement | null;
+    const visibleSectionLists = sectionLists.filter((list) => getComputedStyle(list).display !== 'none');
+    for (let i = 1; i < visibleSectionLists.length; i += 1) {
+      const tile = visibleSectionLists[i].querySelector<HTMLElement>('[data-toolbar-tile]');
       let previous = i - 1;
-      while (previous >= 0 && lists[previous].childElementCount === 0) previous -= 1;
+      while (previous >= 0 && visibleSectionLists[previous].childElementCount === 0) previous -= 1;
       if (!tile || previous < 0) continue;
-      const between = tile.getBoundingClientRect().top - lists[previous].getBoundingClientRect().bottom - rowGap;
+      const between =
+        tile.getBoundingClientRect().top - visibleSectionLists[previous].getBoundingClientRect().bottom - rowGap;
       if (between > 0) {
         sectionBreakHeight = between;
         break;
@@ -139,7 +147,32 @@ const measure = (page: Page): Promise<Measured | null> =>
     }
 
     const firstToggle = document.querySelector('[data-testid="toolbar-layout-toggle"]');
-    const tiles = [...tools.querySelectorAll<HTMLElement>('[data-toolbar-tile]')];
+    const tiles = [...tools.querySelectorAll<HTMLElement>('[data-toolbar-tile]')].filter(
+      (tile) => tile.getBoundingClientRect().height > 0
+    );
+    const tileHeight = tiles[0]?.getBoundingClientRect().height ?? 0;
+    const groups = [...tools.querySelectorAll<HTMLElement>('[data-toolbar-fit-key]')];
+    const visibleGroups = groups.filter((group) => group.getBoundingClientRect().height > 0);
+    const lastVisibleGroup = visibleGroups.at(-1) ?? null;
+    const nextCollapsedGroup = groups.find((group) => group.getBoundingClientRect().height === 0) ?? null;
+    const previousGroupSection = lastVisibleGroup?.closest<HTMLElement>('ul[data-toolbar-fit-section]') ?? null;
+    const nextGroupSection = nextCollapsedGroup?.closest<HTMLElement>('ul[data-toolbar-fit-section]') ?? null;
+    const nextSectionBreak =
+      previousGroupSection !== null && nextGroupSection !== null && previousGroupSection !== nextGroupSection
+        ? Math.max(
+            0,
+            len(getComputedStyle(nextGroupSection).marginTop) +
+              len(getComputedStyle(nextGroupSection).borderTopWidth) +
+              len(getComputedStyle(nextGroupSection).paddingTop) -
+              rowGap
+          )
+        : 0;
+    const nextRowCost =
+      nextCollapsedGroup === null
+        ? 0
+        : visibleGroups.length === 0
+          ? tileHeight + rowGap
+          : tileHeight + rowGap + nextSectionBreak;
     return {
       slotHeight: slot.getBoundingClientRect().height,
       toolsChrome,
@@ -150,12 +183,16 @@ const measure = (page: Page): Promise<Measured | null> =>
       contentHeight,
       over: contentHeight - available,
       free: available - contentHeight,
-      tileHeight: tiles[0]?.getBoundingClientRect().height ?? 0,
+      tileHeight,
       rowGap,
       sectionBreakHeight,
+      nextRowCost,
       toolCount: tiles.filter((tile) => tile.dataset.testid?.startsWith('tool-button-')).length,
       tileCount: tiles.length,
-      hasOverflowTile: tools.querySelector('[data-testid="tool-overflow-tile"]') !== null,
+      hasOverflowTile: (() => {
+        const overflow = tools.querySelector<HTMLElement>('[data-testid="tool-overflow-tile"]');
+        return overflow !== null && overflow.getBoundingClientRect().height > 0;
+      })(),
       isSingleColumn: firstToggle === null || firstToggle.getAttribute('aria-pressed') === 'true',
     };
   });
@@ -190,9 +227,106 @@ const prefersTwoColumns = async (page: Page) => {
 const row = (m: Measured) =>
   `slot=${m.slotHeight.toFixed(0)} avail=${m.available.toFixed(0)} budget=${m.budget.toFixed(0)} ` +
   `content=${m.contentHeight.toFixed(0)} over=${m.over.toFixed(1)} free=${m.free.toFixed(0)} tile=${m.tileHeight} gap=${m.rowGap} ` +
-  `sep=${m.sectionBreakHeight} tools=${m.toolCount}/${ALL_GROUPS.length} overflow=${m.hasOverflowTile ? 'Y' : 'n'}`;
+  `sep=${m.sectionBreakHeight} next=${m.nextRowCost} tools=${m.toolCount}/${ALL_GROUPS.length} overflow=${m.hasOverflowTile ? 'Y' : 'n'}`;
 
 test.describe('Toolbar fit', () => {
+  test('the first constrained frame already fits the toolbar rail', async ({ page }) => {
+    await page.addInitScript(() => {
+      const probeWindow = window as FirstToolbarFrameWindow;
+      probeWindow.__firstToolbarFrame = null;
+      const observer = new MutationObserver(() => {
+        const slot = document.querySelector<HTMLElement>('[data-testid="left-toolbar-slot"]');
+        const tools = document.querySelector<HTMLElement>('[data-testid="left-toolbar-tools"]');
+        const firstGroup = tools?.querySelector<HTMLElement>('[data-toolbar-fit-key]');
+        const overflowList = tools?.querySelector<HTMLElement>('[data-toolbar-fit-overflow-list]');
+        if (!slot || !tools || !firstGroup || !overflowList) return;
+
+        observer.disconnect();
+        requestAnimationFrame(() => {
+          const slotRect = slot.getBoundingClientRect();
+          const overflowTile = overflowList.querySelector<HTMLElement>('[data-testid="tool-overflow-tile"]');
+          const visibleTiles = [...tools.querySelectorAll<HTMLElement>('[data-toolbar-tile]')].filter(
+            (tile) => tile.getBoundingClientRect().height > 0
+          );
+          probeWindow.__firstToolbarFrame = {
+            slotHeight: slotRect.height,
+            firstGroupDisplay: getComputedStyle(firstGroup).display,
+            overflowListDisplay: getComputedStyle(overflowList).display,
+            overflowTileVisible: overflowTile !== null && overflowTile.getBoundingClientRect().height > 0,
+            allVisibleTilesFit: visibleTiles.every((tile) => {
+              const rect = tile.getBoundingClientRect();
+              return rect.top >= slotRect.top && rect.bottom <= slotRect.bottom;
+            }),
+          };
+        });
+      });
+      observer.observe(document, { childList: true, subtree: true });
+    });
+
+    await open(page, 320);
+    await expect
+      .poll(() => page.evaluate(() => (window as FirstToolbarFrameWindow).__firstToolbarFrame ?? null))
+      .not.toBeNull();
+    const firstFrame = await page.evaluate(() => (window as FirstToolbarFrameWindow).__firstToolbarFrame ?? null);
+    if (firstFrame === null) throw new Error('the initial toolbar frame was not captured');
+    expect(firstFrame.slotHeight, 'the viewport constrained the initial rail').toBeLessThan(93);
+    expect(firstFrame.firstGroupDisplay, 'CSS hides the first tool group in the initial constrained frame').toBe(
+      'none'
+    );
+    expect(firstFrame.overflowListDisplay, 'CSS shows the overflow list in the initial constrained frame').toBe('grid');
+    expect(firstFrame.overflowTileVisible, 'the overflow tile itself is visible in the initial constrained frame').toBe(
+      true
+    );
+    expect(firstFrame.allVisibleTilesFit, 'every visible tool tile stays inside the first-frame rail slot').toBe(true);
+  });
+
+  test('CSS responds to a constrained slot before React receives its resize notification', async ({ page }) => {
+    await open(page, 720);
+
+    const fit = await page.evaluate(() => {
+      const slot = document.querySelector<HTMLElement>('[data-testid="left-toolbar-slot"]');
+      const tools = document.querySelector<HTMLElement>('[data-testid="left-toolbar-tools"]');
+      const firstGroup = tools?.querySelector<HTMLElement>('[data-toolbar-fit-key]');
+      const overflowList = tools?.querySelector<HTMLElement>('[data-toolbar-fit-overflow-list]');
+      const firstButton = firstGroup?.querySelector<HTMLButtonElement>('[data-toolbar-tile]');
+      if (!slot || !firstGroup || !overflowList || !firstButton) {
+        throw new Error('The toolbar fit probe could not find its rendered controls');
+      }
+
+      slot.style.flex = 'none';
+      slot.style.height = '50px';
+      return {
+        firstGroupDisplay: getComputedStyle(firstGroup).display,
+        overflowListDisplay: getComputedStyle(overflowList).display,
+        firstButtonPlan: firstButton.dataset.toolbarFitPlanVisible,
+      };
+    });
+
+    expect(fit.firstGroupDisplay, 'the CSS query hides the group at the short height').toBe('none');
+    expect(fit.overflowListDisplay, 'CSS reveals the overflow tile without a React render').toBe('grid');
+    expect(fit.firstButtonPlan, 'React still has the previous tall-rail plan').toBe('true');
+  });
+
+  test('the rail fits at the initial viewport before any resize', async ({ page }) => {
+    // `open` sets this viewport before navigation. The first measured rail is therefore the
+    // one mounted into the constrained slot; this test never resizes a toolbar after load.
+    await open(page, 720);
+
+    const fit = await measure(page);
+    expect(fit, 'the toolbar is measured on its initial viewport').not.toBeNull();
+    if (fit === null) throw new Error('The initial toolbar did not render');
+
+    expect(fit.isSingleColumn, 'the initial fit uses the default one-column rail').toBe(true);
+    expect(fit.hasOverflowTile, 'the short initial slot exposes the overflow tile').toBe(true);
+    expect(fit.toolCount, 'the initial slot collapses at least one tool group').toBeLessThan(ALL_GROUPS.length);
+    expect(fit.over, 'the initial rendered grid stays within its slot').toBeLessThanOrEqual(0);
+    expect(fit.nextRowCost, 'the next collapsed row has a measurable cost').toBeGreaterThan(0);
+    expect(fit.free, 'the initial fit leaves less room than the next actual row costs').toBeLessThan(fit.nextRowCost);
+
+    const fitStyles = await page.locator('style[data-toolbar-fit-styles]').textContent();
+    expect(fitStyles, 'the initial rail installed its container-query fit rules').toContain('@container');
+  });
+
   test('the rendered grid fits its slot, and leaves less than a row behind, at every window height', async ({
     page,
   }) => {
@@ -213,19 +347,27 @@ test.describe('Toolbar fit', () => {
       if (m.hasOverflowTile && m.toolCount === 0) {
         degenerate.push(`H=${height} (slot ${m.slotHeight.toFixed(0)} holds one tile of ${m.tileHeight})`);
         expect(m.hasOverflowTile, `H=${height}: the one reachable tile must be the three-dots tile`).toBe(true);
+        expect(
+          m.nextRowCost,
+          `H=${height}: the first tool row has a measurable incremental cost — ${row(m)}`
+        ).toBeGreaterThan(0);
+        expect(m.free, `H=${height}: no room remains for the first tool row — ${row(m)}`).toBeLessThan(m.nextRowCost);
         continue;
       }
 
       expect(m.over, `H=${height} the grid overflowed its own budget — ${row(m)}`).toBeLessThanOrEqual(0);
-      // AND IT IS NOT SHORT-CHANGED. Whatever the rail does not use, it cannot put a tile in:
-      // under the old 80% budget this failed at every height on this list. Guarded on a collapse
-      // being in play, because once every group has a tile the leftover is not waste — there
-      // is nothing left to put in it, and a rail that padded itself out would be lying.
+      // AND IT IS NOT SHORT-CHANGED. Whatever the rail does not use must be too short for the
+      // next collapsed row at its actual section boundary. Under the old 80% budget this failed
+      // at every height on this list. Once every group has a tile, the leftover is not waste —
+      // there is nothing left to put in it, and a rail that padded itself out would be lying.
       if (m.toolCount < ALL_GROUPS.length) {
+        expect(m.nextRowCost, `H=${height} the next collapsed row has a measurable cost — ${row(m)}`).toBeGreaterThan(
+          0
+        );
         expect(
           m.free,
           `H=${height} left ${m.free.toFixed(0)}px of the slot empty, which is more than a row — ${row(m)}`
-        ).toBeLessThan(m.tileHeight + m.rowGap + SECTION_SEPARATOR_COST);
+        ).toBeLessThan(m.nextRowCost);
       }
       rows.push(`H=${String(height).padStart(4)} ${row(m)}`);
     }
@@ -293,7 +435,7 @@ test.describe('Toolbar fit', () => {
             if (m === null || m.over > 0) return false;
             // A rail showing every group has nothing left to fill the slot with, so the
             // maximality claim only applies while a collapse is in play.
-            return m.toolCount >= ALL_GROUPS.length || m.free < m.tileHeight + m.rowGap + SECTION_SEPARATOR_COST;
+            return m.toolCount >= ALL_GROUPS.length || (m.nextRowCost > 0 && m.free < m.nextRowCost);
           },
           { timeout: 3000, message: `H=${height}: the rail never filled its slot` }
         )
@@ -382,7 +524,7 @@ test.describe('Toolbar fit', () => {
 
         // A collapse has to have happened for the rest to mean anything, and one of the two
         // layouts at one height is the only place all fifteen groups fit.
-        const hasOverflowTile = (await page.getByTestId('tool-overflow-tile').count()) > 0;
+        const hasOverflowTile = await page.getByTestId('tool-overflow-tile').isVisible();
 
         // REACHABILITY, per tool: a tile or the three-dots entry, never neither, never both.
         //
@@ -408,7 +550,7 @@ test.describe('Toolbar fit', () => {
             .toBeGreaterThan(0);
 
           for (const group of ALL_GROUPS) {
-            const hasTile = (await page.getByTestId(`tool-button-${group.name}`).count()) > 0;
+            const hasTile = await page.getByTestId(`tool-button-${group.name}`).isVisible();
             for (const tool of group.tools) {
               const inMenu = (await page.getByTestId(`tool-flyout-item-${tool.name}-${slug(tool)}`).count()) > 0;
               expect(hasTile !== inMenu, `${label}: ${tool.name} tile=${hasTile} three-dots=${inMenu}`).toBe(true);
@@ -418,7 +560,7 @@ test.describe('Toolbar fit', () => {
           const inMenu = await page.getByTestId('tool-flyout-overflow').locator('[role="menuitemradio"]').count();
           let toolsOnTiles = 0;
           for (const group of ALL_GROUPS) {
-            if ((await page.getByTestId(`tool-button-${group.name}`).count()) > 0) toolsOnTiles += group.tools.length;
+            if (await page.getByTestId(`tool-button-${group.name}`).isVisible()) toolsOnTiles += group.tools.length;
           }
           expect(toolsOnTiles + inMenu, `${label}: tools accounted for`).toBe(ALL_TOOLS.length);
           await page.keyboard.press('Escape');
@@ -427,14 +569,14 @@ test.describe('Toolbar fit', () => {
           // through it. Still asserted, because "no collapse" must not become "no tiles".
           for (const group of ALL_GROUPS) {
             expect(
-              await page.getByTestId(`tool-button-${group.name}`).count(),
+              await page.getByTestId(`tool-button-${group.name}`).isVisible(),
               `${label}: ${group.name} must have a tile when nothing collapsed`
-            ).toBe(1);
+            ).toBe(true);
           }
         }
 
         expect(
-          await page.locator('[data-testid^="tool-button-"]').count(),
+          await page.locator('[data-testid^="tool-button-"]:visible').count(),
           `${label}: a rail with no tile at all is not a layout`
         ).toBeGreaterThan(0);
 

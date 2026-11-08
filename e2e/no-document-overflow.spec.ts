@@ -189,13 +189,20 @@ function measureRenderedGrid(page: Page) {
   return page.evaluate(() => {
     const tools = document.querySelector('[data-testid="left-toolbar-tools"]');
     if (!tools) return null;
-    const lists = [...tools.querySelectorAll<HTMLElement>(':scope > ul')].filter((list) => list.childElementCount > 0);
+    const lists = [...tools.querySelectorAll<HTMLElement>(':scope > ul')].filter(
+      (list) =>
+        getComputedStyle(list).display !== 'none' &&
+        [...list.querySelectorAll<HTMLElement>('[data-toolbar-tile]')].some(
+          (tile) => tile.getBoundingClientRect().height > 0
+        )
+    );
     const firstTile = lists[0]?.querySelector<HTMLElement>('[data-toolbar-tile]') ?? null;
     const lastList = lists[lists.length - 1] ?? null;
     if (!firstTile || !lastList) return null;
+    const overflow = tools.querySelector<HTMLElement>('[data-testid="tool-overflow-tile"]');
     return {
       height: lastList.getBoundingClientRect().bottom - firstTile.getBoundingClientRect().top,
-      collapsed: tools.querySelector('[data-testid="tool-overflow-tile"]') !== null,
+      collapsed: overflow !== null && overflow.getBoundingClientRect().height > 0,
     };
   });
 }
@@ -474,7 +481,7 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
       const state = await page.evaluate(() => {
         const tiles = [
           ...document.querySelectorAll<HTMLElement>('[data-testid="left-toolbar-tools"] [data-toolbar-tile]'),
-        ];
+        ].filter((tile) => tile.getBoundingClientRect().height > 0);
         const railEl = document.querySelector('[data-testid="left-sidebar"]');
         return {
           inner: window.innerHeight,

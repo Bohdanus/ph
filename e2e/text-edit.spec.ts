@@ -76,34 +76,9 @@ interface PageRegion {
   bottom: number;
 }
 
-/**
- * The Type tool is a ONE-tool group in `toolbar-mapping.ts`, so it never publishes a flyout of its
- * own. Whether it has a TILE is a different question, and at this viewport the answer is no: the
- * rail drops whole rows that do not fit, and Type is the fourteenth of fifteen groups while 1280x720
- * fits seven of them, so at this viewport it is reached through the three-dots flyout. The flyout's
- * own `onKeyDown` activates the focused entry with Enter, which holds at any viewport because focus
- * does not require the entry to be on screen.
- *
- * This is a LOCAL copy rather than an import because `e2e/text-tool.spec.ts` owns the original and
- * another agent is rewriting that file right now; sharing a helper across two files another agent
- * is editing is how two specs end up disagreeing about the same setup. The divergence that matters
- * is the mount proof: `#text-input` is gone with the options-bar textarea, so this waits on
- * `#font-size-input`, which is a control `Text.tsx` renders unconditionally while the bar is mounted.
- */
+/** Select Text through the shared helper, which handles fit-plan-hidden toolbar tiles. */
 async function selectTextTool(page: Page): Promise<void> {
-  const tile = page.getByTestId('tool-button-text');
-  if (await tile.count()) {
-    await tile.click();
-  } else {
-    await page.getByTestId('tool-overflow-tile').click({ button: 'right' });
-    const menu = page.getByTestId('tool-flyout-overflow');
-    await expect(menu).toBeVisible();
-    const item = page.getByTestId('tool-flyout-item-text-horizontal-type-tool');
-    await expect(item).toBeAttached();
-    await item.focus();
-    await page.keyboard.press('Enter');
-    await expect(menu).toBeHidden();
-  }
+  await clickToolButton(page, 'text');
   await expect(page.locator(TEXT_TOOL_MOUNTED_PROOF), 'the Text toolbar should be mounted').toBeVisible();
 }
 
