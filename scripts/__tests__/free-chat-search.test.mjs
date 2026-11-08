@@ -25,6 +25,7 @@ import {
   searchChatHistory,
   shapeSessions,
   summarizeSearchResults,
+  windowsPathToWslPath,
 } from '../free-chat-search.mjs';
 import { sanitizeForLogging } from '../lib/secrets.mjs';
 
@@ -131,6 +132,14 @@ describe('resolveKiloDbCandidates', () => {
   });
 });
 
+describe('windowsPathToWslPath', () => {
+  it('converts the drive letter and separators while preserving path case', () => {
+    expect(windowsPathToWslPath('C:\\Users\\Alice Smith')).toBe('/mnt/c/Users/Alice Smith');
+    expect(windowsPathToWslPath('D:/Users/Bob')).toBe('/mnt/d/Users/Bob');
+    expect(windowsPathToWslPath('/home/user')).toBeNull();
+  });
+});
+
 describe('findExistingDbPath', () => {
   it('returns the first candidate that exists', async () => {
     const statFn = vi.fn().mockRejectedValueOnce(new Error('no')).mockResolvedValueOnce(undefined);
@@ -178,7 +187,7 @@ describe('buildSearchQuery', () => {
       directory: "/Users/test/ph's project",
     });
     expect(sql).toContain(`time_updated >= ${sinceMs}`);
-    expect(sql).toContain("replace(coalesce(directory, ''), char(92), '/') = '/Users/test/ph''s project'");
+    expect(sql).toContain("replace(coalesce(directory, ''), '\\', '/') = '/Users/test/ph''s project'");
     expect(sql.indexOf('WHERE time_updated')).toBeLessThan(sql.indexOf('ORDER BY time_updated'));
     expect(sql).toContain('LIMIT 50 OFFSET 100');
   });
@@ -255,7 +264,7 @@ describe('buildCodexSearchQuery', () => {
       directory: '/Users/test/ph',
     });
     expect(sql).toContain("julianday(updated_at) >= julianday('2026-10-21T01:00:00.500Z')");
-    expect(sql).toContain("replace(coalesce(cwd, ''), char(92), '/') = '/Users/test/ph'");
+    expect(sql).toContain("replace(coalesce(cwd, ''), '\\', '/') = '/Users/test/ph'");
     expect(sql.indexOf('WHERE julianday(updated_at)')).toBeLessThan(sql.indexOf('ORDER BY updated_at'));
     expect(sql).toContain('LIMIT 25 OFFSET 50');
   });
@@ -276,15 +285,23 @@ describe('buildCodexSearchQuery', () => {
       expect(parseSince('2026-10-21T01:00:00+01:00')).toBe(Date.parse('2026-10-21T00:00:00.000Z'));
     });
 
-    it.each(['not-a-date', '2026-02-30', '2026-02-30T01:00:00Z', '2026-10-21T01:00:00', '2026-10'])(
+    it.each(['not-a-date', '2026-02-30', '2026-02-30T01:00:00Z', '2026-10'])(
       'rejects invalid or timezone-ambiguous dates: %s',
       (value) => {
         expect(() => parseSince(value)).toThrow('--since');
       }
     );
 
+    it('accepts ISO timestamps without timezone (treated as UTC)', () => {
+      expect(parseSince('2026-10-21T01:00:00')).toBe(Date.parse('2026-10-21T01:00:00.000Z'));
+    });
+
     it('accepts ISO timestamps with minute precision', () => {
       expect(parseSince('2026-10-21T01:30Z')).toBe(Date.parse('2026-10-21T01:30:00Z'));
+    });
+
+    it('accepts minute precision without timezone and treats it as UTC', () => {
+      expect(parseSince('2026-10-21T01:30')).toBe(Date.parse('2026-10-21T01:30:00Z'));
     });
   });
 
@@ -969,6 +986,10 @@ describe('defaultTerms', () => {
   it('de-duplicates terms', () => {
     const terms = defaultTerms('brush brush brush tool');
     expect(terms).toEqual(['brush', 'tool']);
+  });
+
+  it('preserves Unicode terms', () => {
+    expect(defaultTerms('Пошук шарів')).toEqual(['пошук', 'шарів']);
   });
 });
 

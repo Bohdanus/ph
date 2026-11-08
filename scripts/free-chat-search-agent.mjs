@@ -30,6 +30,7 @@ const DEFAULTS = {
   maxSnippetChars: 200,
   summaryTokens: 400,
   sqliteTimeoutMs: 15_000,
+  // Default timeout for CLI sqlite3 queries (ms). Can be overridden via options.timeoutMs
 };
 
 const STOP_WORDS = new Set([
@@ -139,7 +140,7 @@ function validateSource(source) {
 export function extractTerms(query, maxTerms = 5) {
   const tokens = query
     .toLowerCase()
-    .replace(/[^\w\s-]/g, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}_\s-]/gu, ' ')
     .split(/\s+/)
     .filter((t) => t && t.length >= 3 && !STOP_WORDS.has(t));
 
@@ -323,6 +324,7 @@ export async function queryDb(dbPath, sql, params = [], opts = {}) {
     try {
       const Database = await import('better-sqlite3').catch(() => null);
       if (Database) {
+        // Open in readonly mode - parity with CLI -readonly flag
         const db = new Database.default(dbPath, { readonly: true });
         try {
           const stmt = db.prepare(sql);
@@ -339,6 +341,13 @@ export async function queryDb(dbPath, sql, params = [], opts = {}) {
 
   // Fallback to sqlite3 CLI - need to inline parameters for CLI
   // Use a proper parameter substitution that respects SQL string literals
+  // This implementation correctly handles:
+  // - Single-quoted strings ('...') with escaped quotes ('')
+  // - Double-quoted strings ("...") with escaped quotes ("")
+  // - Does NOT substitute ? inside string literals
+  // NOTE: Does NOT handle SQLite [bracketed] identifiers or /* comments */ -
+  // placeholders inside those contexts would be incorrectly substituted.
+  // For full SQL literal support, use the native better-sqlite3 path (parameterized queries).
   let cliSql = sql;
   if (params.length > 0) {
     let paramIndex = 0;
@@ -351,24 +360,31 @@ export async function queryDb(dbPath, sql, params = [], opts = {}) {
       const nextChar = sql[i + 1];
 
       if (!inString && (char === '"' || char === "'")) {
+        // Entering a string literal
         inString = true;
         stringChar = char;
         result.push(char);
       } else if (inString && char === stringChar && nextChar === stringChar) {
-        // Escaped quote inside string
+        // Escaped quote inside string ('' or "")
         result.push(char, char);
         i++; // Skip next char
       } else if (inString && char === stringChar) {
+        // Exiting string literal
         inString = false;
         stringChar = '';
         result.push(char);
       } else if (!inString && char === '?') {
-        // Replace placeholder with escaped parameter
+        // Replace placeholder with escaped parameter (only outside strings)
         const escaped = params[paramIndex++].replace(/'/g, "''");
         result.push(`'${escaped}'`);
       } else {
         result.push(char);
       }
+    }
+
+    // If we still have unprocessed params, something went wrong
+    if (paramIndex !== params.length) {
+      throw new Error(`Parameter count mismatch: expected ${params.length}, substituted ${paramIndex}`);
     }
 
     cliSql = result.join('');
@@ -439,7 +455,7 @@ export async function queryDb(dbPath, sql, params = [], opts = {}) {
       if (error.code === 'ENOENT') {
         reject(new Error(`SQLite CLI not found at "${sqlitePath}"; install sqlite3 or better-sqlite3`));
       } else {
-        reject(error);
+        reject(new Error(sanitizeErrorMessage(error.message)));
       }
     });
 
@@ -451,7 +467,11 @@ export async function queryDb(dbPath, sql, params = [], opts = {}) {
       settled = true;
       clearTimeout(timer);
       if (code !== 0) {
-        reject(new Error(`sqlite3 exited with code ${code ?? signal}${stderr ? `: ${stderr.slice(0, 500)}` : ''}`));
+        reject(
+          new Error(
+            `sqlite3 exited with code ${code ?? signal}${stderr ? `: ${sanitizeErrorMessage(stderr.slice(0, 500))}` : ''}`
+          )
+        );
         return;
       }
       try {
@@ -566,7 +586,17 @@ export async function searchAll(options = {}) {
   // Sort by updated date descending
   allResults.sort((a, b) => b.updated.localeCompare(a.updated));
 
-  const finalResults = allResults.slice(0, limit);
+  // Global deduplication by session_id across all sources
+  const seen = new Set();
+  const dedupedResults = [];
+  for (const result of allResults) {
+    if (!seen.has(result.session_id)) {
+      seen.add(result.session_id);
+      dedupedResults.push(result);
+    }
+  }
+
+  const finalResults = dedupedResults.slice(0, limit);
 
   const response = {
     results: finalResults,
@@ -669,6 +699,7 @@ export async function summarizeResults(query, results, opts = {}) {
   do {
     snippets = JSON.stringify(included, null, 2);
     if (snippets.length <= 8000 || included.length === 0) break;
+    // Drop oldest (last in array since results are sorted by updated DESC)
     included = included.slice(0, -1);
   } while (true);
 
@@ -702,11 +733,18 @@ ${snippets}`;
 
 /**
  * Simple async iterator for large result sets
+ * @deprecated This is not a true streaming API - it loads all results first then yields.
+ * Use searchAll() directly for better control. Will be replaced with true streaming in future.
  * @param {Object} options
  * @returns {AsyncIterable<SearchResult>}
  */
 export async function* searchStream(options = {}) {
-  const response = await searchAll(options);
+  let response;
+  try {
+    response = await searchAll(options);
+  } catch (error) {
+    throw new Error(sanitizeErrorMessage(error?.message ?? String(error)));
+  }
   for (const result of response.results) {
     yield result;
   }
@@ -729,25 +767,50 @@ Options:
   --summary           Include AI summary
   --summary-tokens N  Max tokens for summary (default: 400, max: 800)
   --no-native         Force sqlite3 CLI instead of better-sqlite3
+  --timeout MS        Query timeout in milliseconds (default: 15000)
   --help, -h          Show this help
 
 Examples:
   node scripts/free-chat-search-agent.mjs "how to fix bug"
   node scripts/free-chat-search-agent.mjs "react hooks" --json --limit 10
   node scripts/free-chat-search-agent.mjs "typescript error" --source kilo --summary
+  node scripts/free-chat-search-agent.mjs "error --fix" --json
 `);
     return 0;
   }
 
-  // Parse args - query is everything before first flag
-  let query = '';
-  const flagIndices = args.findIndex((a) => a.startsWith('--'));
-  if (flagIndices >= 0) {
-    query = args.slice(0, flagIndices).join(' ');
-  } else {
-    query = args.join(' ');
+  // Parse args - query is everything before first known flag
+  // Known flags are explicitly listed to avoid treating query content like "--fix" as flags
+  const KNOWN_FLAGS = new Set([
+    '--json',
+    '--limit',
+    '--max-sessions',
+    '--source',
+    '--summary',
+    '--summary-tokens',
+    '--no-native',
+    '--timeout',
+    '--help',
+    '-h',
+  ]);
+
+  let queryParts = [];
+  let flagArgs = [];
+  let inQuery = true;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (inQuery && arg.startsWith('--') && KNOWN_FLAGS.has(arg)) {
+      inQuery = false;
+      flagArgs.push(arg);
+    } else if (!inQuery) {
+      flagArgs.push(arg);
+    } else {
+      queryParts.push(arg);
+    }
   }
-  query = query.trim();
+
+  let query = queryParts.join(' ').trim();
 
   if (!query) {
     console.error('Error: Query required. Use --help for usage.');
@@ -755,11 +818,11 @@ Examples:
   }
 
   const getFlag = (flag, def) => {
-    const idx = args.indexOf(flag);
-    return idx >= 0 && args[idx + 1] && !args[idx + 1].startsWith('--') ? args[idx + 1] : def;
+    const idx = flagArgs.indexOf(flag);
+    return idx >= 0 && flagArgs[idx + 1] && !flagArgs[idx + 1].startsWith('--') ? flagArgs[idx + 1] : def;
   };
 
-  const hasFlag = (flag) => args.includes(flag);
+  const hasFlag = (flag) => flagArgs.includes(flag);
 
   const source = getFlag('--source', 'all');
   if (!VALID_SOURCES.has(source)) {
@@ -785,6 +848,12 @@ Examples:
     return 1;
   }
 
+  const timeoutMs = Number(getFlag('--timeout', String(DEFAULTS.sqliteTimeoutMs)));
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 300000) {
+    console.error('Error: --timeout must be an integer between 1000 and 300000 (ms)');
+    return 1;
+  }
+
   const options = {
     query,
     limit,
@@ -794,6 +863,7 @@ Examples:
     summaryTokens,
     useNative: !hasFlag('--no-native'),
     outputJson: hasFlag('--json'),
+    timeoutMs,
   };
 
   try {
@@ -829,15 +899,17 @@ Examples:
 
     return 0;
   } catch (error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`Error: ${sanitizeErrorMessage(error.message)}`);
     return 1;
   }
 }
 
 /**
- * Helper to get Kilo DB candidates
+ * Get Kilo database path candidates (exported for external use)
+ * @param {Object} opts
+ * @returns {string[]}
  */
-function resolveKiloDbCandidates(opts = {}) {
+export function resolveKiloDbCandidates(opts = {}) {
   const home = opts.homeDir || process.env.HOME || process.env.USERPROFILE || '';
   const xdg = opts.xdgDataHome || process.env.XDG_DATA_HOME;
   const candidates = [];
@@ -854,9 +926,11 @@ function resolveKiloDbCandidates(opts = {}) {
 }
 
 /**
- * Helper to get Codex DB candidates
+ * Get Codex database path candidates (exported for external use)
+ * @param {Object} opts
+ * @returns {string[]}
  */
-function resolveCodexDbCandidates(opts = {}) {
+export function resolveCodexDbCandidates(opts = {}) {
   const home = opts.homeDir || process.env.HOME || process.env.USERPROFILE || '';
   const candidates = [];
   if (home) {
@@ -879,7 +953,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   main()
     .then((code) => process.exit(code))
     .catch((err) => {
-      console.error(err.message);
+      console.error(sanitizeErrorMessage(err.message));
       process.exit(1);
     });
 }
