@@ -272,11 +272,22 @@ describe('free model rotation', () => {
         choices: [{ message: { content: 'Nemotron result' }, finish_reason: 'stop' }],
       }),
     });
-    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('nvidia/nemotron-3-ultra-550b-a55b')], chat });
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('weaker-kilo:free')],
+      openrouter: [openRouterRow('nvidia/nemotron-3-ultra-550b-a55b')],
+      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      chat,
+    });
+    const runKilo = vi.fn().mockResolvedValue({ content: 'weaker Kilo result', finishReason: 'stop' });
+    const runOpenCode = vi.fn().mockResolvedValue({ content: 'weaker OpenCode result', finishReason: 'stop' });
     const result = await completeWithFreeModel('safe prompt', {
       fetchImpl,
       openRouterKey: 'test',
       maxTokens: 20,
+      kiloCommand: '/fake-kilo',
+      runKilo,
+      opencodeCommand: '/opt/opencode',
+      runOpenCode,
     });
 
     expect(result).toMatchObject({
@@ -285,6 +296,8 @@ describe('free model rotation', () => {
       content: 'Nemotron result',
     });
     expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ max_tokens: 1024 });
+    expect(runKilo).not.toHaveBeenCalled();
+    expect(runOpenCode).not.toHaveBeenCalled();
   });
 
   it('falls through to OpenCode using its tool-disabled completion adapter', async () => {
@@ -336,9 +349,15 @@ describe('free model rotation', () => {
     expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ reasoning_effort: 'low', max_tokens: 1200 });
   });
 
-  it('tries Groq before OpenCode after Kilo and OpenRouter are exhausted', async () => {
-    const chat = vi.fn(async (url) => {
-      if (url.includes('openrouter')) return { ok: false, status: 429, json: async () => ({}) };
+  it('tries every Nemotron 3 Ultra route before weaker models, then preserves fallback provider order', async () => {
+    const attempts = [];
+    const chat = vi.fn(async (url, options) => {
+      const model = JSON.parse(options.body).model;
+      if (url.includes('openrouter')) {
+        attempts.push(`openrouter/${model}`);
+        return { ok: false, status: 500, json: async () => ({}) };
+      }
+      attempts.push(`groq/${model}`);
       return {
         ok: true,
         status: 200,
@@ -349,18 +368,23 @@ describe('free model rotation', () => {
       };
     });
     const fetchImpl = catalogFetch({
-      kilo: [kiloRow('kilo:free')],
-      openrouter: [openRouterRow('openrouter/model')],
+      kilo: [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'), kiloRow('kilo:free')],
+      openrouter: [openRouterRow('nvidia/nemotron-3-ultra-550b-a55b'), openRouterRow('openrouter/model')],
       groq: [{ id: 'openai/gpt-oss-120b' }],
-      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
-      keyInfo: () => ({
-        ok: true,
-        json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 1000, remaining: 990 } } }),
-      }),
+      opencode: [
+        { id: 'nemotron-3-ultra-free', name: 'NVIDIA Nemotron 3 Ultra Free', owned_by: 'opencode' },
+        { id: 'nemotron-3.5-super-vl-free', name: 'NVIDIA Nemotron 3.5 Super VL Free', owned_by: 'opencode' },
+      ],
       chat,
     });
-    const runKilo = vi.fn().mockResolvedValue({ error: 'Kilo quota', exhaustSource: true });
-    const runOpenCode = vi.fn().mockResolvedValue({ content: 'OpenCode result', finishReason: 'stop' });
+    const runKilo = vi.fn(async ({ model }) => {
+      attempts.push(`kilo/${model}`);
+      return { error: 'model unavailable' };
+    });
+    const runOpenCode = vi.fn(async ({ model }) => {
+      attempts.push(`opencode/${model}`);
+      return { error: 'model unavailable' };
+    });
     const result = await completeWithFreeModel('safe prompt', {
       fetchImpl,
       openRouterKey: 'openrouter-test',
@@ -373,13 +397,16 @@ describe('free model rotation', () => {
     });
 
     expect(result).toMatchObject({ source: 'groq', model: 'openai/gpt-oss-120b', content: 'Groq result' });
-    expect(runKilo).toHaveBeenCalledTimes(1);
-    expect(runOpenCode).not.toHaveBeenCalled();
-    expect(chat.mock.calls.map(([url]) => url)).toEqual([
-      'https://openrouter.ai/api/v1/chat/completions',
-      'https://api.groq.com/openai/v1/chat/completions',
+    expect(attempts).toEqual([
+      'opencode/nemotron-3-ultra-free',
+      'kilo/nvidia/nemotron-3-ultra-550b-a55b:free',
+      'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free',
+      'opencode/nemotron-3.5-super-vl-free',
+      'kilo/kilo:free',
+      'openrouter/openrouter/model:free',
+      'groq/openai/gpt-oss-120b',
     ]);
-    expect(result.requestCounts).toMatchObject({ kilo: 1, openrouter: 1, groq: 1 });
+    expect(result.requestCounts).toMatchObject({ kilo: 2, openrouter: 2, opencode: 2, groq: 1 });
   });
 
   it('rotates to the next Groq key on HTTP 429 from the first key', async () => {
