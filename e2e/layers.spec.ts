@@ -807,44 +807,29 @@ test.describe('Tablet touch layer reordering', () => {
       await page.goto('/');
       const canvas = getWorkspaceCanvas(page);
       await expect(canvas).toBeVisible();
-      const canvasBox = await canvas.boundingBox();
-      if (!canvasBox) throw new Error('Canvas not found');
+      await clickToolButton(page, 'draw');
+      const readCanvasBox = async () => {
+        const box = await canvas.boundingBox();
+        if (!box) throw new Error('Canvas not found');
+        return box;
+      };
 
       const draw = async (color: string, start: { x: number; y: number }, end: { x: number; y: number }) => {
-        await clickToolButton(page, 'draw');
         await setForegroundColor(page, color, true);
-        await drawLine(
-          page,
-          canvasBox,
-          start.x - canvasBox.x,
-          start.y - canvasBox.y,
-          end.x - canvasBox.x,
-          end.y - canvasBox.y,
-          { steps: 15 }
-        );
+        const box = await readCanvasBox();
+        await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: 15 });
       };
 
       // Green initially covers red. A non-overlapping blue layer separates them; dragging red to
       // green's insertion line is non-adjacent and makes red visible at their crossing.
-      await draw(
-        '#ff0000',
-        { x: canvasBox.x + 420, y: canvasBox.y + 180 },
-        { x: canvasBox.x + 180, y: canvasBox.y + 340 }
-      );
-      await draw(
-        '#0000ff',
-        { x: canvasBox.x + 80, y: canvasBox.y + 100 },
-        { x: canvasBox.x + 200, y: canvasBox.y + 100 }
-      );
-      await draw(
-        '#00aa00',
-        { x: canvasBox.x + 160, y: canvasBox.y + 260 },
-        { x: canvasBox.x + 440, y: canvasBox.y + 260 }
-      );
+      await draw('#ff0000', { x: 420, y: 180 }, { x: 180, y: 340 });
+      await draw('#0000ff', { x: 80, y: 100 }, { x: 200, y: 100 });
+      await draw('#00aa00', { x: 160, y: 260 }, { x: 440, y: 260 });
 
+      const overlapBox = await readCanvasBox();
       const overlapClip = viewportClip({
-        x: canvasBox.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
-        y: canvasBox.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
+        x: overlapBox.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
+        y: overlapBox.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
         width: OVERLAP_SAMPLE_RADIUS * 2,
         height: OVERLAP_SAMPLE_RADIUS * 2,
       });
@@ -853,16 +838,24 @@ test.describe('Tablet touch layer reordering', () => {
         description: string
       ) => {
         const sample: { color: { red: number; green: number; blue: number } | null } = { color: null };
-        await waitForCanvasPixels(
-          page,
-          overlapClip,
-          async (screenshot) => {
-            const image = await loadImageData(screenshot);
-            sample.color = await getColorAtPoint(image, Math.round(image.width / 2), Math.round(image.height / 2));
-            return sample.color !== null && matches(sample.color);
-          },
-          { description }
-        );
+        try {
+          await waitForCanvasPixels(
+            page,
+            overlapClip,
+            async (screenshot) => {
+              const image = await loadImageData(screenshot);
+              sample.color = await getColorAtPoint(image, Math.round(image.width / 2), Math.round(image.height / 2));
+              return sample.color !== null && matches(sample.color);
+            },
+            { description }
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `${message}; last sampled center RGB for viewport clip ${JSON.stringify(overlapClip)}: ${JSON.stringify(sample.color)}`,
+            { cause: error }
+          );
+        }
         if (!sample.color) throw new Error(`No pixel sample at overlap: ${description}`);
         return sample.color;
       };

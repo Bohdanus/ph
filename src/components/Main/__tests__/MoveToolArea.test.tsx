@@ -1,5 +1,7 @@
 import { act, fireEvent, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { transformCorners, transformToolArgsToAffine } from '../../../contexts/affine-transform.ts';
+import type { AffineTransform } from '../../../contexts/affine-transform.ts';
 import type { UseRectProps } from '../../../hooks/useRect.ts';
 import {
   claimDocumentGesture,
@@ -10,6 +12,18 @@ import {
 import { MoveToolArea } from '../MoveToolArea.tsx';
 
 type LayerId = 'layer-1' | 'layer-2' | 'bedrock-1';
+type TestLayer = {
+  id: LayerId;
+  isBedrock: boolean;
+  pos: { x: number; y: number; width: number; height: number };
+  operations?: Array<{
+    id: string;
+    kind: 'affine-transform';
+    transform: AffineTransform;
+    enabled: boolean;
+  }>;
+  source?: { kind: 'tool'; args: { toolName: string; figure: string } };
+};
 
 const h = vi.hoisted(() => {
   const isMouseDownRef = { current: false };
@@ -43,10 +57,7 @@ const container = document.createElement('div');
 const toolOverlay = document.createElement('canvas');
 const rectOverlay = document.createElement('canvas');
 
-const layers: Record<
-  LayerId,
-  { id: LayerId; isBedrock: boolean; pos: { x: number; y: number; width: number; height: number } }
-> = {
+const layers: Record<LayerId, TestLayer> = {
   'layer-1': {
     id: 'layer-1',
     isBedrock: false,
@@ -165,6 +176,10 @@ describe('MoveToolArea', () => {
     h.isMouseDownRef.current = false;
     h.pointerIdRef.current = 1;
     h.useRectProps.current = null;
+    for (const layer of Object.values(layers)) {
+      delete layer.source;
+      delete layer.operations;
+    }
 
     storeState.activeLayerId = 'layer-1';
     storeState.documentFrame = null;
@@ -243,6 +258,70 @@ describe('MoveToolArea', () => {
         isMoveTool: true,
       });
       expect(h.useRectProps.current!.onChangeEnd).toEqual(expect.any(Function));
+    });
+
+    it('enables rotation for selected shape layers', () => {
+      layers['layer-1'].source = { kind: 'tool', args: { toolName: 'rectangle', figure: 'rectangle' } };
+
+      renderArea();
+
+      expect(h.useRectProps.current).toMatchObject({
+        rotationEnabled: true,
+        rotation: 0,
+        initialRect: { x1: 10, y1: 20, x2: 40, y2: 60 },
+      });
+    });
+
+    it('uses the transformed shape frame for scaled and mirrored rotation', () => {
+      layers['layer-1'].source = { kind: 'tool', args: { toolName: 'rectangle', figure: 'rectangle' } };
+      const transform = transformToolArgsToAffine(
+        {
+          rotate: 45,
+          mirrorH: true,
+          mirrorV: false,
+          skewX: 0,
+          skewY: 0,
+          trapezoid: 0,
+          resizeX: 200,
+          resizeY: 150,
+          toolName: 'transform',
+        },
+        { width: 30, height: 40 }
+      );
+      if (!transform) throw new Error('Expected an affine transform for the shape frame test');
+      layers['layer-1'].operations = [{ id: 'test-transform', kind: 'affine-transform', transform, enabled: true }];
+
+      renderArea();
+
+      expect(h.useRectProps.current!.rotation).toBeCloseTo(45);
+      expect(h.useRectProps.current!.initialRect!.x1).toBeCloseTo(-5);
+      expect(h.useRectProps.current!.initialRect!.y1).toBeCloseTo(10);
+      expect(h.useRectProps.current!.initialRect!.x2).toBeCloseTo(55);
+      expect(h.useRectProps.current!.initialRect!.y2).toBeCloseTo(70);
+    });
+
+    it('keeps skewed shape transforms on the existing axis-aligned Move path', () => {
+      layers['layer-1'].source = { kind: 'tool', args: { toolName: 'rectangle', figure: 'rectangle' } };
+      const transform = transformToolArgsToAffine(
+        {
+          rotate: 30,
+          mirrorH: false,
+          mirrorV: false,
+          skewX: 20,
+          skewY: 0,
+          trapezoid: 0,
+          resizeX: 200,
+          resizeY: 150,
+          toolName: 'transform',
+        },
+        { width: 30, height: 40 }
+      );
+      if (!transform) throw new Error('Expected an affine transform for the skewed shape frame test');
+      layers['layer-1'].operations = [{ id: 'test-transform', kind: 'affine-transform', transform, enabled: true }];
+
+      renderArea();
+
+      expect(h.useRectProps.current).toMatchObject({ rotationEnabled: false, rotation: 0 });
     });
   });
 
@@ -341,6 +420,31 @@ describe('MoveToolArea', () => {
       });
     });
 
+    it('previews shape rotation as a retained affine transform', () => {
+      layers['layer-1'].source = { kind: 'tool', args: { toolName: 'rectangle', figure: 'rectangle' } };
+      pressOn('layer-1');
+
+      act(() => {
+        h.useRectProps.current!.onRotationChange?.(45);
+        h.useRectProps.current!.onRepaint?.({ x1: 10, y1: 20, x2: 40, y2: 60 });
+      });
+
+      expect(h.tempUpdateLayer).toHaveBeenCalledWith({
+        id: 'layer-1',
+        toolArgs: {
+          rotate: 45,
+          mirrorH: false,
+          mirrorV: false,
+          skewX: 0,
+          skewY: 0,
+          trapezoid: 0,
+          resizeX: 100,
+          resizeY: 100,
+          toolName: 'transform',
+        },
+      });
+    });
+
     it('never repaints a layer before any pointer interaction happened', () => {
       renderArea();
 
@@ -387,6 +491,134 @@ describe('MoveToolArea', () => {
       });
 
       expect(h.updateLayerByTool).not.toHaveBeenCalled();
+    });
+
+    it('commits shape rotation as one transform operation', async () => {
+      layers['layer-1'].source = { kind: 'tool', args: { toolName: 'rectangle', figure: 'rectangle' } };
+      pressOn('layer-1');
+      h.useRectProps.current!.onRotationChange?.(45);
+
+      await act(async () => {
+        await h.useRectProps.current!.onChangeEnd({ x1: 10, y1: 20, x2: 40, y2: 60 });
+      });
+
+      expect(h.updateLayerByTool).toHaveBeenCalledWith({
+        id: 'layer-1',
+        toolArgs: {
+          rotate: 45,
+          mirrorH: false,
+          mirrorV: false,
+          skewX: 0,
+          skewY: 0,
+          trapezoid: 0,
+          resizeX: 100,
+          resizeY: 100,
+          toolName: 'transform',
+        },
+      });
+    });
+
+    it.each([
+      [45, 6.464466094067262, 16.464466094067262],
+      [90, 10, 15],
+    ])(
+      'keeps the opposite edge fixed when resizing a shape rotated %s degrees',
+      async (rotation, expectedX, expectedY) => {
+        layers['layer-1'].source = { kind: 'tool', args: { toolName: 'rectangle', figure: 'rectangle' } };
+        const transform = transformToolArgsToAffine(
+          {
+            rotate: rotation,
+            mirrorH: false,
+            mirrorV: false,
+            skewX: 0,
+            skewY: 0,
+            trapezoid: 0,
+            resizeX: 100,
+            resizeY: 100,
+            toolName: 'transform',
+          },
+          { width: 30, height: 40 }
+        );
+        if (!transform) throw new Error('Expected an affine transform for the rotated resize test');
+        layers['layer-1'].operations = [{ id: 'test-transform', kind: 'affine-transform', transform, enabled: true }];
+
+        const getCorners = (position: TestLayer['pos']) =>
+          transformCorners(transform, { width: position.width, height: position.height }).map((point) => ({
+            x: point.x + position.x,
+            y: point.y + position.y,
+          }));
+        const originalRightEdge = getCorners(layers['layer-1'].pos).slice(1, 3);
+        pressOn('layer-1');
+
+        await act(async () => {
+          await h.useRectProps.current!.onChangeEnd({ x1: 5, y1: 20, x2: 40, y2: 60 });
+        });
+
+        const toolArgs = h.updateLayerByTool.mock.calls[0]?.[0].toolArgs;
+        expect(toolArgs).toMatchObject({ toolName: 'reposition' });
+        if (!toolArgs || !('resize' in toolArgs)) {
+          throw new Error('Expected a resize operation for the rotated shape');
+        }
+        expect(toolArgs.resize.x).toBeCloseTo(expectedX, 10);
+        expect(toolArgs.resize.y).toBeCloseTo(expectedY, 10);
+        expect(toolArgs.resize.width).toBeCloseTo(35, 10);
+        expect(toolArgs.resize.height).toBeCloseTo(40, 10);
+        getCorners(toolArgs.resize)
+          .slice(1, 3)
+          .forEach((corner, index) => {
+            expect(corner.x).toBeCloseTo(originalRightEdge[index]!.x, 10);
+            expect(corner.y).toBeCloseTo(originalRightEdge[index]!.y, 10);
+          });
+      }
+    );
+
+    it('keeps the opposite edge fixed after non-uniform scale and rotation with a document offset', async () => {
+      layers['layer-1'].source = { kind: 'tool', args: { toolName: 'rectangle', figure: 'rectangle' } };
+      storeState.documentFrame = { x: 100, y: 50, width: 800, height: 600 };
+      const transform = transformToolArgsToAffine(
+        {
+          rotate: 30,
+          mirrorH: false,
+          mirrorV: false,
+          skewX: 0,
+          skewY: 0,
+          trapezoid: 0,
+          resizeX: 200,
+          resizeY: 150,
+          toolName: 'transform',
+        },
+        { width: 30, height: 40 }
+      );
+      if (!transform) throw new Error('Expected an affine transform for the non-uniform resize test');
+      layers['layer-1'].operations = [{ id: 'test-transform', kind: 'affine-transform', transform, enabled: true }];
+
+      pressOn('layer-1');
+      const initialRect = h.useRectProps.current!.initialRect!;
+      const resizedRect = { ...initialRect, x1: initialRect.x1 + 5 };
+
+      await act(async () => {
+        await h.useRectProps.current!.onChangeEnd(resizedRect);
+      });
+
+      const toolArgs = h.updateLayerByTool.mock.calls[0]?.[0].toolArgs;
+      if (!toolArgs || !('resize' in toolArgs)) {
+        throw new Error('Expected a resize operation for the non-uniformly scaled shape');
+      }
+      expect(toolArgs.resize.width).toBeGreaterThan(0);
+      expect(toolArgs.resize.height).toBeGreaterThan(0);
+
+      const getCorners = (position: TestLayer['pos']) =>
+        transformCorners(transform, { width: position.width, height: position.height }).map((point) => ({
+          x: point.x + position.x,
+          y: point.y + position.y,
+        }));
+      const originalRightEdge = getCorners(layers['layer-1'].pos).slice(1, 3);
+      getCorners(toolArgs.resize)
+        .slice(1, 3)
+        .forEach((corner, index) => {
+          expect(corner.x).toBeCloseTo(originalRightEdge[index]!.x, 10);
+          expect(corner.y).toBeCloseTo(originalRightEdge[index]!.y, 10);
+        });
     });
   });
 

@@ -1015,16 +1015,20 @@ describe("maintained guidance's code claims resolve against the program", () => 
     expect(live).not.toContain('140');
     expect(live).toContain('146');
     expect(live).toContain('152');
+    expect(live).not.toContain('147');
     expect(live).not.toContain('148');
 
-    // Live sections resolve, while §140 and §148 are explicit retired entries.
+    // Live sections resolve, while §140, §147, and §148 are explicit retired entries.
     expect(staleHandoffRefs('see §146 and §152', handoff)).toEqual([]);
     // The retired one, and one that never existed, are both reported and named differently,
     // because only the second can be fixed by repointing.
-    const retired = staleHandoffRefs('see §148', handoff);
-    expect(retired).toHaveLength(1);
-    expect(retired[0]).toContain('§148');
-    expect(retired[0]).toContain('retired');
+    const retired147 = staleHandoffRefs('see §147', handoff);
+    expect(retired147).toHaveLength(1);
+    expect(retired147[0]).toContain('§147');
+    expect(retired147[0]).toContain('retired');
+    const retired148 = staleHandoffRefs('see §148', handoff);
+    expect(retired148).toHaveLength(1);
+    expect(retired148[0]).toContain('retired');
     const removed = staleHandoffRefs('see §140', handoff);
     expect(removed).toHaveLength(1);
     expect(removed[0]).toContain('§140');

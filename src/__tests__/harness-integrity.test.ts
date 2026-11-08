@@ -1147,6 +1147,32 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
     ).toBe(true);
   });
 
+  it('binds the local E2E server and browser to the same IPv4 loopback address', async () => {
+    const previousPort = process.env.PLAYWRIGHT_PORT;
+    const previousBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
+    try {
+      process.env.PLAYWRIGHT_PORT = '5197';
+      delete process.env.PLAYWRIGHT_BASE_URL;
+      vi.resetModules();
+      const localConfig = await loadPlaywrightConfig();
+      const webServer = localConfig.webServer as { command?: string; url?: string } | undefined;
+      expect(webServer?.url).toBe('http://127.0.0.1:5197');
+      expect(webServer?.command).toContain('--host 127.0.0.1');
+      expect(localConfig.use?.baseURL).toBe(webServer?.url);
+
+      process.env.PLAYWRIGHT_BASE_URL = 'http://localhost:5197/app';
+      vi.resetModules();
+      const aliasConfig = await loadPlaywrightConfig();
+      expect(aliasConfig.use?.baseURL).toBe('http://127.0.0.1:5197/app');
+    } finally {
+      if (previousPort === undefined) delete process.env.PLAYWRIGHT_PORT;
+      else process.env.PLAYWRIGHT_PORT = previousPort;
+      if (previousBaseUrl === undefined) delete process.env.PLAYWRIGHT_BASE_URL;
+      else process.env.PLAYWRIGHT_BASE_URL = previousBaseUrl;
+      vi.resetModules();
+    }
+  });
+
   it('keeps the browser color scheme stable without treating it as the app theme pin', () => {
     // `colorScheme` sets `prefers-color-scheme`, which ThemeContext no longer reads.
     // The shared `extended-test` fixture seeds the app's `localStorage.theme` to light

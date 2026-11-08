@@ -68,6 +68,9 @@ function dispatcher(name) {
 # progress rather than as a way around a red gate.
 [ "\${HUSKY-}" = "0" ] && exit 0
 
+# Normalise Windows backslash paths before comparing git and config output.
+normalise() { printf '%s' "$1" | tr '\\\\' '/'; }
+
 hook="$(git rev-parse --show-toplevel)/.husky/${name}"
 if [ ! -f "$hook" ]; then
 \t# Older linked worktrees can predate a new commit-msg hook until they sync.
@@ -87,10 +90,10 @@ if [ ! -f "$hook" ]; then
 \t\t\t\tvalidated_main_identity="$(cat "$validated_main_git_dir/kilo-main-worktree-identity" 2>/dev/null || true)"
 \t\t\tfi
 \t\tfi
-\t\tif [ -n "$registered_main_identity" ] && [ "$validated_main_git_dir" = "$registered_main_git_dir" ] && [ "$validated_main_identity" = "$registered_main_identity" ]; then
+\t\tif [ -n "$registered_main_identity" ] && [ "$(normalise "$validated_main_git_dir")" = "$(normalise "$registered_main_git_dir")" ] && [ "$validated_main_identity" = "$registered_main_identity" ]; then
 \t\t\tsaved_main_identity_match=true
 \t\tfi
-\t\tif [ -f "$main_message_guard" ] && [ -n "$registered_main_identity" ] && [ "$validated_main_git_dir" = "$registered_main_git_dir" ] && [ "$validated_main_identity" = "$registered_main_identity" ]; then
+\t\tif [ -f "$main_message_guard" ] && [ -n "$registered_main_identity" ] && [ "$(normalise "$validated_main_git_dir")" = "$(normalise "$registered_main_git_dir")" ] && [ "$validated_main_identity" = "$registered_main_identity" ]; then
 \t\t\tnode "$main_message_guard" "$1"
 \t\t\texit $?
 \t\tfi
@@ -103,7 +106,7 @@ if [ ! -f "$hook" ]; then
 \t\t\tcurrent_main_identity="$(cat "$current_git_dir/kilo-main-worktree-identity" 2>/dev/null || true)"
 \t\tfi
 \t\tdesignated_main_identity_match=false
-\t\tif [ -n "$registered_main_identity" ] && [ "$current_git_dir" = "$designated_main_git_dir" ] && [ -n "$current_main_identity" ] && [ "$current_main_identity" = "$registered_main_identity" ]; then
+\t\tif [ -n "$registered_main_identity" ] && [ "$(normalise "$current_git_dir")" = "$(normalise "$designated_main_git_dir")" ] && [ -n "$current_main_identity" ] && [ "$current_main_identity" = "$registered_main_identity" ]; then
 \t\t\tdesignated_main_identity_match=true
 \t\tfi
 \t\tcurrent_worktree_path="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -119,7 +122,7 @@ if [ ! -f "$hook" ]; then
 \t\tif [ -z "$registered_main_identity" ] && [ -n "$main_worktree_path" ] && [ "$current_worktree_path" = "$main_worktree_path" ] && [ -z "$current_branch_ref" ]; then
 \t\t\tdetached_designated_main_path=true
 \t\tfi
-\t\tif [ "$current_branch" != "main" ] && [ "$current_git_dir" != "$common_git_dir" ] && [ "$designated_main_identity_match" != true ] && [ "$detached_designated_main_path" != true ]; then
+\t\tif [ "$current_branch" != "main" ] && [ "$(normalise "$current_git_dir")" != "$(normalise "$common_git_dir")" ] && [ "$designated_main_identity_match" != true ] && [ "$detached_designated_main_path" != true ]; then
 \t\tif [ -n "$registered_main_identity" ] && [ "$saved_main_identity_match" != true ]; then
 \t\t\techo "gate: cannot locate the designated main commit-msg guard with its saved identity; run 'npm install' from the designated main worktree" >&2
 \t\t\texit 1

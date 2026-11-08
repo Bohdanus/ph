@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { isProjectMainWorktree } from './merge-takeover-guard.mjs';
 import { readMergeHeadRefs, resolveWorktree } from './main-worktree-guard.mjs';
+import { assertLandingLease } from './main-landing.mjs';
 
 function git(args, { cwd = process.cwd(), env = process.env, input } = {}) {
   const result = spawnSync('git', args, {
@@ -134,6 +135,20 @@ export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = 
     return fail(
       'set KILO_EXPECTED_MAIN_SHA, KILO_EXPECTED_INCOMING_SHA, KILO_EXPECTED_TREE_SHA, KILO_EXPECTED_BRANCH, and KILO_EXPECTED_CHAT_ID from the reviewed candidate record'
     );
+  }
+  if (!env.KILO_MAIN_LANDING_LEASE_ID) {
+    return fail('use `npm run main:landing -- land ...` so the main landing has a recorded owner and recovery lease');
+  }
+  try {
+    assertLandingLease(cwd, env.KILO_MAIN_LANDING_LEASE_ID, {
+      branch: expectedBranch,
+      chatId: expectedChat,
+      mainSha: expectedMain,
+      incomingSha: expectedIncoming,
+      treeSha: expectedTree,
+    });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
   }
   try {
     if (!hasRequiredTrailers(argv[1], { cwd, env, expectedBranch, expectedChat })) {

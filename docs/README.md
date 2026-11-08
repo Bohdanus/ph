@@ -7,16 +7,17 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 
 ## Read this first
 
-|                                                          |                                                                                            |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [`DOCUMENTATION.md`](DOCUMENTATION.md)                   | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
-| [`OVERRIDES.md`](OVERRIDES.md)                           | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
-| [`FEATURES.md`](FEATURES.md)                             | What the app can and cannot do, system-wide, against Photoshop                             |
-| [`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)                 | Supported desktop/tablet/Retina boundary; handheld phones are out of scope                 |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)                     | What the code is and how it fits together                                                  |
-| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)           | Durable-history requirements, sequencing, and operator gates                               |
-| [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md) | Restart guide: current status contract, loose ends, and next migration sequence            |
-| [`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md)     | Fetched Adobe evidence and processed Layers/History panel summary                          |
+|                                                                              |                                                                                            |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`DOCUMENTATION.md`](DOCUMENTATION.md)                                       | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
+| [`OVERRIDES.md`](OVERRIDES.md)                                               | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
+| [`FEATURES.md`](FEATURES.md)                                                 | What the app can and cannot do, system-wide, against Photoshop                             |
+| [`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)                                     | Supported desktop/tablet/Retina boundary; handheld phones are out of scope                 |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                                         | What the code is and how it fits together                                                  |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)                               | Durable-history requirements, sequencing, and operator gates                               |
+| [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md)                     | Restart guide: current status contract, loose ends, and next migration sequence            |
+| [`HISTORY-MIGRATION-AUDIT-20261107.md`](HISTORY-MIGRATION-AUDIT-20261107.md) | Point-in-time audit of durable-history migration gates and open parity evidence            |
+| [`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md)                         | Fetched Adobe evidence and processed Layers/History panel summary                          |
 
 The ladder is **operator → Adobe → this repository → judgement**, and the rule belongs to
 [`DOCUMENTATION.md`](DOCUMENTATION.md). `AGENTS.md` carries the short form for agents; this page
@@ -57,11 +58,11 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 | Document                                                                                               | Its one job                                                                                          |
 | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| [WINDOWS-GOTCHAS.md](WINDOWS-GOTCHAS.md)                                                               | Windows command shims, process cleanup, and Git/WSL path mismatches                                  |
 | [`../AGENTS.md`](../AGENTS.md)                                                                         | Rules every agent reads first                                                                        |
 | [`../MODELS.md`](../MODELS.md)                                                                         | Everyday model/provider policy, safe routing, budget checks, and token-saving research               |
 | [`ORCHESTRATION.md`](ORCHESTRATION.md)                                                                 | Worktrees, delegation, the swarm board, dead-agent recovery                                          |
 | [`CODEX-ORCHESTRATION.md`](CODEX-ORCHESTRATION.md)                                                     | Codex subagent tools, context, model routing, cost, and shared-worktree rules                        |
-| [`INCOMING_COMMITS.md`](INCOMING_COMMITS.md)                                                           | Records incoming commits from `git pull`/`git fetch` on the main worktree                            |
 | [`CHAT-ID.md`](CHAT-ID.md)                                                                             | Resolving the host-native chat ID used in commit trailers                                            |
 | [`KILO.md`](KILO.md)                                                                                   | The agent-facing Kilo config, including the parts no tracked file holds                              |
 | [`CODE-REVIEW.md`](CODE-REVIEW.md)                                                                     | The verbatim prompt and rules for the code review subagent                                           |
