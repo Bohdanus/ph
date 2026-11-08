@@ -1181,6 +1181,12 @@ describe('provider rate-limit diagnostics', () => {
       30_000
     );
     expect(retryAfterDelayMs(new Response(null, { headers: { 'retry-after': '0' } }), now)).toBe(0);
+    expect(retryAfterDelayMs(new Response(null, { headers: { 'retry-after': '9007199254741' } }), now)).toBe(
+      Number.MAX_SAFE_INTEGER
+    );
+    expect(
+      retryAfterDelayMs(new Response(null, { headers: { 'retry-after': '9999999999999999999999999999' } }), now)
+    ).toBe(Number.MAX_SAFE_INTEGER);
     expect(retryAfterDelayMs(new Response(null, { headers: { 'retry-after': '-1' } }), now)).toBeNull();
     expect(retryAfterDelayMs(new Response(null, { headers: { 'retry-after': '1.5' } }), now)).toBeNull();
     expect(
