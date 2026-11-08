@@ -8,14 +8,6 @@ import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
 const cancelLayerPreviewMock = vi.hoisted(() => vi.fn());
-/**
- * `createLayerFromTool` is present in the mock on purpose even though the component must never
- * reach it. A `useLayers` mock that simply omitted it would make a regression that committed
- * through the layer-CREATING path a `TypeError` rather than an assertion, and a test that
- * cannot fail on the defect is not a pin. `EraserToolArea.test.tsx` carries it for the same
- * reason: a "new layer holding the burn" composites as its own opaque patch rather than as an
- * edit to the layer the user selected, so the tool would be selectable, draggable and wrong.
- */
 const createLayerFromToolMock = vi.hoisted(() => vi.fn());
 const pointerState = vi.hoisted(() => ({ isMouseDown: { current: false }, activePointer: null as number | null }));
 const storeState = vi.hoisted(
@@ -59,25 +51,10 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
   }),
 }));
 
-/**
- * `getToolArgs` is keyed by tool name, and the key is load-bearing twice over: it is how the
- * component finds its own args at all, and returning `null` for a name that is not this file's
- * is what makes a neighbouring area's args unreachable. A mock that ignored the name would let
- * a wrong key mount a working area — and `BurnToolArea` is `DodgeToolArea` with the string
- * `'burn'` in place of `'dodge'`, so the two keys are the entire difference between them.
- */
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({ getToolArgs: (toolName: string) => (toolName === 'burn' ? toolState.toolArgs : null) }),
 }));
 
-/**
- * A faithful stand-in for the real `usePointerPosition` capture contract: the first `pointerDown`
- * claims the pointer, and only that pointer's move/up are valid. A mock that let every event
- * through would make "a stroke gesture that the tool never sees" unobservable, which is exactly
- * the state a disabled `usePaintStroke` produces — the whole point of the bedrock case below is
- * that the hook's handlers return before the validators are ever consulted, and this double is
- * what proves it: nothing claims the pointer, because nothing is called.
- */
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
     isPointerDownValid: vi.fn((event: PointerEvent) => {
@@ -128,30 +105,20 @@ const burnArgs = (): DodgeBurnToolArgs => ({
 
 const renderArea = () => {
   const { container } = render(<BurnToolArea className="test-burn-area" overlayCtxRef={{ current: null }} />);
-
   return container.firstElementChild as HTMLDivElement;
 };
 
-/**
- * One press/move/release, all on the same pointer id.
- *
- * ## Why the coordinates here are the coordinates that reach the processor
- *
- * `usePaintStroke` resolves the document frame itself as
- * `currentFrame ?? documentFrameFromSize(totalSize)` (`src/hooks/usePaintStroke.ts:145`), and
- * this store hands it `documentFrame: null` with a 200x120 document, so the frame is
- * `{ x: 0, y: 0, width: 200, height: 120 }` (`src/contexts/document-frame.ts:5`).
- * `canvasToDocumentPoint` then ADDS that origin (`document-frame.ts:32-34`), and the layer sits
- * at `pos: { x: 0, y: 0 }`, so `documentPointsToLayerLocal` subtracts nothing
- * (`src/util/layer-space.ts:74-77`). Canvas, document and layer-local therefore coincide HERE, by
- * the arithmetic rather than by luck — which is the one configuration in which a dropped
- * conversion is invisible. The rebasing itself is pinned where the layer origin is non-zero, in
- * `GradientToolArea.test.tsx`.
- */
 const stroke = (toolArea: HTMLDivElement, from: [number, number], to: [number, number]) => {
   fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: from[0], clientY: from[1] });
   fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: to[0], clientY: to[1] });
   fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: to[0], clientY: to[1] });
+};
+
+const strokeCancel = (toolArea: HTMLDivElement, from: [number, number], to: [number, number]) => {
+  fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: from[0], clientY: from[1] });
+  fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: to[0], clientY: to[1] });
+  fireEvent.pointerLeave(toolArea, { button: 0, pointerId: 1, clientX: to[0], clientY: to[1] });
+  fireEvent.pointerUp(document, { button: 0, pointerId: 1, clientX: to[0], clientY: to[1] });
 };
 
 type ToolLayerCall = { id?: string; toolArgs: { points: { x: number; y: number }[] } };
@@ -172,29 +139,14 @@ describe('BurnToolArea', () => {
   });
 
   it('writes nothing at all for a stroke over the bedrock layer', () => {
-    // Bedrock is the document's own backing image — the floor every other layer composites over,
-    // and the surface whose pixels are the judge of every transparent region above it. There is
-    // no layer beneath it, so there is nothing to composite a burn back onto and nothing to
-    // restore from. `MoveToolArea.tsx:35` and `EraserToolArea.tsx:56-63` read the same flag for
-    // the same reason, and so do `DodgeToolArea`, `SmudgeToolArea`, `CloneStampToolArea`,
-    // `GradientToolArea` and `FillToolArea`.
     storeState.layers = { base: makeLayer('base', { isBedrock: true }) };
     storeState.activeLayerId = 'base';
     const toolArea = renderArea();
 
     stroke(toolArea, [20, 20], [100, 60]);
 
-    // BOTH writers, and the preview is the load-bearing half. `enabled` is false, and
-    // `usePaintStroke` returns from every handler before reaching a callback — so this is an
-    // exact total no-op, not an approximation. Asserting only the commit would pass on a
-    // regression that let the preview run: `tempUpdateLayer` is the only writer of
-    // `previewLayersRef` (`src/contexts/useLayer.ts:473`), so a preview that reached it would
-    // repaint the bedrock, and `commitDirtyTool` would then promote a preview no gesture ever
-    // committed. The user would see a burn they cannot undo.
     expect(tempUpdateLayerMock).not.toHaveBeenCalled();
     expect(updateLayerByToolMock).not.toHaveBeenCalled();
-    // Nothing was ever claimed, because the validators were never consulted: the refusal
-    // happens above them, not inside the pointer double.
     expect(pointerState.activePointer).toBeNull();
   });
 
@@ -203,9 +155,6 @@ describe('BurnToolArea', () => {
 
     stroke(toolArea, [20, 20], [100, 60]);
 
-    // The split is the whole contract. `tempUpdateLayer` is the live-pixel writer the options
-    // bar previews through; `updateLayerByTool` is the undo boundary, and it must be reached
-    // ONCE per gesture or one stroke becomes one `TOOL_ACTION` per pointer event.
     const [preview] = tempUpdateLayerMock.mock.calls[0] as [ToolLayerCall];
     expect(preview.id).toBe('base');
     expect(preview.toolArgs.points).toEqual([
@@ -215,9 +164,6 @@ describe('BurnToolArea', () => {
 
     expect(updateLayerByToolMock).toHaveBeenCalledTimes(1);
     const [commit] = updateLayerByToolMock.mock.calls[0] as [ToolLayerCall];
-    // `usePaintStroke` appends the release point to the gesture before calling `onCommit`
-    // (`src/hooks/usePaintStroke.ts:226-237`), so the committed stroke is the drag plus the
-    // point it ended on.
     expect(commit.id).toBe('base');
     expect(commit.toolArgs.points).toEqual([
       { x: 20, y: 20 },
@@ -226,11 +172,6 @@ describe('BurnToolArea', () => {
   });
 
   it('rebases a stroke through the PRESENTED origin of a transformed layer, not through pos', () => {
-    // A retained affine is evaluated before the processor is handed a raster, so the buffer it
-    // writes is staged at the EVALUATED extent. The layer origin is `pos`; the origin of the
-    // raster is `pos` plus the affine's own offset. Subtracting `pos` addressed the buffer
-    // `(5, 3)` pixels up and left of where the layer is drawn — a stroke that landed on the
-    // wrong pixels of a layer the user could see.
     storeState.layers = {
       base: makeLayer('base', {
         pos: { x: 10, y: 5, width: 200, height: 120 },
@@ -248,7 +189,6 @@ describe('BurnToolArea', () => {
 
     stroke(toolArea, [25, 18], [35, 28]);
 
-    // Presented origin (15, 8): (10, 5) plus the affine's (5, 3). Both writers see it.
     const [preview] = tempUpdateLayerMock.mock.calls[0] as [ToolLayerCall];
     expect(preview.toolArgs.points).toEqual([
       { x: 10, y: 10 },
@@ -262,9 +202,6 @@ describe('BurnToolArea', () => {
   });
 
   it('leaves a disabled operation out of the rebased origin entirely', () => {
-    // A disabled entry contributes to no presentation, so it must not move the origin either:
-    // this is the identity case with a disabled operation on the layer, and the rebase has to
-    // stay `point - pos` rather than inventing an extent from an operation nothing renders.
     storeState.layers = {
       base: makeLayer('base', {
         pos: { x: 10, y: 5, width: 200, height: 120 },
@@ -287,5 +224,68 @@ describe('BurnToolArea', () => {
       { x: 15, y: 13 },
       { x: 25, y: 23 },
     ]);
+  });
+
+  // === NEW TESTS FOR MISSING COVERAGE ===
+
+  it('never calls createLayerFromTool (edits active layer, never creates layer)', () => {
+    const toolArea = renderArea();
+    stroke(toolArea, [20, 20], [100, 60]);
+    expect(createLayerFromToolMock).not.toHaveBeenCalled();
+  });
+
+  it('calls cancelLayerPreview on gesture cancel (pointerLeave)', () => {
+    const toolArea = renderArea();
+    strokeCancel(toolArea, [20, 20], [100, 60]);
+    expect(cancelLayerPreviewMock).toHaveBeenCalledWith('base');
+    // Commit should not be called on cancel
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when tool args are null', () => {
+    toolState.toolArgs = null;
+    const toolArea = renderArea();
+    stroke(toolArea, [20, 20], [100, 60]);
+    expect(tempUpdateLayerMock).not.toHaveBeenCalled();
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
+    expect(cancelLayerPreviewMock).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when there is no active layer', () => {
+    storeState.activeLayerId = null;
+    const toolArea = renderArea();
+    stroke(toolArea, [20, 20], [100, 60]);
+    expect(tempUpdateLayerMock).not.toHaveBeenCalled();
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when active layer is missing from layers', () => {
+    storeState.activeLayerId = 'missing';
+    storeState.layers = { base: makeLayer('base') };
+    const toolArea = renderArea();
+    stroke(toolArea, [20, 20], [100, 60]);
+    expect(tempUpdateLayerMock).not.toHaveBeenCalled();
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
+  });
+
+  it('rebases points relative to layer pos when no documentFrame', () => {
+    storeState.layers = {
+      base: makeLayer('base', {
+        pos: { x: 10, y: 5, width: 200, height: 120 },
+      }),
+    };
+    const toolArea = renderArea();
+    stroke(toolArea, [25, 18], [35, 28]);
+    const [preview] = tempUpdateLayerMock.mock.calls[0] as [ToolLayerCall];
+    expect(preview.toolArgs.points).toEqual([
+      { x: 15, y: 13 },
+      { x: 25, y: 23 },
+    ]);
+  });
+
+  it('does not call createLayerFromTool (regression guard)', () => {
+    const toolArea = renderArea();
+    stroke(toolArea, [20, 20], [100, 60]);
+    expect(createLayerFromToolMock).not.toHaveBeenCalled();
   });
 });

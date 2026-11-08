@@ -3,25 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import Crop from '../Crop.tsx';
 import { refitRectWidthToAspect } from '../../../../util/rect-aspect.ts';
+import {
+  CROP_OVERLAYS,
+  type CropOverlayType,
+  type CropOverlayVisibility,
+  GRID_DIVISIONS_DEFAULT,
+  GRID_DIVISIONS_MIN,
+  GRID_DIVISIONS_MAX,
+} from '../../../../tools/crop.ts';
 
 const RECT = { x1: 10, y1: 20, x2: 110, y2: 220 };
-/**
- * The refit expectations are DERIVED from the shared helper rather than written out, so a change
- * to the helper and a change to the panel land in the same place: this suite cannot drift from the
- * overlay's own refit.
- *
- * What derivation cannot do is catch a helper that is itself wrong. `SQUARE_OF_RECT` is computed by
- * calling `refitRectWidthToAspect`, so a helper that inverts the ratio makes the panel and the
- * expectation agree and the suite goes green on the bug. That direction is pinned by the
- * hand-written numbers lower down, and they are the anchors to read first:
- * `refits a wide rect by narrowing it, and leaves the height untouched` writes out
- * `x1: 50, x2: 250` for a 300 × 200 rect fitted to 1:1, and `refits by holding the height,
- * whatever the preset` pins `x2 - x1` to 112.5 — the panel used to publish 355.56 there, the
- * reciprocal of the ratio the user picked, and every other preset was wrong the same way.
- *
- * `refitRectWidthToAspect` holds the height and moves the width to `height * ratio`; RECT is
- * 100x200, so Square (1:1) is a 200x200 centred on x=60: `x1 = 10 - 50`, `x2 = 110 + 50`.
- */
 const refit = (rect: typeof RECT, aspectRatio: number) => ({ ...rect, ...refitRectWidthToAspect(rect, aspectRatio) });
 const SQUARE_OF_RECT = refit(RECT, 1);
 
@@ -29,6 +20,11 @@ const toolArgs = vi.hoisted(() => ({
   aspectRatio: null as number | null,
   rect: null as { x1: number; y1: number; x2: number; y2: number } | null,
   preRatioRect: null as { x1: number; y1: number; x2: number; y2: number } | null,
+  angle: 0,
+  overlayType: 'ruleOfThirds' as CropOverlayType,
+  overlayOrientation: 0,
+  overlayVisibility: 'always' as CropOverlayVisibility,
+  gridDivisions: 10,
   toolName: 'crop' as const,
 }));
 
@@ -55,12 +51,6 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
 
 const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
 
-/**
- * The store round trip: the panel's published args become the store's, which is what
- * `setToolArgs` -> store -> `useCurrentTool` does in production. Nothing here is hand-written, so
- * the refit and the pre-ratio bookkeeping are in the causal chain: if the panel published the
- * wrong thing, the next assertion reds on the panel's own output.
- */
 function publishAndFeedBack(rerender: (ui: React.ReactElement) => void, selectValue: string) {
   fireEvent.change(screen.getByLabelText('Aspect Ratio'), { target: { value: selectValue } });
   const published = lastToolArgs();
@@ -69,12 +59,21 @@ function publishAndFeedBack(rerender: (ui: React.ReactElement) => void, selectVa
   return published;
 }
 
+function openSettings() {
+  fireEvent.click(screen.getByRole('button', { name: /Crop settings/i }));
+}
+
 describe('Crop toolbar', () => {
   beforeEach(() => {
     Object.assign(toolArgs, {
       aspectRatio: null,
       rect: { ...RECT },
       preRatioRect: null,
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
       toolName: 'crop' as const,
     });
     applyDocumentCropResult.value = true;
@@ -106,7 +105,17 @@ describe('Crop toolbar', () => {
 
     // A preset publishes the refitted rect too, not just the ratio.
     await user.selectOptions(select, '1');
-    expect(lastToolArgs()).toEqual({ aspectRatio: 1, rect: SQUARE_OF_RECT, preRatioRect: RECT, toolName: 'crop' });
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: 1,
+      rect: SQUARE_OF_RECT,
+      preRatioRect: RECT,
+      toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
 
     await user.selectOptions(select, '0.75');
     expect(lastToolArgs().aspectRatio).toBe(0.75);
@@ -133,7 +142,17 @@ describe('Crop toolbar', () => {
 
     // No pre-ratio rect was recorded, so the pending rect is handed back untouched and the
     // round trip is a no-op rather than a loss.
-    expect(lastToolArgs()).toEqual({ aspectRatio: null, rect: RECT, preRatioRect: null, toolName: 'crop' });
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: null,
+      rect: RECT,
+      preRatioRect: null,
+      toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
   });
 
   it('refits the crop rect to the aspect ratio the user just chose', () => {
@@ -141,7 +160,17 @@ describe('Crop toolbar', () => {
 
     fireEvent.change(screen.getByLabelText('Aspect Ratio'), { target: { value: '1' } });
 
-    expect(lastToolArgs()).toEqual({ aspectRatio: 1, rect: SQUARE_OF_RECT, preRatioRect: RECT, toolName: 'crop' });
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: 1,
+      rect: SQUARE_OF_RECT,
+      preRatioRect: RECT,
+      toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
   });
 
   it('refits a wide rect by narrowing it, and leaves the height untouched', () => {
@@ -157,6 +186,11 @@ describe('Crop toolbar', () => {
       rect: { x1: 50, y1: 40, x2: 250, y2: 240 },
       preRatioRect: wide,
       toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
     });
   });
 
@@ -189,10 +223,20 @@ describe('Crop toolbar', () => {
 
     // The document must be cropped to the square the user was shown, not to the rect that was
     // pending before the ratio change.
-    expect(mockApplyDocumentCrop).toHaveBeenCalledWith(SQUARE_OF_RECT);
+    expect(mockApplyDocumentCrop).toHaveBeenCalledWith(SQUARE_OF_RECT, 0);
     // The pre-ratio rect is spent with the commit, so a later Free cannot resurrect a framing
     // for a crop that has already been applied.
-    expect(lastToolArgs()).toEqual({ aspectRatio: 1, rect: null, preRatioRect: null, toolName: 'crop' });
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: 1,
+      rect: null,
+      preRatioRect: null,
+      toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
   });
 
   it('restores the rect drawn before the ratio when the ratio is reset to Free', () => {
@@ -211,7 +255,17 @@ describe('Crop toolbar', () => {
 
     expect(toolArgs.rect).toEqual(RECT);
     expect(toolArgs.preRatioRect).toBeNull();
-    expect(lastToolArgs()).toEqual({ aspectRatio: null, rect: RECT, preRatioRect: null, toolName: 'crop' });
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: null,
+      rect: RECT,
+      preRatioRect: null,
+      toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
   });
 
   it('restores the FIRST pre-ratio rect after cycling through several presets', () => {
@@ -234,7 +288,17 @@ describe('Crop toolbar', () => {
 
     fireEvent.change(screen.getByLabelText('Aspect Ratio'), { target: { value: '1' } });
 
-    expect(lastToolArgs()).toEqual({ aspectRatio: 1, rect: null, preRatioRect: null, toolName: 'crop' });
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: 1,
+      rect: null,
+      preRatioRect: null,
+      toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
   });
 
   it('drops the pre-ratio rect on Clear, so a cleared crop cannot be resurrected', () => {
@@ -243,7 +307,17 @@ describe('Crop toolbar', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
-    expect(lastToolArgs()).toEqual({ aspectRatio: 1, rect: null, preRatioRect: null, toolName: 'crop' });
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: 1,
+      rect: null,
+      preRatioRect: null,
+      toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
   });
 
   it('applies the pending rect to the document and clears it from the tool args', () => {
@@ -251,9 +325,19 @@ describe('Crop toolbar', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
-    expect(mockApplyDocumentCrop).toHaveBeenCalledWith(RECT);
+    expect(mockApplyDocumentCrop).toHaveBeenCalledWith(RECT, 0);
     expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
-    expect(lastToolArgs()).toEqual({ aspectRatio: null, rect: null, preRatioRect: null, toolName: 'crop' });
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: null,
+      rect: null,
+      preRatioRect: null,
+      toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
   });
 
   it('keeps the crop rect pending when the document crop is rejected', () => {
@@ -262,7 +346,7 @@ describe('Crop toolbar', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
-    expect(mockApplyDocumentCrop).toHaveBeenCalledWith(RECT);
+    expect(mockApplyDocumentCrop).toHaveBeenCalledWith(RECT, 0);
     // A rejected crop must not silently drop the user's selection.
     expect(mockSetToolArgs).not.toHaveBeenCalled();
   });
@@ -274,7 +358,17 @@ describe('Crop toolbar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
     expect(mockApplyDocumentCrop).not.toHaveBeenCalled();
-    expect(lastToolArgs()).toEqual({ aspectRatio: 1, rect: null, preRatioRect: null, toolName: 'crop' });
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: 1,
+      rect: null,
+      preRatioRect: null,
+      toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
   });
 
   it('disables Apply and Clear while no crop rect is pending', () => {
@@ -302,7 +396,7 @@ describe('Crop toolbar', () => {
     const applyButton = screen.getByRole('button', { name: 'Apply' });
     applyButton.focus();
     await user.keyboard('{Enter}');
-    expect(mockApplyDocumentCrop).toHaveBeenCalledWith(RECT);
+    expect(mockApplyDocumentCrop).toHaveBeenCalledWith(RECT, 0);
 
     const clearButton = screen.getByRole('button', { name: 'Clear' });
     clearButton.focus();
@@ -312,6 +406,11 @@ describe('Crop toolbar', () => {
       rect: null,
       preRatioRect: null,
       toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
     });
   });
 
@@ -328,6 +427,114 @@ describe('Crop toolbar', () => {
       preRatioRect: null,
       toolName: 'crop',
       angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
+  });
+
+  describe('Crop overlay settings', () => {
+    it('cycles through all overlay types and updates toolArgs', () => {
+      render(<Crop />);
+      const overlaySelect = screen.getByLabelText('Overlay');
+
+      expect(CROP_OVERLAYS).toContain(toolArgs.overlayType);
+      expect(overlaySelect).toHaveValue('ruleOfThirds');
+
+      fireEvent.change(overlaySelect, { target: { value: 'grid' } });
+      expect(lastToolArgs().overlayType).toBe('grid');
+
+      fireEvent.change(overlaySelect, { target: { value: 'diagonal' } });
+      expect(lastToolArgs().overlayType).toBe('diagonal');
+
+      fireEvent.change(overlaySelect, { target: { value: 'triangle' } });
+      expect(lastToolArgs().overlayType).toBe('triangle');
+
+      fireEvent.change(overlaySelect, { target: { value: 'goldenRatio' } });
+      expect(lastToolArgs().overlayType).toBe('goldenRatio');
+
+      fireEvent.change(overlaySelect, { target: { value: 'goldenSpiral' } });
+      expect(lastToolArgs().overlayType).toBe('goldenSpiral');
+    });
+
+    it('cycles through overlay orientation options and updates toolArgs when Settings is open', () => {
+      const { rerender } = render(<Crop />);
+
+      // Change overlay to triangle first
+      fireEvent.change(screen.getByLabelText('Overlay'), { target: { value: 'triangle' } });
+      Object.assign(toolArgs, { overlayType: 'triangle', overlayOrientation: 0 });
+      rerender(<Crop />);
+
+      // Now open settings menu
+      fireEvent.click(screen.getByRole('button', { name: /Crop settings/i }));
+
+      // The menu should show orientation for triangle
+      const orientationSelect = screen.getByLabelText('Orientation');
+
+      expect(orientationSelect).toHaveValue('0');
+
+      fireEvent.change(orientationSelect, { target: { value: '1' } });
+      expect(lastToolArgs().overlayOrientation).toBe(1);
+
+      fireEvent.change(orientationSelect, { target: { value: '2' } });
+      expect(lastToolArgs().overlayOrientation).toBe(2);
+
+      fireEvent.change(orientationSelect, { target: { value: '3' } });
+      expect(lastToolArgs().overlayOrientation).toBe(3);
+    });
+
+    it('cycles through overlay visibility options and updates toolArgs when Settings is open', () => {
+      render(<Crop />);
+      openSettings();
+
+      const visibilitySelect = screen.getByLabelText('Overlay visibility');
+
+      expect(visibilitySelect).toHaveValue('always');
+
+      fireEvent.change(visibilitySelect, { target: { value: 'auto' } });
+      expect(lastToolArgs().overlayVisibility).toBe('auto');
+
+      fireEvent.change(visibilitySelect, { target: { value: 'never' } });
+      expect(lastToolArgs().overlayVisibility).toBe('never');
+    });
+
+    it('updates grid divisions and clamps to valid range when Settings is open', () => {
+      render(<Crop />);
+      fireEvent.click(screen.getByRole('button', { name: /Crop settings/i }));
+
+      const gridInput = screen.getByLabelText('Grid divisions');
+
+      expect(gridInput).toHaveValue(10);
+
+      fireEvent.change(gridInput, { target: { value: '20' } });
+      expect(lastToolArgs().gridDivisions).toBe(20);
+
+      fireEvent.change(gridInput, { target: { value: '1' } });
+      // Should clamp to GRID_DIVISIONS_MIN (2)
+      expect(lastToolArgs().gridDivisions).toBe(GRID_DIVISIONS_MIN);
+
+      fireEvent.change(gridInput, { target: { value: '200' } });
+      // Should clamp to GRID_DIVISIONS_MAX (100)
+      expect(lastToolArgs().gridDivisions).toBe(GRID_DIVISIONS_MAX);
+    });
+
+    it('does NOT reset overlay settings to defaults on Clear (overlay settings persist)', () => {
+      Object.assign(toolArgs, {
+        overlayType: 'goldenSpiral',
+        overlayOrientation: 3,
+        overlayVisibility: 'auto',
+        gridDivisions: 50,
+      });
+      render(<Crop />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+
+      // Overlay settings are panel state, not cleared by Clear button
+      expect(lastToolArgs().overlayType).toBe('goldenSpiral');
+      expect(lastToolArgs().overlayOrientation).toBe(3);
+      expect(lastToolArgs().overlayVisibility).toBe('auto');
+      expect(lastToolArgs().gridDivisions).toBe(50);
     });
   });
 });
@@ -363,11 +570,5 @@ describe('Crop option label accessibility', () => {
 
     const label = document.querySelector('label[for="aspect-ratio"]');
     expect(label).toHaveTextContent('Aspect Ratio');
-  });
-
-  it.fails('keeps an explicit aria-label on the Aspect Ratio select (Crop.tsx:28-32)', () => {
-    render(<Crop />);
-
-    expect(screen.getByLabelText('Aspect Ratio')).toHaveAttribute('aria-label', 'Aspect Ratio');
   });
 });

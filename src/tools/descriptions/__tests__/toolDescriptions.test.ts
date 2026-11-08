@@ -176,4 +176,125 @@ describe('toolDescriptions', () => {
       expect(description, `${name}`).toBeDefined();
     }
   });
+
+  describe('implementationRefs integrity', () => {
+    it('requires at least one implementationRef for every tool', () => {
+      for (const name of toolNames) {
+        const { implementationRefs } = toolDescriptions[name];
+        expect(implementationRefs.length, `${name}: implementationRefs is empty`).toBeGreaterThan(0);
+      }
+    });
+
+    it('requires implementationRefs to use file:line format', () => {
+      for (const name of toolNames) {
+        const { implementationRefs } = toolDescriptions[name];
+        for (const ref of implementationRefs) {
+          // Format: path/to/file.ts:123 or path/to/file.tsx:45
+          expect(ref, `${name}: "${ref}" does not match file:line pattern`).toMatch(/^[^:]+:+\d+$/);
+        }
+      }
+    });
+  });
+
+  describe('sources integrity', () => {
+    it('requires at least one source URL for every tool', () => {
+      for (const name of toolNames) {
+        const { sources } = toolDescriptions[name];
+        expect(sources.length, `${name}: sources array is empty`).toBeGreaterThan(0);
+      }
+    });
+
+    it('requires all source URLs to be valid HTTP/HTTPS', () => {
+      for (const name of toolNames) {
+        const { sources } = toolDescriptions[name];
+        for (const source of sources) {
+          expect(source, `${name}: "${source}" is not a valid HTTP/HTTPS URL`).toMatch(/^https?:\/\/\S+$/);
+        }
+      }
+    });
+
+    it('prefers Adobe documentation sources', () => {
+      const adobeDomains = ['helpx.adobe.com', 'developer.adobe.com', 'adobe.com'];
+      for (const name of toolNames) {
+        const { sources } = toolDescriptions[name];
+        const adobeSources = sources.filter((s) => adobeDomains.some((d) => s.includes(d)));
+        expect(adobeSources.length, `${name}: no Adobe documentation source found`).toBeGreaterThan(0);
+      }
+    });
+  });
+
+  describe('family disjointness', () => {
+    it('excludes the star shape from toolDescriptions', () => {
+      // star is explicitly excluded in index.ts via destructuring
+      // star is not a ToolName, so we check the raw object keys
+      const allKeys = Object.keys(toolDescriptions) as string[];
+      expect(allKeys).not.toContain('star');
+    });
+  });
+
+  describe('extraTools handling', () => {
+    it('ensures color/levels/invert/transform are described but marked as extra tools', () => {
+      // These are "extraTools" in toolbar-mapping.ts - they appear in the toolbar but
+      // are not standard paint/selection tools. They should have descriptions.
+      const extraTools: readonly ToolName[] = ['color', 'levels', 'invert', 'transform'];
+      for (const name of extraTools) {
+        expect(toolDescriptions[name], `${name}: missing description`).toBeDefined();
+        // These tools are partial because they don't have full paint tool implementation
+        expect(['implemented', 'partial']).toContain(toolDescriptions[name].implementation);
+      }
+    });
+  });
+
+  describe('modifiers and shortcuts consistency', () => {
+    it('ensures modifier keys use standard notation', () => {
+      const knownModifierWords = [
+        'Shift',
+        'Alt',
+        'Control',
+        'Ctrl',
+        'Meta',
+        'Space',
+        'Enter',
+        'Escape',
+        'Backspace',
+        'Delete',
+        'Arrow',
+        'Option',
+        'Command',
+        '⌘',
+        'Cmd',
+      ];
+      for (const name of toolNames) {
+        const { modifiers } = toolDescriptions[name];
+        for (const modifier of modifiers) {
+          // The keys field should be non-empty and contain at least one recognized modifier word
+          expect(modifier.keys.trim().length, `${name}: modifier keys is empty`).toBeGreaterThan(0);
+          const hasKnownModifier = knownModifierWords.some((word) => modifier.keys.includes(word));
+          expect(hasKnownModifier, `${name}: "${modifier.keys}" does not contain any recognized modifier word`).toBe(
+            true
+          );
+        }
+      }
+    });
+  });
+
+  describe('appRef format validation', () => {
+    it('requires appRef for non-missing controls and validates format', () => {
+      for (const name of toolNames) {
+        for (const option of toolDescriptions[name].options) {
+          if (option.status !== 'missing') {
+            expect(option.appRef, `${name}: control "${option.control}" needs appRef`).toBeDefined();
+            if (option.appRef) {
+              // Format: path/to/file.ts:123 or path/to/file.tsx:45
+              expect(option.appRef, `${name}: "${option.appRef}" does not match file:line pattern`).toMatch(
+                /^[^:]+:+\d+$/
+              );
+              const [filePath] = option.appRef.split(':');
+              expect(filePath).toMatch(/\.(ts|tsx)$/);
+            }
+          }
+        }
+      }
+    });
+  });
 });

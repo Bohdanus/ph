@@ -142,7 +142,8 @@ Three homes for an open defect, split by what broke. A defect goes in one of the
 
 Eight root-level files are point-in-time reports: an investigation of one tree on
 one date, or a disposition record for documents that were stashed and recovered.
-The hardening harvest handoff is another dated report. These documents are **not
+The hardening harvest handoff and the dated history audit below are additional
+point-in-time reports. These documents are **not
 current**, nothing in the live set depends on them, and they are not part of this
 hierarchy.
 
@@ -152,6 +153,7 @@ hierarchy.
 | `../AUDIT-STASHED-DOCS.md`               | Disposition record for three recovered stashed documents. Its two `docs/*.md` subjects are itself obsolete   |
 | `../FOCUSED-REVIEW-2026-09-28.md`        | A dated four-subsystem review, recorded rather than fixed                                                    |
 | `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them               |
+| `HISTORY-MIGRATION-AUDIT-20261107.md`    | Read-only history migration audit at main `659ca8e`; findings are a dated snapshot, not current contract     |
 | `../MERGE-INTEGRITY-AUDIT.md`            | What concurrent-branch work left unresolved: open merges, colliding handoff numbers, gates that miss a class |
 | `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
 | `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
