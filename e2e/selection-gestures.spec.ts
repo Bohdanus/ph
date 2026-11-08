@@ -410,6 +410,35 @@ const expectOutlineAround = (
   ).toBeLessThanOrEqual(expected.y + expected.height + slackPx);
 };
 
+/** Asserts that each page-coordinate selection-border edge matches the supplied region. */
+const expectOutlineMatches = (
+  found: Pick<SelectionBounds, 'left' | 'top' | 'right' | 'bottom'> | null,
+  expected: Required<ClipOptions>,
+  slackPx = OUTLINE_SLACK_PX
+) => {
+  expect(found, `no selection border pixels found (${JSON.stringify({ expected, found })})`).not.toBeNull();
+  const outline = found!;
+  const actualEdges = {
+    left: outline.left,
+    top: outline.top,
+    right: outline.right,
+    bottom: outline.bottom,
+  };
+  const expectedEdges = {
+    left: expected.x,
+    top: expected.y,
+    right: expected.x + expected.width,
+    bottom: expected.y + expected.height,
+  };
+
+  for (const edge of ['left', 'top', 'right', 'bottom'] as const) {
+    expect(
+      Math.abs(actualEdges[edge] - expectedEdges[edge]),
+      `selection outline ${edge} edge does not match (${JSON.stringify({ expectedEdges, actualEdges })})`
+    ).toBeLessThanOrEqual(slackPx);
+  }
+};
+
 /**
  * The Move tool's transform box is drawn in the same `#007bff` as a selection, by the same
  * `useRect.drawMask`, so the two are indistinguishable by colour alone. They are, however, drawn
@@ -854,7 +883,7 @@ test.describe('Selection tools', () => {
     await expectMoveTransformBoxHidden(page);
     await page.mouse.click(document.x + document.width / 2, document.y + document.height / 2);
     await waitForCommittedAnts(page, 'the full blank document selected by the Magic Wand');
-    expectOutlineAround(await committedAntsOutline(page), ORIGIN_CLIP, document);
+    expectOutlineMatches(await committedAntsOutline(page), document);
 
     const report = page.getByText(/\d[\d,]*\s+matching pixels/);
     await expect(report).toBeVisible();
