@@ -1202,6 +1202,14 @@ describe('provider rate-limit diagnostics', () => {
   });
 
   it.each([
+    ['midday', 'Sat, 07 Nov 2026 12:34:60 GMT'],
+    ['before the final minute', 'Sat, 07 Nov 2026 23:58:60 GMT'],
+  ])('rejects a leap second %s of the day', (_label, retryAfter) => {
+    const now = Date.parse('2026-11-07T00:00:00.000Z');
+    expect(retryAfterDelayMs(new Response(null, { headers: { 'retry-after': retryAfter } }), now)).toBeNull();
+  });
+
+  it.each([
     ['IMF-fixdate', 'Fri, 07 Nov 2026 00:00:30 GMT'],
     ['RFC 850 date', 'Friday, 07-Nov-26 00:00:30 GMT'],
     ['asctime date', 'Fri Nov  7 00:00:30 2026'],

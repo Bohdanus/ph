@@ -436,7 +436,7 @@ function retryAfterHint(response) {
 
 function utcHttpDateTimestamp(year, monthName, day, hour, minute, second) {
   const month = HTTP_DATE_MONTHS.indexOf(monthName);
-  if (month < 0 || second > 60) return null;
+  if (month < 0 || second > 60 || (second === 60 && (hour !== 23 || minute !== 59))) return null;
 
   const normalizedSecond = Math.min(second, 59);
   const date = new Date(0);
