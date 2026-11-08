@@ -77,6 +77,7 @@ describe('useWorkspaceFitScale', () => {
 
     const { result, rerender } = renderHook(() => useWorkspaceFitScale());
     const lastValidScale = result.current;
+    expect(lastValidScale).toBe(1.925);
 
     store.totalSize = { width: 0, height: 100 };
     rerender();

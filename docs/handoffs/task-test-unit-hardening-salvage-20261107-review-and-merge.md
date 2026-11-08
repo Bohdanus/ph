@@ -1,24 +1,23 @@
 # Review and merge record: test unit hardening salvage
 
 **Branch:** `task/test-unit-hardening-salvage-20261107`
-**Base main:** `b877c79ae49d45f9bd8dbf5bebf84415cc218799`
+**Base main:** `8cd115c427b79aafd99bfa1894a6761b466744a4`
+**Sync commit:** `9deeed57cd889bb319bde7603155c390c0ac32e8`
 **Source commits:** `6badc372ea1e21bc0482bc63c56047e2dddd826f`, `b218b555f156045f59af278c43036a71f82c11df`
-**Status:** Validation passes; final free review and pinned landing are in progress.
+**Status:** Candidate synced and validated; final candidate review and protected landing remain.
 
 ## Provenance and scope
 
-The source branch `task/test-unit-hardening-20261029` accumulated unrelated commits and is not the landing candidate. The 2026-11-07 inventory reported 19 branch-only commits, 370 main-only commits, and conflicts in nine files. `git cherry` confirmed the two source commits above were not patch-absorbed by `main`. The candidate started on `3a1d4ad37fa35fca88979803fe3d3be1d42054e1`, synced through `b5df9dbc272e208dc04768259228e13abdad33fb`, `659ca8ede3be5c4f05aa0d250d63d6f394964315`, and `30e32ccf6efba0536525ac66a8e71e04a97889ab`, then synced to current main `b877c79ae49d45f9bd8dbf5bebf84415cc218799` in commit `935b6f00ea0cb2241b70668230970650fb2c19c0`. The merge tree was `b64553fb389287135183c4eb84365d30f63ab8e7` before the remaining test and documentation fixes.
+The source branch `task/test-unit-hardening-20261029` accumulated unrelated commits, so this branch carries only the test and documentation changes selected for salvage. The candidate was synced to the current `main` tip with commit `9deeed57cd889bb319bde7603155c390c0ac32e8`. The other unit-test hardening candidate has since landed in `main` as `8cd115c427b79aafd99bfa1894a6761b466744a4`; the source-backed naming fix and history audit index entry are already present there.
 
-The candidate salvages only the two source commits and their test/documentation changes. It omits unrelated E2E specs, model-pool implementation, and other source-branch work. Current-main follow-up fixes add the missing docs index row for `HISTORY-MIGRATION-AUDIT-20261107.md` and correct the source-backed presentation test fixture so its names follow the production `deriveLayerNameAndOrder()` contract.
+The remaining candidate diff covers nine test files and four documentation files. During sync, the `agents-citations.test.mjs` overlap was resolved to retain the live §152 assertion and explicitly distinguish retired §§147–148. Its focused test passed. No production code changed.
 
 ## Review and validation
 
-The earlier full unit run exposed two source-backed presentation failures. The renderer parity gate correctly rejected the test fixture: durable conversion derived `Image 1` / `Blank 1` for order 1, while the fixture used other names. Updating the fixture to derive its name prefix from the source kind and suffix from the layer order made all 11 tests in that file pass without changing production behavior. A later full run found the current-main audit document was missing from `docs/README.md`; adding its system-table entry fixed the documentation-index failure.
+The refreshed full unit suite passed: 428 files, 12,480 passed, 227 expected failures, and 2 skipped. The E2E helper unit suite passed: 22 files, 1,565 passed, and 12 expected failures. Typecheck and production build passed. Lint and Prettier passed with 78 existing warnings and zero errors. The new unavailable-dimensions fit-scale test passed after adding an explicit assertion that its starting scale is 1.925.
 
-On the current synchronized candidate, the full unit suite passes: 421 files, 12,240 passed, 207 expected failures, and 2 skipped. The E2E helper unit suite passes: 22 files, 1,565 passed, and 12 expected failures. Typecheck and production build pass. Lint and Prettier pass with 78 existing warnings and zero errors. The docs-index suite passes: 10 tests.
-
-Two independent full-diff Kilo reviews of earlier source candidate `05056df26a9b749936a2eab496a0ef811bf0f5ce` returned no actionable findings. Focused reviews caught a missing redo-side fallback row; that assertion was strengthened and verified. The current final-synchronized diff still requires a fresh review before landing. MODELS.md prefers exact-free NVIDIA Nemotron 3 Ultra through Kilo and allows OpenRouter as the next free route. Groq is not allowed for deep code review.
+Four completed, exact-zero OpenRouter reviews used `nvidia/nemotron-3-ultra-550b-a55b:free`. One identified the missing starting-scale oracle, which was added and passed its focused test. The other proposed test and documentation issues were checked against implementation, fixtures, and actual paths; they were not defects. One broader review request ended without complete output after a provider 429 and length-limited responses, so it is not counted as review evidence. A fresh review of the exact final candidate is still required before landing.
 
 ## Landing gate
 
-The latest `npm run repo:state` reported clean. Before merging into `main`, capture the exact candidate SHA and tree, complete independent read-only reviews of the final diff with verified exact-free model/provider routes, confirm the full unit and E2E helper gates remain green, regenerate the worktree inventory, verify ownership and ancestry, compare the exact merge tree, and use the protected pinned-landing procedure. Do not merge a reviewed range if either main or the candidate changes afterward.
+Before merging into `main`, capture the final candidate SHA and tree, complete two independent read-only reviews of the exact diff, rerun the unit and E2E helper gates, regenerate the worktree inventory, verify ownership and ancestry, compare the prepared merge tree, and use the protected pinned-landing procedure. Do not land if either `main` or the candidate changes after review.
