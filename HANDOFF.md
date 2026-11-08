@@ -1429,17 +1429,18 @@ presumed Photoshop fix. The thickness slider reaches half-integers
 axis-aligned strokes would change document pixels without defining behavior for fractional widths
 or diagonals.
 
-**Safe next step: characterize before deciding.** Add raster-level tests for the real Canvas path at
-integer and half-integer positions, including a diagonal control, and assert coverage/alpha. A
-Photoshop-parity claim requires a reproducible comparison against Photoshop's default behavior; any
-pixel-changing alignment policy also requires review of the export visual-regression gate and its
-baseline prohibition.
+**Raster characterization:** `e2e/stroke-pixel-coverage.spec.ts` samples the workspace backing
+pixels for 1px Draw Pen and Shape Line strokes at integer and half-integer positions, with a
+diagonal control. It pins partial coverage and neighboring rows in the current browser; it is not a
+Photoshop comparison. Any Photoshop-parity claim still requires a reproducible comparison against
+Photoshop's default behavior, and any pixel-changing alignment policy requires review of the export
+visual-regression gate and its baseline prohibition.
 
-**Coverage.** `draw.test.ts` checks path calls rather than exact pixel coverage; shape tests do not
-provide an integer/half-integer 1px raster oracle; `e2e/pen-types.spec.ts` tests stroke categories,
-not pixel rows. The export visual-regression fixture uses a 10px Draw stroke and is not an oracle for
-1px coverage. Any alignment change alters committed pixels and must not be hidden by re-recording
-that baseline.
+**Coverage.** `draw.test.ts` checks path calls rather than exact pixel coverage; the new E2E test is
+the 1px raster oracle for Draw Pen and Shape Line. `e2e/pen-types.spec.ts` still covers stroke
+categories, not pixel rows. The export visual-regression fixture uses a 10px Draw stroke and is not
+an oracle for 1px coverage. Any alignment change alters committed pixels and must not be hidden by
+re-recording that baseline.
 
 **Files.** `src/tools/shape.ts` (`setShapeCtx()`), `src/tools/draw.ts` (`setupDrawCtx()`),
 `src/util/draw.ts` (`drawPen()`), `src/components/ToolbarsRight/Figures/Shape.tsx` (the thickness
