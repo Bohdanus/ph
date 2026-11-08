@@ -27,7 +27,7 @@ function added(kind: 'image' | 'blank', id = 'added', order = 1): Layer {
   const pos = { x: 22, y: 28, width: 24, height: 18 };
   const bitmap = kind === 'image' ? createMockImageBitmap(pos.width, pos.height) : null;
   return {
-    ...createMockLayer({ id, pos, order, name: `Layer ${order + 1}` }),
+    ...createMockLayer({ id, pos, order, name: `${kind === 'image' ? 'Image' : 'Blank'} ${order}` }),
     bitmap,
     source: bitmap
       ? { kind: 'image', bitmap, pos, isBedrock: false }
