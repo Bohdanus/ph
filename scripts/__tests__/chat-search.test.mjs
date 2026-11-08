@@ -15,6 +15,7 @@ import {
   MAX_PROMPT_CHARS,
   validatePath,
   validateCodexRolloutPath,
+  validateOpencodeCommand,
 } from '../lib/chat-search.mjs';
 
 /* ---------- helpers ---------- */
@@ -243,6 +244,20 @@ describe('path validation', () => {
   });
 });
 
+describe('validateOpencodeCommand', () => {
+  it('allows bare allowlisted commands and absolute paths to them', () => {
+    expect(validateOpencodeCommand('opencode')).toBe(true);
+    expect(validateOpencodeCommand('opencode.exe')).toBe(true);
+    expect(validateOpencodeCommand(join(tmpdir(), 'bin', 'opencode'))).toBe(true);
+  });
+
+  it('rejects relative path suffixes and command arguments', () => {
+    expect(validateOpencodeCommand('../opencode')).toBe(false);
+    expect(validateOpencodeCommand('./opencode')).toBe(false);
+    expect(validateOpencodeCommand('opencode --version')).toBe(false);
+  });
+});
+
 /* ---------- truncateMiddle ---------- */
 
 describe('truncateMiddle', () => {
@@ -256,12 +271,13 @@ describe('truncateMiddle', () => {
   });
 
   it('truncates long text with marker in the middle', () => {
-    const text = 'A'.repeat(20);
-    const result = truncateMiddle(text, 10);
+    const text = 'A'.repeat(50);
+    const result = truncateMiddle(text, 30);
     expect(result).toContain('…[truncated]…');
+    expect(result.length).toBe(30);
     const parts = result.split('\n…[truncated]…\n');
-    expect(parts[0].length).toBe(5);
-    expect(parts[1].length).toBe(5);
+    expect(parts[0].length).toBe(8);
+    expect(parts[1].length).toBe(7);
   });
 
   it('returns empty string for empty string input', () => {
@@ -274,19 +290,24 @@ describe('truncateMiddle', () => {
     expect(truncateMiddle(42, 10)).toBe(42);
   });
 
-  it('produces head + middle + tail structure for very long text', () => {
-    const text = 'HEAD' + 'X'.repeat(100) + 'TAIL';
-    const result = truncateMiddle(text, 16);
-    expect(result).toBe('HEADXXXX\n…[truncated]…\nXXXXTAIL');
+  it('keeps the result within very small limits', () => {
+    expect(truncateMiddle('abcdef', 0)).toBe('');
+    expect(truncateMiddle('abcdef', 5)).toBe('abcd…');
   });
 
-  it('uses floor for odd maxChars', () => {
-    const text = 'A'.repeat(21);
-    const result = truncateMiddle(text, 11);
-    const half = Math.floor(11 / 2);
+  it('produces head + middle + tail structure for very long text', () => {
+    const text = 'HEAD' + 'X'.repeat(100) + 'TAIL';
+    const result = truncateMiddle(text, 24);
+    expect(result).toBe('HEADX\n…[truncated]…\nTAIL');
+  });
+
+  it('splits an odd retained body with the extra character at the head', () => {
+    const text = 'A'.repeat(50);
+    const result = truncateMiddle(text, 30);
     const parts = result.split('\n…[truncated]…\n');
-    expect(parts[0].length).toBe(half);
-    expect(parts[1].length).toBe(half);
+    expect(result.length).toBe(30);
+    expect(parts[0].length).toBe(8);
+    expect(parts[1].length).toBe(7);
   });
 });
 
@@ -695,7 +716,7 @@ describe('executeChatSearch', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('returns 3 when no excerpts can be extracted from matching sessions', async () => {
+  it('returns 4 when no excerpts can be extracted from matching sessions', async () => {
     const stderr = makeMockStream();
     const stdout = makeMockStream();
     const dir = mkdtempSync(join(tmpdir(), 'cs-test-'));

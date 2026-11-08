@@ -15,8 +15,9 @@ const REVIEWED = {
     patterns: `subprocess:execFileSync=1`,
   },
   'chat-search.test.mjs': {
-    scope: 'Search fixtures use per-test temporary directories and test-owned databases.',
-    patterns: `database-open:DatabaseSync:write-capable=8 filesystem-write:mkdtempSync=15 filesystem-write:rmSync=15 filesystem-write:writeFileSync=2`,
+    scope:
+      'Search fixtures use per-test temporary directories and test-owned databases, including symlink path guards.',
+    patterns: `database-open:DatabaseSync:write-capable=8 filesystem-write:mkdtempSync=17 filesystem-write:mkdirSync=3 filesystem-write:rmSync=17 filesystem-write:symlinkSync=1 filesystem-write:writeFileSync=3`,
   },
   'dispose-worktree.test.mjs': {
     scope:
@@ -43,7 +44,7 @@ const REVIEWED = {
   'free-chat-search-agent.test.mjs': {
     scope:
       'Fake SQLite, database, failing CLI, and Kilo home fixtures live in unique temporary directories and are cleaned; child invocations use test-controlled paths.',
-    patterns: `filesystem-write:mkdtemp=3 filesystem-write:writeFile=6 subprocess:spawnSync=7 filesystem-write:rm=3 filesystem-write:mkdir=4`,
+    patterns: `filesystem-write:mkdtemp=3 filesystem-write:writeFile=6 subprocess:spawnSync=9 filesystem-write:rm=3 filesystem-write:mkdir=4`,
   },
   'free-chat-search.test.mjs': {
     scope: 'Search database fixtures use unique OS temporary directories and are removed after the test.',
@@ -72,7 +73,7 @@ const REVIEWED = {
   },
   'free-research.test.mjs': {
     scope: 'Research output fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=3 filesystem-write:writeFile=8 filesystem-write:rm=3`,
+    patterns: `filesystem-write:mkdtemp=4 filesystem-write:writeFile=10 filesystem-write:rm=4`,
   },
   'free-web-research.test.mjs': {
     scope: 'Research output fixtures use a unique OS temporary directory.',

@@ -81,9 +81,11 @@ export function validatePath(filePath, allowlist = PROMPT_FILE_ALLOWLIST) {
  */
 export function validateOpencodeCommand(cmd) {
   if (typeof cmd !== 'string' || !cmd.trim()) return false;
-  const base = cmd.trim().split(/\s+/, 1)[0];
-  const resolved = isAbsolute(base) ? base : base;
-  return ALLOWED_OPENCODE_COMMANDS.some((allowed) => resolved === allowed || resolved.endsWith('/' + allowed));
+  const command = cmd.trim();
+  if (/\s/.test(command)) return false;
+  return ALLOWED_OPENCODE_COMMANDS.some(
+    (allowed) => command === allowed || (isAbsolute(command) && basename(command) === allowed)
+  );
 }
 
 /**
@@ -166,12 +168,20 @@ export function searchTermsFromQuery(query) {
  * Truncate `text` to at most `maxChars` characters, keeping the head intact
  * and the tail visible.
  */
-export function truncateMiddle(text, maxChars) {
-  if (typeof text !== 'string' || text.length <= maxChars) return text;
-  const half = Math.floor(maxChars / 2);
-  const start = text.slice(0, half);
-  const end = text.slice(-half);
-  return `${start}\n…[truncated]…\n${end}`;
+export function truncateMiddle(text, maxChars = DEFAULT_MAX_EXCERPT_CHARS) {
+  if (typeof text !== 'string') return text;
+  const limit = Number.isFinite(maxChars) ? Math.max(0, Math.floor(maxChars)) : DEFAULT_MAX_EXCERPT_CHARS;
+  if (text.length <= limit) return text;
+  if (limit === 0) return '';
+
+  const marker = '\n…[truncated]…\n';
+  if (limit <= marker.length) return `${text.slice(0, limit - 1)}…`;
+
+  const remainingChars = limit - marker.length;
+  const headLength = Math.ceil(remainingChars / 2);
+  const tailLength = Math.floor(remainingChars / 2);
+  const tail = tailLength > 0 ? text.slice(-tailLength) : '';
+  return `${text.slice(0, headLength)}${marker}${tail}`;
 }
 
 /**
@@ -587,7 +597,7 @@ export async function extractCodexExcerpt(rolloutPath, query, maxChars, options 
   return {
     source: 'codex',
     sessionId: null,
-    excerpt: truncateMiddle(content, maxChars || DEFAULT_MAX_EXCERPT_CHARS),
+    excerpt: truncateMiddle(content, maxChars),
     excerptLength: content.length,
   };
 }

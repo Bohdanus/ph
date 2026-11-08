@@ -140,7 +140,7 @@ function validateSource(source) {
 export function extractTerms(query, maxTerms = 5) {
   const tokens = query
     .toLowerCase()
-    .replace(/[^\w\s-]/g, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}_\s-]/gu, ' ')
     .split(/\s+/)
     .filter((t) => t && t.length >= 3 && !STOP_WORDS.has(t));
 

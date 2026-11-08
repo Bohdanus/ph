@@ -7,6 +7,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ testTimeout: 30_000 });
 
+describe('extractTerms', () => {
+  it('preserves Unicode search terms', () => {
+    const source = [
+      'import { extractTerms } from ' + JSON.stringify(agentModule) + ';',
+      "process.stdout.write(JSON.stringify(extractTerms('Малювання шар')));",
+    ].join('\n');
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(['малювання', 'шар']);
+  });
+});
+
 describe('searchStream errors', () => {
   it('sanitizes errors propagated by the async iterator', () => {
     const secret = `sk-${'a'.repeat(24)}`;
