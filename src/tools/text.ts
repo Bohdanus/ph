@@ -1345,7 +1345,8 @@ export const text =
     const cached = textRasterCache.get(key);
     if (cached) return [cached];
 
-    const canvas = new OffscreenCanvas(size.width, size.height);
+    // Match the draft preview, which ceils fractional layer bounds before allocating its canvas.
+    const canvas = new OffscreenCanvas(Math.ceil(size.width), Math.ceil(size.height));
     // A platform may expose OffscreenCanvas without a usable 2D context. Returning the allocated
     // blank canvas keeps the creator total and lets the caller preserve the layer rather than
     // throwing from a force-unwrap during replay or export.
