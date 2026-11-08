@@ -5,9 +5,9 @@ Current operating instructions for the free-model runner. Historical measurement
 
 ## Model preferences
 
-| Model                              | Rating   | Notes                                                                          |
-| ---------------------------------- | -------- | ------------------------------------------------------------------------------ |
-| **NVIDIA Nemotron 3 Ultra (free)** | **Best** | Strong reasoning, reliable completions, preferred for all free inference tasks |
+The runner prefers NVIDIA Nemotron 3 Ultra when it is present in the live catalog at exact-zero
+pricing. This is an ordering preference, not a benchmark claim. The available free models change;
+use `npm run free:models -- --list` to see the current provider/model pairs before a run.
 
 ## Find credentials safely
 
@@ -48,16 +48,28 @@ protected environment setup to provide it. Check the account's daily counter wit
 node scripts/free-model-pool.mjs --openrouter-quota
 ```
 
-The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, and prefers Nemotron
-3 Ultra followed by XingChen only when those IDs appear in the live catalog. Other models retain
-catalog order. HTTP 401/402 exhaust the provider for the run; an inference HTTP 429 does
-so only when rate-limit headers or the daily counter show no requests remaining. Otherwise, the
-runner rotates among verified-free models within its per-run cap. A 429 from the quota endpoint is
-treated as an unknown counter, not proof that inference is exhausted. Inference gets five minutes;
-catalog and quota requests keep a separate 15-second timeout. A quota snapshot is only current at
-the time it was read and can change when other tools use the account.
-OpenRouter Nemotron 3 Ultra receives at least 1,024 completion tokens so reasoning has room to finish; other
-models use the requested token limit.
+The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, and orders Nemotron 3
+Ultra first when it is present. It does not depend on a fixed alternative model list. HTTP 401/402
+exhaust the provider for the run. For HTTP 429, zero platform remaining requests or a zero daily
+counter exhausts it; otherwise the runner rotates among verified-free models within its three-model
+cap. For HTTP 503, it checks the daily counter before rotating because failed attempts count against
+that allowance. A 429 from the quota endpoint is treated as an unknown counter, not proof that
+inference is exhausted. The runner honors a valid `Retry-After` before another OpenRouter attempt;
+waits longer than 60 seconds skip OpenRouter for that run. OpenRouter's free variants currently allow 20 requests
+per minute and 50 requests per day by default, rising to 1,000 per day after a $10 credit purchase
+(the higher cap starts at $9 to account for top-up fees). Failed attempts count toward the daily limit.
+The live `/api/v1/key` quota check reports the daily counter, not the per-minute limit; see [OpenRouter's free-model limits](https://openrouter.ai/collections/free-models)
+and [API rate-limit reference](https://openrouter.ai/docs/api_reference/limits) for the current
+policy. Inference gets five minutes; catalog and quota requests keep a separate 15-second timeout.
+A quota snapshot can change when other tools use the account.
+
+OpenRouter can return HTTP 200 with no visible text when a reasoning model spends its output budget
+on reasoning. The pool accepts only non-empty completions with `finish_reason: stop`; an incomplete
+answer is discarded and the next eligible model is tried. For deliberate reasoning tasks, request a
+larger `--max-tokens` budget and verify the returned model and finish reason. Nemotron 3 Ultra gets
+at least 1,024 completion tokens; other OpenRouter models use the requested limit. OpenRouter's
+[error guide](https://github.com/OpenRouterTeam/docs/blob/main/api_reference/errors-and-debugging.mdx)
+explains that retrying the same model does not fix a reasoning-budget exhaustion.
 
 ## OpenCode
 
@@ -81,8 +93,7 @@ It rotates only explicitly supplied keys after per-key 401/402/429 responses and
 key files during inference. `--probe-groq` can check saved-key files separately. Use keys from
 distinct Free-plan organizations because Groq limits apply at the organization level. This
 machine's saved-key convention is `~/.config/groq/api_key` and `~/.config/groq/api_key_*`.
-A successful
-`/models` request proves the key is accepted, not that the organization is on Groq's Free plan.
+A successful `/models` request proves the key is accepted, not that the organization is on Groq's Free plan.
 
 For a confirmed Free-plan organization, load the selected key only into the runner process:
 
@@ -144,11 +155,14 @@ node scripts/free-research.mjs --prompt-file ./prompt.txt --url-list ./urls.txt 
 
 The inference fallback order is Kilo, OpenRouter, Groq, then OpenCode; catalog checks can run in
 parallel, but completions are attempted in that order. The pool tries at most three eligible
-models per provider and never falls back to paid models. Kilo tries other eligible models after request errors. Groq stops for the run on HTTP 401/402/429.
-OpenRouter 401/402 exhausts the source; on 429,
-the runner stops when the platform remaining-request header or daily counter is zero, and
-otherwise tries another verified-free model within the three-model cap. If the quota counter is
-unavailable, rotation stays bounded by that cap. Explicit content-policy rejections and
+models per provider and never falls back to paid models. Kilo stops for the run on a reported
+401/402/429; other completion errors may move to another eligible model. Groq retires a supplied key
+on 401/402/429 and stops when all supplied keys are exhausted. OpenRouter 401/402 exhausts the
+source; on 429, zero platform remaining requests or a zero daily counter exhausts it, and otherwise
+the runner rotates within the three-model cap. On 503, it checks the daily counter before rotation.
+Unknown counters stay within that cap. The runner honors `Retry-After` before another OpenRouter
+request, and skips that source for the run if the requested wait exceeds 60 seconds. Explicit
+content-policy rejections and
 `finish_reason: content_filter` stop routing across providers so the same request is not retried
 elsewhere. `--list` refreshes public catalogs and does not send an inference request.
 `--openrouter-quota` reads OpenRouter's daily counter only; it does not report Kilo's separate
@@ -178,18 +192,21 @@ are also clamped to 1,024 tokens to account for hidden reasoning tokens.
 
 ### Catalog ordering
 
-Within each provider, the runner sorts only live, exact-free candidates by its preference list.
-Unavailable preferred IDs are skipped; the remaining models keep live catalog order. Disabled
-model families are filtered before ordering, and the runner makes at most three attempts per
-provider.
+Within each provider, the runner sorts live candidates by its configured preference. Nemotron 3
+Ultra is first when the provider currently lists it at exact-zero cost. Other candidates retain the
+provider's catalog order; disabled model families are filtered before ordering. Do not assume a
+named alternative remains available: refresh the catalog for each run.
 
-### Scheduled failure reports
+### Report-only failure sweep
 
-The hourly `free-model-sweep` cron job scans Kilo, Codex, and OpenRouter logs for quota/capacity
-errors (429s, empty completions, content-policy blocks) and writes a summary to
-`docs/handoffs/free-model-sweep-<date>.md`. It runs report-only: it does not modify quarantine
-state or rotate credentials. Start it with `npm run free:sweep`:
+`npm run free:sweep` runs the sweep once. It reads recent Kilo SQLite and provider-log records,
+Codex rollout metadata, and current OpenRouter catalog/quota health; it does not read OpenRouter
+inference logs. It writes a report under `.kilo/sweep-reports/` by default (the directory follows
+`FREE_MODEL_QUARANTINE_FILE` when that override is set). The report is local and includes session,
+run, and record identifiers, so review it before sharing. It does not copy transcript text, send
+history to a model, modify quarantine state, or rotate credentials. The repository does not install
+an hourly scheduler; run the command manually or configure an external scheduler yourself.
 
 ```sh
-node scripts/cron/free-model-sweep.mjs --report-only
+npm run free:sweep
 ```
