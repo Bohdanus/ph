@@ -33,6 +33,7 @@ const OWNER_FILE = 'owner.json';
 const LOCK_DIR = 'main-landing-occupancy';
 const HEARTBEAT_MS = 30_000;
 const WATCH_POLL_MS = 30_000;
+const WATCHER_READY_TIMEOUT_MS = 10_000;
 const AUTO_MERGE_RECOVERY_MS = 30 * 60_000;
 const AUTO_MERGE_OBSERVATION_GAP_MS = WATCH_POLL_MS * 3;
 const PENDING_RECOVERY_EXIT = 75;
@@ -288,6 +289,23 @@ export function observeOrphanAutoMerge(owner, state, signature, now = Date.now()
   next.autoMergeLastObservedAt = new Date(now).toISOString();
   next.autoMergeSignature = signature;
   return next;
+}
+
+export function resetOrphanAutoMergeFailover(owner, state, signature, now = Date.now()) {
+  const next = {
+    ...owner,
+    owner: { ...(owner.previousOwner ?? owner.owner), childPid: null },
+    autoMergeFailoverAttempted: false,
+    step: 'replacement creation failed before a new worktree existed; restarting the 30-minute AUTO_MERGE observation',
+    heartbeatAt: new Date(now).toISOString(),
+  };
+  delete next.previousOwner;
+  delete next.autoMergeFailoverStartedAt;
+  delete next.autoMergeRecoveryPath;
+  delete next.autoMergeObservedSince;
+  delete next.autoMergeLastObservedAt;
+  delete next.autoMergeSignature;
+  return observeOrphanAutoMerge(next, state, signature, now);
 }
 
 export function canRecoverOrphanAutoMerge(owner, now = Date.now(), pids = recordedPidStates(owner?.owner)) {
@@ -798,20 +816,56 @@ function acquire(paths, owner) {
   }
 }
 
-function startWatcher(paths, leaseId) {
+export function startWatcher(paths, leaseId, { spawnProcess = spawn, readyTimeoutMs = WATCHER_READY_TIMEOUT_MS } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(process.execPath, [SCRIPT_PATH, 'watch', leaseId], {
-      cwd: paths.cwd,
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    child.once('spawn', () => {
+    let child;
+    let settled = false;
+    let output = '';
+    let timer;
+    const readyToken = 'KILO_MAIN_LANDING_WATCHER_READY:' + leaseId + '\n';
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        child?.kill();
+      } catch {
+        // The child may already have exited.
+      }
+      rejectPromise(error);
+    };
+
+    try {
+      child = spawnProcess(process.execPath, [SCRIPT_PATH, 'watch', leaseId], {
+        cwd: paths.cwd,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+      });
+    } catch (error) {
+      fail(new Error('could not start the detached alert watcher: ' + error.message, { cause: error }));
+      return;
+    }
+
+    timer = setTimeout(
+      () => fail(new Error('detached alert watcher did not become ready within ' + readyTimeoutMs + 'ms')),
+      readyTimeoutMs
+    );
+    child.stdout.on('data', (chunk) => {
+      output = (output + String(chunk)).slice(-readyToken.length);
+      if (!output.includes(readyToken) || settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.stdout.destroy();
       child.unref();
       resolvePromise(child.pid);
     });
-    child.once('error', (error) => {
-      rejectPromise(new Error('could not start the detached alert watcher: ' + error.message, { cause: error }));
+    child.once('error', (error) =>
+      fail(new Error('could not start the detached alert watcher: ' + error.message, { cause: error }))
+    );
+    child.once('close', (code, signal) => {
+      if (!settled)
+        fail(new Error('detached alert watcher exited before readiness (code ' + code + ', signal ' + signal + ')'));
     });
   });
 }
@@ -907,10 +961,10 @@ function operationIsClean(paths) {
   }
 }
 
-async function runPinnedLanding(paths, owner, pins) {
+async function runPinnedLanding(paths, owner, pins, { run = runChild } = {}) {
   assertCleanPreflight(paths, pins);
   heartbeat(paths, owner, 'preparing reviewed merge', null);
-  const merge = await runChild('git', ['merge', '--no-commit', '--no-ff', '--no-edit', pins.incomingSha], {
+  const merge = await run('git', ['merge', '--no-commit', '--no-ff', '--no-edit', pins.incomingSha], {
     cwd: paths.mainPath,
     env: process.env,
     onPid: (pid) => heartbeat(paths, owner, 'git merge --no-commit --no-ff', pid),
@@ -924,7 +978,7 @@ async function runPinnedLanding(paths, owner, pins) {
     );
   }
 
-  const hooks = await runChild(process.execPath, [join(paths.mainPath, 'scripts/install-git-hooks.js')], {
+  const hooks = await run(process.execPath, [join(paths.mainPath, 'scripts/install-git-hooks.js')], {
     cwd: paths.mainPath,
     env: process.env,
     onPid: (pid) => heartbeat(paths, owner, 'refreshing shared Git hook dispatchers', pid),
@@ -957,7 +1011,7 @@ async function runPinnedLanding(paths, owner, pins) {
     KILO_EXPECTED_CHAT_ID: pins.chatId,
     KILO_MAIN_LANDING_LEASE_ID: owner.leaseId,
   };
-  const commit = await runChild(
+  const commit = await run(
     process.execPath,
     [join(dirname(SCRIPT_PATH), 'commit-reviewed-landing.mjs'), '-m', message],
     {
@@ -997,9 +1051,10 @@ export async function createReplacementMainWorktree(paths, owner, { run = runChi
   });
   if (gitWorktree.code !== 0) throw new Error('replacement main worktree creation failed; preserving the old checkout');
 
-  const hooks = await run(process.execPath, [join(recoveryPath, 'scripts/install-git-hooks.js')], {
+  // The replacement contains the old main snapshot, so install with the reviewed candidate's identity rules.
+  const hooks = await run(process.execPath, [join(dirname(SCRIPT_PATH), 'install-git-hooks.js')], {
     cwd: recoveryPath,
-    env: process.env,
+    env: { ...process.env, KILO_MAIN_LANDING_RECOVERY_PATH: recoveryPath },
     onPid: (pid) => onStep('installing hooks in replacement main worktree', pid, recoveryPath),
   });
   if (hooks.code !== 0) throw new Error('replacement main hook installation failed; preserving both worktrees');
@@ -1334,7 +1389,17 @@ function pinsFromOwner(owner) {
   };
 }
 
-async function recoverPersistentOrphanAutoMerge(paths, owner) {
+async function recoverPersistentOrphanAutoMerge(
+  paths,
+  owner,
+  {
+    now = Date.now,
+    run = runChild,
+    runLanding = runPinnedLanding,
+    startHeartbeat = beginHeartbeat,
+    note = boardNote,
+  } = {}
+) {
   const leaseId = owner.leaseId;
   let activeOwner;
   try {
@@ -1345,7 +1410,7 @@ async function recoverPersistentOrphanAutoMerge(paths, owner) {
       if (!isOrphanAutoMergeState(state) || signature !== current.autoMergeSignature) {
         throw new Error('orphan AUTO_MERGE changed at the recovery boundary; restarting the observation window');
       }
-      if (!canRecoverOrphanAutoMerge(current)) {
+      if (!canRecoverOrphanAutoMerge(current, now())) {
         throw new Error('the pinned landing owner process tree is still live or cannot be proven stopped');
       }
       assertReviewedPins(currentPaths, pinsFromOwner(current));
@@ -1353,7 +1418,7 @@ async function recoverPersistentOrphanAutoMerge(paths, owner) {
         ...current,
         previousOwner: current.owner,
         autoMergeFailoverAttempted: true,
-        autoMergeFailoverStartedAt: new Date().toISOString(),
+        autoMergeFailoverStartedAt: new Date(now()).toISOString(),
         owner: {
           ...current.owner,
           pid: process.pid,
@@ -1364,7 +1429,7 @@ async function recoverPersistentOrphanAutoMerge(paths, owner) {
           scriptPath: SCRIPT_PATH,
         },
         step: 'creating replacement main worktree after 30-minute orphan AUTO_MERGE',
-        heartbeatAt: new Date().toISOString(),
+        heartbeatAt: new Date(now()).toISOString(),
       };
     });
   } catch (error) {
@@ -1384,7 +1449,7 @@ async function recoverPersistentOrphanAutoMerge(paths, owner) {
       } catch {
         return false;
       }
-      boardNote(
+      note(
         paths,
         'The 30-minute orphan AUTO_MERGE fallback did not run because the reviewed landing pins changed. Preserve the damaged checkout and obtain a fresh review before retrying.'
       );
@@ -1393,18 +1458,19 @@ async function recoverPersistentOrphanAutoMerge(paths, owner) {
     throw error;
   }
 
-  const timer = beginHeartbeat(paths, activeOwner);
+  const timer = startHeartbeat(paths, activeOwner);
   try {
     const replacement = await createReplacementMainWorktree(paths, activeOwner, {
+      run,
       onStep: (step, childPid, recoveryPath) => {
         if (recoveryPath) activeOwner.autoMergeRecoveryPath = recoveryPath;
         heartbeat(paths, activeOwner, step, childPid);
       },
     });
-    await runPinnedLanding(replacement, activeOwner, pinsFromOwner(activeOwner));
+    await runLanding(replacement, activeOwner, pinsFromOwner(activeOwner), { run });
     releaseLock(replacement, leaseId);
     try {
-      boardNote(
+      note(
         replacement,
         'Persistent orphan AUTO_MERGE blocked the old landing checkout for 30 continuous minutes. The old checkout was left untouched at ' +
           activeOwner.originalMainPath +
@@ -1418,6 +1484,34 @@ async function recoverPersistentOrphanAutoMerge(paths, owner) {
     return true;
   } catch (error) {
     const message = safeText(error instanceof Error ? error.message : error, 240);
+    const recoveryPathExists = activeOwner.autoMergeRecoveryPath && existsSync(activeOwner.autoMergeRecoveryPath);
+    if (!recoveryPathExists) {
+      const state = mainGitState(paths);
+      const signature = orphanAutoMergeSignature(paths, state);
+      if (!isOrphanAutoMergeState(state) && cleanMain(paths)) {
+        clearInterval(timer);
+        releaseLock(paths, leaseId);
+        try {
+          note(
+            paths,
+            'The orphan AUTO_MERGE state cleared before replacement creation. The landing lease was released; retry the same pinned landing from the clean main checkout.'
+          );
+        } catch {
+          // The clean main checkout and lease release are authoritative.
+        }
+        return true;
+      }
+      if (signature) {
+        updateOwnedRecord(paths, leaseId, (current) => resetOrphanAutoMergeFailover(current, state, signature, now()));
+        note(
+          paths,
+          'Automatic stale AUTO_MERGE replacement creation failed before a new worktree existed: ' +
+            message +
+            '. The old checkout is preserved and a fresh 30-minute observation will run before retry.'
+        );
+        return false;
+      }
+    }
     try {
       updateOwnedRecord(paths, leaseId, (current) => {
         current.owner = current.previousOwner ?? current.owner;
@@ -1433,7 +1527,7 @@ async function recoverPersistentOrphanAutoMerge(paths, owner) {
         new Date().toISOString() + ' AUTO_MERGE failover: ' + updateError.message + '\n'
       );
     }
-    boardNote(
+    note(
       paths,
       'Automatic stale AUTO_MERGE landing failover failed: ' +
         message +
@@ -1445,9 +1539,17 @@ async function recoverPersistentOrphanAutoMerge(paths, owner) {
   }
 }
 
-async function watch(paths, leaseId) {
+export async function watch(
+  paths,
+  leaseId,
+  {
+    sleep = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
+    now = Date.now,
+    recoveryOptions = {},
+  } = {}
+) {
   for (;;) {
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, WATCH_POLL_MS));
+    await sleep(WATCH_POLL_MS);
     let owner;
     try {
       owner = readOwner(paths);
@@ -1477,7 +1579,9 @@ async function watch(paths, leaseId) {
           const signature = orphanAutoMergeSignature(currentPaths, state);
           const wasObserving = Boolean(owner.autoMergeObservedSince);
           if (signature || wasObserving) {
-            owner = updateOwnedRecord(paths, leaseId, (current) => observeOrphanAutoMerge(current, state, signature));
+            owner = updateOwnedRecord(paths, leaseId, (current) =>
+              observeOrphanAutoMerge(current, state, signature, now())
+            );
           }
           if (!isOrphanAutoMergeState(state) && wasObserving && cleanMain(currentPaths)) {
             releaseLock(currentPaths, leaseId);
@@ -1487,8 +1591,8 @@ async function watch(paths, leaseId) {
             );
             return 0;
           }
-          if (signature && canRecoverOrphanAutoMerge(owner)) {
-            if (await recoverPersistentOrphanAutoMerge(currentPaths, owner)) return 0;
+          if (signature && canRecoverOrphanAutoMerge(owner, now())) {
+            if (await recoverPersistentOrphanAutoMerge(currentPaths, owner, { ...recoveryOptions, now })) return 0;
             owner = readOwner(paths);
             if (!owner || owner.leaseId !== leaseId) return 0;
           }
@@ -1518,6 +1622,9 @@ async function main(argv = process.argv.slice(2), { cwd = process.cwd() } = {}) 
     const paths = resolvePaths(cwd);
     const leaseId = rest[0];
     if (!leaseId || rest.length !== 1) throw new Error('watch requires one lease ID');
+    const owner = readOwner(paths);
+    if (!owner || owner.leaseId !== leaseId || owner.mode !== 'landing') return 0;
+    process.stdout.write('KILO_MAIN_LANDING_WATCHER_READY:' + leaseId + '\n');
     return watch(paths, leaseId);
   }
   const options = parseOptions(rest);

@@ -265,15 +265,22 @@ clean files or the index, remove the old worktree, or bypass the commit guards; 
 and its Git administrative directory remain untouched for a later sweep. A changed marker or main
 SHA restarts the 30-minute observation. Other operation markers, an invalid marker, changed candidate
 pins, or an owner/child process that is live or cannot be proven stopped do not qualify.
+The watcher runs the reviewed candidate's hook installer with the replacement path explicitly selected;
+ordinary hook installs with duplicate `main` checkouts preserve the saved designated-main identity.
 If the designated main path changes outside the active lease, the automatic failover stops and
-preserves the owner record for review.
+preserves the owner record for review. If replacement creation fails before any new worktree exists,
+the watcher restores the original owner and starts a fresh 30-minute observation. Once a replacement
+path exists, automatic creation is one-shot; a hook or landing failure preserves the lease and paths
+for the four-hour recovery process rather than creating competing main checkouts.
 
 If the orphan marker clears before the threshold and main is clean, the watcher releases the landing
 lease and tells the operator to retry the same pinned landing. If it changes into any other dirty or
 unmerged state, retain the lease and use the four-hour recovery path below.
 
 When `land` arms this wait, it prints `landing pending` and exits with code 75; this is not a
-successful landing. Do not run post-merge parent/tree checks until `main:landing status` shows the
+successful landing. Code 75 is returned only after the detached watcher reads the matching lease
+and acknowledges readiness; watcher startup failure retains the lease and returns an error instead
+of reporting pending. Do not run post-merge parent/tree checks until `main:landing status` shows the
 lease released and the pinned merge is present in `main`.
 
 If the operator confirms the owner process tree has stopped and `main:landing status` reports a

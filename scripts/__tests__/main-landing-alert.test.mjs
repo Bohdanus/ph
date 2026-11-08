@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +9,8 @@ import {
   claimAlert,
   isOrphanAutoMergeState,
   observeOrphanAutoMerge,
+  resetOrphanAutoMergeFailover,
+  startWatcher,
 } from '../main-landing.mjs';
 
 const tempDirectories = [];
@@ -52,6 +55,63 @@ describe('main landing alert claims', () => {
       leaseId: owner.leaseId,
     });
     expect(existsSync(controlFile)).toBe(false);
+  });
+
+  it('waits for the detached watcher readiness token before returning', async () => {
+    const child = new EventEmitter();
+    let unrefed = false;
+    let stdoutDestroyed = false;
+    child.pid = 12345;
+    child.stdout = new EventEmitter();
+    child.stdout.destroy = () => {
+      stdoutDestroyed = true;
+    };
+    child.kill = () => {};
+    child.unref = () => {
+      unrefed = true;
+    };
+    let settled = false;
+    let spawnOptions;
+    const pending = startWatcher({ cwd: '/temporary/project' }, 'lease-token', {
+      readyTimeoutMs: 1_000,
+      spawnProcess: (_command, _args, options) => {
+        spawnOptions = options;
+        return child;
+      },
+    }).then((pid) => {
+      settled = true;
+      return pid;
+    });
+
+    expect(spawnOptions).toMatchObject({ detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    child.stdout.emit('data', 'incomplete watcher startup');
+    expect(settled).toBe(false);
+    child.stdout.emit('data', 'KILO_MAIN_LANDING_WATCHER_READY:lease-token\n');
+
+    await expect(pending).resolves.toBe(12345);
+    expect(unrefed).toBe(true);
+    expect(stdoutDestroyed).toBe(true);
+  });
+
+  it('rejects when the detached watcher exits before readiness', async () => {
+    const child = new EventEmitter();
+    let killed = false;
+    child.pid = 12345;
+    child.stdout = new EventEmitter();
+    child.stdout.destroy = () => {};
+    child.kill = () => {
+      killed = true;
+    };
+    child.unref = () => {};
+
+    const pending = startWatcher({ cwd: '/temporary/project' }, 'lease-token', {
+      readyTimeoutMs: 1_000,
+      spawnProcess: () => child,
+    });
+    child.emit('close', 1, null);
+
+    await expect(pending).rejects.toThrow('exited before readiness');
+    expect(killed).toBe(true);
   });
 });
 
@@ -107,10 +167,40 @@ describe('persistent orphan AUTO_MERGE failover', () => {
     expect(canRecoverOrphanAutoMerge(owner, now, { owner: false, child: null })).toBe(false);
     expect(canRecoverOrphanAutoMerge(owner, now, { owner: false, child: false })).toBe(true);
     expect(
+      canRecoverOrphanAutoMerge({ ...owner, autoMergeFailoverAttempted: true }, now, { owner: false, child: false })
+    ).toBe(false);
+    expect(
       canRecoverOrphanAutoMerge({ ...owner, autoMergeLastObservedAt: new Date(now - 120_000).toISOString() }, now, {
         owner: false,
         child: null,
       })
     ).toBe(false);
+  });
+
+  it('restarts the 30-minute observation if failover fails before creating a worktree', () => {
+    const now = 60 * 60_000;
+    const owner = {
+      mode: 'landing',
+      autoMergeRecoveryReady: true,
+      autoMergeFailoverAttempted: true,
+      autoMergeFailoverStartedAt: new Date(now - 1_000).toISOString(),
+      autoMergeRecoveryPath: '/tmp/not-created',
+      autoMergeSignature: 'main-a:tree-a',
+      autoMergeObservedSince: new Date(0).toISOString(),
+      autoMergeLastObservedAt: new Date(now - 1_000).toISOString(),
+      owner: { pid: 100, childPid: 101, branch: 'feature', chatId: 'test-chat' },
+      previousOwner: { pid: 1, childPid: 2, branch: 'feature', chatId: 'test-chat' },
+    };
+
+    const reset = resetOrphanAutoMergeFailover(owner, orphan, 'main-a:tree-a', now);
+
+    expect(reset.autoMergeFailoverAttempted).toBe(false);
+    expect(reset.autoMergeRecoveryReady).toBe(true);
+    expect(reset.owner).toMatchObject({ pid: 1, childPid: null, branch: 'feature', chatId: 'test-chat' });
+    expect(reset.autoMergeObservedSince).toBe(new Date(now).toISOString());
+    expect(reset.autoMergeLastObservedAt).toBe(new Date(now).toISOString());
+    expect(reset).not.toHaveProperty('previousOwner');
+    expect(reset).not.toHaveProperty('autoMergeFailoverStartedAt');
+    expect(reset).not.toHaveProperty('autoMergeRecoveryPath');
   });
 });
