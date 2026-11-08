@@ -541,3 +541,9 @@ Local `main` at `5924024c527122cd8766431fab0bbf0fb1b0fbf2` and fetched `origin/m
 - 6e99240a (6e99240a0358cab54291b1337e98dc169034abe8) "merge: harden CI coverage, secrets, and Small Caps preview" — Bohdan Kalynovskyi (Dan)
 - 5a70a672 (5a70a672eaae167aac80e4ff48c529b40a3a4dd7) "test(e2e): harden selection history assertions" — Bohdan Kalynovskyi (Dan)
 - e24fc2ad (e24fc2add4cfad7885861a847a44a021f08bcd74) "merge: harden selection history E2E coverage" — Bohdan Kalynovskyi (Dan)
+
+## 2026-11-08 — origin/main (fetch + merge into local main)
+
+Local `main` at `e4c0f3a90849793a77dfcc5c75a8d413809107e4` and fetched `origin/main` at `2134c8588ed0591afa1f8a9096fd540368e8f7bf` shared merge base `b02eddb646c222a29aedd1c8785eede9daf692d6`. This landing imports the one remote-only commit:
+
+- 2134c858 (2134c8588ed0591afa1f8a9096fd540368e8f7bf) "Windows command hardening: safe .cmd resolution, process-tree termination, inventory fail-closed" — bohdan
