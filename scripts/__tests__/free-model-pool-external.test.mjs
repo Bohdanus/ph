@@ -1173,7 +1173,7 @@ describe('provider rate-limit diagnostics', () => {
     ).toBe(Date.UTC(2051, 10, 7, 0, 0, 30) - now);
     expect(
       retryAfterDelayMs(
-        new Response(null, { headers: { 'retry-after': 'Saturday, 07-Nov-76 00:00:30 GMT' } }),
+        new Response(null, { headers: { 'retry-after': 'Sunday, 07-Nov-76 00:00:30 GMT' } }),
         Date.UTC(2026, 0, 1)
       )
     ).toBe(0);
@@ -1199,6 +1199,15 @@ describe('provider rate-limit diagnostics', () => {
       retryAfterDelayMs(new Response(null, { headers: { 'retry-after': 'Sat, 07 Nov 2026 23:59:60 GMT' } }), now)
     ).toBe(Date.UTC(2026, 10, 8, 0, 0, 0) - now);
     expect(retryAfterDelayMs(new Response(null), now)).toBeNull();
+  });
+
+  it.each([
+    ['IMF-fixdate', 'Fri, 07 Nov 2026 00:00:30 GMT'],
+    ['RFC 850 date', 'Friday, 07-Nov-26 00:00:30 GMT'],
+    ['asctime date', 'Fri Nov  7 00:00:30 2026'],
+  ])('rejects a %s with a weekday that disagrees with its date', (_format, retryAfter) => {
+    const now = Date.parse('2026-11-07T00:00:00.000Z');
+    expect(retryAfterDelayMs(new Response(null, { headers: { 'retry-after': retryAfter } }), now)).toBeNull();
   });
 
   it('rechecks daily capacity after a model 429 before rotating', async () => {

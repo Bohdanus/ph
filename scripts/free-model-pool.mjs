@@ -40,6 +40,15 @@ const HTTP_DATE_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'
 const HTTP_SHORT_DAY_PATTERN = 'Mon|Tue|Wed|Thu|Fri|Sat|Sun';
 const HTTP_LONG_DAY_PATTERN = 'Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday';
 const HTTP_MONTH_PATTERN = '(?:' + HTTP_DATE_MONTHS.join('|') + ')';
+const HTTP_WEEKDAY_NAMES = [
+  ['Sun', 'Sunday'],
+  ['Mon', 'Monday'],
+  ['Tue', 'Tuesday'],
+  ['Wed', 'Wednesday'],
+  ['Thu', 'Thursday'],
+  ['Fri', 'Friday'],
+  ['Sat', 'Saturday'],
+];
 const IMF_FIXDATE_PATTERN = new RegExp(
   '^(?:' + HTTP_SHORT_DAY_PATTERN + '), (\\d{2}) (' + HTTP_MONTH_PATTERN + ') (\\d{4}) (\\d{2}):(\\d{2}):(\\d{2}) GMT$'
 );
@@ -446,10 +455,19 @@ function utcHttpDateTimestamp(year, monthName, day, hour, minute, second) {
   return date.getTime() + (second === 60 ? 1000 : 0);
 }
 
+function httpDateWeekdayMatches(value, timestamp, second) {
+  if (!Number.isFinite(timestamp)) return false;
+  const commaIndex = value.indexOf(',');
+  const spaceIndex = value.indexOf(' ');
+  const weekday = value.slice(0, commaIndex >= 0 ? commaIndex : spaceIndex);
+  const dateTimestamp = timestamp - (second === 60 ? 1000 : 0);
+  return HTTP_WEEKDAY_NAMES[new Date(dateTimestamp).getUTCDay()]?.includes(weekday) ?? false;
+}
+
 function parseHttpDateTimestamp(value, now) {
   let match = value.match(IMF_FIXDATE_PATTERN);
   if (match) {
-    return utcHttpDateTimestamp(
+    const timestamp = utcHttpDateTimestamp(
       Number(match[3]),
       match[2],
       Number(match[1]),
@@ -457,6 +475,7 @@ function parseHttpDateTimestamp(value, now) {
       Number(match[5]),
       Number(match[6])
     );
+    return httpDateWeekdayMatches(match[0], timestamp, Number(match[6])) ? timestamp : null;
   }
 
   match = value.match(RFC850_DATE_PATTERN);
@@ -464,17 +483,18 @@ function parseHttpDateTimestamp(value, now) {
     const currentYear = new Date(now).getUTCFullYear();
     const year = Math.floor(currentYear / 100) * 100 + Number(match[3]);
     const dateParts = [match[2], Number(match[1]), Number(match[4]), Number(match[5]), Number(match[6])];
-    const retryAt = utcHttpDateTimestamp(year, ...dateParts);
+    let retryAt = utcHttpDateTimestamp(year, ...dateParts);
     if (!Number.isFinite(retryAt)) return null;
 
     const fiftyYearsLater = new Date(now);
     fiftyYearsLater.setUTCFullYear(currentYear + 50);
-    return retryAt > fiftyYearsLater.getTime() ? utcHttpDateTimestamp(year - 100, ...dateParts) : retryAt;
+    if (retryAt > fiftyYearsLater.getTime()) retryAt = utcHttpDateTimestamp(year - 100, ...dateParts);
+    return httpDateWeekdayMatches(match[0], retryAt, dateParts[4]) ? retryAt : null;
   }
 
   match = value.match(ASCTIME_DATE_PATTERN);
   if (match) {
-    return utcHttpDateTimestamp(
+    const timestamp = utcHttpDateTimestamp(
       Number(match[7]),
       match[1],
       Number(match[2] ?? match[3]),
@@ -482,6 +502,7 @@ function parseHttpDateTimestamp(value, now) {
       Number(match[5]),
       Number(match[6])
     );
+    return httpDateWeekdayMatches(match[0], timestamp, Number(match[6])) ? timestamp : null;
   }
 
   return undefined;
