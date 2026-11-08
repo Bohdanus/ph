@@ -857,6 +857,30 @@ describe('TextToolArea', () => {
       }
     });
 
+    it('keeps compositor ownership when a deferred overlay retry later succeeds', () => {
+      const ctx = makeMockCtx();
+      const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
+      toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true });
+      h.publishSmallCapsTextDraftPreview.mockReturnValueOnce('overlay-deferred').mockReturnValueOnce('rendered');
+      vi.useFakeTimers();
+
+      const rendered = renderArea({ current: ctx });
+      try {
+        act(() => h.useRectProps.current!.onRepaint!(rect));
+        expect(renderText).not.toHaveBeenCalled();
+
+        act(() => vi.advanceTimersByTime(250));
+        expect(h.publishSmallCapsTextDraftPreview).toHaveBeenCalledTimes(2);
+        expect(h.publishSmallCapsTextDraftPreview).toHaveBeenNthCalledWith(2, toolArgs, rect);
+        expect(renderText).not.toHaveBeenCalled();
+        expect(ctx.fillText).not.toHaveBeenCalled();
+      } finally {
+        rendered.unmount();
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    });
+
     it('keeps the committed source hidden when a failed Small Caps edit returns to DOM text', () => {
       const ctx = makeMockCtx();
       const overlayCtxRef = { current: ctx };
