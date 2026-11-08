@@ -62,16 +62,15 @@ not vector eligibility.
 
 ## Current-main drift and new renderer evidence
 
-At the 2026-11-07 checkpoint, local `main` is `b5df9dbc`; `origin/main` and `mirror/main` remain
-at `e24fc2ad`. Since `3a1d4ad3`, local main advanced through the stale-sweep documentation merge;
-the only change in that delta is removal of one obsolete note from `docs/FREE-COMPUTE.md`. The
-broader `e24fc2ad` to `b5df9dbc` drift includes toolbar-fit files, free-compute policy docs, a
-selection-tool description, and removal of an unrelated resolved handoff entry and stale local-model
-note. None of these commits changes history replay, compositor, renderer, export, or the
-crop-history fixture. This candidate has been rebased onto local `main` at `b5df9dbc`; its current
-merge base is that exact commit. The local rebase is not a remote update. Before landing, recheck the
-live main SHA and tree, candidate ancestry, repository state, and ownership; this task does not
-include a remote push.
+At the 2026-11-07 checkpoint, local `main` is `30e32ccf6efba0536525ac66a8e71e04a97889ab`.
+Since the history-export landing at `659ca8ede3be5c4f05aa0d250d63d6f394964315`, main advanced
+through `df1d78387` and merge `30e32ccf6`; that delta adds the migration audit and updates this
+restart guide, without changing history replay, compositor, renderer, export, or the crop fixture.
+This candidate is rebased onto that local main. Commit `bd5f3d29f` adds the adapter diagnostics and
+`8c842c4fe` removes the two-pixel allowances from the affected frame and tight-raster assertions.
+Neither changes production admission or renderer behavior. This local rebase is not a remote update.
+Before landing, recheck the live main SHA and tree, candidate ancestry, repository state, and
+ownership; this task does not include a remote push.
 
 The historical `7cf69dca` affine-parity commit is not an ancestor of current main. Its behavior has
 evolved in the current compositor: `3ccccba0` introduced direct affine raster composition and
@@ -88,17 +87,23 @@ matrices, and cross-platform parity remain unproven.
 The transformed-raster opacity/blend fixture uses opacity `0.58` and `multiply`. Its raw tight
 bitmap bytes, premultiplied tight pixels, bounds, dimensions, opacity, and blend metadata match in
 the HTML and OffscreenCanvas comparisons at the affine and fractional-frame cursors. The direct
-durable composite also matches the legacy composite exactly. A temporary diagnostic observed 42
-differing channel bytes at the affine cursor and 46 after the fractional frame in the runtime
-projection and durable export path over the opaque backdrop, but those paths are not yet asserted by
-a committed fixture; treat the counts as exploratory until that test is added. The earlier 146-byte
-isolated-layer comparison over transparency is not a valid blend-mode oracle. Retained operations
-therefore remain outside the renderer parity gate. The export candidate uses the same conservative
-eligibility check and keeps legacy records for any unsupported source, retained operation, metadata
-mismatch, missing or extra legacy layer, or changed bounds. The compositor materializes visible layers only,
-so any hidden layer forces PSD export to keep legacy records; after composition, actual materialized
-bounds are checked before durable records are selected. This does not admit frame-changing commits
-or alter logical history authority.
+durable composite also matches the legacy composite exactly. The committed E2E diagnostic now
+measures runtime projection, the `durableExportRecords()`/`renderExportCanvas()` result, decoded PNG,
+and PSD layer plus composite pixels at both cursors. The normal admission predicate refuses the
+retained `apply-affine-transform` case at the affine cursor and the retained frame-transform case
+after the fractional frame. Accordingly, the test requires that refusal and records the adapter
+pixels for diagnosis; these manually invoked, refused adapter outputs are not selected for product
+rendering or export. On local Chrome, those diagnostics show 42 differing channel bytes in runtime,
+export-canvas, and decoded-PNG pixels at the affine cursor, with zero PSD composite or layer-byte
+differences. After the fractional frame they show 46 differing bytes in runtime, export-canvas, and
+decoded-PNG pixels, 8 in the PSD composite, 7 in the PSD background layer, and zero in the
+foreground layer. The 42/46 results are now reproduced as adapter diagnostics, not as a confirmed
+product-output defect. The test requires exact zero bytes on all surfaces if the records are
+admitted. The earlier 146-byte isolated-layer comparison over transparency is not a valid blend-mode
+oracle. Keep retained operations outside runtime and export admission; the current product path
+continues to use legacy records. Hidden layers also force legacy PSD records, and export checks
+actual materialized bounds before selecting durable records. This does not admit frame-changing
+commits or alter logical history authority.
 
 ## Loose Ends
 
@@ -119,14 +124,24 @@ or alter logical history authority.
 2. **Presentation parity.** Keep runtime and export byte-parity admission conservative. The recovered
    fractional mixed-source fixture passes exact per-layer checks and exact composites at its three
    transitions; it closes only those inputs and does not establish the cause of the older `(5, 26)`
-   mismatch or the wider frame matrix. The transformed raster with opacity `0.58` and `multiply`
-   retains exact raw materialized pixels and metadata, and its direct durable composite is exact,
-   but temporary diagnostics reported 42 channel-byte differences at the affine cursor and 46 after
-   the fractional frame in runtime projection and durable export over the opaque backdrop. Those
-   production paths are not asserted by a committed fixture, so treat the counts as unverified
-   until reproduced or corrected. Keep retained operations out of both gates until the next proof
-   slice establishes exact parity through runtime projection, PNG, and PSD. Do not promote
-   `SET_DOCUMENT_FRAME_ACTION` to durable publication.
+   mismatch or the wider frame matrix. The opacity `0.58`/`multiply` fixture has exact raw
+   materialization and direct-composite results, plus local-Chrome diagnostics for the refused
+   runtime/export adapters, PNG, and PSD. The measured 42/46 runtime/export/PNG differences and the
+   fractional-frame PSD differences are not product-path failures because admission refuses those
+   records and the app retains legacy rendering/export. The root cause remains unknown. Keep the
+   gate closed and isolate the first differing intermediate surface before changing production code.
+   The diagnostic test records pixel offsets and channel values; extend that capture with document
+   coordinates, alpha, source/backdrop pixels, and exact surface bounds. Compare identical frame,
+   transform, clipping, layer order, and opaque backdrop, then vary one factor at a time: opacity 1
+   versus 0.58, source-over versus multiply, integer versus fractional frame, and direct frame-surface
+   copy versus tight-bitmap placement. Check operation order and intermediate alpha/premultiplication
+   around `drawEvaluatedPresentation()` and `renderExportCanvas()`; `durable-compositor.ts` explicitly
+   disables image smoothing on its composition path, so smoothing is not an established explanation.
+   Investigate the fractional PSD discrepancy separately by comparing legacy and durable background
+   raster bytes before encoding at identical integer bounds, then check layer placement relative to
+   the fractional frame and decoded layer versus composite pixels. Require exact zero at runtime,
+   PNG, and PSD before considering an admission change; keep `SET_DOCUMENT_FRAME_ACTION` out of
+   durable publication.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
 4. **Status UI coverage.** Dev status, ErrorBoundary fallback, and structured diagnostics now
@@ -145,18 +160,39 @@ not impose a dependency between them.
    layer base while append composition is pending or accepted, then reveal the durable base only
    after the preview clears; `useLayer.render.test.tsx` pins accepted and refused append cases, and
    `e2e/undo-redo.spec.ts` pins live Brush preview pixels while durable status is current.
-3. Continue parity-only work with the transformed raster opacity/blend discrepancy as the next
-   bounded slice. At the affine cursor and after the fractional frame, compare legacy rendering,
-   `projectDurableRender()`, `renderExportCanvas()` using `durableExportRecords()`, and PSD layer plus
-   composite pixels over the same opaque backdrop. Keep separate assertions for raw source pixels,
-   tight bitmap bounds/dimensions, alpha and premultiplication, opacity/blend metadata, and the
-   composed output; do not use a transparent multiply result as the oracle. Pin the temporary 42/46
-   byte observation by asserting those production paths, or correct the measured result if the
-   differential does not reproduce. Require exact byte equality with no tolerance. Trace any
-   difference to materialization, retained-affine composition, or the standard layer/export renderer
-   before changing production code. Preserve bitmap leases and release assertions. The current
-   fallback must continue selecting legacy records for retained operations, hidden PSD layers, and
-   replay/legacy layer sets or materialized bounds that do not match the legacy record.
+3. Continue parity-only work with the transformed raster opacity/blend fixture. The exact assertions
+   for raw and premultiplied materialization and the direct composite are green locally; the adapter
+   measurements are intentionally diagnostic because the normal gate refuses retained operations.
+   First identify the earliest intermediate surface where legacy and durable bytes diverge. Reuse the
+   same opaque backdrop, layer order, frame, transform, clipping, opacity, and blend settings, and
+   capture the differing pixel coordinates, channels, alpha, source/backdrop samples, and bounds.
+   At each cursor, compare the direct original-source draw, the materialized bitmap drawn at matching
+   frame-grid coordinates, and the projected-record draw. Hold canvas type, transform, clipping, and
+   destination constant; include controls that prove the transform and blend each affect pixels.
+   Then vary opacity 1 versus 0.58, source-over versus multiply, integer versus fractional frame,
+   opaque versus transparent backdrop, and direct frame-surface copy versus tight-bitmap placement,
+   changing one condition at a time. Inspect intermediate alpha/premultiplication and operation
+   order; preserve the explicit `imageSmoothingEnabled = false` setting rather than attributing the
+   result to filtering without evidence. For PSD, isolate the legacy and durable background-layer
+   bytes before encoding at `savePsd()`'s equal integer bounds, inspect `left`/`top`/width/height
+   against the fractional frame, then compare PSD layer and composite pixels separately using the
+   same quantized opacity. Do not use PNG as the PSD pixel oracle. Keep separate exact
+   assertions for source pixels, materialized bytes/bounds/dimensions, opacity/blend metadata, runtime
+   pixels, PNG pixels, PSD layer pixels, and PSD composite pixels. Require zero differing bytes
+   without tolerance before proposing any admission change. Preserve bitmap lease and stale-completion
+   release assertions. The current product path must continue selecting legacy records for retained
+   operations, hidden PSD layers, and replay/legacy layer sets or materialized bounds that do not
+   match the legacy record.
+
+   Do not change production rendering until these comparisons identify the first divergent boundary.
+   If the evidence shows direct source drawing is required, consider a narrowly scoped durable
+   presentation record that retains a leased immutable source and its affine operations while
+   keeping the materialized bitmap for layer and export consumers. That design would need explicit
+   source identity and generation, full visible-layer coverage, cancellation and stale-result
+   rejection, one-time release on replacement or failure, and whole-document legacy fallback when
+   any source cannot be resolved. Prove runtime, PNG, PSD layer, and PSD composite pixels
+   independently with exact equality before considering admission. Do not allocate a full-document
+   bitmap per layer.
 
    Once that slice is exact, broaden the fractional frame matrix across open angles, additional
    retained-affine combinations, text styling/rotation, blank opacity variants, and fractional
@@ -221,7 +257,7 @@ not impose a dependency between them.
   not Photoshop requirements or a contract for this migration. Keep the repository's branch,
   replay-failure, rollback, and ownership tests as the authority for local behavior.
 
-## Validation Evidence
+## Prior Validation Evidence
 
 Implementation commit `04f95264ed20aef5168e602409b9fd253120e4ed` (tree
 `8fff8d49d892febd6fabe55f128d9dd7fa33a10e4`) was validated on the local macOS checkout after
@@ -235,6 +271,31 @@ rebasing onto `main` at `b5df9dbc272e208dc04768259228e13abdad33fb`.
   78 warnings and no errors; the changed implementation and E2E files pass focused ESLint checks.
 - No Linux or Windows mirror run was performed. Local browser results do not prove cross-platform or
   Photoshop pixel parity, and the wider frame matrix remains open.
+
+## Continuation Validation — 2026-11-07
+
+This continuation was rebased onto local `main` at `30e32ccf6efba0536525ac66a8e71e04a97889ab`.
+`bd5f3d29f` adds refused-adapter diagnostics; `8c842c4fe` changes the frame and tight-raster
+alpha-boundary allowances to exact zero. No production source file changed.
+
+- Focused Chrome E2E in `e2e/crop-history.spec.ts` for retained affine/frame parity and opacity/blend
+  adapter diagnostics: 2 passed, run `2026-11-07T09-54-49-011Z-42015`. The adapter diagnostic
+  reproduced 42 runtime/export/PNG channel differences at the affine cursor and 46 after the
+  fractional frame; PSD had 0 composite/layer differences at the affine cursor, then 8 composite, 7
+  background-layer, and 0 foreground-layer differences after the fractional frame. The admission
+  predicate refused both cursors.
+- Full `npm run test:e2e -- e2e/crop-history.spec.ts`: 19 passed, 11 failed, run
+  `2026-11-07T09-49-22-961Z-26277`. The failures are toolbar-helper interactions outside the changed
+  parity assertions: seven expected `tool-overflow-tile` controls were hidden, and four clicks timed
+  out waiting for `tool-button-draw` or `tool-button-text`. The strict retained-layer and opacity/blend
+  tests passed in the separate focused run. A full run of the same spec at base `30e32ccf6`
+  reproduced the same 19 passed, 11 failed, and the same 11 failing test titles, run
+  `2026-11-07T10-08-37-864Z-2500`. This confirms those toolbar-helper failures predate this candidate;
+  the full spec is still not green and should be tracked separately, but they are not regressions from
+  the exact-parity test changes.
+- `npm run tsc`, `npm run build`, and `npm run lint:check` passed. Lint reported 78 warnings and no
+  errors; Prettier formatting passed. No Linux/Windows mirror or independent Photoshop oracle was
+  run. These are local macOS/Chrome results only.
 
 ## Review Findings and Dispositions
 
@@ -261,10 +322,11 @@ and tree `8fff8d49d892febd6fabe55f128d9dd7fa33a10e4`, based on local main `b5df9
 - Codex had no Kilo CLI or verifiable free subagent launcher in this session, so the free reviews used
   the repository's tool-free completion runner rather than tool-using Kilo subagents. Incomplete model
   responses were not review evidence.
-- A fresh Luna 6 docs review found that the Loose Ends summary stated the reported 42/46-byte runtime
-  projection/export diagnostics as confirmed, despite the evidence and next-step sections marking
-  them unpinned. The summary now calls them reported and unverified until reproduced or corrected;
-  the follow-up review found no remaining actionable contradiction in either migration document.
+- A prior Luna 6 docs review correctly caught that the 42/46-byte runtime/export observations were
+  presented too strongly while they were still exploratory. The current E2E diagnostic now
+  reproduces those counts only by manually invoking adapters that production admission refuses; the
+  docs distinguish those diagnostics from the live legacy-fallback product path. The root cause is
+  still unknown, and the detailed runtime/PNG/PSD isolation sequence below remains open.
 
 The actionable export layer-set finding is resolved. Keep the transformed-raster runtime/PNG/PSD
 parity proof, broader frame matrix, and source-backed ownership as independent remaining gates.
@@ -288,16 +350,19 @@ The implementation slices and acceptance gates remain governed by the
 The current-state audit and its resolved/open findings are recorded in
 [History Migration Audit — 2026-11-07](HISTORY-MIGRATION-AUDIT-20261107.md).
 
-The audit baseline is local `main` at `659ca8ede3be5c4f05aa0d250d63d6f394964315`, which merges
-the prior main pin `b5df9dbc272e208dc04768259228e13abdad33fb` and candidate
-`e9debc96e8620c3494632aee74fad8753157b582`. The validation counts above were recorded on the
-candidate implementation tree before landing. The candidate-to-landing delta is documentation-only;
-this audit did not rerun those gates. No Linux or Windows mirror was run, and the wider parity matrix
-remains open.
+The source audit originally recorded local `main` at
+`659ca8ede3be5c4f05aa0d250d63d6f394964315`, which merges the prior main pin
+`b5df9dbc272e208dc04768259228e13abdad33fb` and candidate
+`e9debc96e8620c3494632aee74fad8753157b582`. Main subsequently advanced to
+`30e32ccf6efba0536525ac66a8e71e04a97889ab` through documentation-only audit updates. The local
+candidate is rebased on that current main and includes the exact-assertion and adapter-diagnostic
+follow-ups described above. Validation recorded below is for the current candidate; no Linux or
+Windows mirror was run, and the wider parity matrix remains open.
 
-The immediate implementation target is transformed-raster opacity/blend output parity and the
-legacy export fallback described above. After exact PNG, PSD, and runtime proof for that fixture,
-continue the broader fractional-frame matrix and source-backed import/replacement ownership as
-separate gates. Only after every presentation surface has explicit identity, coverage, freshness,
-lease, preview, and fallback proofs should durable replay be considered for logical undo/redo
-authority. The current `HistoryItem[]` and `replayHistory()` authority remains unchanged.
+The immediate implementation target is to isolate the transformed-raster adapter differences while
+retaining the legacy fallback. Only after exact runtime, PNG, PSD layer, and PSD composite proof on
+the currently refused fixture should a separate reviewed change consider admission. Then continue
+the broader fractional-frame matrix and source-backed import/replacement ownership as separate gates.
+Only after every presentation surface has explicit identity, coverage, freshness, lease, preview,
+and fallback proofs should durable replay be considered for logical undo/redo authority. The current
+`HistoryItem[]` and `replayHistory()` authority remains unchanged.
