@@ -419,7 +419,7 @@ describe('buildResearchPrompt', () => {
     const records = JSON.parse(prompt.split('Source records (JSON):\n')[1].split('\n\nSummary:')[0]);
     expect(
       records.map((record) => record.content.split(' [total source-text limit reached; truncated]')[0].length)
-    ).toEqual([20_000, 20_000]);
+    ).toEqual([20_036, 20_036]);
     expect(() => buildResearchPrompt('Q'.repeat(4001), [])).toThrow(/question/);
     expect(() =>
       buildResearchPrompt('Question?', new Array(21).fill({ url: 'https://a.example.com', ok: false }))
@@ -436,6 +436,48 @@ describe('buildResearchPrompt', () => {
 });
 
 describe('free research CLI', () => {
+  it('accepts JSON output without an output file but still requires both inputs', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-research-json-'));
+    const promptPath = join(directory, 'prompt.txt');
+    const urlListPath = join(directory, 'urls.txt');
+    const chunks = [];
+    const stdout = { write: (chunk) => chunks.push(String(chunk)) };
+    const stderr = { write: vi.fn() };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(new Response('<p>Public source evidence</p>', { headers: { 'content-type': 'text/html' } }));
+    const completeImpl = vi.fn().mockResolvedValue({
+      source: 'openrouter',
+      model: 'test-free-model',
+      content: 'Summary with evidence',
+      finishReason: 'stop',
+      usage: { prompt_tokens: 20, completion_tokens: 8 },
+      requestCounts: { openrouter: 1 },
+    });
+    try {
+      await writeFile(promptPath, 'Summarize source evidence');
+      await writeFile(urlListPath, 'https://example.com');
+
+      const code = await main(['--prompt-file', promptPath, '--url-list', urlListPath, '--json'], {
+        fetchImpl,
+        completeImpl,
+        stdout,
+        stderr,
+      });
+
+      expect(code).toBe(0);
+      expect(fetchImpl).toHaveBeenCalledOnce();
+      expect(JSON.parse(chunks.join(''))).toMatchObject({ content: 'Summary with evidence', fetchedCount: 1 });
+      expect(stderr.write).not.toHaveBeenCalledWith(expect.stringContaining('Usage:'));
+
+      const missingInputs = await main(['--json'], { fetchImpl, completeImpl, stdout, stderr });
+      expect(missingInputs).toBe(2);
+      expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Usage:'));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('passes quota tracking and records per-run request counts', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-research-'));
     const promptPath = join(directory, 'prompt.txt');

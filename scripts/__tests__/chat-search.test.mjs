@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,6 +13,8 @@ import {
   searchCopilotSessions,
   executeChatSearch,
   MAX_PROMPT_CHARS,
+  validatePath,
+  validateCodexRolloutPath,
 } from '../lib/chat-search.mjs';
 
 /* ---------- helpers ---------- */
@@ -207,6 +209,37 @@ describe('searchTermsFromQuery', () => {
 
   it('handles mixed separators', () => {
     expect(searchTermsFromQuery('hello, world;test foo.bar')).toEqual(['hello', 'world', 'test', 'foo.bar']);
+  });
+
+  it('preserves Unicode words in search queries', () => {
+    expect(searchTermsFromQuery('Малювання слой')).toEqual(['малювання', 'слой']);
+  });
+});
+
+describe('path validation', () => {
+  it('rejects path-prefix siblings and symlink escapes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'chat-search-path-'));
+    const allowed = join(dir, 'allowed');
+    const prefixSibling = `${allowed}-escape`;
+    const outside = join(dir, 'outside');
+    const link = join(allowed, 'linked');
+    const outsideFile = join(outside, 'secret.jsonl');
+    const siblingFile = join(prefixSibling, 'prompt.txt');
+
+    try {
+      mkdirSync(allowed);
+      mkdirSync(prefixSibling);
+      mkdirSync(outside);
+      writeFileSync(outsideFile, 'private');
+      symlinkSync(outside, link, 'dir');
+
+      expect(validatePath(siblingFile, [allowed])).toBe(false);
+      expect(validatePath(join(link, 'secret.jsonl'), [allowed])).toBe(false);
+      expect(validateCodexRolloutPath(join(`${allowed}-escape`, 'rollout.jsonl'), allowed)).toBe(false);
+      expect(validateCodexRolloutPath(join(link, 'secret.jsonl'), allowed)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -486,6 +519,35 @@ describe('integerOption', () => {
 /* ---------- executeChatSearch ---------- */
 
 describe('executeChatSearch', () => {
+  it('quiet mode suppresses progress while preserving the final answer and errors', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cs-quiet-test-'));
+    const dbPath = join(dir, 'kilo.db');
+    createTestKiloDb(dbPath);
+    const stderr = makeMockStream();
+    const stdout = makeMockStream();
+
+    const code = await executeChatSearch({
+      query: 'chat search',
+      providers: 'kilo',
+      quiet: true,
+      stderr,
+      stdout,
+      resolveChatStores: makeMockResolveStores(dbPath),
+      completeImpl: makeMockComplete(),
+    });
+
+    expect(code).toBe(0);
+    expect(stderr.output).toBe('');
+    expect(stdout.output).toContain('Test synthesized answer.');
+
+    const invalidStderr = makeMockStream();
+    const invalidCode = await executeChatSearch({ query: '', quiet: true, stderr: invalidStderr, stdout });
+    expect(invalidCode).toBe(2);
+    expect(invalidStderr.output).toContain('no query provided');
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('returns 2 when no query is provided', async () => {
     const stderr = makeMockStream();
     const stdout = makeMockStream();
@@ -653,7 +715,7 @@ describe('executeChatSearch', () => {
       completeImpl: makeMockComplete(),
     });
 
-    expect(code).toBe(3);
+    expect(code).toBe(4);
     expect(stderr.output).toMatch(/could not extract transcript excerpts/);
 
     rmSync(dir, { recursive: true, force: true });

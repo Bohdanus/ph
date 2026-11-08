@@ -3,9 +3,29 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ testTimeout: 30_000 });
+
+describe('searchStream errors', () => {
+  it('sanitizes errors propagated by the async iterator', () => {
+    const secret = `sk-${'a'.repeat(24)}`;
+    const source = `
+      import { searchStream } from ${JSON.stringify(agentModule)};
+      const iterator = searchStream({ source: ${JSON.stringify(secret)} });
+      try {
+        await iterator.next();
+        process.exitCode = 1;
+      } catch (error) {
+        process.stdout.write(error.message);
+      }
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('sk-***REDACTED***');
+    expect(result.stdout).not.toContain(secret);
+  });
+});
 
 const cliPath = resolve('scripts/free-chat-search-agent.mjs');
 const agentModule = pathToFileURL(cliPath).href;
