@@ -14,9 +14,9 @@ The remaining candidate diff covers nine test files and four documentation files
 
 ## Review and validation
 
-The refreshed full unit suite passed: 428 files, 12,480 passed, 227 expected failures, and 2 skipped. The E2E helper unit suite passed: 22 files, 1,565 passed, and 12 expected failures. Typecheck and production build passed. Lint and Prettier passed with 78 existing warnings and zero errors. The new unavailable-dimensions fit-scale test passed after adding an explicit assertion that its starting scale is 1.925.
+The refreshed full unit suite passed: 428 files, 12,480 passed, 227 expected failures, and 2 skipped. The E2E helper unit suite passed: 22 files, 1,565 passed, and 12 expected failures. Typecheck and production build passed. Lint and Prettier passed with 78 warnings and zero errors. The fit-scale test now pins its starting value at 1.925, verifies it is retained while dimensions are unavailable, and verifies it recalculates to 0.9625 after valid dimensions return. The history projection assertion derives the expected current-row map from its fixture.
 
-Four completed, exact-zero OpenRouter reviews used `nvidia/nemotron-3-ultra-550b-a55b:free`. One identified the missing starting-scale oracle, which was added and passed its focused test. The other proposed test and documentation issues were checked against implementation, fixtures, and actual paths; they were not defects. One broader review request ended without complete output after a provider 429 and length-limited responses, so it is not counted as review evidence. A fresh review of the exact final candidate is still required before landing.
+Five completed exact-zero OpenRouter reviews used `nvidia/nemotron-3-ultra-550b-a55b:free`. They exposed the missing fit-scale starting and recovery assertions, the fixed-length history-row expectation, and stale validation counts in this handoff; all were corrected and verified. Other test and link concerns were checked against implementation, fixtures, and actual paths and were not defects. One broader review request ended without complete output after a provider 429 and length-limited responses, so it is not counted as evidence. Two fresh reviews of the exact final candidate are still required before landing.
 
 ## Landing gate
 

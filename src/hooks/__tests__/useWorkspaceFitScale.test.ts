@@ -51,7 +51,7 @@ describe('useWorkspaceFitScale', () => {
     expect(result.current).toBe(1.925);
   });
 
-  it('keeps the last valid fit scale while document dimensions are unavailable', () => {
+  it('keeps the last valid scale while dimensions are unavailable and recalculates when they return', () => {
     const element = document.createElement('div');
     element.getBoundingClientRect = () =>
       ({
@@ -83,5 +83,10 @@ describe('useWorkspaceFitScale', () => {
     rerender();
 
     expect(result.current).toBe(lastValidScale);
+
+    store.totalSize = { width: 400, height: 200 };
+    rerender();
+
+    expect(result.current).toBe(0.9625);
   });
 });

@@ -81,7 +81,7 @@ describe('selectHistoryPanelProjection', () => {
 
     expect(projection.source).toBe('legacy');
     expect(projection.rows.map((row) => row.item.id)).toEqual(history.map((item) => item.id));
-    expect(projection.rows.map((row) => row.isCurrent)).toEqual([true, false]);
+    expect(projection.rows.map((row) => row.isCurrent)).toEqual(history.map((_, index) => index === 0));
   });
 
   it('falls back for duplicate legacy or durable ids', () => {
