@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { resetOverlayAlpha, resizeCanvas } from '../canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha, resizeCanvas } from '../canvas.ts';
 import type { Ctx2D } from '../../contexts/general-types.ts';
 
 /**
@@ -248,6 +248,33 @@ describe('resizeCanvas', () => {
     expect(heightWrites).toEqual([2_000_000]);
     expect(canvas.width).toBe(1_000_000);
     expect(canvas.height).toBe(2_000_000);
+  });
+});
+
+describe('clearCanvasBackingStore', () => {
+  it('clears the whole backing bitmap under identity and restores the drawing transform', () => {
+    const canvas = { width: 40, height: 20 } as HTMLCanvasElement;
+    let transform = { a: 0.4, b: 0, c: 0, d: 0.4, e: 0, f: 0 };
+    const savedTransforms: (typeof transform)[] = [];
+    const clearState: Array<{ args: number[]; transform: typeof transform }> = [];
+    const ctx = {
+      canvas,
+      save: vi.fn(() => savedTransforms.push({ ...transform })),
+      setTransform: vi.fn((a: number, b: number, c: number, d: number, e: number, f: number) => {
+        transform = { a, b, c, d, e, f };
+      }),
+      clearRect: vi.fn((...args: [number, number, number, number]) => {
+        clearState.push({ args, transform: { ...transform } });
+      }),
+      restore: vi.fn(() => {
+        transform = savedTransforms.pop()!;
+      }),
+    } as unknown as Ctx2D;
+
+    clearCanvasBackingStore(ctx);
+
+    expect(clearState).toEqual([{ args: [0, 0, 40, 20], transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } }]);
+    expect(transform).toEqual({ a: 0.4, b: 0, c: 0, d: 0.4, e: 0, f: 0 });
   });
 });
 

@@ -14,6 +14,7 @@ import {
   drawSelectionAnchors,
 } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { clearCanvasBackingStore } from '../../util/canvas.ts';
 
 type MagicWandToolAreaProps = {
   className?: string;
@@ -42,7 +43,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    clearCanvasBackingStore(ctx);
     selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame, containScale.current));
   }
 
@@ -137,7 +138,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    clearCanvasBackingStore(ctx);
     selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame, containScale.current));
   }, [documentFrame, overlayCtxRef, selections, containScale]);
 
@@ -146,7 +147,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
 
     return () => {
       if (ctx) {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [overlayCtxRef]);

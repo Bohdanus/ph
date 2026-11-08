@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
 import type { Point, Pos, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
 import { clearSelectionDragPreview, publishSelectionDragPreview } from './selection-drag-preview.ts';
@@ -12,7 +12,7 @@ import {
   trimRect,
 } from '../util/rect.ts';
 import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
-import { resetOverlayAlpha } from '../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../util/canvas.ts';
 import { refitRectWidthToAspect } from '../util/rect-aspect.ts';
 import { isEqual } from 'lodash-es';
 import { isTemporaryHandActive } from './temporary-hand.ts';
@@ -350,10 +350,6 @@ export function useRect({
   onChangeEnd,
 }: UseRectProps) {
   const startRectRef = useRef<RectXYSorted | null>(null);
-  const latestImageSizeRef = useRef(imageSize);
-  useLayoutEffect(() => {
-    latestImageSizeRef.current = imageSize;
-  }, [imageSize]);
   const rectUnsortedRef = useRef<RectXY | null>(null); // might become unsorted while dragging
 
   const startPointRef = useRef<Point | null>(null);
@@ -538,11 +534,7 @@ export function useRect({
       endGesture();
 
       if (ctx) {
-        // The overlay context is scaled by DPR (via resizeCanvas in Main.tsx), so clearRect
-        // coordinates are in logical/frame pixels. Use imageSize (logical frame bounds) rather
-        // than ctx.canvas.width/height (backing-store device pixels) to avoid over-clearing.
-        const latestImageSize = latestImageSizeRef.current;
-        ctx.clearRect(0, 0, latestImageSize.width, latestImageSize.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [endGesture, overlayRef]);
@@ -758,7 +750,7 @@ export function useRect({
     // rotated canvas overlay left by the previous mode.
     if (externalOverlay) {
       if (overlayPaintModeRef.current !== 'external') {
-        if (overlayPaintModeRef.current !== null) ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+        if (overlayPaintModeRef.current !== null) clearCanvasBackingStore(ctx);
         overlayPaintModeRef.current = 'external';
       }
       lastIncrementalRectRef.current = null;
@@ -777,7 +769,7 @@ export function useRect({
     // both covered. The dash this function owns is written after, deliberately.
     resetOverlayAlpha(ctx);
     if (!rect) {
-      ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+      clearCanvasBackingStore(ctx);
       overlayPaintModeRef.current = null;
       lastIncrementalRectRef.current = null;
       return;
@@ -805,7 +797,7 @@ export function useRect({
         canvasSize.width !== ctx.canvas.width ||
         canvasSize.height !== ctx.canvas.height;
       if (needsBasePaint) {
-        ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+        clearCanvasBackingStore(ctx);
         if (!hideBlend) {
           ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
           ctx.fillRect(0, 0, imageSize.width, imageSize.height);
@@ -825,7 +817,7 @@ export function useRect({
         }
       }
     } else {
-      ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+      clearCanvasBackingStore(ctx);
       overlayPaintModeRef.current = 'full';
       lastIncrementalRectRef.current = null;
     }

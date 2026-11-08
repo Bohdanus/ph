@@ -21,7 +21,7 @@ import {
   moveSelectionByDelta,
 } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, type DocumentFrame } from '../../contexts/document-frame.ts';
-import { resetOverlayAlpha } from '../../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../../util/canvas.ts';
 
 const MIN_POINTS_FOR_SELECTION = 3;
 const CLOSE_START_THRESHOLD = 10; // px in image coordinate space
@@ -81,8 +81,7 @@ function drawPolygonOverlay({
   documentFrame: DocumentFrame;
   scale: number;
 }) {
-  const canvas = ctx.canvas;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  clearCanvasBackingStore(ctx);
   // `drawSelectionAnchors` resets the alpha itself, but the draft polygon below is drawn by this
   // function on the same shared context and writes `strokeStyle`/`lineWidth` with no alpha of its
   // own, so the reset has to happen before both rather than only inside the anchors.
@@ -221,8 +220,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   function clearOverlay() {
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
-    const canvas = ctx.canvas;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    clearCanvasBackingStore(ctx);
   }
 
   /**
@@ -1021,7 +1019,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
       resetDoubleClick();
 
       if (ctx) {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [overlayCtxRef, releaseFreehandPointer, resetDoubleClick, takeSelectionDrag]);
