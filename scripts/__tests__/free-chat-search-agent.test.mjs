@@ -1,11 +1,43 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ testTimeout: 30_000 });
+
+describe('extractTerms', () => {
+  it('preserves Unicode search terms', () => {
+    const source = [
+      'import { extractTerms } from ' + JSON.stringify(agentModule) + ';',
+      "process.stdout.write(JSON.stringify(extractTerms('Малювання шар')));",
+    ].join('\n');
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(['малювання', 'шар']);
+  });
+});
+
+describe('searchStream errors', () => {
+  it('sanitizes errors propagated by the async iterator', () => {
+    const secret = `sk-${'a'.repeat(24)}`;
+    const source = `
+      import { searchStream } from ${JSON.stringify(agentModule)};
+      const iterator = searchStream({ source: ${JSON.stringify(secret)} });
+      try {
+        await iterator.next();
+        process.exitCode = 1;
+      } catch (error) {
+        process.stdout.write(error.message);
+      }
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('sk-***REDACTED***');
+    expect(result.stdout).not.toContain(secret);
+  });
+});
 
 const cliPath = resolve('scripts/free-chat-search-agent.mjs');
 const agentModule = pathToFileURL(cliPath).href;
@@ -13,7 +45,28 @@ const agentModule = pathToFileURL(cliPath).href;
 async function runWithFakeSqlite(fake, action = 'query') {
   const directory = await mkdtemp(join(tmpdir(), 'free-chat-search-agent-'));
   const dbPath = join(directory, 'store.db');
+  const homeDir = join(directory, 'home');
+  const kiloDbPath = join(homeDir, '.local', 'share', 'kilo', 'kilo.db');
+  const codexDbPath =
+    process.platform === 'darwin'
+      ? join(
+          homeDir,
+          'Library',
+          'Application Support',
+          'Code',
+          'User',
+          'globalStorage',
+          'github.copilot-chat',
+          'session-store.db'
+        )
+      : join(homeDir, '.config', 'Code', 'User', 'globalStorage', 'github.copilot-chat', 'session-store.db');
   await writeFile(dbPath, '');
+  if (action === 'searchAll') {
+    await mkdir(join(homeDir, '.local', 'share', 'kilo'), { recursive: true });
+    await writeFile(kiloDbPath, '');
+    await mkdir(dirname(codexDbPath), { recursive: true });
+    await writeFile(codexDbPath, '');
+  }
   try {
     const source = `
       import { EventEmitter } from 'node:events';
@@ -23,15 +76,14 @@ async function runWithFakeSqlite(fake, action = 'query') {
       const fake = ${JSON.stringify(fake)};
       const action = ${JSON.stringify(action)};
       const dbPath = ${JSON.stringify(dbPath)};
+      const homeDir = ${JSON.stringify(homeDir)};
       const expectedDbPaths = action === 'query'
         ? ['/unused.db']
         : action === 'search'
           ? [dbPath]
-          : [
-              '/nonexistent-home/.local/share/kilo/kilo.db',
-              '/nonexistent-home/.config/Code/User/globalStorage/github.copilot-chat/session-store.db',
-            ];
+          : [${JSON.stringify(kiloDbPath)}, ${JSON.stringify(codexDbPath)}];
       let spawnCount = 0;
+      const unexpectedInvocations = [];
       const stdout = fake.stdout === 'large' ? 'é'.repeat(1_100_000) : fake.stdout ?? '';
       const spawnImpl = (sqlitePath, args, options) => {
         if (
@@ -47,6 +99,7 @@ async function runWithFakeSqlite(fake, action = 'query') {
           options.stdio.join(',') !== 'ignore,pipe,pipe' ||
           spawnCount >= expectedDbPaths.length
         ) {
+          unexpectedInvocations.push({ sqlitePath, args, expected: expectedDbPaths[spawnCount] });
           throw new Error('Unexpected sqlite3 invocation');
         }
         spawnCount += 1;
@@ -83,7 +136,7 @@ async function runWithFakeSqlite(fake, action = 'query') {
       try {
         const options = { sqlitePath: 'sqlite3', useNative: false, spawnImpl };
         const result = action === 'searchAll'
-          ? await searchAll({ query: 'needle', homeDir: '/nonexistent-home', ...options })
+          ? await searchAll({ query: 'needle', homeDir, ...options })
           : action === 'search'
             ? await search({ query: 'needle', source: 'kilo', kiloDbPath: dbPath, ...options })
             : await queryDb('/unused.db', 'SELECT 1', [], options);
@@ -91,7 +144,9 @@ async function runWithFakeSqlite(fake, action = 'query') {
       } catch (error) {
         console.log(JSON.stringify({ error: error.message }));
       }
-      if (spawnCount !== expectedDbPaths.length) throw new Error('Expected sqlite3 invocation was not made');
+      if (spawnCount !== expectedDbPaths.length) {
+        throw new Error(JSON.stringify({ message: 'Expected sqlite3 invocation was not made', spawnCount, expectedDbPaths, unexpectedInvocations }));
+      }
     `;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' });
     expect(result.status, result.stderr).toBe(0);

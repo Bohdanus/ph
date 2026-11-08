@@ -321,56 +321,9 @@ function toClip(rect: Rect): ViewportClip {
   return viewportClip({ x: rect.left, y: rect.top, width: rect.right - rect.left, height: rect.bottom - rect.top });
 }
 
-/**
- * The Type tool is a one-tool group in `toolbar-mapping.ts:108` (its group is the single
- * entry `[{ label: 'Horizontal Type Tool', name: 'text', shortcut: 'T' }]`), so it never
- * publishes a flyout of its own: a group only does when `group.length > 1`
- * (`SidebarLeft.tsx:604`). Whether it has a TILE is a different question, and at this viewport
- * the answer is no — the rail drops whole rows that do not fit into the three-dots tile
- * (`SidebarLeft.tsx:1002-1017`, planned by `planToolbarOverflow`), and Type is the FOURTEENTH
- * of the fifteen groups while 1280x720 fits SEVEN of them, so at this viewport it is reached
- * through the three-dots flyout. `clickToolButton` has a route for that, but it ends
- * in a click, and the click is a pointer at a coordinate this file does not control.
- *
- * WHY THE KEYBOARD ROUTE, stated because the reason this comment used to give is GONE and
- * saying so is the only way the rest can be trusted. It said the menu was taller than the
- * window and the Type entry was therefore off-screen with nothing to click. The 31 rows and
- * the 1254px were the folded set at a FIVE-row window, which is what this viewport used to
- * show; the rail now fills its whole slot (`TOOLBAR_HEIGHT_BUDGET = 1`,
- * `toolbar-overflow.ts:52`), seven of the fifteen groups fit at 720, and the folded set is
- * the eight groups from the Clone Stamp (the eighth) down, which is 22 rows. The menu is also
- * bounded and scrollable rather than unbounded (`SidebarLeft.tsx:859`, `max-h-[calc(100vh-1rem)]`
- * with `overflow-y-auto`), which is what makes the old claim untrue twice over: measured at
- * 1280x720 those 22 rows at 24.5px each are a 543px menu against a 704px bound, with
- * `scrollHeight === clientHeight` — nothing scrolls, the Type row renders at y 537.5..562,
- * and a plain `click()` on it succeeds.
- *
- * What survives is the property that made the route worth choosing: the row's position is a
- * function of HOW MANY GROUPS THE WINDOW FOLDED, and that count is what the fit planner
- * decides, so it is not a constant this helper can aim at. At 566..631 five rows fit, so the
- * menu carries the 29 rows of groups Crop (the sixth) down — 715px of content at 24.5px a row
- * against a bound of 550..615, so the menu DOES scroll, and at the BOTTOM of that range the
- * Type row, the twenty-third, is clipped by the fold rather than below it. A helper that four
- * tests depend on, in a file
- * whose whole subject is a tool the rail cannot show, should not have its route change with a
- * planner constant in another file. The menu's own `onKeyDown` activates the focused entry
- * with Enter (`SidebarLeft.tsx:887-901`), which is the app's supported way to pick an entry,
- * and it holds at any viewport, because focus does not require the entry to be on screen.
- */
+/** Select the Text tool through the shared rail/overflow selector. */
 async function selectTextTool(page: Page): Promise<void> {
-  const tile = page.getByTestId('tool-button-text');
-  if (await tile.count()) {
-    await tile.click();
-  } else {
-    await page.getByTestId('tool-overflow-tile').click({ button: 'right' });
-    const menu = page.getByTestId('tool-flyout-overflow');
-    await expect(menu).toBeVisible();
-    const item = page.getByTestId('tool-flyout-item-text-horizontal-type-tool');
-    await expect(item).toBeAttached();
-    await item.focus();
-    await page.keyboard.press('Enter');
-    await expect(menu).toBeHidden();
-  }
+  await clickToolButton(page, 'text');
   // The bar's own colour swatch, because that is the control every test below drives first and
   // because it is mounted for as long as the tool is selected — the textarea this used to wait on
   // was mounted for the same span and is gone with the in-place editor.

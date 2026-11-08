@@ -193,7 +193,7 @@ export async function run(argv, options = {}) {
       pid: process.pid,
       port: childEnv.PLAYWRIGHT_PORT ?? null,
       baseUrl:
-        env.PLAYWRIGHT_BASE_URL ?? (childEnv.PLAYWRIGHT_PORT ? `http://localhost:${childEnv.PLAYWRIGHT_PORT}` : null),
+        env.PLAYWRIGHT_BASE_URL ?? (childEnv.PLAYWRIGHT_PORT ? `http://127.0.0.1:${childEnv.PLAYWRIGHT_PORT}` : null),
       remote: Boolean(remote),
       outputDir: paths.outputDir,
       queued,

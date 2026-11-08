@@ -182,11 +182,12 @@ variant or an equivalent atomic history action.
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
    only after the empty-history and transactional-baseline invariants are safe.
-6. Keep the staged durable projection as the authority for supported runtime
-   presentation and both raster/PSD export paths. Ownership checks, production
-   adapter parity, and atomic failure fallback are closed; supported committed
-   eligible append/reorder presentation now composes in the background with legacy
-   as the immediate selector. Image/blank layer creates also request background presentation
+6. Keep the staged durable projection as the authority for runtime presentation
+   and both raster/PSD export paths only after each surface has an explicit parity
+   proof. Identity, coverage, freshness and failure fallback are guarded; adapter
+   parity is established only for the currently admitted no-operation layer cases.
+   Supported committed eligible append/reorder presentation now composes in the background with
+   legacy as the immediate selector. Image/blank layer creates also request background presentation
    after asset finalization. A Shape Tool create converts to a typed vector entry, but its
    presentation remains behind the `NEW_LAYER_ACTION` ownership gate. Other tool-source creates,
    source replacements, merge and frame-changing commits retain their independent ownership or
@@ -203,11 +204,10 @@ variant or an equivalent atomic history action.
    -17-degree transform.
    The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
-   pixel grid. The retained two-layer affine/frame sequence pins exact materialized bounds and allows
-   at most two partial-alpha boundary pixels in frame comparisons and two tight-bitmap pixels
-   at alpha boundaries where both paths preserve identical RGB values. A transparent/one-alpha
-   pair also needs adjacent samples of that same color in both neighborhoods; composites remain
-   byte-identical.
+   pixel grid. The retained two-layer affine/frame sequence pins exact materialized bounds and
+   requires exact frame and tight-bitmap equality, including alpha-boundary pixels. A
+   transparent/one-alpha pair also needs adjacent samples of that same color in both neighborhoods;
+   composites remain byte-identical.
    The three-transition
    mixed-source fixture pins exact bounds and checks per-layer frame and tight bitmaps exactly in
    premultiplied space. The styled-text fixture also compares tight bitmaps exactly after
@@ -220,12 +220,35 @@ variant or an equivalent atomic history action.
    opacity blank, and one each to the other layers, checking per-layer bounds and dimensions at all
    nine changed cursors. The other source-only cases assert byte-identical composites and
    materialized-layer presence. The
-   mixed-source fixture uses integer frame origins and extents; a fractional-frame probe retained
-   exact per-layer bounds and pixels but its first composite transition differed at canvas pixel
-   (5, 26), with legacy red/alpha 188/122 and durable 190/121. Do not count that mixed-source
-   fractional case as parity proof until the composite mismatch is resolved. The
+   mixed-source integer fixture uses integer frame origins and extents. A recovered fractional
+   variant now checks the exact three-transition sequence at angles 37, 0 and -17 with fractional
+   origins and extents; its per-layer bounds/pixels and composites pass byte-for-byte in the tested
+   browser environment. The earlier first-transition observation at `(5, 26)` (legacy red/alpha
+   `188/122`, durable `190/121`) is not reproduced for this fixture. Treat only that observation as
+   resolved for these exact inputs; no root cause or broader/cross-platform frame proof has been
+   established. The
    retained-affine fixtures below separately pin exact per-layer bounds for their listed raster and
    styled-text combinations.
+   A separate transformed-raster fixture uses opacity `0.58` and `multiply`. Its raw tight bitmap
+   bytes, premultiplied tight pixels, bounds, dimensions, opacity and blend metadata match in HTML
+   and OffscreenCanvas materialization at the affine and fractional-frame cursors, and the direct
+   durable composite matches legacy exactly. The diagnostic fixture also inspects runtime projection,
+   `durableExportRecords()`/`renderExportCanvas()`, decoded PNG, and PSD layer plus composite pixels.
+   The normal admission predicate refuses the retained affine and fractional-frame cases, so these
+   adapter outputs are recorded only as diagnostics and do not represent the product's selected
+   render/export path. When the refused adapters are invoked for diagnosis in local Chrome, runtime,
+   export-canvas, and decoded-PNG pixels differ by 42 channel bytes at the affine cursor and 46 after
+   the fractional frame. PSD has zero composite/layer differences at the affine cursor; after the
+   fractional frame, its composite differs by 8 bytes, the background layer by 7, and the foreground
+   layer by zero. The test requires the refusal reason and would require exact zero on every surface
+   if admission were allowed. These results do not establish a product-output defect; the root cause
+   remains unproven. The earlier 146-byte isolated-layer comparison over transparency is not a valid
+   blend-mode oracle. Retained operations stay outside runtime and export admission. The export
+   preflight shares the runtime's exact layer-set and conservative source/operation/metadata/bounds
+   checks, blocks durable PSD export when any hidden layer lacks materialized pixels, and checks
+   actual materialized bounds before selecting durable records. Unsupported, transformed, or
+   otherwise unproven cases keep legacy records. This changes neither logical history authority nor
+   the closed frame-publication gate.
    These fixtures close only their listed cases, not the frame gate: other angles and source/tool
    variants, additional text styling/rotation combinations, other frame sequences and other
    retained-affine operation combinations still need parity proof. The blank pair and 45%-opacity case
@@ -243,8 +266,8 @@ variant or an equivalent atomic history action.
 
    The retained-affine/frame proof now covers two transformed raster layers across two successive
    non-quarter frame transforms with fractional origins and extents, checking exact per-layer bounds
-   and allowing at most two tight per-layer alpha-boundary pixels with identical RGB values at both
-   affine cursors, both frame cursors, and a frame-only control. A separate styled
+   and exact tight per-layer pixels, including alpha-boundary pixels, at both affine cursors, both
+   frame cursors, and a frame-only control. A separate styled
    paragraph-text fixture checks its affine cursor and two frame cursors against exact per-layer
    bounds and pixels. Both fixtures also require byte-identical composites, and their frame-only
    controls pass with zero differing bytes. These listed cases do not close the frame gate. Do not

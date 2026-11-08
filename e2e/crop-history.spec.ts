@@ -1,5 +1,7 @@
 import { expect, type Page, type TestInfo, test } from './fixtures/extended-test';
+import { initializeCanvas, readPsd } from 'ag-psd';
 import path from 'node:path';
+import sharp from 'sharp';
 import { getWorkspaceCanvas, loadImageData } from './helpers/canvas-helpers';
 import type { BoundingBox } from './helpers/canvas-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
@@ -916,6 +918,7 @@ type CropParityFixture = Readonly<{
   transitions: readonly CropParityTransition[];
   layerTransforms?: readonly CropParityLayerTransform[];
   materializedLayerIds?: readonly string[];
+  verifyProjectedOutputs?: boolean;
   layers: readonly CropParityLayerFixture[];
 }>;
 
@@ -943,6 +946,12 @@ type CropParityLayerComparison = Readonly<{
     legacy: Readonly<{ x: number; y: number; width: number; height: number }>;
     durable: Readonly<{ x: number; y: number; width: number; height: number }>;
   }>;
+  compositing: Readonly<{
+    legacyOpacity: number;
+    durableOpacity: number;
+    legacyBlendMode: GlobalCompositeOperation;
+    durableBlendMode: GlobalCompositeOperation;
+  }>;
   affineTransforms: Readonly<{
     legacy: readonly CropParityAffineTransform[];
     durable: readonly CropParityAffineTransform[];
@@ -958,6 +967,10 @@ type CropParityLayerComparison = Readonly<{
   offscreenFrameNonEdgeDifferingPixels: number;
   frameDifferingSamples: readonly CropParityFramePixelSample[];
   offscreenFrameDifferingSamples: readonly CropParityFramePixelSample[];
+  tightBitmapRawDifferingBytes: number;
+  tightBitmapRawDifferingSamples: readonly CropParityFramePixelSample[];
+  offscreenTightBitmapRawDifferingBytes: number;
+  offscreenTightBitmapRawDifferingSamples: readonly CropParityFramePixelSample[];
   tightBitmapPremultipliedDifferingBytes: number;
   tightBitmapDifferingPixels: number;
   tightBitmapNonEdgeDifferingPixels: number;
@@ -988,6 +1001,9 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
     const [
       { AssetRegistry },
       { composeDurableDocument },
+      { durableLayerPresentationMismatch, projectDurableRender },
+      { durableExportRecords, renderExportCanvas },
+      { savePsd },
       { isIdentityAffineTransform, rotationAffineAroundPoint },
       { documentFrameSize },
       { legacyHistoryToDurable },
@@ -1000,6 +1016,9 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
     ] = await Promise.all([
       load('/src/contexts/asset-registry.ts'),
       load('/src/contexts/durable-compositor.ts'),
+      load('/src/contexts/durable-render-projection.ts'),
+      load('/src/contexts/export-canvas.ts'),
+      load('/src/contexts/psd-utils.ts'),
       load('/src/contexts/affine-transform.ts'),
       load('/src/contexts/document-frame.ts'),
       load('/src/contexts/history-adapter.ts'),
@@ -1729,6 +1748,35 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               legacyOffscreenRawFramePixels
             );
             // The tight raster uses frame-grid pixels inside the frame and bounded pixels outside it.
+            const compareRawPixels = (expected: Uint8ClampedArray, actual: Uint8ClampedArray) => {
+              let rawBitmapDifferingBytes = 0;
+              const rawBitmapDifferingSamples: CropParityFramePixelSample[] = [];
+              for (let byte = 0; byte < Math.max(expected.length, actual.length); byte += 1) {
+                const legacy = expected[byte] ?? null;
+                const durable = actual[byte] ?? null;
+                if (legacy === durable) continue;
+                rawBitmapDifferingBytes += 1;
+                if (rawBitmapDifferingSamples.length >= 8) continue;
+                const pixel = Math.floor(byte / 4);
+                const x = pixel % expectedBounds.width;
+                const y = Math.floor(pixel / expectedBounds.width);
+                rawBitmapDifferingSamples.push({
+                  x,
+                  y,
+                  documentX: expectedBounds.x + x,
+                  documentY: expectedBounds.y + y,
+                  channel: frameChannels[byte % 4],
+                  legacy,
+                  durable,
+                });
+              }
+              return { differingBytes: rawBitmapDifferingBytes, differingSamples: rawBitmapDifferingSamples };
+            };
+            const tightBitmapRawComparison = compareRawPixels(legacyHybridTightPixels, durableTightPixels);
+            const offscreenTightBitmapRawComparison = compareRawPixels(
+              legacyOffscreenHybridTightPixels,
+              durableOffscreenTightPixels
+            );
             const tightBitmapComparison = compareTightPixels(legacyHybridTightPixels, durableTightPixels);
             const offscreenTightBitmapComparison = compareTightPixels(
               legacyOffscreenHybridTightPixels,
@@ -1817,6 +1865,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 legacy: legacyLayer.pos,
                 durable: durableLayer.snapshot.pos,
               },
+              compositing: {
+                legacyOpacity: legacyLayer.opacity,
+                durableOpacity: materializedLayer.opacity,
+                legacyBlendMode: legacyLayer.blendMode,
+                durableBlendMode: materializedLayer.blendMode,
+              },
               affineTransforms: {
                 legacy: legacyLayer.operations
                   .filter(
@@ -1845,6 +1899,10 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               offscreenFrameNonEdgeDifferingPixels,
               frameDifferingSamples,
               offscreenFrameDifferingSamples,
+              tightBitmapRawDifferingBytes: tightBitmapRawComparison.differingBytes,
+              tightBitmapRawDifferingSamples: tightBitmapRawComparison.differingSamples,
+              offscreenTightBitmapRawDifferingBytes: offscreenTightBitmapRawComparison.differingBytes,
+              offscreenTightBitmapRawDifferingSamples: offscreenTightBitmapRawComparison.differingSamples,
               tightBitmapPremultipliedDifferingBytes: tightBitmapComparison.differingBytes,
               tightBitmapDifferingPixels: tightBitmapComparison.differingPixels,
               tightBitmapNonEdgeDifferingPixels: tightBitmapComparison.nonEdgeDifferingPixels,
@@ -1855,6 +1913,201 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               offscreenTightBitmapDifferingSamples: offscreenTightBitmapComparison.differingSamples,
             };
           });
+          const projectedOutputParity = fixture.verifyProjectedOutputs
+            ? await (async () => {
+                const projection = projectDurableRender(replay, {
+                  status: 'durable',
+                  materializedLayers: composite.layers,
+                });
+                const projectionCanvas = document.createElement('canvas');
+                const projectedLayers = (Object.values(projection.layers) as Layer[]).sort(
+                  (left, right) => left.order - right.order
+                );
+                if (!drawLayersToCanvas(projectionCanvas, projectedLayers, projection.frame)) {
+                  throw new Error(`Durable projection renderer refused ${fixture.caseName} at ${stage}`);
+                }
+                const projectionContext = projectionCanvas.getContext('2d');
+                if (!projectionContext) throw new Error(`Durable projection has no 2D context at ${stage}`);
+                const projectedPixels = Array.from(
+                  projectionContext.getImageData(0, 0, projectionCanvas.width, projectionCanvas.height).data
+                ) as number[];
+                const compareBytes = (expected: number[], received: number[]) => {
+                  let surfaceDifferingBytes = 0;
+                  const surfaceDifferingSamples: Array<{
+                    offset: number;
+                    expected: number | null;
+                    received: number | null;
+                  }> = [];
+                  for (let offset = 0; offset < Math.max(expected.length, received.length); offset += 1) {
+                    const expectedByte = expected[offset] ?? null;
+                    const receivedByte = received[offset] ?? null;
+                    if (expectedByte === receivedByte) continue;
+                    surfaceDifferingBytes += 1;
+                    if (surfaceDifferingSamples.length < 8) {
+                      surfaceDifferingSamples.push({ offset, expected: expectedByte, received: receivedByte });
+                    }
+                  }
+                  return {
+                    expectedByteLength: expected.length,
+                    receivedByteLength: received.length,
+                    differingBytes: surfaceDifferingBytes,
+                    differingSamples: surfaceDifferingSamples,
+                  };
+                };
+                const encodeBase64 = (bytes: Uint8Array) => {
+                  let binary = '';
+                  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+                    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+                  }
+                  return btoa(binary);
+                };
+                const encodeCanvasPng = async (canvas: HTMLCanvasElement, label: string) => {
+                  const blob = await new Promise<Blob | null>((resolve) => {
+                    canvas.toBlob(resolve, 'image/png');
+                  });
+                  if (!blob) throw new Error(`${label} did not encode to PNG at ${stage}`);
+                  return encodeBase64(new Uint8Array(await blob.arrayBuffer()));
+                };
+                const exportRecords = durableExportRecords(replay, composite);
+                const legacyExportCanvas = renderExportCanvas(legacyReplay.layers, { width: 64, height: 64 }, frame);
+                const durableExportCanvas = renderExportCanvas(
+                  exportRecords.layers,
+                  exportRecords.size,
+                  exportRecords.frame
+                );
+                const legacyExportContext = legacyExportCanvas.getContext('2d');
+                const durableExportContext = durableExportCanvas.getContext('2d');
+                if (!legacyExportContext || !durableExportContext) {
+                  throw new Error(`Export parity surfaces have no 2D context at ${stage}`);
+                }
+                const legacyExportPixels = Array.from(
+                  legacyExportContext.getImageData(0, 0, legacyExportCanvas.width, legacyExportCanvas.height).data
+                ) as number[];
+                const durableExportPixels = Array.from(
+                  durableExportContext.getImageData(0, 0, durableExportCanvas.width, durableExportCanvas.height).data
+                ) as number[];
+                const layerIds = fixture.layers.map(({ id }) => id);
+                const projectedLayerRecords = Object.fromEntries(
+                  layerIds.map((id) => {
+                    const layer = projection.layers[id];
+                    const replayLayer = replay.layers[id];
+                    const materialized = composite.layers[id];
+                    if (!layer || !replayLayer || !materialized) {
+                      throw new Error(`Missing durable projection metadata for ${id} at ${stage}`);
+                    }
+                    return [
+                      id,
+                      {
+                        id: layer.id,
+                        name: layer.name,
+                        visible: layer.visible,
+                        opacity: layer.opacity,
+                        blendMode: layer.blendMode,
+                        order: layer.order,
+                        pos: layer.pos,
+                        expectedPos: replayLayer.snapshot.pos,
+                        presentationBounds: layer.presentationBounds,
+                        expectedPresentationBounds: materialized.bounds,
+                        operationsLength: layer.operations.length,
+                      },
+                    ];
+                  })
+                );
+                const exportLayerRecords = Object.fromEntries(
+                  layerIds.map((id) => {
+                    const layer = exportRecords.layers[id];
+                    const materialized = composite.layers[id];
+                    if (!layer || !materialized)
+                      throw new Error(`Missing durable export metadata for ${id} at ${stage}`);
+                    return [
+                      id,
+                      {
+                        id: layer.id,
+                        name: layer.name,
+                        visible: layer.visible,
+                        opacity: layer.opacity,
+                        blendMode: layer.blendMode,
+                        order: layer.order,
+                        pos: layer.pos,
+                        expectedPos: materialized.bounds,
+                        presentationBounds: layer.presentationBounds,
+                        operationsLength: layer.operations.length,
+                      },
+                    ];
+                  })
+                );
+                const eligibilityReasons = Object.fromEntries(
+                  layerIds.map((id) => {
+                    const replayLayer = replay.layers[id];
+                    const legacyLayer = legacyReplay.layers[id];
+                    const materialized = composite.layers[id];
+                    if (!replayLayer || !legacyLayer || !materialized) {
+                      throw new Error(`Missing durable export eligibility input for ${id} at ${stage}`);
+                    }
+                    return [id, durableLayerPresentationMismatch(replayLayer, legacyLayer, materialized.bounds)];
+                  })
+                );
+                const expectedPsdLayerBounds = Object.fromEntries(
+                  fixture.layers.map(({ id }) => {
+                    const bounds = composite.layers[id]?.bounds;
+                    if (!bounds) throw new Error(`Missing materialized PSD bounds for ${id} at ${stage}`);
+                    const localX = bounds.x - frame.x;
+                    const localY = bounds.y - frame.y;
+                    const left = Math.floor(localX);
+                    const top = Math.floor(localY);
+                    return [
+                      id,
+                      {
+                        left,
+                        top,
+                        right: Math.ceil(localX + bounds.width),
+                        bottom: Math.ceil(localY + bounds.height),
+                      },
+                    ];
+                  })
+                );
+                const legacyPsdBase64 = encodeBase64(
+                  new Uint8Array(await savePsd(legacyReplay.layers, { width: 64, height: 64 }, frame))
+                );
+                const durablePsdBase64 = encodeBase64(
+                  new Uint8Array(await savePsd(exportRecords.layers, exportRecords.size, exportRecords.frame))
+                );
+                return {
+                  stage,
+                  frame,
+                  expectedSize: { width: frameSize.width, height: frameSize.height },
+                  runtime: {
+                    legacyWidth: legacySurface.width,
+                    legacyHeight: legacySurface.height,
+                    durableWidth: projectionCanvas.width,
+                    durableHeight: projectionCanvas.height,
+                    pixelComparison: compareBytes(legacyPixels, projectedPixels),
+                    layerRecords: projectedLayerRecords,
+                  },
+                  admission: {
+                    eligible: Object.values(eligibilityReasons).every((reason) => reason === null),
+                    reasons: eligibilityReasons,
+                  },
+                  exportCanvas: {
+                    legacyWidth: legacyExportCanvas.width,
+                    legacyHeight: legacyExportCanvas.height,
+                    durableWidth: durableExportCanvas.width,
+                    durableHeight: durableExportCanvas.height,
+                    pixelComparison: compareBytes(legacyExportPixels, durableExportPixels),
+                    layerRecords: exportLayerRecords,
+                  },
+                  png: {
+                    legacyBase64: await encodeCanvasPng(legacyExportCanvas, 'Legacy export canvas'),
+                    durableBase64: await encodeCanvasPng(durableExportCanvas, 'Durable export canvas'),
+                  },
+                  psd: {
+                    legacyBase64: legacyPsdBase64,
+                    durableBase64: durablePsdBase64,
+                    expectedLayerBounds: expectedPsdLayerBounds,
+                  },
+                };
+              })()
+            : null;
           return {
             frame,
             durableFrame: composite.frame,
@@ -1870,6 +2123,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             differingSamples,
             materializedBounds,
             materializedLayerComparisons,
+            projectedOutputParity,
           };
         } finally {
           composite.release();
@@ -1897,6 +2151,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           legacyDiffersFromPrevious: differsFromPrevious(result.legacyPixels, previousLegacyTransformPixels),
           durableDiffersFromPrevious: differsFromPrevious(result.durablePixels, previousDurableTransformPixels),
           materializedLayerComparisons: result.materializedLayerComparisons,
+          projectedOutputParity: result.projectedOutputParity,
         });
         previousLegacyTransformPixels = result.legacyPixels;
         previousDurableTransformPixels = result.durablePixels;
@@ -1933,6 +2188,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           durablePixels: result.durablePixels,
           materializedBounds: result.materializedBounds,
           materializedLayerComparisons: result.materializedLayerComparisons,
+          projectedOutputParity: result.projectedOutputParity,
         });
         if (index === transitions.length - 1) {
           finalLegacyPixels = result.legacyPixels;
@@ -2009,6 +2265,21 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       registry.shutdown();
     }
   }, caseFixture);
+}
+
+let psdImageDataReaderInitialized = false;
+
+function decodePsdCapture(base64: string) {
+  if (!psdImageDataReaderInitialized) {
+    initializeCanvas(
+      () => {
+        throw new Error('PSD parity decoding must use ImageData');
+      },
+      (width, height) => ({ width, height, data: new Uint8ClampedArray(width * height * 4), colorSpace: 'srgb' })
+    );
+    psdImageDataReaderInitialized = true;
+  }
+  return readPsd(new Uint8Array(Buffer.from(base64, 'base64')), { useImageData: true });
 }
 
 test.describe('Crop history', () => {
@@ -3776,32 +4047,32 @@ test.describe('Crop history', () => {
         ).toBe(0);
         expect(
           comparison.frameDifferingPixels,
-          `${comparison.layerId} frame raster at ${comparison.stage} may differ only at two antialiased edge pixels; samples ${JSON.stringify(comparison.frameDifferingSamples)}`
-        ).toBeLessThanOrEqual(2);
+          `${comparison.layerId} frame raster at ${comparison.stage} differs; samples ${JSON.stringify(comparison.frameDifferingSamples)}`
+        ).toBe(0);
         expect(
           comparison.offscreenFrameNonEdgeDifferingPixels,
           `${comparison.layerId} OffscreenCanvas frame raster at ${comparison.stage} differs away from an alpha boundary; samples ${JSON.stringify(comparison.offscreenFrameDifferingSamples)}`
         ).toBe(0);
         expect(
           comparison.offscreenFrameDifferingPixels,
-          `${comparison.layerId} OffscreenCanvas frame raster at ${comparison.stage} may differ only at two antialiased edge pixels`
-        ).toBeLessThanOrEqual(2);
+          `${comparison.layerId} OffscreenCanvas frame raster at ${comparison.stage} differs; samples ${JSON.stringify(comparison.offscreenFrameDifferingSamples)}`
+        ).toBe(0);
         expect(
           comparison.tightBitmapNonEdgeDifferingPixels,
           `${comparison.layerId} full tight bitmap at ${comparison.stage} differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
         ).toBe(0);
         expect(
           comparison.tightBitmapDifferingPixels,
-          `${comparison.layerId} full tight bitmap at ${comparison.stage} may differ at no more than two alpha-boundary pixels with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
-        ).toBeLessThanOrEqual(2);
+          `${comparison.layerId} full tight bitmap at ${comparison.stage} differs; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+        ).toBe(0);
         expect(
           comparison.offscreenTightBitmapNonEdgeDifferingPixels,
           `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
         ).toBe(0);
         expect(
           comparison.offscreenTightBitmapDifferingPixels,
-          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} may differ at no more than two alpha-boundary pixels with identical RGB values`
-        ).toBeLessThanOrEqual(2);
+          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} differs; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
+        ).toBe(0);
       }
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
       for (const [index, transition] of untransformedControl.transitionResults.entries()) {
@@ -3824,32 +4095,32 @@ test.describe('Crop history', () => {
           ).toBe(0);
           expect(
             comparison.frameDifferingPixels,
-            `frame-only ${comparison.layerId} raster may differ only at two antialiased edge pixels; samples ${JSON.stringify(comparison.frameDifferingSamples)}`
-          ).toBeLessThanOrEqual(2);
+            `frame-only ${comparison.layerId} raster differs; samples ${JSON.stringify(comparison.frameDifferingSamples)}`
+          ).toBe(0);
           expect(
             comparison.offscreenFrameNonEdgeDifferingPixels,
             `frame-only ${comparison.layerId} OffscreenCanvas raster differs away from an alpha boundary; samples ${JSON.stringify(comparison.offscreenFrameDifferingSamples)}`
           ).toBe(0);
           expect(
             comparison.offscreenFrameDifferingPixels,
-            `frame-only ${comparison.layerId} OffscreenCanvas raster may differ only at two antialiased edge pixels`
-          ).toBeLessThanOrEqual(2);
+            `frame-only ${comparison.layerId} OffscreenCanvas raster differs; samples ${JSON.stringify(comparison.offscreenFrameDifferingSamples)}`
+          ).toBe(0);
           expect(
             comparison.tightBitmapNonEdgeDifferingPixels,
             `frame-only ${comparison.layerId} tight bitmap differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
           ).toBe(0);
           expect(
             comparison.tightBitmapDifferingPixels,
-            `frame-only ${comparison.layerId} full tight bitmap may differ at no more than two alpha-boundary pixels with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
-          ).toBeLessThanOrEqual(2);
+            `frame-only ${comparison.layerId} full tight bitmap differs; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+          ).toBe(0);
           expect(
             comparison.offscreenTightBitmapNonEdgeDifferingPixels,
             `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
           ).toBe(0);
           expect(
             comparison.offscreenTightBitmapDifferingPixels,
-            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap may differ at no more than two alpha-boundary pixels with identical RGB values`
-          ).toBeLessThanOrEqual(2);
+            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap differs; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
+          ).toBe(0);
         }
       }
       // This control isolates the retained operation within each renderer; the broader frame-only
@@ -3860,12 +4131,14 @@ test.describe('Crop history', () => {
       expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'foreground']);
     });
 
-    test('an affine raster preserves combined layer opacity and blend mode exactly', async ({ page }) => {
+    test('an affine raster keeps composite opacity and blend mode exact', async ({ page }, testInfo) => {
       await openDocument(page);
 
       const fixture: CropParityFixture = {
         caseName: 'affine raster opacity and multiply blend',
         documentId: 'affine-raster-opacity-multiply-parity',
+        materializedLayerIds: ['foreground'],
+        verifyProjectedOutputs: true,
         layerTransforms: [
           {
             id: 'affine-opacity-multiply',
@@ -3907,6 +4180,7 @@ test.describe('Crop history', () => {
         ],
       };
       const result = await compareCropRenderers(page, fixture);
+      const adapterDiagnostics = [];
       const normalComposite = await compareCropRenderers(page, {
         ...fixture,
         caseName: 'normal composite control for affine raster opacity and blend',
@@ -3918,17 +4192,278 @@ test.describe('Crop history', () => {
 
       expect(result.layerTransformResults).toHaveLength(1);
       const transformed = result.layerTransformResults[0];
+      const assertForegroundMaterialization = (comparisons: readonly CropParityLayerComparison[], stage: string) => {
+        expect(comparisons, stage + ' materialized foreground count').toHaveLength(1);
+        const comparison = comparisons[0];
+        if (!comparison) throw new Error(stage + ' has no foreground materialization comparison');
+        expect(comparison.layerId).toBe('foreground');
+        expect(comparison.materializedBounds, stage + ' materialized bounds').toEqual(comparison.expectedBounds);
+        expect(comparison.bitmapSize, stage + ' bitmap dimensions').toEqual({
+          width: comparison.expectedBounds.width,
+          height: comparison.expectedBounds.height,
+        });
+        expect(comparison.compositing, stage + ' opacity and blend metadata').toEqual({
+          legacyOpacity: 0.58,
+          durableOpacity: 0.58,
+          legacyBlendMode: 'multiply',
+          durableBlendMode: 'multiply',
+        });
+        expect(
+          comparison.tightBitmapRawDifferingBytes,
+          stage +
+            ' isolated tight bitmap raw bytes differ at ' +
+            JSON.stringify(comparison.tightBitmapRawDifferingSamples)
+        ).toBe(0);
+        expect(
+          comparison.offscreenTightBitmapRawDifferingBytes,
+          stage +
+            ' OffscreenCanvas tight bitmap raw bytes differ at ' +
+            JSON.stringify(comparison.offscreenTightBitmapRawDifferingSamples)
+        ).toBe(0);
+        expect(
+          comparison.tightBitmapPremultipliedDifferingBytes,
+          stage + ' isolated tight bitmap differs at ' + JSON.stringify(comparison.tightBitmapDifferingSamples)
+        ).toBe(0);
+        expect(
+          comparison.offscreenTightBitmapPremultipliedDifferingBytes,
+          stage +
+            ' OffscreenCanvas tight bitmap differs at ' +
+            JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)
+        ).toBe(0);
+      };
+      const inspectProjectedOutputParity = async (
+        output: Exclude<NonNullable<typeof transformed>['projectedOutputParity'], null>,
+        stage: string
+      ) => {
+        const expectedSize = output.expectedSize;
+        expect(
+          { width: output.runtime.legacyWidth, height: output.runtime.legacyHeight },
+          `${stage} legacy runtime dimensions`
+        ).toEqual(expectedSize);
+        expect(
+          { width: output.runtime.durableWidth, height: output.runtime.durableHeight },
+          `${stage} projected runtime dimensions`
+        ).toEqual(expectedSize);
+        expect(output.runtime.pixelComparison.expectedByteLength).toBe(expectedSize.width * expectedSize.height * 4);
+        expect(output.runtime.pixelComparison.receivedByteLength).toBe(expectedSize.width * expectedSize.height * 4);
+        expect(Object.keys(output.runtime.layerRecords).sort()).toEqual(['background', 'foreground']);
+        for (const id of ['background', 'foreground'] as const) {
+          const layer = output.runtime.layerRecords[id];
+          expect(layer.pos, `${stage} projected ${id} logical position`).toEqual(layer.expectedPos);
+          expect(layer.presentationBounds, `${stage} projected ${id} materialized bounds`).toEqual(
+            layer.expectedPresentationBounds
+          );
+          expect(layer.operationsLength, `${stage} projected ${id} operations`).toBe(0);
+        }
+        expect(output.runtime.layerRecords.background).toMatchObject({
+          visible: true,
+          opacity: 1,
+          blendMode: 'source-over',
+          order: 0,
+        });
+        expect(output.runtime.layerRecords.foreground).toMatchObject({
+          visible: true,
+          opacity: 0.58,
+          blendMode: 'multiply',
+          order: 1,
+        });
+
+        expect(
+          { width: output.exportCanvas.legacyWidth, height: output.exportCanvas.legacyHeight },
+          `${stage} legacy export dimensions`
+        ).toEqual(expectedSize);
+        expect(
+          { width: output.exportCanvas.durableWidth, height: output.exportCanvas.durableHeight },
+          `${stage} durable export dimensions`
+        ).toEqual(expectedSize);
+        expect(output.exportCanvas.pixelComparison.expectedByteLength).toBe(
+          expectedSize.width * expectedSize.height * 4
+        );
+        expect(output.exportCanvas.pixelComparison.receivedByteLength).toBe(
+          expectedSize.width * expectedSize.height * 4
+        );
+        expect(Object.keys(output.exportCanvas.layerRecords).sort()).toEqual(['background', 'foreground']);
+        for (const id of ['background', 'foreground'] as const) {
+          const layer = output.exportCanvas.layerRecords[id];
+          expect(layer.pos, `${stage} exported ${id} position`).toEqual(layer.expectedPos);
+          expect(layer.presentationBounds, `${stage} exported ${id} presentation bounds`).toBeNull();
+          expect(layer.operationsLength, `${stage} exported ${id} operations`).toBe(0);
+        }
+        expect(output.exportCanvas.layerRecords.background).toMatchObject({
+          visible: true,
+          opacity: 1,
+          blendMode: 'source-over',
+          order: 0,
+        });
+        expect(output.exportCanvas.layerRecords.foreground).toMatchObject({
+          visible: true,
+          opacity: 0.58,
+          blendMode: 'multiply',
+          order: 1,
+        });
+
+        const readPngPixels = async (base64: string) => {
+          const decoded = await sharp(Buffer.from(base64, 'base64'))
+            .ensureAlpha()
+            .raw()
+            .toBuffer({ resolveWithObject: true });
+          return {
+            width: decoded.info.width,
+            height: decoded.info.height,
+            channels: decoded.info.channels,
+            data: decoded.data,
+          };
+        };
+        const compareByteSequences = (expected: ArrayLike<number>, received: ArrayLike<number>) => {
+          let differingBytes = 0;
+          const differingSamples: Array<{ offset: number; expected: number | null; received: number | null }> = [];
+          for (let offset = 0; offset < Math.max(expected.length, received.length); offset += 1) {
+            const expectedByte = expected[offset] ?? null;
+            const receivedByte = received[offset] ?? null;
+            if (expectedByte === receivedByte) continue;
+            differingBytes += 1;
+            if (differingSamples.length < 8)
+              differingSamples.push({ offset, expected: expectedByte, received: receivedByte });
+          }
+          return {
+            expectedByteLength: expected.length,
+            receivedByteLength: received.length,
+            differingBytes,
+            differingSamples,
+          };
+        };
+        const legacyPng = await readPngPixels(output.png.legacyBase64);
+        const durablePng = await readPngPixels(output.png.durableBase64);
+        expect(
+          { width: legacyPng.width, height: legacyPng.height, channels: legacyPng.channels },
+          `${stage} decoded legacy PNG dimensions`
+        ).toEqual({ width: expectedSize.width, height: expectedSize.height, channels: 4 });
+        expect(
+          { width: durablePng.width, height: durablePng.height, channels: durablePng.channels },
+          `${stage} decoded durable PNG dimensions`
+        ).toEqual({ width: expectedSize.width, height: expectedSize.height, channels: 4 });
+        const pngPixelComparison = compareByteSequences(legacyPng.data, durablePng.data);
+
+        const legacyPsd = decodePsdCapture(output.psd.legacyBase64);
+        const durablePsd = decodePsdCapture(output.psd.durableBase64);
+        expect({ width: legacyPsd.width, height: legacyPsd.height }, `${stage} legacy PSD dimensions`).toEqual(
+          expectedSize
+        );
+        expect({ width: durablePsd.width, height: durablePsd.height }, `${stage} durable PSD dimensions`).toEqual(
+          expectedSize
+        );
+        if (!legacyPsd.imageData || !durablePsd.imageData) {
+          throw new Error(`${stage} PSD decode returned no composite pixels`);
+        }
+        const psdCompositePixelComparison = compareByteSequences(legacyPsd.imageData.data, durablePsd.imageData.data);
+        expect(
+          legacyPsd.children?.map((layer) => layer.name),
+          `${stage} legacy PSD layer order`
+        ).toEqual(['background', 'foreground']);
+        expect(
+          durablePsd.children?.map((layer) => layer.name),
+          `${stage} durable PSD layer order`
+        ).toEqual(['background', 'foreground']);
+        const psdLayerPixelComparisons = {} as Record<
+          'background' | 'foreground',
+          ReturnType<typeof compareByteSequences>
+        >;
+        for (const id of ['background', 'foreground'] as const) {
+          const legacyLayer = legacyPsd.children?.find((layer) => layer.name === id);
+          const durableLayer = durablePsd.children?.find((layer) => layer.name === id);
+          if (!legacyLayer || !durableLayer) throw new Error(`${stage} PSD is missing ${id}`);
+          const expectedBounds = output.psd.expectedLayerBounds[id];
+          expect(
+            { left: legacyLayer.left, top: legacyLayer.top, right: legacyLayer.right, bottom: legacyLayer.bottom },
+            `${stage} legacy PSD ${id} bounds`
+          ).toEqual(expectedBounds);
+          expect(
+            { left: durableLayer.left, top: durableLayer.top, right: durableLayer.right, bottom: durableLayer.bottom },
+            `${stage} durable PSD ${id} bounds`
+          ).toEqual(expectedBounds);
+          const opacity = id === 'foreground' ? Math.round(0.58 * 255) / 255 : 1;
+          const blendMode = id === 'foreground' ? 'multiply' : 'normal';
+          expect(
+            { hidden: legacyLayer.hidden, opacity: legacyLayer.opacity, blendMode: legacyLayer.blendMode },
+            `${stage} legacy PSD ${id} compositing metadata`
+          ).toEqual({ hidden: false, opacity, blendMode });
+          expect(
+            { hidden: durableLayer.hidden, opacity: durableLayer.opacity, blendMode: durableLayer.blendMode },
+            `${stage} durable PSD ${id} compositing metadata`
+          ).toEqual({ hidden: false, opacity, blendMode });
+          if (!legacyLayer.imageData || !durableLayer.imageData) {
+            throw new Error(`${stage} PSD decode returned no ${id} layer pixels`);
+          }
+          expect(
+            { width: legacyLayer.imageData.width, height: legacyLayer.imageData.height },
+            `${stage} legacy PSD ${id} layer dimensions`
+          ).toEqual({
+            width: expectedBounds.right - expectedBounds.left,
+            height: expectedBounds.bottom - expectedBounds.top,
+          });
+          expect(
+            { width: durableLayer.imageData.width, height: durableLayer.imageData.height },
+            `${stage} durable PSD ${id} layer dimensions`
+          ).toEqual({
+            width: expectedBounds.right - expectedBounds.left,
+            height: expectedBounds.bottom - expectedBounds.top,
+          });
+          psdLayerPixelComparisons[id] = compareByteSequences(legacyLayer.imageData.data, durableLayer.imageData.data);
+        }
+        const pixelParity = {
+          runtime: output.runtime.pixelComparison,
+          exportCanvas: output.exportCanvas.pixelComparison,
+          png: pngPixelComparison,
+          psdComposite: psdCompositePixelComparison,
+          psdLayers: psdLayerPixelComparisons,
+        };
+        if (output.admission.eligible) {
+          expect(pixelParity, `${stage} eligible durable output pixels`).toEqual({
+            runtime: expect.objectContaining({ differingBytes: 0 }),
+            exportCanvas: expect.objectContaining({ differingBytes: 0 }),
+            png: expect.objectContaining({ differingBytes: 0 }),
+            psdComposite: expect.objectContaining({ differingBytes: 0 }),
+            psdLayers: {
+              background: expect.objectContaining({ differingBytes: 0 }),
+              foreground: expect.objectContaining({ differingBytes: 0 }),
+            },
+          });
+        } else {
+          expect(output.admission.reasons.foreground).toContain('not pixel-parity approved');
+        }
+        return { stage, admission: output.admission, pixelParity };
+      };
       expect(transformed?.differingBytes, 'affine composite must preserve opacity and blend byte-for-byte').toBe(0);
+      if (transformed) {
+        assertForegroundMaterialization(transformed.materializedLayerComparisons, 'affine cursor');
+        const projectedOutputs = transformed.projectedOutputParity;
+        if (!projectedOutputs) throw new Error('Missing projected output parity result at affine cursor');
+        adapterDiagnostics.push(await inspectProjectedOutputParity(projectedOutputs, 'affine cursor'));
+        expect(projectedOutputs.admission.reasons.foreground).toContain('not pixel-parity approved');
+      }
       expect(transformed?.legacyDiffersFromUntransformed).toBe(true);
       expect(transformed?.durableDiffersFromUntransformed).toBe(true);
 
       expect(result.transitionResults).toHaveLength(1);
       expect(result.transitionResults[0]?.differingBytes, 'frame composite must remain byte-identical').toBe(0);
+      const frameTransition = result.transitionResults[0];
+      if (frameTransition) {
+        assertForegroundMaterialization(frameTransition.materializedLayerComparisons, 'frame transition');
+        const projectedOutputs = frameTransition.projectedOutputParity;
+        if (!projectedOutputs) throw new Error('Missing projected output parity result at fractional frame cursor');
+        adapterDiagnostics.push(await inspectProjectedOutputParity(projectedOutputs, 'fractional frame cursor'));
+        expect(projectedOutputs.admission.reasons.foreground).toContain('not pixel-parity approved');
+      }
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(result.transitionResults[0]?.legacyPixels).not.toEqual(normalComposite.transitionResults[0]?.legacyPixels);
       expect(result.transitionResults[0]?.durablePixels).not.toEqual(
         normalComposite.transitionResults[0]?.durablePixels
       );
+      await testInfo.attach('affine-raster-opacity-blend-adapter-diagnostics.json', {
+        body: JSON.stringify(adapterDiagnostics, null, 2),
+        contentType: 'application/json',
+      });
+      console.info(`[crop-history] affine opacity/blend adapter diagnostics: ${JSON.stringify(adapterDiagnostics)}`);
     });
 
     test('a retained styled text transform matches through a sequence of frame transforms', async ({ page }) => {
@@ -4280,7 +4815,7 @@ test.describe('Crop history', () => {
     }) => {
       await openDocument(page);
 
-      const result = await compareCropRenderers(page, {
+      const fixture: CropParityFixture = {
         caseName: 'multi-step mixed-source crop',
         documentId: 'multi-step-mixed-source-crop-pixel-parity',
         materializedLayerIds: ['blank', 'blank-semi', 'vector', 'paint', 'text'],
@@ -4453,7 +4988,8 @@ test.describe('Crop history', () => {
             },
           },
         ],
-      });
+      };
+      const integerResult = await compareCropRenderers(page, fixture);
 
       const assertMixedLayerParity = (comparisons: readonly CropParityLayerComparison[], stage: string) => {
         expect(comparisons, `${stage} materialized layer count`).toHaveLength(5);
@@ -4486,33 +5022,61 @@ test.describe('Crop history', () => {
         }
       };
 
-      expect(result.layerTransformResults).toHaveLength(6);
-      for (const transform of result.layerTransformResults) {
-        assertMixedLayerParity(transform.materializedLayerComparisons, `retained affine ${transform.id}`);
-        expect(transform.differingBytes, `retained affine ${transform.id} composite parity`).toBe(0);
-        expect(transform.legacyDiffersFromUntransformed).toBe(true);
-        expect(transform.durableDiffersFromUntransformed).toBe(true);
-        expect(transform.legacyDiffersFromPrevious).toBe(true);
-        expect(transform.durableDiffersFromPrevious).toBe(true);
-      }
-      expect(result.transitionResults).toHaveLength(3);
-      for (const transition of result.transitionResults) {
-        expect(transition.durableFrame).toEqual(transition.frame);
-        const frameSize = getDocumentFrameSize(transition.frame);
-        expect(transition.legacyByteLength).toBe(frameSize.width * frameSize.height * 4);
-        expect(transition.durableByteLength).toBe(transition.legacyByteLength);
-        assertMixedLayerParity(transition.materializedLayerComparisons, `frame transition ${transition.index}`);
-        expect(
-          transition.differingBytes,
-          `frame transition ${transition.index} must match byte-for-byte; ${pixelDifferenceSummary(transition)}`
-        ).toBe(0);
-      }
-      for (const [color, presence] of Object.entries(result.colorPresence)) {
-        expect(presence.legacy, `legacy mixed-source crop should contain ${color}`).toBe(true);
-        expect(presence.durable, `durable mixed-source crop should contain ${color}`).toBe(true);
-      }
-      expect(result.durablePixels).toEqual(result.legacyPixels);
-      expect(Object.keys(result.materializedBounds).sort()).toEqual(['blank', 'blank-semi', 'paint', 'text', 'vector']);
+      const assertMixedSourceParity = (result: Awaited<ReturnType<typeof compareCropRenderers>>, context: string) => {
+        expect(result.layerTransformResults, context + ' retained affine count').toHaveLength(6);
+        for (const transform of result.layerTransformResults) {
+          assertMixedLayerParity(transform.materializedLayerComparisons, context + ' retained affine ' + transform.id);
+          expect(transform.differingBytes, context + ' retained affine ' + transform.id + ' composite parity').toBe(0);
+          expect(transform.legacyDiffersFromUntransformed).toBe(true);
+          expect(transform.durableDiffersFromUntransformed).toBe(true);
+          expect(transform.legacyDiffersFromPrevious).toBe(true);
+          expect(transform.durableDiffersFromPrevious).toBe(true);
+        }
+        expect(result.transitionResults, context + ' frame transition count').toHaveLength(3);
+        for (const transition of result.transitionResults) {
+          expect(transition.durableFrame).toEqual(transition.frame);
+          const frameSize = getDocumentFrameSize(transition.frame);
+          expect(transition.legacyByteLength).toBe(frameSize.width * frameSize.height * 4);
+          expect(transition.durableByteLength).toBe(transition.legacyByteLength);
+          assertMixedLayerParity(
+            transition.materializedLayerComparisons,
+            context + ' frame transition ' + transition.index
+          );
+          expect(
+            transition.differingBytes,
+            context +
+              ' frame transition ' +
+              transition.index +
+              ' must match byte-for-byte; ' +
+              pixelDifferenceSummary(transition)
+          ).toBe(0);
+        }
+        for (const [color, presence] of Object.entries(result.colorPresence)) {
+          expect(presence.legacy, context + ' legacy mixed-source crop should contain ' + color).toBe(true);
+          expect(presence.durable, context + ' durable mixed-source crop should contain ' + color).toBe(true);
+        }
+        expect(result.durablePixels, context + ' final composite').toEqual(result.legacyPixels);
+        expect(Object.keys(result.materializedBounds).sort()).toEqual([
+          'blank',
+          'blank-semi',
+          'paint',
+          'text',
+          'vector',
+        ]);
+      };
+
+      assertMixedSourceParity(integerResult, 'integer frame fixture');
+      const fractionalResult = await compareCropRenderers(page, {
+        ...fixture,
+        caseName: 'fractional multi-step mixed-source crop',
+        documentId: 'fractional-multi-step-mixed-source-crop-pixel-parity',
+        transitions: [
+          { angleDegrees: 37, nextFrame: { x: 4.25, y: 4.5, width: 55.75, height: 55.5 } },
+          { angleDegrees: 0, nextFrame: { x: 5.125, y: 6.25, width: 53.5, height: 51.875 } },
+          { angleDegrees: -17, nextFrame: { x: 6.75, y: 6.125, width: 49.875, height: 49.5 } },
+        ],
+      });
+      assertMixedSourceParity(fractionalResult, 'fractional frame fixture');
     });
   });
 });

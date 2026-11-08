@@ -19,6 +19,7 @@ import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
 import type { NewDocumentBlankParams } from './tool-types.ts';
 import { stripOutputFileExtension } from '../constants/imageFormats.ts';
 import { useOptionalStore } from './StoreContext.tsx';
+import { durableLayerPresentationMismatch } from './durable-render-projection.ts';
 import { composeDurableDocument } from './durable-compositor.ts';
 import { replayDurableAtCursor } from './durable-replay.ts';
 import { getAssetRegistry } from './asset-registry.ts';
@@ -166,28 +167,63 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       ) {
         try {
           const replay = replayDurableAtCursor(current.durableDocument, current.durableDocument.cursor);
-          durableComposite = await composeDurableDocument(replay, {
-            documentId: current.documentId,
-            baselineAssetGeneration: getAssetRegistry().getDocumentGeneration(current.documentId),
-            operationSetRevision: current.durableDocument.durableRevision,
-            assetRegistry: getAssetRegistry(),
-          });
-          const records = durableExportRecords(replay, durableComposite);
-          const latest = latestStoreRef.current;
-          if (
-            !latest ||
-            latest.durableStatus !== 'current' ||
-            latest.durableDocument?.durableRevision !== current.durableDocument.durableRevision ||
-            latest.historyIndex !== current.historyIndex ||
-            latest.documentRevision !== current.documentRevision ||
-            latest.branchRevision !== current.branchRevision
-          ) {
-            durableComposite.release();
-            durableComposite = undefined;
-          } else {
-            exportLayers = records.layers;
-            exportSize = records.size;
-            exportFrame = records.frame;
+          // The compositor materializes visible layers only. PSD must keep legacy
+          // records whenever a hidden layer could otherwise lose its pixel data.
+          const hiddenLayersBlockPsd =
+            format === 'psd' && Object.values(replay.layers).some(({ snapshot }) => !snapshot.visible);
+          const replayLayerIds = Object.keys(replay.layers);
+          const layerSetMatchesLegacy =
+            replayLayerIds.length === Object.keys(layers).length && replayLayerIds.every((layerId) => layers[layerId]);
+          const pixelApprovedForExport =
+            !hiddenLayersBlockPsd &&
+            layerSetMatchesLegacy &&
+            Object.values(replay.layers).every((replayLayer) => {
+              const existing = layers[replayLayer.snapshot.id];
+              return (
+                existing !== undefined &&
+                durableLayerPresentationMismatch(replayLayer, existing, replayLayer.snapshot.pos) === null
+              );
+            });
+          if (pixelApprovedForExport) {
+            const composite = await composeDurableDocument(replay, {
+              documentId: current.documentId,
+              baselineAssetGeneration: getAssetRegistry().getDocumentGeneration(current.documentId),
+              operationSetRevision: current.durableDocument.durableRevision,
+              assetRegistry: getAssetRegistry(),
+            });
+            durableComposite = composite;
+            const materializedBoundsApprovedForExport = Object.values(replay.layers).every((replayLayer) => {
+              if (!replayLayer.snapshot.visible) return true;
+              const existing = layers[replayLayer.snapshot.id];
+              const materialized = composite.layers[replayLayer.snapshot.id];
+              return (
+                existing !== undefined &&
+                materialized !== undefined &&
+                durableLayerPresentationMismatch(replayLayer, existing, materialized.bounds) === null
+              );
+            });
+            if (!materializedBoundsApprovedForExport) {
+              composite.release();
+              durableComposite = undefined;
+            } else {
+              const records = durableExportRecords(replay, composite);
+              const latest = latestStoreRef.current;
+              if (
+                !latest ||
+                latest.durableStatus !== 'current' ||
+                latest.durableDocument?.durableRevision !== current.durableDocument.durableRevision ||
+                latest.historyIndex !== current.historyIndex ||
+                latest.documentRevision !== current.documentRevision ||
+                latest.branchRevision !== current.branchRevision
+              ) {
+                composite.release();
+                durableComposite = undefined;
+              } else {
+                exportLayers = records.layers;
+                exportSize = records.size;
+                exportFrame = records.frame;
+              }
+            }
           }
         } catch {
           durableComposite?.release();

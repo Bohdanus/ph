@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page, test } from './fixtures/extended-test';
 import {
+  CANVAS_REDRAW_TIMEOUT_MS,
   type BoundingBox,
   drawLine,
   getWorkspaceCanvas,
@@ -288,12 +289,14 @@ test.describe('History panel', () => {
       // Undo should restore the selection
       await expect(page.getByTestId('undo-button')).toBeEnabled();
       await page.getByTestId('undo-button').click();
-      await waitForCommittedAnts(page, 'the selection to be restored');
+      await expect
+        .poll(() => committedAntsOutline(page), {
+          message: 'undo restores the exact selection outline',
+          timeout: CANVAS_REDRAW_TIMEOUT_MS,
+        })
+        .toEqual(selectionOutline);
       await expect(selectionRows(page)).toHaveCount(2);
       await expect(selectionRows(page).last().getByTitle('Current state')).toBeVisible();
-      const restoredOutline = await committedAntsOutline(page);
-      expect(restoredOutline).not.toBeNull();
-      expect(restoredOutline).toEqual(selectionOutline);
     });
 
     test('selection move creates separate SELECTION_ACTION row and restores on undo', async ({ page }) => {
@@ -314,7 +317,17 @@ test.describe('History panel', () => {
       await page.mouse.down();
       await page.mouse.move(box.x + 250, box.y + 250);
       await page.mouse.up();
-      await waitForCommittedAnts(page, 'the selection to be moved');
+      // The ants canvas redraws on animation frames; wait for the new geometry rather than
+      // accepting the still-painted outline from before the move.
+      await expect
+        .poll(
+          async () => {
+            const outline = await committedAntsOutline(page);
+            return outline !== null && JSON.stringify(outline) !== JSON.stringify(initialOutline);
+          },
+          { timeout: CANVAS_REDRAW_TIMEOUT_MS, message: 'the ants canvas to show the moved selection' }
+        )
+        .toBe(true);
       const movedOutline = await committedAntsOutline(page);
       expect(movedOutline).not.toBeNull();
       expect(movedOutline).not.toEqual(initialOutline);
@@ -324,7 +337,12 @@ test.describe('History panel', () => {
       // Undo should restore the selection to original position
       await expect(page.getByTestId('undo-button')).toBeEnabled();
       await page.getByTestId('undo-button').click();
-      await waitForCommittedAnts(page, 'the selection to be restored');
+      await expect
+        .poll(() => committedAntsOutline(page), {
+          timeout: CANVAS_REDRAW_TIMEOUT_MS,
+          message: 'the ants canvas to redraw the original selection after undo',
+        })
+        .toEqual(initialOutline);
       await expect(selectionRows(page)).toHaveCount(2);
       await expect(selectionRows(page).last().getByTitle('Current state')).toBeVisible();
       const restoredOutline = await committedAntsOutline(page);
@@ -334,7 +352,12 @@ test.describe('History panel', () => {
       // Redo must restore the moved selection recorded by the second history row.
       await expect(page.getByTestId('redo-button')).toBeEnabled();
       await page.getByTestId('redo-button').click();
-      await waitForCommittedAnts(page, 'the moved selection to be restored by redo');
+      await expect
+        .poll(() => committedAntsOutline(page), {
+          timeout: CANVAS_REDRAW_TIMEOUT_MS,
+          message: 'the ants canvas to redraw the moved selection after redo',
+        })
+        .toEqual(movedOutline);
       await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
       const redoneOutline = await committedAntsOutline(page);
       expect(redoneOutline).not.toBeNull();
