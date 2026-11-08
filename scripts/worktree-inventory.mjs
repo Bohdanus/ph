@@ -520,6 +520,7 @@ async function runAsyncMain(opts) {
     chatWindowMs: windowMs,
     liveWindowMs: LIVE_WINDOW_MS,
     liveWritersSuppressed: opts.noLiveWriters,
+    ownershipAvailable: Boolean(chatAudit.available && writeAudit.available && board.available),
     readsReleasedBeforeMs,
   });
 

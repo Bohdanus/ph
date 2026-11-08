@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -10,64 +10,158 @@ vi.setConfig({ testTimeout: 30_000 });
 const cliPath = resolve('scripts/free-chat-search-agent.mjs');
 const agentModule = pathToFileURL(cliPath).href;
 
-async function runWithFakeSqlite(script, action = 'query') {
+async function runWithFakeSqlite(fake, action = 'query') {
+  const directory = await mkdtemp(join(tmpdir(), 'free-chat-search-agent-'));
+  const dbPath = join(directory, 'store.db');
+  const homeDir = join(directory, 'home');
+  const kiloDbPath = join(homeDir, '.local', 'share', 'kilo', 'kilo.db');
+  const codexDbPath =
+    process.platform === 'darwin'
+      ? join(
+          homeDir,
+          'Library',
+          'Application Support',
+          'Code',
+          'User',
+          'globalStorage',
+          'github.copilot-chat',
+          'session-store.db'
+        )
+      : join(homeDir, '.config', 'Code', 'User', 'globalStorage', 'github.copilot-chat', 'session-store.db');
+  await writeFile(dbPath, '');
+  if (action === 'searchAll') {
+    await mkdir(join(homeDir, '.local', 'share', 'kilo'), { recursive: true });
+    await writeFile(kiloDbPath, '');
+    await mkdir(dirname(codexDbPath), { recursive: true });
+    await writeFile(codexDbPath, '');
+  }
+  try {
+    const source = `
+      import { EventEmitter } from 'node:events';
+      import { PassThrough } from 'node:stream';
+      import { queryDb, search, searchAll } from ${JSON.stringify(agentModule)};
+
+      const fake = ${JSON.stringify(fake)};
+      const action = ${JSON.stringify(action)};
+      const dbPath = ${JSON.stringify(dbPath)};
+      const homeDir = ${JSON.stringify(homeDir)};
+      const expectedDbPaths = action === 'query'
+        ? ['/unused.db']
+        : action === 'search'
+          ? [dbPath]
+          : [${JSON.stringify(kiloDbPath)}, ${JSON.stringify(codexDbPath)}];
+      let spawnCount = 0;
+      const unexpectedInvocations = [];
+      const stdout = fake.stdout === 'large' ? 'é'.repeat(1_100_000) : fake.stdout ?? '';
+      const spawnImpl = (sqlitePath, args, options) => {
+        if (
+          sqlitePath !== 'sqlite3' ||
+          args[0] !== '-readonly' ||
+          args[1] !== '-json' ||
+          args[2] !== '-bail' ||
+          args[3] !== expectedDbPaths[spawnCount] ||
+          args.length !== 5 ||
+          typeof args[4] !== 'string' ||
+          (action === 'query' ? args[4] !== 'SELECT 1' : !args[4].includes("'needle'")) ||
+          options.shell !== false ||
+          options.stdio.join(',') !== 'ignore,pipe,pipe' ||
+          spawnCount >= expectedDbPaths.length
+        ) {
+          unexpectedInvocations.push({ sqlitePath, args, expected: expectedDbPaths[spawnCount] });
+          throw new Error('Unexpected sqlite3 invocation');
+        }
+        spawnCount += 1;
+        const child = new EventEmitter();
+        child.stdout = new PassThrough();
+        child.stderr = new PassThrough();
+        child.exitCode = null;
+        child.signalCode = null;
+        let closed = false;
+        const finish = (code, signal) => {
+          if (closed) return;
+          closed = true;
+          child.exitCode = code;
+          child.signalCode = signal;
+          child.emit('exit', code, signal);
+          child.emit('close', code, signal);
+        };
+        child.kill = (signal) => {
+          setImmediate(() => finish(null, signal));
+          return true;
+        };
+        setImmediate(() => {
+          let pendingStreams = 2;
+          const onStreamEnd = () => {
+            pendingStreams -= 1;
+            if (pendingStreams === 0) setImmediate(() => finish(fake.exitCode ?? 0, null));
+          };
+          child.stdout.end(Buffer.from(stdout), onStreamEnd);
+          child.stderr.end(Buffer.from(fake.stderr ?? ''), onStreamEnd);
+        });
+        return child;
+      };
+
+      try {
+        const options = { sqlitePath: 'sqlite3', useNative: false, spawnImpl };
+        const result = action === 'searchAll'
+          ? await searchAll({ query: 'needle', homeDir, ...options })
+          : action === 'search'
+            ? await search({ query: 'needle', source: 'kilo', kiloDbPath: dbPath, ...options })
+            : await queryDb('/unused.db', 'SELECT 1', [], options);
+        console.log(JSON.stringify({ result }));
+      } catch (error) {
+        console.log(JSON.stringify({ error: error.message }));
+      }
+      if (spawnCount !== expectedDbPaths.length) {
+        throw new Error(JSON.stringify({ message: 'Expected sqlite3 invocation was not made', spawnCount, expectedDbPaths, unexpectedInvocations }));
+      }
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    return result;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function runCliWithoutSqlite() {
   const directory = await mkdtemp(join(tmpdir(), 'free-chat-search-agent-'));
   try {
-    const sqlitePath = join(directory, 'sqlite3');
-    await writeFile(sqlitePath, script, { mode: 0o700 });
-    if (action === 'cli') {
-      const homeDir = join(directory, 'home');
-      await mkdir(join(homeDir, '.local', 'share', 'kilo'), { recursive: true });
-      await writeFile(join(homeDir, '.local', 'share', 'kilo', 'kilo.db'), '');
-      const env = {
+    const homeDir = join(directory, 'home');
+    await mkdir(join(homeDir, '.local', 'share', 'kilo'), { recursive: true });
+    await writeFile(join(homeDir, '.local', 'share', 'kilo', 'kilo.db'), '');
+    return spawnSync(process.execPath, [cliPath, 'needle', '--json', '--source', 'kilo', '--no-native'], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, PATH: directory },
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function runCliWithFailingSqlite() {
+  const directory = await mkdtemp(join(tmpdir(), 'free-chat-search-agent-'));
+  try {
+    const homeDir = join(directory, 'home');
+    const kiloDbPath = join(homeDir, '.local', 'share', 'kilo', 'kilo.db');
+    await mkdir(join(homeDir, '.local', 'share', 'kilo'), { recursive: true });
+    await writeFile(kiloDbPath, '');
+    await writeFile(
+      join(directory, 'sqlite3'),
+      '#!/usr/bin/env node\nprocess.stderr.write("database locked");\nprocess.exitCode = 1;\n',
+      {
+        mode: 0o700,
+      }
+    );
+    return spawnSync(process.execPath, [cliPath, 'needle', '--json', '--source', 'kilo', '--no-native'], {
+      encoding: 'utf8',
+      env: {
         ...process.env,
         HOME: homeDir,
         USERPROFILE: homeDir,
         PATH: [directory, process.env.PATH].filter(Boolean).join(delimiter),
-      };
-      return spawnSync(process.execPath, [cliPath, 'needle', '--json', '--source', 'kilo', '--no-native'], {
-        encoding: 'utf8',
-        env,
-      });
-    }
-    const source =
-      action === 'searchAll'
-        ? `
-          import { searchAll } from ${JSON.stringify(agentModule)};
-          const result = await searchAll({
-            query: 'needle',
-            homeDir: '/nonexistent-home',
-            sqlitePath: ${JSON.stringify(sqlitePath)},
-            useNative: false,
-          });
-          console.log(JSON.stringify(result));
-        `
-        : action === 'search'
-          ? `
-            import { search } from ${JSON.stringify(agentModule)};
-            const result = await search({
-              query: 'needle',
-              source: 'kilo',
-              kiloDbPath: ${JSON.stringify(join(directory, 'store.db'))},
-              sqlitePath: ${JSON.stringify(sqlitePath)},
-              useNative: false,
-            });
-            console.log(JSON.stringify(result));
-          `
-          : `
-          import { queryDb } from ${JSON.stringify(agentModule)};
-          try {
-            const result = await queryDb('/unused.db', 'SELECT 1', [], {
-              sqlitePath: ${JSON.stringify(sqlitePath)},
-              useNative: false,
-            });
-            console.log(JSON.stringify({ result }));
-          } catch (error) {
-            console.log(JSON.stringify({ error: error.message }));
-          }
-        `;
-    if (action === 'search') await writeFile(join(directory, 'store.db'), '');
-    return spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' });
+      },
+    });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -88,37 +182,32 @@ describe('chat search CLI numeric options', () => {
 
 describe('SQLite CLI output', () => {
   it('distinguishes malformed JSON from an empty result set', async () => {
-    const malformed = await runWithFakeSqlite('#!/usr/bin/env node\nprocess.stdout.write("not-json");\n');
+    const malformed = await runWithFakeSqlite({ stdout: 'not-json' });
     expect(malformed.status).toBe(0);
     expect(JSON.parse(malformed.stdout)).toEqual({ error: 'sqlite3 returned malformed JSON output' });
 
-    const emptyOutput = await runWithFakeSqlite('#!/usr/bin/env node\n');
-    expect(emptyOutput.status).toBe(0);
+    const emptyOutput = await runWithFakeSqlite({ stdout: '' });
     expect(JSON.parse(emptyOutput.stdout)).toEqual({ result: [] });
 
-    const empty = await runWithFakeSqlite('#!/usr/bin/env node\nprocess.stdout.write("[]");\n');
-    expect(empty.status).toBe(0);
+    const empty = await runWithFakeSqlite({ stdout: '[]' });
     expect(JSON.parse(empty.stdout)).toEqual({ result: [] });
   });
 
   it('enforces the output limit in bytes', async () => {
-    const result = await runWithFakeSqlite("#!/usr/bin/env node\nprocess.stdout.write('é'.repeat(1_100_000));\n");
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).error).toContain('output byte limit');
+    const result = await runWithFakeSqlite({ stdout: 'large' });
+    expect(JSON.parse(result.stdout)).toEqual({ error: 'SQLite response exceeded output byte limit' });
   });
 
   it('reports database errors instead of presenting them as no matches', async () => {
-    const result = await runWithFakeSqlite('#!/usr/bin/env node\nprocess.stdout.write("not-json");\n', 'searchAll');
-    expect(result.status).toBe(0);
-    const response = JSON.parse(result.stdout);
+    const result = await runWithFakeSqlite({ stdout: 'not-json' }, 'searchAll');
+    const response = JSON.parse(result.stdout).result;
     expect(response.results).toEqual([]);
     expect(response.errors.map(({ source }) => source)).toEqual(['kilo', 'codex']);
   });
 
   it('returns sanitized source errors from a single-source search', async () => {
-    const result = await runWithFakeSqlite('#!/usr/bin/env node\nprocess.stdout.write("not-json");\n', 'search');
-    expect(result.status).toBe(0);
-    const response = JSON.parse(result.stdout);
+    const result = await runWithFakeSqlite({ stdout: 'not-json' }, 'search');
+    const response = JSON.parse(result.stdout).result;
     expect(response.results).toEqual([]);
     expect(response.errors).toHaveLength(1);
     expect(response.errors[0].source).toBe('kilo');
@@ -127,27 +216,36 @@ describe('SQLite CLI output', () => {
 
   it('preserves nonzero SQLite exit diagnostics and redacts secret values', async () => {
     const secret = 'abcdefghijklmnopqrstuvwxyz012345';
-    const script = `#!/usr/bin/env node\nprocess.stderr.write("GROQ_API_KEY='${secret}'");\nprocess.exitCode = 1;\n`;
-    const result = await runWithFakeSqlite(script, 'searchAll');
-    expect(result.status).toBe(0);
-    const response = JSON.parse(result.stdout);
+    const result = await runWithFakeSqlite({ stderr: `GROQ_API_KEY='${secret}'`, exitCode: 1 }, 'searchAll');
+    const response = JSON.parse(result.stdout).result;
     expect(response.errors).toHaveLength(2);
     expect(response.errors[0].message).toContain('sqlite3 exited with code 1');
     expect(response.errors[0].message).toContain("GROQ_API_KEY='[REDACTED]'");
     expect(JSON.stringify(response.errors)).not.toContain(secret);
   });
 
-  it('returns a failing status for JSON output with no results and source errors', async () => {
-    const result = await runWithFakeSqlite(
-      '#!/usr/bin/env node\nprocess.stderr.write("database locked");\nprocess.exitCode = 1;\n',
-      'cli'
-    );
+  it('returns a failing status for JSON output when the SQLite CLI is unavailable', async () => {
+    const result = await runCliWithoutSqlite();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Search warning (kilo):');
     const response = JSON.parse(result.stdout);
     expect(response.results).toEqual([]);
     expect(response.errors.map(({ source }) => source)).toEqual(['kilo']);
+    expect(response.errors[0].message).toContain('SQLite CLI not found');
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'returns a failing status for JSON output when SQLite reports an error',
+    async () => {
+      const result = await runCliWithFailingSqlite();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Search warning (kilo):');
+      const response = JSON.parse(result.stdout);
+      expect(response.results).toEqual([]);
+      expect(response.errors.map(({ source }) => source)).toEqual(['kilo']);
+      expect(response.errors[0].message).toContain('sqlite3 exited with code 1: database locked');
+    }
+  );
 });
 
 describe('Codex session timestamps', () => {

@@ -1645,8 +1645,8 @@ export const useLayers = () => {
       position = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
       localRect = sortRect(canvasRectToLocal(measuredRect, position, documentFrame));
 
-      const width = Math.trunc(position.width);
-      const height = Math.trunc(position.height);
+      const width = Math.ceil(position.width);
+      const height = Math.ceil(position.height);
       if (width <= 0 || height <= 0) {
         clearSmallCapsTextDraftPreview(args.editingLayerId);
         return false;

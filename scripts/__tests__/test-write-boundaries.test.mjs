@@ -29,8 +29,8 @@ const REVIEWED = {
   },
   'e2e-run.test.mjs': {
     scope:
-      'Board, run-record, and filesystem fixtures are temporary; the live run record and sentinel are read-only tripwires.',
-    patterns: `filesystem-write:mkdtempSync=3 filesystem-write:rmSync=3 subprocess:spawnSync=2 filesystem-write:writeFileSync=1`,
+      'Board, run-record, process-tree, and filesystem fixtures are temporary; the live run record and sentinel are read-only tripwires.',
+    patterns: `filesystem-write:mkdtempSync=3 filesystem-write:rmSync=3 subprocess:spawnSync=3 filesystem-write:writeFileSync=1 subprocess:spawn=1`,
   },
   'e2e-skip-baseline.test.mjs': {
     scope: 'Baseline and report fixtures use unique OS temporary directories.',
@@ -42,8 +42,8 @@ const REVIEWED = {
   },
   'free-chat-search-agent.test.mjs': {
     scope:
-      'Fake SQLite, database, and Kilo home fixtures live in unique temporary directories and are cleaned; child invocations use test-controlled paths.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:mkdtemp=1 filesystem-write:rm=1 filesystem-write:writeFile=3 subprocess:spawnSync=6`,
+      'Fake SQLite, database, failing CLI, and Kilo home fixtures live in unique temporary directories and are cleaned; child invocations use test-controlled paths.',
+    patterns: `filesystem-write:mkdtemp=3 filesystem-write:writeFile=6 subprocess:spawnSync=7 filesystem-write:rm=3 filesystem-write:mkdir=4`,
   },
   'free-chat-search.test.mjs': {
     scope: 'Search database fixtures use unique OS temporary directories and are removed after the test.',
@@ -60,7 +60,7 @@ const REVIEWED = {
   'free-model-pool.test.mjs': {
     scope:
       'Model/provider fixtures use unique OS temporary directories; PATH overrides are restored in finally blocks.',
-    patterns: `filesystem-write:mkdtemp=11 filesystem-write:rm=11 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
+    patterns: `filesystem-write:mkdtemp=12 filesystem-write:rm=12 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
   },
   'free-model-quarantine.test.mjs': {
     scope: 'Quarantine fixtures use unique OS temporary directories.',
@@ -87,6 +87,10 @@ const REVIEWED = {
       'Git and hook fixtures use temporary repositories; review child cwd and any environment passed to subprocesses.',
     patterns: `subprocess:execFileSync=1 subprocess:spawnSync=43 filesystem-write:mkdtempSync=8 filesystem-write:writeFileSync=20 filesystem-write:rmSync=11 filesystem-write:mkdirSync=3`,
   },
+  'main-landing-alert.test.mjs': {
+    scope: 'Alert-claim marker fixtures use a unique temporary directory and are removed after the test.',
+    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:writeFileSync=2 filesystem-write:rmSync=2`,
+  },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
     patterns: `subprocess:execFileSync=3 filesystem-write:mkdtempSync=1 filesystem-write:mkdirSync=1 filesystem-write:writeFileSync=3 filesystem-write:rmSync=1`,
@@ -97,8 +101,8 @@ const REVIEWED = {
   },
   'merge-takeover-guard.test.mjs': {
     scope:
-      'Git/hook fixtures use temporary repositories; process environment changes are restored and PATH changes are explicit.',
-    patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=46 filesystem-write:mkdirSync=18 filesystem-write:copyFileSync=3 filesystem-write:chmodSync=27 filesystem-write:rmSync=8 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
+      'Temporary repositories model the owner-tracked landing wrapper; project markers, installer stubs, hook scripts, and process environment changes remain isolated to each temporary repository.',
+    patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=50 filesystem-write:mkdirSync=20 filesystem-write:copyFileSync=2 filesystem-write:chmodSync=28 filesystem-write:rmSync=7 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
   },
   'mirror-e2e.test.mjs': {
     scope: 'Mirror and git fixtures use temporary repositories and directories.',
@@ -110,7 +114,7 @@ const REVIEWED = {
   },
   'quiet-command.test.mjs': {
     scope: 'Subprocess invocation is the command-wrapper behavior under test; review command and cwd.',
-    patterns: `subprocess:spawnSync=2`,
+    patterns: `subprocess:spawnSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=3 filesystem-write:rmSync=2`,
   },
   'recover-stale-auto-merge.test.mjs': {
     scope: 'Git and filesystem fixtures use temporary repositories and directories.',
@@ -134,8 +138,9 @@ const REVIEWED = {
     patterns: `subprocess:spawnSync=6 filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=10 filesystem-write:rmSync=9 filesystem-write:mkdirSync=2 filesystem-write:symlinkSync=3`,
   },
   'worktree-inventory.test.mjs': {
-    scope: 'Writable databases are test fixtures; the machine session database is explicitly opened read-only.',
-    patterns: `filesystem-write:mkdtempSync=13 subprocess:execFileSync=79 filesystem-write:writeFileSync=19 filesystem-write:rmSync=53 database-open:DatabaseSync:write-capable=9 database-open:DatabaseSync:readOnly=3 filesystem-write:chmodSync=2`,
+    scope:
+      'Writable databases and environment overrides are test fixtures; the machine session database is explicitly opened read-only.',
+    patterns: `filesystem-write:mkdtempSync=16 subprocess:execFileSync=80 filesystem-write:writeFileSync=25 filesystem-write:rmSync=58 database-open:DatabaseSync:write-capable=9 database-open:DatabaseSync:readOnly=3 filesystem-write:chmodSync=2 process-env-write:delete:<computed>=2 process-env-write:assignment:<computed>=2 filesystem-write:mkdirSync=3`,
   },
   'board-post-cap.test.mjs': {
     scope: 'Read-only document checks; no filesystem mutations, subprocesses, or database access.',
@@ -174,8 +179,8 @@ const REVIEWED = {
     patterns: '',
   },
   'windows-command-shim.test.mjs': {
-    scope: 'Pure command-line argument assertions; no filesystem mutations, subprocesses, or database access.',
-    patterns: '',
+    scope: 'Windows command lookup fixtures live in unique temporary directories and are removed after each test.',
+    patterns: `filesystem-write:mkdirSync=1 filesystem-write:mkdtempSync=11 filesystem-write:writeFileSync=9 filesystem-write:rmSync=11`,
   },
 };
 
@@ -369,7 +374,7 @@ describe('script-test resource boundary audit', () => {
       if (!expected) continue;
 
       expect(expected.scope, `${name} needs a reviewed resource scope`).toBeTruthy();
-      const actualPatterns = summarize(findings);
+      const actualPatterns = summarize(findings).sort();
       const expectedPatterns = expected.patterns.trim() ? expected.patterns.trim().split(/\s+/).sort() : [];
       if (JSON.stringify(actualPatterns) !== JSON.stringify(expectedPatterns)) {
         stale.push(`${name}: expected [${expectedPatterns.join(', ')}], found [${findingsWithLines(findings)}]`);

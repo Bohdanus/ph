@@ -376,9 +376,10 @@ export async function queryDb(dbPath, sql, params = [], opts = {}) {
 
   const sqlitePath = opts.sqlitePath || 'sqlite3';
   const timeoutMs = opts.timeoutMs || DEFAULTS.sqliteTimeoutMs;
+  const spawnImpl = opts.spawnImpl || spawn;
 
   return new Promise((resolve, reject) => {
-    const child = spawn(sqlitePath, ['-readonly', '-json', '-bail', dbPath, cliSql], {
+    const child = spawnImpl(sqlitePath, ['-readonly', '-json', '-bail', dbPath, cliSql], {
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
     });
@@ -531,6 +532,7 @@ export async function searchAll(options = {}) {
         maxSessions,
         useNative: opts.useNative,
         sqlitePath: opts.sqlitePath,
+        spawnImpl: opts.spawnImpl,
         timeoutMs: opts.timeoutMs,
       });
       allResults.push(...results);
@@ -552,6 +554,7 @@ export async function searchAll(options = {}) {
         maxSessions,
         useNative: opts.useNative,
         sqlitePath: opts.sqlitePath,
+        spawnImpl: opts.spawnImpl,
         timeoutMs: opts.timeoutMs,
       });
       allResults.push(...results);
@@ -616,6 +619,7 @@ export async function search(options = {}) {
       maxSessions: opts.maxSessions,
       useNative: opts.useNative,
       sqlitePath: opts.sqlitePath,
+      spawnImpl: opts.spawnImpl,
       timeoutMs: opts.timeoutMs,
     });
   } catch (error) {

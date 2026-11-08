@@ -143,15 +143,15 @@ const Text: React.FC<{}> = () => {
   };
 
   /**
-   * Reset line height to Adobe's auto-leading default (120% of the type size).
+   * Set the line-height ratio to the app's 120% preset.
    *
-   * Adobe's `CharacterStyle.leading` is `null` for Auto, and `JustificationProperties.autoLeadingAmount`
-   * defaults to `120`. This app's `lineHeight` is a ratio rather than a length (§5 of
-   * `TEXT_TOOL_REQUIREMENTS.md` records the divergence), so `AUTO_LEADING = 1.2` is the
-   * closest faithful reproduction. The button gives the user one click back to the default
-   * the way Photoshop's Character panel does when leading is cleared.
+   * Adobe's `CharacterStyle.leading` is `null` for Auto.
+   * `JustificationProperties.autoLeadingAmount` defaults to `120`.
+   * This app's `lineHeight` is a ratio, not a length or Auto mode (§5 and §6 of
+   * `TEXT_TOOL_REQUIREMENTS.md`). The preset matches the default value, but does
+   * not enable Adobe's Auto-leading mode.
    */
-  const handleAutoLeading = () => {
+  const handleLineHeightPreset = () => {
     publishStyle({ lineHeight: AUTO_LEADING });
   };
 
@@ -376,13 +376,12 @@ const Text: React.FC<{}> = () => {
           </span>
           <button
             type="button"
-            tabIndex={-1}
-            aria-label="Reset line height to Auto (1.2)"
-            title="Reset to Auto leading (120% of type size)"
-            onClick={handleAutoLeading}
-            className="text-xs px-1.5 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors"
+            aria-label={`Set line height to ${AUTO_LEADING} (${Math.round(AUTO_LEADING * 100)}%)`}
+            title={`Set line height to ${AUTO_LEADING} (${Math.round(AUTO_LEADING * 100)}% of type size)`}
+            onClick={handleLineHeightPreset}
+            className="text-xs px-1.5 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
           >
-            Auto
+            {Math.round(AUTO_LEADING * 100)}%
           </button>
         </div>
       </div>
