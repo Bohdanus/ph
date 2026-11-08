@@ -149,6 +149,9 @@ describe('toolDescriptions', () => {
       expect(mode?.detail, `${name}: Clear on shape tools requires a selected fill region`).toMatch(
         /shape tools when a fill region is selected/i
       );
+      expect(mode?.detail, `${name}: Clear requires Lock Transparency to be deselected`).toMatch(
+        /Lock Transparency to be deselected/i
+      );
     }
   });
 
