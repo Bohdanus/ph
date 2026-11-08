@@ -299,19 +299,72 @@ async function measureShape(page: Page, rect: Rect, name: string): Promise<{ wid
   return { width: bounds!.width, height: bounds!.height };
 }
 
-async function rotationCursorInfo(page: Page): Promise<{ angle: number; whiteOutline: boolean } | null> {
+async function rotationCursorInfo(
+  page: Page
+): Promise<{ angle: number; hotspotX: number; hotspotY: number; usesBitmap: boolean } | null> {
   return page.locator('.cursor-move').evaluate((element) => {
     const cursor = getComputedStyle(element).cursor;
-    const encodedSvg = cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
-    if (!encodedSvg) return null;
-
+    const match = cursor.match(/url\("([^"]+)"\)\s+(\d+)\s+(\d+)/);
+    const encodedSvg = match?.[1].match(/^data:image\/svg\+xml,(.+)$/)?.[1];
+    if (!match || !encodedSvg) return null;
     const svg = decodeURIComponent(encodedSvg);
-    const angle = svg.match(/rotate\((\d+) 16 16\)/)?.[1];
+    const angle = svg.match(/rotate\((\d+) 32 32\)/)?.[1];
     if (!angle) return null;
 
     return {
       angle: Number(angle),
-      whiteOutline: svg.includes('stroke="#fff" stroke-width="6"'),
+      hotspotX: Number(match[2]),
+      hotspotY: Number(match[3]),
+      usesBitmap: svg.includes('href="data:image/png;base64,'),
+    };
+  });
+}
+
+async function rotationCursorAssetInfo(page: Page): Promise<{
+  width: number;
+  height: number;
+  opaquePixels: number;
+  whitePixels: number;
+  transparentCorners: boolean;
+} | null> {
+  return page.evaluate(async () => {
+    const image = new Image();
+    const cursor = getComputedStyle(document.querySelector('.cursor-move')!).cursor;
+    image.src = cursor.match(/url\("([^"]+)"\)/)?.[1] ?? '';
+    try {
+      await image.decode();
+    } catch {
+      return null;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return null;
+    context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let opaquePixels = 0;
+    let whitePixels = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      const alpha = pixels[index + 3];
+      if (alpha > 0) opaquePixels++;
+      if (alpha > 0 && pixels[index] > 245 && pixels[index + 1] > 245 && pixels[index + 2] > 245) {
+        whitePixels++;
+      }
+    }
+    const corners = [
+      3,
+      (canvas.width - 1) * 4 + 3,
+      (canvas.height - 1) * canvas.width * 4 + 3,
+      (canvas.height * canvas.width - 1) * 4 + 3,
+    ];
+    return {
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      opaquePixels,
+      whitePixels,
+      transparentCorners: corners.every((index) => pixels[index] === 0),
     };
   });
 }
@@ -388,6 +441,7 @@ test.describe('Shape tools', () => {
     const searchArea: Rect = { from: { x: 80, y: 80 }, to: { x: 500, y: 400 } };
     await dragShape(page, shape, 'the shape before rotation');
     const before = await measureShape(page, searchArea, 'the unrotated shape');
+    const maxExpectedExtent = ((before.width + before.height) / Math.SQRT2) * 1.1;
 
     await clickToolButton(page, 'reposition');
     await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
@@ -407,7 +461,13 @@ test.describe('Shape tools', () => {
       await page.mouse.move(box.x + offset.x, box.y + offset.y);
       await expect
         .poll(() => rotationCursorInfo(page), { message: `cursor orientation ${cursorAngle}°` })
-        .toEqual({ angle: cursorAngle, whiteOutline: true });
+        .toEqual({ angle: cursorAngle, hotspotX: 32, hotspotY: 32, usesBitmap: true });
+      const artwork = await rotationCursorAssetInfo(page);
+      expect(artwork?.width, `the ${cursorAngle}° cursor asset width`).toBe(64);
+      expect(artwork?.height, `the ${cursorAngle}° cursor asset height`).toBe(64);
+      expect(artwork?.opaquePixels, `the ${cursorAngle}° cursor contains the supplied artwork`).toBeGreaterThan(0);
+      expect(artwork?.whitePixels, `the ${cursorAngle}° cursor retains its white outline`).toBeGreaterThan(0);
+      expect(artwork?.transparentCorners, `the ${cursorAngle}° cursor keeps its transparent background`).toBe(true);
     }
 
     const handleOffset = 36;
@@ -415,7 +475,7 @@ test.describe('Shape tools', () => {
     const radius = (shape.to.y - shape.from.y) / 2 + handleOffset;
     const endOffset = documentToCanvasOffset(box, center.x + radius / Math.sqrt(2), center.y - radius / Math.sqrt(2));
     await page.mouse.move(box.x + startOffset.x, box.y + startOffset.y);
-    await expect(rotationSurface, 'the rotation grip keeps its white-underlined SVG cursor').toHaveCSS(
+    await expect(rotationSurface, 'the rotation grip uses the supplied cursor artwork').toHaveCSS(
       'cursor',
       /url.*data:image\/svg\+xml/
     );
@@ -423,12 +483,19 @@ test.describe('Shape tools', () => {
     await page.mouse.move(box.x + endOffset.x, box.y + endOffset.y, { steps: 12 });
     await expect
       .poll(() => rotationCursorInfo(page), { message: 'the cursor keeps following the pointer during rotation' })
-      .toEqual({ angle: 45, whiteOutline: true });
+      .toEqual({ angle: 45, hotspotX: 32, hotspotY: 32, usesBitmap: true });
+    const livePreview = await measureShape(page, searchArea, 'the live rotated shape preview');
+    expect(livePreview.width, 'the live preview has no outer rectangle artifact').toBeLessThan(maxExpectedExtent);
+    expect(livePreview.height, 'the live preview has no outer rectangle artifact').toBeLessThan(maxExpectedExtent);
     await page.mouse.up();
 
     const after = await measureShape(page, searchArea, 'the rotated shape');
     expect(after.width, 'the diagonal rotation widens the shape').toBeGreaterThan(before.width + 20);
     expect(after.height, 'the diagonal rotation makes the shape taller').toBeGreaterThan(before.height + 20);
+    expect(after.width, 'the rotated shape stays clear of an outer rectangle artifact').toBeLessThan(maxExpectedExtent);
+    expect(after.height, 'the rotated shape stays clear of an outer rectangle artifact').toBeLessThan(
+      maxExpectedExtent
+    );
     await expect(historyRows, 'one rotation gesture commits one history entry').toHaveCount(
       historyCountBeforeRotation + 1
     );
@@ -459,7 +526,7 @@ test.describe('Shape tools', () => {
     const rotationEnd = documentToCanvasOffset(box, center.x + radius, center.y);
 
     await page.mouse.move(box.x + rotationStart.x, box.y + rotationStart.y);
-    await expect(rotationSurface, 'the rotation grip exposes its custom SVG cursor').toHaveCSS(
+    await expect(rotationSurface, 'the rotation grip exposes the supplied cursor artwork').toHaveCSS(
       'cursor',
       /url.*data:image\/svg\+xml/
     );
