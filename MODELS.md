@@ -2,10 +2,10 @@
 
 ## Current defaults
 
-| Model                          | Provider | Variant | Use                                                                      |
-| ------------------------------ | -------- | ------- | ------------------------------------------------------------------------ |
-| Luna 6                         | `openai` | `xhigh` | Paid; keep context under 272k tokens                                     |
-| NVIDIA Nemotron 3 Ultra (free) | `kilo`   | `high`  | Preferred reasoning route when the live catalog verifies exact-zero cost |
+| Model                          | Route policy              | Use                                                                  |
+| ------------------------------ | ------------------------- | -------------------------------------------------------------------- |
+| Luna 6                         | `openai`                  | Paid; keep context under 272k tokens                                 |
+| NVIDIA Nemotron 3 Ultra (free) | First eligible free route | Preferred reasoning route when the live catalog verifies eligibility |
 
 The preference is a routing choice, not a current benchmark ranking. Free model catalogs and
 availability change; refresh them with `node scripts/free-model-pool.mjs --list` before use.
@@ -14,12 +14,12 @@ Use live catalogs, not stale model lists. Prefer verified free models for bounde
 
 ## Routing
 
-- Inference attempts providers in this order: Kilo, OpenRouter, Groq, then OpenCode. Catalog checks can run in parallel; inference is sequential. A provider is skipped unless its route is configured and its catalog has a currently verified-free candidate.
+- The runner attempts every eligible Nemotron 3 Ultra candidate first, across OpenCode, Kilo, and OpenRouter. If those candidates fail, weaker candidates are tried in this order: OpenCode, Kilo, OpenRouter, then Groq. Catalog checks can run in parallel; inference is sequential. A provider is skipped unless its route is configured and its catalog has a currently verified-free candidate.
 - Refresh candidates with `node scripts/free-model-pool.mjs --list`. Check the exact model/provider pair: Kilo and OpenRouter require exact-zero prices, OpenCode requires provider-owned `-free` IDs, and Groq allows only `openai/gpt-oss-120b` after explicit Free-plan opt-in.
 - The runner sends Kilo inference through the installed Kilo Code CLI, so its saved Kilo Gateway OAuth is used. It searches `PATH` and common editor extension directories; set `KILO_CLI` only when discovery misses the executable. The child receives runtime paths but not other provider credentials or `KILO_CONFIG_CONTENT`; the tool-free `free-completion` agent and `--pure` mode block agent tools and external plugins.
 - The Kilo CLI has no `--max-tokens` option. The runner's `--max-tokens` value is a response-length instruction for Kilo; the CLI/model controls the actual generation budget. OpenRouter and Groq receive a provider-side token limit.
-- OpenRouter inference uses `OPENROUTER_API_KEY`. When Nemotron 3 Ultra appears as an exact-zero model in that live catalog, the runner tries it first, then preserves the catalog order. `--openrouter-quota` requires the same environment key; Kilo's locally stored OpenRouter credential is not read by the runner.
-- OpenRouter Nemotron 3 Ultra receives at least 1,024 completion tokens so reasoning does not consume a tiny caller budget before a visible answer. The other OpenRouter models receive the requested `--max-tokens` value.
+- OpenRouter inference uses `OPENROUTER_API_KEY`. When Nemotron 3 Ultra appears as an exact-zero model in that live catalog, it is attempted before weaker models from every source; remaining OpenRouter candidates preserve catalog order. `--openrouter-quota` requires the same environment key; Kilo's locally stored OpenRouter credential is not read by the runner.
+- The runner requests at least 1,024 completion tokens for OpenRouter Nemotron 3 Ultra so reasoning does not consume a tiny caller budget before a visible answer. For other OpenRouter models, it requests the caller's `--max-tokens` value.
 - OpenRouter 401/402 exhausts the source. On HTTP 429, a zero platform `X-RateLimit-Remaining` header or a zero daily counter exhausts it for the run; otherwise the pool can rotate among verified-free models within its three-model cap. HTTP 503 also triggers a daily-counter check before rotation. A missing or unreadable daily counter is treated as unknown and remains capped. The pool honors a valid `Retry-After` before another OpenRouter attempt; waits over 60 seconds skip OpenRouter for that run. Content-policy rejections — including successful HTTP responses with `finish_reason: content_filter` — stop routing across providers so the same request is not retried elsewhere.
 - Catalog and quota requests have a 15-second timeout. Model inference has a five-minute timeout so reasoning models are not cut off by a catalog-sized deadline.
 - **MANDATORY: In Kilo tasks, pass `model` and `provider` together. GPT models use `openai`. Free sessions must not launch GPT children or perform Git operations.**
