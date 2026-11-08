@@ -392,6 +392,7 @@ export const selectionDescriptions: Record<
     appNotes:
       'The tool traces a closed loop and commits it, and its bar renders Copy, Paste and Deselect beside a single toggle. That toggle is the app’s own control and has no Photoshop counterpart: it is labelled Mode in the bar but switches between Outline and Fill, which changes how the committed border is painted rather than how a new gesture combines with the existing selection. The app therefore has no Photoshop control on this bar at all, and no combination modes. The LassoToolArgs type carries alpha, lineWidth, color and fill, none of which Photoshop puts on this tool’s bar. None of the modifiers above is read: the freehand lasso is drawn by the same PolygonClickToolArea as the polygonal one, and neither that component nor anything else on the lasso path consults a modifier key, so the Shift/Alt/Shift+Alt rows describe Photoshop only. The Return row is not bound either — the app registers Escape, Enter, Backspace and Delete on this tool’s own gesture and nothing else (`src/components/Main/PolygonClickToolArea.tsx:922`) — so the focus-the-Feather-field binding above is a Photoshop binding with no counterpart here, and neither is Photoshop’s mid-trace Space-to-Hand switch, which this app binds on the Shape tool alone and there to pan the shape being drawn (`src/components/Main/ShapeToolArea.tsx:52`) rather than to change tools. The Delete row is bound to the same registration that pops the last point of the trace.',
     sources: [
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html',
       'https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/lasso-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
@@ -409,7 +410,7 @@ export const selectionDescriptions: Record<
     summary:
       'Click to lay straight-edged anchors around a shape, then click the first anchor, double-click, or press Enter to close.',
     purpose:
-      'The Polygonal Lasso tool draws a selection border out of straight segments, which is the right tool for anything with corners: a building edge, a piece of type, a flat geometric shape. You do not hold the mouse button down; you click to add a corner anchor, move, and click again. Closing the border is explicit and has four ways in: click the starting anchor, Ctrl-click on Windows or Command-click on Mac OS, double-click, or press Enter or Return, the last of which closes with a segment the tool finds rather than a straight one. Clicking the mouse down and dragging instead of clicking lays a curved segment, and holding Alt/Option while dragging draws a freehand segment between two clicked points. This description is of Photoshop 2023 through 2026.',
+      'The Polygonal Lasso tool draws a selection border out of straight segments, which is the right tool for anything with corners: a building edge, a piece of type, a flat geometric shape. Click to add a corner anchor, move, and click again. Hold Shift while selecting to constrain segments to multiples of 45 degrees; hold Alt/Option and drag to temporarily switch to freehand drawing. Close the border by selecting the starting point or double-clicking. This description is of Photoshop 2025–2026.',
     options: [
       {
         control: 'New / Add To / Subtract From / Intersect With',
@@ -436,6 +437,8 @@ export const selectionDescriptions: Record<
       },
     ],
     modifiers: [
+      { keys: 'Shift', action: 'Constrains each straight segment to a multiple of 45 degrees.' },
+      { keys: 'Alt', action: 'Alt/Option-drag temporarily switches to freehand drawing.' },
       { keys: 'Shift', action: 'Sets the gesture to Add to Selection.' },
       { keys: 'Alt', action: 'Set as the combination mode, sets the gesture to Subtract From Selection.' },
       { keys: 'Shift+Alt', action: 'Sets the gesture to Intersect With Selection.' },
@@ -466,8 +469,10 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:53',
     ],
     appNotes:
-      'The click-to-add-anchor gesture, the double-click close, the right-click close, the Enter close, the Delete anchor removal and the Escape abort are all implemented, which makes this the most faithful of the seven. Its options bar, however, is the thinnest component in the family: forty lines rendering one app-invented Outline/Fill toggle and a hint sentence, and — unlike the freehand and magnetic lasso bars beside it — no Copy, Paste or Deselect buttons. It shares LassoToolArgs with the freehand lasso, so none of the four Photoshop controls in the table above has a field to live in. None of the modifiers above is read either. The component that draws this tool (`src/components/Main/PolygonClickToolArea.tsx`, which serves the freehand lasso too) consults no modifier key at all, so every one of those rows — the three combination modes — describes Photoshop and is not implemented here. The 45° Shift constraint, the Alt-drag freehand segment and the Alt-double-click straight close are not implemented here either, which is why none of the three is listed above. Of the shortcuts above, `Enter` and `Delete` are bound on this tool’s own gesture (`src/components/Main/PolygonClickToolArea.tsx:931` and `:953`); `Enter` is the key the app registers for the close that the table above calls Return, while the row’s second half, focus moving to a Feather field when no border is open, is not bound, because this bar has no Feather field to focus. Feathering is where the app is narrowest: no selection tool’s bar carries a Feather field except the magnetic lasso’s, re-making a selection with this tool applies no feather of any kind, and with no `Select > Modify > Feather` and no Refine Edge a committed border can never be softened after the fact. The magnetic lasso is the family’s only feathered path, and even there the value is written into the selection’s metadata at commit and read back when the selection is copied (`src/util/selection.ts:755`), so it softens the copied mask and not the selection the ants are drawn from.',
+      'The tool commits a closed polygon selection using click-to-add-anchor, double-click, right-click, or Enter to close; Delete removes the latest anchor and Escape cancels the draft. Its options bar has an app-specific Outline/Fill toggle and no Photoshop selection controls. `PolygonClickToolArea` reads no modifier keys, so the selection-combination modes, Shift-constrained segments, and Alt/Option-drag freehand behavior documented above are absent in the app. Adobe documents Alt/Option-double-click straight closure for the Magnetic Lasso, not the Polygonal Lasso. The app has no Feather field or Select and Mask route from this tool, so a committed polygon cannot be feathered here.',
     sources: [
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/isolate-specific-areas-in-images-with-lasso-tool.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html',
       'https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/polygonal-lasso-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
@@ -546,8 +551,7 @@ export const selectionDescriptions: Record<
       },
       {
         keys: 'Alt',
-        action:
-          'Double-clicking while Alt is held closes the border with a straight segment rather than a magnetic one.',
+        action: 'Alt/Option-double-click closes the border with a straight segment.',
       },
       { keys: 'Shift', action: 'Sets the trace to Add to Selection.' },
       { keys: 'Alt', action: 'Set as the combination mode, sets the trace to Subtract From Selection.' },
@@ -597,6 +601,7 @@ export const selectionDescriptions: Record<
     appNotes:
       'The magnetic machinery is real: Width, Contrast and Snap feed a gradient-snapping edge detector, Frequency gates automatic fastening points, Smooth simplifies the traced path, and Feather and Anti-alias reach the copied alpha mask through the selection’s metadata. Three things diverge, and one load-bearing finding of the previous version of this record no longer holds. (1) Frequency was inverted and is no longer. That record said the app stored it as a maximum path length in pixels, so that lower values added more anchors — the exact opposite of Photoshop. The finding was correctly sourced and has been fixed: it is Adobe’s own 0–100 range with a plain-number readout (`MAGNETIC_LASSO_FREQUENCY_MIN`/`_MAX`, `src/tools/featherMagneticLasso.ts:20-21`), and `magneticLassoAnchorSpan` (`src/tools/featherMagneticLasso.ts:43-54`) is the single place the direction is decided, mapping Frequency 0 to the longest 120px anchor span and Frequency 100 to the shortest 8px one, so a higher value anchors sooner. The gate is `pathLength(segment.path) < magneticLassoAnchorSpan(args.frequency)` (`src/components/Main/FeatherMagneticLassoToolArea.tsx:486`), and the row is `present` because range, direction and the bar’s own readout now agree with Adobe. (2) Contrast allows 0% where Photoshop’s documented range starts at 1%. (3) Feather and Anti-alias are not properties of the selection at all: `args.featherRadius` and `args.antiAlias` are written into the selection’s metadata at commit (`src/components/Main/FeatherMagneticLassoToolArea.tsx:401-406`) and read back in exactly one place, `copySelectionToCanvas` → `copyFeatheredPolygonSelectionToCanvas` (`src/util/selection.ts:1171-1174`), so both reach only the COPIED alpha mask — un-ticking Anti-alias softens the copy and changes nothing else on the canvas, and the Feather radius is likewise never a feather of the selection the ants are drawn from. Adobe caps its own options-bar box at 0 to 100 pixels, which is the same ceiling the app uses, so that cap was never a divergence; what is missing behind both controls is `Select > Modify > Feather`, which the app has no route to. Width is `partial` for a narrower reason than the others: the app renders a 1–64px slider (`src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:289-290`) and Adobe states the field only as “a pixel value” with no maximum, so the ceiling is the app’s own. Three of the app’s controls have no Photoshop counterpart at all: Snap, which the toolbar’s own help text describes as cursor pull toward a detected edge, Smooth, and the Preview feather outline. Alt is the one modifier this tool actually reads, and only as `magneticEnabled: !event.altKey` (`src/components/Main/FeatherMagneticLassoToolArea.tsx:468`), so the freehand-segment row above is real while the Alt-double-click straight close, the Shift/Alt/Shift+Alt combination modes and the Caps Lock, bracket, comma and period keys are all absent.',
     sources: [
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/isolate-specific-areas-in-images-with-lasso-tool.html',
       'https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/magnetic-lasso-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
@@ -734,7 +739,7 @@ export const selectionDescriptions: Record<
       {
         control: 'New / Add to / Subtract from',
         detail:
-          'Three buttons: New, Add to and Subtract from. Quick Selection has no Intersect with Selection mode. The app provides only Add and Subtract, with no temporary Alt/Option modifier for subtracting while brushing.',
+          'Three buttons: New, Add to and Subtract from. Quick Selection has no Intersect with Selection mode. Adobe also documents Alt/Option while brushing to subtract temporarily; the app has no temporary modifier gesture.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:148',
       },
@@ -764,7 +769,10 @@ export const selectionDescriptions: Record<
         status: 'missing',
       },
     ],
-    modifiers: [],
+    modifiers: [
+      { keys: 'Shift', action: 'Adds the painted area to the existing selection.' },
+      { keys: 'Alt', action: 'Alt/Option subtracts the painted area from the existing selection.' },
+    ],
     shortcuts: [
       {
         keys: 'W',
@@ -790,6 +798,7 @@ export const selectionDescriptions: Record<
     appNotes:
       'The app offers Size (1–500 px), Tolerance (0–100%), and Add or Subtract. Adobe Photoshop also provides New selection, brush Hardness, Spacing, Angle and Roundness, pen-pressure sensitivity, Sample All Layers, Enhance Edge and Select and Mask; those controls are not implemented here. The app reads the merged visible document canvas, so it always samples the composite rather than offering a layer-sampling choice. It samples the stroke at fixed 25% brush-diameter spacing and grows a 4-connected RGBA-tolerance flood fill from sparse points inside each round brush stamp. This is not Photoshop’s image-edge-following Quick Selection algorithm, and the app-only Tolerance control exposes that difference. Temporary modifier gestures and bracket-key resizing are also absent. Add and Subtract strokes begin from the active selection rasterized to binary pixel membership. Simple results are stored as compound contours; highly fragmented results use an authoritative packed one-bit mask. Fractional positioning and antialiased coverage are quantized when an existing selection is edited, because the app has no persistent 8-bit selection channel. Quick Selection commits its own `quick-selection` provenance, and preserves disconnected regions and holes in either representation.',
     sources: [
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/quick-selection-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/use-quick-selection-tool.html',

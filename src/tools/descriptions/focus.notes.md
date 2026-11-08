@@ -118,9 +118,12 @@ it becomes, and the whole stroke is one history state. It is the member of the f
 **reduces local contrast and smooths** — the direction that separates it from the Sharpen, which
 increases local contrast at edges over a wider radius with an unsharp-like falloff, and from the
 Smudge, which transports pixels rather than transforming them. The bar is one bar shared with both
-siblings: a brush preset (Size, Hardness), a Mode, Strength and Sample All Layers. Adobe's own
-product page tells you to use `[` and `]` to resize the tip and to reach for Strength when the
-effect needs to be stronger, and the `flylib` per-tool checklist is the compact form: "Double-check
+siblings: a brush preset (Size, Hardness), Strength and Sample All Layers. The current Blur-specific
+Adobe page lists those controls but not Mode. Adobe's broader painting-tools page includes Mode
+among general options-bar controls while warning that options vary by tool; it does not establish
+whether Mode is on the current Blur bar. Adobe's own product page tells you to use `[` and `]` to
+resize the tip and to reach for Strength when the effect needs to be stronger, and the `flylib`
+per-tool checklist is the compact form: "Double-check
 the following: the Mode pop-up menu, Strength, and Sample All Layers checkbox. Typical Problem: The
 default 50% setting for Strength is usually too high for most situations."
 
@@ -135,7 +138,6 @@ correction itself then over-corrected in the opposite direction.
 | Control             | Photoshop behaviour                                                     | Default / range | App status            | App source |
 | ------------------- | ----------------------------------------------------------------------- | --------------- | --------------------- | ---------- |
 | Brush Preset Picker | The tip, with Size and Hardness                                         | preset library  | `missing`             | —          |
-| Mode                | Blend mode the blurred result composites with                           | Normal          | `missing`             | —          |
 | Strength            | Percent of the blurred result blended per pass                          | 50%, 1–100      | `missing`             | —          |
 | Sample All Layers   | Blur from the composite so the result can be painted onto a blank layer | off             | `missing`             | —          |
 | _Flow_              | _reported on the shared bar; see `## Unverified`_                       | _50%, 1–100_    | _omitted — unsourced_ | —          |
@@ -153,12 +155,11 @@ The 50% default is unchanged and is Adobe-attributable, and so is the 10–30% /
 range correction has one app consequence and it is recorded on the Smudge, where the bar's own
 minimum is 0.
 
-**The `Mode` row no longer claims a restricted list.** It previously said the list "is restricted to
-the modes that make sense for a blur, including Normal, Darken, Lighten, Hue, Saturation, Color and
-Luminosity". The seven names are third-party attested; the _restriction_ is not, by anything, and
-Adobe's current Blur page does not enumerate a `Mode` control at all. The data file's `detail` now
-attributes the seven to third-party walkthroughs and says plainly that no page states the list is
-restricted. See `## Unverified` 13.
+**Blur `Mode` is omitted pending a current tool-specific source.** The current Adobe Blur page
+enumerates Brush Settings for Size and Hardness, Strength, and Sample All Layers, but does not name
+Mode. Adobe's broader painting-tools page lists Mode among options that vary by tool, so it does not
+establish that this Blur bar has the control. Older secondary walkthroughs report a Mode menu and
+some list choices, but they do not establish its current availability. See `## Unverified` 13.
 
 **App verdict: not the tool.** The app's blur is a whole-layer filter panel. Its bar is a single
 `Blur Radius` slider (`src/components/ToolbarsRight/Blur/Blur.tsx` — `Blur()`'s `Blur Radius`
@@ -191,13 +192,11 @@ carries the Sharpen and the Gradient, and is now stated in each of their `appNot
 three tools inheriting one verdict is exactly where a reviewer should expect the reasoning to be
 written down.
 
-**The `Mode` row is softer than it was, because one page does claim a restriction.** An earlier
-draft said no page claims the list is restricted; one does. The University of Idaho's CS-era
-walkthrough of this very bar says of the Mode dropdown that "this tool only offers a limited number
-of blends to choose from" (<https://www.webpages.uidaho.edu/larc246/toolBarPages/blur.htm>), and
-Wikiversity says the same of "the latest edition". Neither says _to what_, so the row now reads as
-"one of them says the dropdown only offers a limited number of blends, but no page states to what
-the list is restricted". See `## Unverified` 13.
+**Older Blur `Mode` claims remain secondary evidence only.** A University of Idaho walkthrough says
+the menu offers a limited number of blends, while Wikiversity and other tutorials report lists.
+Those pages do not resolve whether the current desktop bar has Mode or give a complete current
+list. The data file therefore omits the control rather than treating those reports as current
+Photoshop behavior. See `## Unverified` 13.
 
 **The slider previews; it does not commit.** The bar routes through `tempUpdateLayer`
 (`src/components/ToolbarsRight/Blur/Blur.tsx` — `throttledOnChange()`), the only writer of
@@ -1099,11 +1098,10 @@ a binding is **absent**, which is the stronger form of the same objection.
     Photoshop gradient property the app has no counterpart for; it is a Properties-panel control
     rather than an options-bar one, so it has no row, and it is noted here because the brief asked
     about the Methods and this is the other half of their behaviour.
-11. **The `R` keyboard shortcut for the Blur and the Sharpen, and only those two.** This item used
-    to ask about the whole group. **It is answered for the Smudge**: Adobe's current page for the
-    tool states "Select the Smudge tool (R) from the toolbar"
-    (<https://helpx.adobe.com/photoshop/using/tool-techniques/smudge-tool.html>), and Photoshop
-    Elements' reference prints `R` for the three-tool group
+11. **The `R` keyboard shortcut for the Blur and the Sharpen, and only those two.** Adobe's current
+    desktop Smudge guide says `R` cycles through retouching tools until Smudge is selected
+    (<https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html>),
+    and Photoshop Elements' reference prints `R` for the three-tool group
     (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>), so
     the row is in the Smudge's `shortcuts`. The two CS-era sources that give the group `R`
     (`flylib`, and the CS2 keyboard sheet on
@@ -1125,16 +1123,13 @@ a binding is **absent**, which is the stronger form of the same objection.
     teachucomp says only "check the 'Dither' checkbox". Adobe says nothing either way. One
     third-party statement of a default is not two, so the row keeps the honest phrasing and the
     citation is the third party's. `Reverse` has no statement at all in any direction.
-13. **The Blur `Mode` restriction, narrowed but not closed.** The Blur's `Mode` list is said by two
-    pages to be restricted: the University of Idaho's CS-era walkthrough says the dropdown "only
-    offers a limited number of blends to choose from"
-    (<https://www.webpages.uidaho.edu/larc246/toolBarPages/blur.htm>), and Wikiversity says "In the
-    latest edition of Adobe Photoshop there are seven blur tool modes" and enumerates them. The
-    seven modes are also attested by `expertphotography` and `dummies`. What no page says is what
-    else, if anything, the dropdown offers — so "restricted to these seven" remains unestablished
-    and the `detail` now attributes the restriction claim to the page that makes it while saying it
-    does not name the restriction's extent. The row is kept, because `Mode` itself is on the bar by
-    several independent enumerations.
+13. **Whether the current Blur options bar has a `Mode` control.** Adobe's current Blur-specific
+    page lists Brush Settings for Size and Hardness, Strength, and Sample All Layers, but omits
+    Mode. Its broader painting-tools page says that options vary by tool while listing Mode among
+    general controls, which does not establish that Blur has it. The University of Idaho's CS-era
+    walkthrough describes a Mode menu with a limited list; Wikiversity and other secondary
+    sources also report menus and choices, but none establish current availability or a complete
+    current list. The data file omits the row until a current tool-specific source resolves it.
 14. **The provenance of the keyboard bindings, which are reproductions rather than Adobe's page.**
     The Smudge's `R`, the Dodge's and the Burn's `Shift+Alt+S/M/H`, the `0` for Exposure and the
     `[`/`]` brush-size pair are all in Adobe's published default-keyboard list, and three

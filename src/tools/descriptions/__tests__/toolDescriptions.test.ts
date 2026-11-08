@@ -117,47 +117,30 @@ describe('toolDescriptions', () => {
     }
   });
 
-  it('does not tell the reader to press a key these selection tools do not read', () => {
-    // A tripwire for named claims, not a general property — nothing in `src/` can decide whether a
-    // row is implemented, since that needs the gesture the row describes. What can be checked is
-    // that the removed rows and the prose that shipped them stay gone, in EVERY surface a reader
-    // sees them: the tooltip summary, the `modifiers` table, and the `options` control detail.
-    //
-    // `PolygonClickToolArea`, which draws the freehand and the polygonal lasso alike, registers
-    // Escape, Enter, Backspace and Delete and reads no `shiftKey`, `altKey`, `metaKey` or
-    // `ctrlKey` anywhere in the file. `QuickSelectionToolArea` and the quick-selection options bar
-    // read no modifier key either. The app's only `Space` keydown that matters to a tool is the
-    // Shape tool's mid-drag pan (`ShapeToolArea.tsx:52`), which pans the shape being drawn
-    // rather than switching to the Hand tool. A user who read any of these rows and tried it got
-    // nothing.
-    const lassoNames: readonly ToolName[] = ['freehand-lasso', 'polygonal-lasso'];
-    const rows = lassoNames.flatMap((name) =>
-      toolDescriptions[name].modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)
+  it('documents Photoshop lasso and Quick Selection modifiers separately from app support', () => {
+    const polygon = toolDescriptions['polygonal-lasso'];
+    const polygonRows = polygon.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`);
+    expect(polygonRows).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Shift:.*45 degrees/i),
+        expect.stringMatching(/Alt:.*drag.*freehand/i),
+        expect.stringMatching(/Shift:.*Add to Selection/i),
+        expect.stringMatching(/Alt:.*Subtract From Selection/i),
+        expect.stringMatching(/Shift\+Alt:.*Intersect With Selection/i),
+      ])
     );
-    const unImplemented = /45°|freehand segment|straight segment rather than a magnetic one|Hand tool/;
+    expect(polygonRows).not.toEqual(expect.arrayContaining([expect.stringMatching(/Alt.*double-click/i)]));
+    expect(polygon.appNotes).toMatch(/modifier keys.*absent/i);
 
-    expect(
-      rows.filter((row) => unImplemented.test(row)),
-      'a lasso modifier row promises a gesture its tool area never reads'
-    ).toEqual([]);
+    const magnetic = toolDescriptions['feather-magnetic-lasso'];
+    expect(magnetic.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
+      expect.arrayContaining([expect.stringMatching(/Alt:.*double-click.*straight segment/i)])
+    );
 
-    // The quick-selection surface is three shapes, and an earlier pass fixed only the first: the
-    // summary said "Alt-drag to subtract" while the same entry's `modifiers` and `options` prose
-    // still described an Alt gesture, so the fix had to be made three times or not at all.
     const quick = toolDescriptions['quick-selection'];
-    expect(quick.summary, 'the quick-selection tooltip names Alt, which is never read').not.toMatch(/\bAlt\b/);
-    expect(
-      quick.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`),
-      'a quick-selection modifier row promises a gesture neither its bar nor its tool area reads'
-    ).toEqual([]);
-    // Matched on the ASSERTION of a binding, not on the bare word `Alt` — the corrected row says
-    // "binds no Alt/Option modifier", which is the truth and must not trip this.
-    expect(
-      quick.options
-        .map((option) => option.detail)
-        .filter((detail) => /holding (?:Alt|Option)\b|with Alt held/i.test(detail)),
-      'a quick-selection control row describes a modifier gesture the app does not bind'
-    ).toEqual([]);
+    expect(quick.modifiers.map((modifier) => modifier.keys)).toEqual(['Shift', 'Alt']);
+    expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option while brushing to subtract/i);
+    expect(quick.appNotes).toMatch(/Temporary modifier gestures.*absent/i);
   });
 
   it('resolves a shape figure to its own description rather than the generic one', () => {

@@ -1096,12 +1096,13 @@ from the data file's `appNotes`; a gap is cheaper than a broken cross-reference.
    current user-guide page was opened for either command, so the data file's `appNotes` mention
    their absence without describing what they do in detail.
 
-4. **The `Polygonal Lasso`'s click-and-drag smooth anchor.** Asserted by the research corpus
-   (a drag setting both tangent handles) and not re-established here; Adobe's current page
-   describes `Alt`/`Option`-drag as a freehand _segment_ and `Alt`+double-click as a _straight_
-   close. Closest: `https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html` and
-   `https://helpx.adobe.com/photoshop/using/tool-techniques/polygonal-lasso-tool.html`. Left
-   out of the data file.
+4. **The `Polygonal Lasso`'s mouse-down drag behavior.** The recovered research says dragging
+   without clicking creates a smooth anchor, but Adobe's current desktop guide does not describe
+   that gesture. It does verify Shift-constrained 45-degree segments, Alt/Option-drag temporarily
+   switching to freehand drawing, and closing by selecting the start point or double-clicking.
+   The data file includes those verified behaviors and omits the unconfirmed mouse-down drag claim.
+   Alt/Option-double-click straight closure is documented for the Magnetic Lasso, not this tool.
+   Source: <https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/isolate-specific-areas-in-images-with-lasso-tool.html>.
 
 5. **The Magnetic Lasso's fallback on a flat or uniform region**, where there is no gradient to
    snap to. The only statement found is a community wiki ("If no such region can be found, the
