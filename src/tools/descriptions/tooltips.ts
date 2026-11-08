@@ -46,7 +46,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   'polygonal-lasso': {
     summary:
-      'Click to lay straight-edged anchors around a shape, then click the first anchor, double-click, or press Enter to close.',
+      'Click to lay straight-edged anchors around a shape; close at the starting point, double-click, or Ctrl/Command-click away from it.',
     implementation: 'partial',
   },
   'feather-magnetic-lasso': {

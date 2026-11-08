@@ -117,8 +117,10 @@ Photoshop's Blur tool paints a blur under the brush: the more you paint over an 
 it becomes, and the whole stroke is one history state. It is the member of the focus trio that
 **reduces local contrast and smooths** — the direction that separates it from the Sharpen, which
 increases local contrast at edges over a wider radius with an unsharp-like falloff, and from the
-Smudge, which transports pixels rather than transforming them. The bar is one bar shared with both
-siblings: a brush preset (Size, Hardness), Strength and Sample All Layers. The current Blur-specific
+Smudge, which transports pixels rather than transforming them. The trio shares common brush
+controls for Size, Hardness, Strength and Sample All Layers, while the current Adobe pages differ on
+Mode and Protect Detail; common family membership does not establish an identical per-tool control
+list. The current Blur-specific
 Adobe page lists those controls but not Mode. Adobe's broader painting-tools page includes Mode
 among general options-bar controls while warning that options vary by tool; it does not establish
 whether Mode is on the current Blur bar. Adobe's own product page tells you to use `[` and `]` to

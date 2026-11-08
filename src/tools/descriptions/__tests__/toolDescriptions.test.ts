@@ -130,6 +130,11 @@ describe('toolDescriptions', () => {
       ])
     );
     expect(polygonRows).not.toEqual(expect.arrayContaining([expect.stringMatching(/Alt.*double-click/i)]));
+    expect(polygon.summary).toMatch(/starting point.*double-click.*Ctrl\/Command-click/i);
+    expect(polygon.summary).not.toMatch(/Enter|Return/i);
+    expect(polygon.purpose).toMatch(/Ctrl-clicking on Windows \/ Command-clicking on macOS/i);
+    expect(polygon.purpose).not.toMatch(/Enter|Return/i);
+    expect(polygon.shortcuts.map((shortcut) => shortcut.keys)).not.toContain('Return');
     expect(polygon.appNotes).toMatch(/modifier keys.*absent/i);
 
     const magnetic = toolDescriptions['feather-magnetic-lasso'];
@@ -139,6 +144,12 @@ describe('toolDescriptions', () => {
 
     const quick = toolDescriptions['quick-selection'];
     expect(quick.modifiers.map((modifier) => modifier.keys)).toEqual(['Shift', 'Alt']);
+    expect(quick.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Shift:.*temporarily adds.*while brushing/i),
+        expect.stringMatching(/Alt:.*temporarily subtracts.*while brushing/i),
+      ])
+    );
     expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option while brushing to subtract/i);
     expect(quick.appNotes).toMatch(/Temporary modifier gestures.*absent/i);
   });
@@ -153,6 +164,19 @@ describe('toolDescriptions', () => {
         /Lock Transparency to be deselected/i
       );
     }
+  });
+
+  it('keeps the general 32-bit blend-mode count separate from each tool’s available modes', () => {
+    for (const name of ['brush', 'pencil', 'paint-bucket', 'clone-stamp'] as const) {
+      const mode = toolDescriptions[name].options.find((option) => option.control === 'Mode');
+      expect(mode?.detail, `${name}: the general 32-bit list is not tool-specific`).toMatch(
+        /general 32-bit list contains 11 modes; availability can be narrower for each tool/i
+      );
+    }
+    const sharpenMode = toolDescriptions.sharpen.options.find((option) => option.control === 'Mode');
+    expect(sharpenMode?.detail).toMatch(
+      /general blending guide lists 11 modes for 32-bit images, but does not establish Sharpen’s tool-specific set/i
+    );
   });
 
   it('resolves a shape figure to its own description rather than the generic one', () => {

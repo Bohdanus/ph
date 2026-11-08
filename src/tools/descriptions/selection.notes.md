@@ -404,20 +404,21 @@ The `modifiers[]` rows are kept because the file describes Photoshop; the absenc
 
 ## Polygonal Lasso Tool — `polygonal-lasso`
 
-Identical three-control bar. The gesture is where this tool lives, and Adobe's page is
-complete about it: click to set the starting point; `Alt`/`Option`-drag to draw a freehand
-segment; `Delete` to erase recently drawn straight segments; and **four** documented ways to
-close — click the starting point (a closed circle appears next to the pointer),
-`Ctrl`-click or `Cmd`-click, double-click / `Enter` / `Return` for a magnetic segment, with
-`Alt`-double-click closing on a straight one.
+Identical three-control bar. The gesture is where this tool lives, and Adobe's current desktop
+guide documents these behaviors: click to set the starting point; hold `Shift` to constrain
+segments to 45-degree increments; `Alt`/`Option`-drag to draw a freehand segment; and `Delete` to
+erase the last segment. It documents three ways to close: select the starting point, double-click,
+or Ctrl-click on Windows / Command-click on macOS when away from the starting point. It does not
+document Enter/Return as a Polygonal Lasso close gesture. Those keys close the Magnetic Lasso; this
+app's Enter binding is recorded separately in `appNotes`.
 
 **Two gestures the data file was missing, both Adobe's, both now added.** (a) The 45° constraint:
 "To draw a straight line at a multiple of 45°, hold down Shift as you move to select the next
 segment." The data file's `modifiers` listed only "Shift — Sets the gesture to Add to Selection",
 which is also true and also documented, so Shift now carries **two** entries rather than one. (b)
-The fourth close gesture: "If the pointer is not over the starting point, double-click… or
-**Ctrl-click (Windows) or Command-click (Mac OS)**." The data file's `purpose` said the border "has
-three ways in" and enumerated three; it now says four and carries the modifier-click.
+The Ctrl/Command-click close away from the starting point. The updated `purpose` lists the three
+documented close methods: select the starting point, double-click, or Ctrl/Command-click.
+Alt/Option-double-click belongs to the Magnetic Lasso and remains documented there.
 
 ### Options table
 
@@ -706,6 +707,11 @@ before a separate section headed "The Quick Selection Tool Options" that lists o
 and `Enhance Edge` (`cod.pressbooks.pub/photoshopmastery1250`). The four-mode list is not
 attributed to this tool on that page.
 
+The options-bar count and the modifier gestures describe different controls. Adobe's manual
+selection guide says any selection tool can hold `Shift` while dragging to add and `Alt`/`Option`
+while dragging to subtract. The tool-specific Quick Selection page still lists only three persistent
+mode buttons; the `modifiers` rows record the held-key gestures separately.
+
 ### `W`, and the `Shift+L` badge
 
 **The bare letter re-selects; `Shift+letter` is the cycling key.** Every one of the three groups
@@ -966,10 +972,9 @@ Alt-drag size gesture and the live size/opacity readout are not bound. Every tra
 committed, including disconnected components and enclosed holes; the active selection remains a
 contour model with derived masks rather than a persistent Photoshop-style alpha channel.
 
-**Both modifier rows are unannotated false claims about the app.** `QuickSelectionToolArea` reads no
-modifier key either, so neither the `Alt`-subtracts-for-the-stroke row nor the
-`Ctrl+Alt`-drag-changes-the-brush-size row has an implementation. Both were carried as if they did.
-The rows are kept as Photoshop descriptions and the absence is now in `appNotes`.
+**The modifier gestures are absent from the app.** `QuickSelectionToolArea` reads no modifier key,
+so neither the temporary `Shift`-add or `Alt`-subtract stroke gesture is implemented. The rows are
+kept as Photoshop descriptions and the absence is stated in `appNotes`.
 
 **The second row was also a false claim about Photoshop, and is now corrected in the data file.** It
 read "the same gesture Photoshop binds on every brush tool" for a plain `Alt`-drag. Adobe's own
@@ -1099,10 +1104,11 @@ from the data file's `appNotes`; a gap is cheaper than a broken cross-reference.
 4. **The `Polygonal Lasso`'s mouse-down drag behavior.** The recovered research says dragging
    without clicking creates a smooth anchor, but Adobe's current desktop guide does not describe
    that gesture. It does verify Shift-constrained 45-degree segments, Alt/Option-drag temporarily
-   switching to freehand drawing, and closing by selecting the start point or double-clicking.
-   The data file includes those verified behaviors and omits the unconfirmed mouse-down drag claim.
+   switching to freehand drawing, Delete to undo the last segment, and closing at the start,
+   double-clicking, or Ctrl/Command-clicking away from the start. The data file includes those
+   verified behaviors and omits the unconfirmed mouse-down drag and Enter/Return close claims.
    Alt/Option-double-click straight closure is documented for the Magnetic Lasso, not this tool.
-   Source: <https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/isolate-specific-areas-in-images-with-lasso-tool.html>.
+   Source: <https://helpx.adobe.com/photoshop/desktop/make-selections/freehand-selections/draw-straight-edged-segments-of-a-selection-border.html>.
 
 5. **The Magnetic Lasso's fallback on a flat or uniform region**, where there is no gradient to
    snap to. The only statement found is a community wiki ("If no such region can be found, the
