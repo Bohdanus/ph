@@ -29,8 +29,8 @@ type TextToolAreaProps = {
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
 };
 
-const SMALL_CAPS_OVERLAY_RETRY_BASE_DELAY_MS = 250;
-const SMALL_CAPS_OVERLAY_RETRY_MAX_DELAY_MS = 2_000;
+const SMALL_CAPS_DRAFT_RETRY_BASE_DELAY_MS = 250;
+const SMALL_CAPS_DRAFT_RETRY_MAX_DELAY_MS = 2_000;
 
 export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) => {
   const [{ containerRef, toolOverlayRef, totalSize, layers, activeLayerId, documentFrame: currentFrame }] = useStore();
@@ -46,51 +46,51 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
 
   const args = toolArgs as TextToolArgs;
   const argsRef = useRef(args);
-  const smallCapsOverlayRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const smallCapsOverlayRetryAttemptRef = useRef(0);
-  const smallCapsOverlayRetryRectRef = useRef<RectXY | null>(null);
-  const smallCapsOverlayRetryCallbackRef = useRef<((rect: RectXY) => void) | null>(null);
+  const smallCapsDraftRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const smallCapsDraftRetryAttemptRef = useRef(0);
+  const smallCapsDraftRetryRectRef = useRef<RectXY | null>(null);
+  const smallCapsDraftRetryCallbackRef = useRef<((rect: RectXY) => void) | null>(null);
   useEffect(() => {
     argsRef.current = args;
     if (!args.text || !args.rect || !args.smallCaps || args.allCaps) {
-      if (smallCapsOverlayRetryTimerRef.current !== null) clearTimeout(smallCapsOverlayRetryTimerRef.current);
-      smallCapsOverlayRetryTimerRef.current = null;
-      smallCapsOverlayRetryAttemptRef.current = 0;
-      smallCapsOverlayRetryRectRef.current = null;
+      if (smallCapsDraftRetryTimerRef.current !== null) clearTimeout(smallCapsDraftRetryTimerRef.current);
+      smallCapsDraftRetryTimerRef.current = null;
+      smallCapsDraftRetryAttemptRef.current = 0;
+      smallCapsDraftRetryRectRef.current = null;
       clearSmallCapsTextDraftPreview(args.editingLayerId, args.editingLayerId ? 'hide-committed' : 'preserve');
     }
   }, [args, clearSmallCapsTextDraftPreview]);
 
   useEffect(
     () => () => {
-      if (smallCapsOverlayRetryTimerRef.current !== null) clearTimeout(smallCapsOverlayRetryTimerRef.current);
-      smallCapsOverlayRetryTimerRef.current = null;
-      smallCapsOverlayRetryAttemptRef.current = 0;
-      smallCapsOverlayRetryRectRef.current = null;
-      smallCapsOverlayRetryCallbackRef.current = null;
+      if (smallCapsDraftRetryTimerRef.current !== null) clearTimeout(smallCapsDraftRetryTimerRef.current);
+      smallCapsDraftRetryTimerRef.current = null;
+      smallCapsDraftRetryAttemptRef.current = 0;
+      smallCapsDraftRetryRectRef.current = null;
+      smallCapsDraftRetryCallbackRef.current = null;
     },
     []
   );
 
-  const cancelSmallCapsOverlayRetry = () => {
-    if (smallCapsOverlayRetryTimerRef.current !== null) clearTimeout(smallCapsOverlayRetryTimerRef.current);
-    smallCapsOverlayRetryTimerRef.current = null;
-    smallCapsOverlayRetryAttemptRef.current = 0;
-    smallCapsOverlayRetryRectRef.current = null;
+  const cancelSmallCapsDraftRetry = () => {
+    if (smallCapsDraftRetryTimerRef.current !== null) clearTimeout(smallCapsDraftRetryTimerRef.current);
+    smallCapsDraftRetryTimerRef.current = null;
+    smallCapsDraftRetryAttemptRef.current = 0;
+    smallCapsDraftRetryRectRef.current = null;
   };
 
-  const scheduleSmallCapsOverlayRetry = (rect: RectXY) => {
-    smallCapsOverlayRetryRectRef.current = rect;
-    if (smallCapsOverlayRetryTimerRef.current !== null) return;
+  const scheduleSmallCapsDraftRetry = (rect: RectXY) => {
+    smallCapsDraftRetryRectRef.current = rect;
+    if (smallCapsDraftRetryTimerRef.current !== null) return;
     const delay = Math.min(
-      SMALL_CAPS_OVERLAY_RETRY_BASE_DELAY_MS * 2 ** smallCapsOverlayRetryAttemptRef.current,
-      SMALL_CAPS_OVERLAY_RETRY_MAX_DELAY_MS
+      SMALL_CAPS_DRAFT_RETRY_BASE_DELAY_MS * 2 ** smallCapsDraftRetryAttemptRef.current,
+      SMALL_CAPS_DRAFT_RETRY_MAX_DELAY_MS
     );
-    smallCapsOverlayRetryAttemptRef.current += 1;
-    smallCapsOverlayRetryTimerRef.current = setTimeout(() => {
-      smallCapsOverlayRetryTimerRef.current = null;
-      const retryRect = smallCapsOverlayRetryRectRef.current;
-      if (retryRect) smallCapsOverlayRetryCallbackRef.current?.(retryRect);
+    smallCapsDraftRetryAttemptRef.current += 1;
+    smallCapsDraftRetryTimerRef.current = setTimeout(() => {
+      smallCapsDraftRetryTimerRef.current = null;
+      const retryRect = smallCapsDraftRetryRectRef.current;
+      if (retryRect) smallCapsDraftRetryCallbackRef.current?.(retryRect);
     }, delay);
   };
 
@@ -342,10 +342,14 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     if (currentArgs.smallCaps && !currentArgs.allCaps) {
       const publication = publishSmallCapsTextDraftPreview(currentArgs, rect);
       if (publication === 'overlay-deferred' && !currentArgs.editingLayerId) {
-        scheduleSmallCapsOverlayRetry(rect);
+        scheduleSmallCapsDraftRetry(rect);
         return;
       }
-      cancelSmallCapsOverlayRetry();
+      if (publication === 'failed' && currentArgs.editingLayerId) {
+        scheduleSmallCapsDraftRetry(rect);
+        return;
+      }
+      cancelSmallCapsDraftRetry();
       if (publication !== 'rendered') {
         // The overlay is above the full document canvas, so it cannot faithfully replace an
         // existing layer when opacity, blend mode, filters, or higher layers affect its pixels.
@@ -358,7 +362,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
         return;
       }
     } else {
-      cancelSmallCapsOverlayRetry();
+      cancelSmallCapsDraftRetry();
       clearSmallCapsTextDraftPreview(
         currentArgs.editingLayerId,
         currentArgs.editingLayerId ? 'hide-committed' : 'preserve'
@@ -372,7 +376,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
   }
 
   useEffect(() => {
-    smallCapsOverlayRetryCallbackRef.current = redrawDraftChrome;
+    smallCapsDraftRetryCallbackRef.current = redrawDraftChrome;
   });
 
   return <div className={`${className} cursor-text`} data-rotation={args.angle ?? 0} {...trackedPointerHandlers} />;

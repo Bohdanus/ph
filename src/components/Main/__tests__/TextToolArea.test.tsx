@@ -881,6 +881,46 @@ describe('TextToolArea', () => {
       }
     });
 
+    it('retries a failed Small Caps edit with the latest text and rectangle', () => {
+      const ctx = makeMockCtx();
+      const firstRect = { x1: 105, y1: 206, x2: 150, y2: 230 };
+      const latestRect = { x1: 112, y1: 208, x2: 194, y2: 232 };
+      toolArgs = makeTextArgs({ text: 'Wave', rect: firstRect, smallCaps: true, editingLayerId: 'text-1' });
+      h.publishSmallCapsTextDraftPreview
+        .mockReturnValueOnce('failed')
+        .mockReturnValueOnce('failed')
+        .mockReturnValueOnce('rendered');
+      vi.useFakeTimers();
+
+      const rendered = renderArea({ current: ctx });
+      try {
+        act(() => h.useRectProps.current!.onRepaint!(firstRect));
+        expect(h.publishSmallCapsTextDraftPreview).toHaveBeenCalledTimes(1);
+        expect(renderText).not.toHaveBeenCalled();
+
+        toolArgs = makeTextArgs({
+          text: 'Updated Small Caps',
+          rect: latestRect,
+          smallCaps: true,
+          editingLayerId: 'text-1',
+        });
+        rendered.rerender(<TextToolArea overlayCtxRef={{ current: ctx }} />);
+        act(() => h.useRectProps.current!.onRepaint!(latestRect));
+        expect(h.publishSmallCapsTextDraftPreview).toHaveBeenCalledTimes(2);
+        expect(h.publishSmallCapsTextDraftPreview).toHaveBeenNthCalledWith(2, toolArgs, latestRect);
+
+        act(() => vi.advanceTimersByTime(250));
+        expect(h.publishSmallCapsTextDraftPreview).toHaveBeenCalledTimes(3);
+        expect(h.publishSmallCapsTextDraftPreview).toHaveBeenNthCalledWith(3, toolArgs, latestRect);
+        expect(renderText).not.toHaveBeenCalled();
+        expect(ctx.fillText).not.toHaveBeenCalled();
+      } finally {
+        rendered.unmount();
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    });
+
     it('keeps the committed source hidden when a failed Small Caps edit returns to DOM text', () => {
       const ctx = makeMockCtx();
       const overlayCtxRef = { current: ctx };
