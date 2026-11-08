@@ -42,7 +42,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          'The blend mode for painted pixels. Behind is available only for Brush; Clear is available for Brush, Pencil, Paint Bucket, Fill and Stroke, and filled shape tools. These special modes require Lock Transparency to be deselected. Available modes vary by image color mode; Adobe lists 11 modes for 32-bit images. Normal is the default.',
+          'The blend mode for painted pixels. Behind is available only for the Brush tool. Clear is available for Brush, Pencil, Paint Bucket, Fill and Stroke, and for shape tools when a fill region is selected. These special modes require Lock Transparency to be deselected. Available modes vary by image color mode; Adobe lists 11 modes for 32-bit images. Normal is the default.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:131',
       },
@@ -761,7 +761,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          'The blend mode the copied pixels composite with. Available modes vary by tool and image color mode; Adobe lists 11 modes for 32-bit images. Neither special mode is available: Behind is Brush-only and Clear is restricted to the shape tools, Paint Bucket, Brush, Pencil, Fill and Stroke when Lock Transparency is deselected. The app renders no Mode control for the Clone Stamp. Normal is the default.',
+          'The blend mode the copied pixels composite with. Available modes vary by tool and image color mode; Adobe lists 11 modes for 32-bit images. Neither special mode is available: Behind is Brush-only, and Clear is limited to Brush, Pencil, Paint Bucket, Fill and Stroke, and shape tools when a fill region is selected. These modes require Lock Transparency to be deselected. The app renders no Mode control for the Clone Stamp. Normal is the default.',
         status: 'missing',
       },
       {

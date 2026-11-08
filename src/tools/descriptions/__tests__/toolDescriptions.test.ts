@@ -143,6 +143,15 @@ describe('toolDescriptions', () => {
     expect(quick.appNotes).toMatch(/Temporary modifier gestures.*absent/i);
   });
 
+  it('documents the fill-region condition for Clear on shape tools', () => {
+    for (const name of ['brush', 'clone-stamp'] as const) {
+      const mode = toolDescriptions[name].options.find((option) => option.control === 'Mode');
+      expect(mode?.detail, `${name}: Clear on shape tools requires a selected fill region`).toMatch(
+        /shape tools when a fill region is selected/i
+      );
+    }
+  });
+
   it('resolves a shape figure to its own description rather than the generic one', () => {
     // The five shape tiles all carry the name `shape` in `toolbarMap`, so a lookup on the
     // name alone would put the generic Shape Tool's summary under the Rectangle Tool.
