@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, join } from 'node:path';
@@ -18,6 +19,8 @@ import {
   zeroPriced,
 } from '../free-model-pool.mjs';
 import { COMPLETION_TIMEOUT_MS } from '../lib/free-model-kilo.mjs';
+
+vi.setConfig({ testTimeout: 30_000 });
 
 const completeWithFreeModel = async (prompt, options = {}) => {
   const temporaryDirectory = options.quarantineFile ? null : await mkdtemp(join(tmpdir(), 'free-model-pool-test-'));
@@ -688,6 +691,56 @@ process.exit(1);`
       runOpenCodeCompletion({ command: '/missing-opencode', model: 'beam', prompt: 'prompt', maxTokens: 8 })
     ).resolves.toMatchObject({ error: 'OpenCode model is not an eligible free catalog ID' });
   });
+
+  it('rejects invalid OpenCode timeouts before starting the CLI', async () => {
+    await expect(
+      runOpenCodeCompletion({ command: '/missing-opencode', model: 'beam-free', prompt: 'prompt', timeoutMs: 0 })
+    ).resolves.toMatchObject({ error: 'Invalid OpenCode timeout' });
+    await expect(
+      runOpenCodeCompletion({
+        command: '/missing-opencode',
+        model: 'beam-free',
+        prompt: 'prompt',
+        timeoutMs: COMPLETION_TIMEOUT_MS + 1,
+      })
+    ).resolves.toMatchObject({ error: 'Invalid OpenCode timeout' });
+  });
+
+  it('kills the OpenCode process tree after a timeout', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const pidFile = join(directory, 'descendant.pid');
+    const sentinel = join(directory, 'descendant-survived');
+    const descendantScript = `process.on('SIGTERM', () => {}); setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'), 4000); setInterval(() => {}, 1000);`;
+    const command = await writeFakeOpenCode(
+      directory,
+      `const { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nconst descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' });\nfs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));\nsetInterval(() => {}, 1000);\n`
+    );
+    let descendantPid;
+
+    try {
+      await expect(
+        runOpenCodeCompletion({
+          command,
+          model: 'beam-free',
+          prompt: 'prompt',
+          maxTokens: 8,
+          timeoutMs: 1000,
+        })
+      ).rejects.toThrow('OpenCode timed out after 1000ms');
+      descendantPid = Number(await readFile(pidFile, 'utf8'));
+      await new Promise((resolve) => setTimeout(resolve, 4500));
+      expect(existsSync(sentinel)).toBe(false);
+    } finally {
+      if (Number.isSafeInteger(descendantPid) && descendantPid > 0) {
+        try {
+          process.kill(descendantPid);
+        } catch (error) {
+          if (error?.code !== 'ESRCH') throw error;
+        }
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   it('rejects an explicit non-zero OpenCode cost even for a free catalog ID', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
