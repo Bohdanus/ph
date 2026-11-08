@@ -9,6 +9,7 @@
     "build": "vite build --logLevel silent",
     "dist": "vite build",
     "swarm": "node scripts/agent-board.mjs",
+    "main:landing": "node scripts/main-landing.mjs",
     "repo:state": "node scripts/repo-state-gate.mjs",
     "repo:state:recover-auto-merge": "node scripts/recover-stale-auto-merge.mjs",
     "branches:orphan": "node scripts/orphan-branches.mjs",

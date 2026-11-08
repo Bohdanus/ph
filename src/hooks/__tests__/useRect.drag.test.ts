@@ -5,7 +5,7 @@ import { CURSOR_MAP, HANDLE_SIZE } from '../../util/constants.ts';
 import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
 import { createPointerEvent } from '@/__tests__/fixtures/pointer.ts';
 import { createMockCanvasContext } from '../../test/setup.ts';
-import { useRect, type UseRectProps } from '../useRect.ts';
+import { ROTATE_HANDLE_OFFSET, useRect, type UseRectProps } from '../useRect.ts';
 
 /**
  * Interaction coverage for `useRect`.
@@ -1092,7 +1092,7 @@ describe('useRect pointer up and move tool', () => {
 
     expect(ctx.lineWidth).toBe(1);
     act(() => {
-      result.current.pointerHandlers.onPointerDown(event(200, 88));
+      result.current.pointerHandlers.onPointerDown(event(200, RECT.y1 - ROTATE_HANDLE_OFFSET));
     });
 
     expect(result.current.pointerState.currentEdgeRef.current).toBe('rotate');

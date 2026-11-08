@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url';
 
 import { hasChatTrailer, hasRequiredTrailers } from './commit-reviewed-landing.mjs';
 import { assertExpectedLandingHeads, findTakeovers, isProjectMainWorktree } from './merge-takeover-guard.mjs';
+import { assertLandingLease } from './main-landing.mjs';
 import {
   isIsolatedIndex,
   isReviewedLandingSnapshot,
@@ -190,6 +191,18 @@ export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = 
     const pendingMergeState = assertPendingMergeState(cwd, mergeHeads);
     if (reviewedLanding && (!projectMainWorktree || !worktree?.isMainWorktree)) {
       throw new Error('reviewed landing checkout changed away from the designated main worktree');
+    }
+    if (reviewedLanding && !env.KILO_MAIN_LANDING_LEASE_ID) {
+      throw new Error('pinned main landings require the owner lease from `npm run main:landing -- land ...`');
+    }
+    if (reviewedLanding) {
+      assertLandingLease(cwd, env.KILO_MAIN_LANDING_LEASE_ID, {
+        branch: env.KILO_EXPECTED_BRANCH,
+        chatId: env.KILO_EXPECTED_CHAT_ID,
+        mainSha: env.KILO_EXPECTED_MAIN_SHA,
+        incomingSha: env.KILO_EXPECTED_INCOMING_SHA,
+        treeSha: env.KILO_EXPECTED_TREE_SHA,
+      });
     }
     if (!reviewedLanding) {
       if (argv.length !== 1 || !argv[0]) throw new Error('Git did not provide the prepared commit message file');

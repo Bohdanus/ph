@@ -1072,7 +1072,7 @@ duplicate entry, are stale.
 **Current implementation evidence.** `Reposition.tsx` renders no Tool Preset Picker, Auto-Select,
 Group/Layer, Align/Distribute, Align-to, or numeric transform controls. `MoveToolArea.tsx` always
 hit-tests the topmost layer and draws a resize rectangle without a toggle. The code has no Move-tool
-Alt-drag duplicate, Shift axis-lock, or Shift-click multi-select path. Arrow-key nudges commit through
+Alt-drag duplicate, Shift axis-lock, or Shift-click multi-select path. Arrow-key nudges in `AppKeyboardShortcuts.tsx` commit through
 `updateLayerByTool` and are limited to one active unlocked non-bedrock layer when no selection is
 active. The `isLayerLocked()` checks in `useLayer.ts` now refuse edits/moves of locked layers; do not
 repeat older claims that locked layers remain draggable. Multi-layer selection remains blocked by the
@@ -1088,7 +1088,8 @@ divergences/product questions.
 
 **Files.** `src/tools/descriptions/transform.ts`; generated `docs/TOOLS.md` — "Move Tool";
 `src/components/ToolbarsRight/Move/Reposition.tsx`; `src/components/Main/MoveToolArea.tsx`;
-`src/hooks/useRect.ts`; `src/contexts/useLayer.ts`; `docs/LAYERS-PANEL.md`.
+`src/hooks/useRect.ts`; `src/contexts/useLayer.ts`;
+`src/components/Common/AppKeyboardShortcuts.tsx`; `docs/LAYERS-PANEL.md`.
 
 ## 123. Most pointer moves of a stroke still re-rasterize the stroke's whole bounding box
 

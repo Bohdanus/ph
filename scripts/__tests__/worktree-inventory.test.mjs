@@ -23,8 +23,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
@@ -571,6 +571,45 @@ describe('git.mjs against a real repository', () => {
       const tree = __testables.workingTreeState(dir, 'no-such-branch');
       expect(tree.modified).toBe(1);
       expect(tree.notOnBase).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('batches large modified-path comparisons for both inventory paths', async () => {
+    const dir = makeRepo();
+    const paths = Array.from(
+      { length: 320 },
+      (_, index) => `bulk-${String(index).padStart(3, '0')}-${'x'.repeat(120)}.txt`
+    );
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+      g('checkout', '--quiet', 'main');
+      for (const [index, path] of paths.entries()) writeFileSync(join(dir, path), `base-${index}`);
+      g('add', '.');
+      g('commit', '--quiet', '-m', 'add bulk paths to base');
+
+      g('checkout', '--quiet', 'side');
+      for (const [index, path] of paths.entries()) writeFileSync(join(dir, path), `side-${index}`);
+      g('add', '.');
+      g('commit', '--quiet', '-m', 'track bulk paths on side');
+      const offBasePaths = paths.filter((_, index) => index % 7 === 0);
+      for (const [index, path] of paths.entries()) {
+        writeFileSync(join(dir, path), index % 7 === 0 ? `only-side-${index}` : `base-${index}`);
+      }
+
+      const batches = __testables.batchPathArguments(['git', 'ls-tree', 'main', '--'], paths);
+      expect(batches.length).toBeGreaterThan(1);
+      expect(batches.flat()).toEqual(paths);
+      expect(__testables.batchPathArguments(['git', 'ls-tree', 'main', '--'], ['x'.repeat(8_000)])).toBe(null);
+
+      const syncTree = __testables.workingTreeState(dir, 'main');
+      expect(syncTree.modified).toBe(paths.length);
+      expect(syncTree.notOnBase).toBe(offBasePaths.length);
+
+      const [asyncWorktree] = await collectWorktrees(dir, { base: 'main' });
+      expect(asyncWorktree.workingTree.modified).toBe(paths.length);
+      expect(asyncWorktree.workingTree.notOnBase).toBe(offBasePaths.length);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -3313,9 +3352,154 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     });
     expect(clean.disposalCandidates).toEqual(['derived-shape']);
   });
+
+  it('withholds land and dispose recommendations when ownership sources are unavailable', () => {
+    const inventory = buildInventory({
+      worktrees: [
+        wt({ name: 'clean-candidate', ahead: 0, behind: 0, mergedIntoBase: true }),
+        wt({
+          name: 'land-candidate',
+          ahead: 1,
+          behind: 0,
+          mergedIntoBase: false,
+          patchEquivalence: PATCH_EQUIVALENCE.UNMERGED,
+          merge: { conflict: false, files: [] },
+        }),
+      ],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'fixture-main-head',
+      ...silent(),
+      writeAudit: { available: false, dbPath: null, reason: 'session database unavailable' },
+      ownershipAvailable: false,
+      nowMs: NOW,
+    });
+    const records = new Map(inventory.worktrees.map((record) => [record.name, record]));
+
+    expect(records.get('clean-candidate')).toMatchObject({
+      status: STATUS.LANDED,
+      recommendation: RECOMMENDATION.UNKNOWN,
+      action: ACTION.UNDECIDED,
+      prunable: false,
+    });
+    expect(records.get('land-candidate')).toMatchObject({
+      recommendation: RECOMMENDATION.UNKNOWN,
+      action: ACTION.UNDECIDED,
+    });
+    expect(records.get('clean-candidate')?.statusReasons).toContain(
+      'live ownership sources are unavailable, so landing or removing this worktree cannot be verified'
+    );
+    expect(inventory.readyToLand).toEqual([]);
+    expect(inventory.disposalCandidates).toEqual([]);
+  });
 });
 
 import * as chatsModule from '../lib/worktree-inventory/chats.mjs';
+
+describe('resolveSessionDb', () => {
+  function withEnv(values, run) {
+    const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    try {
+      run();
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  }
+
+  it('prefers an explicit KILO_DB path', () => {
+    withEnv(
+      {
+        KILO_DB: 'C:/custom/kilo.db',
+        XDG_DATA_HOME: 'C:/xdg',
+        APPDATA: undefined,
+        LOCALAPPDATA: undefined,
+        USERPROFILE: undefined,
+        HOME: undefined,
+      },
+      () => expect(chatsModule.resolveSessionDb('C:/fallback')).toBe('C:/custom/kilo.db')
+    );
+  });
+
+  it('uses XDG_DATA_HOME when it is set', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'kilo-xdg-'));
+    const database = join(directory, 'kilo', 'kilo.db');
+    mkdirSync(join(directory, 'kilo'));
+    writeFileSync(database, '');
+    try {
+      withEnv(
+        {
+          KILO_DB: undefined,
+          XDG_DATA_HOME: directory,
+          APPDATA: undefined,
+          LOCALAPPDATA: undefined,
+          USERPROFILE: undefined,
+          HOME: undefined,
+        },
+        () => expect(chatsModule.resolveSessionDb('C:/fallback')).toBe(database)
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the supplied home directory and then to the platform home', () => {
+    withEnv(
+      {
+        KILO_DB: undefined,
+        XDG_DATA_HOME: undefined,
+        APPDATA: undefined,
+        LOCALAPPDATA: undefined,
+        USERPROFILE: undefined,
+        HOME: undefined,
+      },
+      () => {
+        expect(chatsModule.resolveSessionDb('C:/profile')).toBe(
+          join('C:/profile', '.local', 'share', 'kilo', 'kilo.db')
+        );
+        expect(chatsModule.resolveSessionDb()).toBe(join(homedir(), '.local', 'share', 'kilo', 'kilo.db'));
+      }
+    );
+  });
+
+  it.skipIf(process.platform !== 'win32')('uses Windows application-data databases in order', () => {
+    const appData = mkdtempSync(join(tmpdir(), 'kilo-roaming-'));
+    const localAppData = mkdtempSync(join(tmpdir(), 'kilo-local-'));
+    const roamingDatabase = join(appData, 'kilo', 'kilo.db');
+    const localDatabase = join(localAppData, 'kilo', 'kilo.db');
+    mkdirSync(join(appData, 'kilo'));
+    mkdirSync(join(localAppData, 'kilo'));
+    writeFileSync(roamingDatabase, '');
+    writeFileSync(localDatabase, '');
+
+    try {
+      withEnv(
+        {
+          KILO_DB: undefined,
+          XDG_DATA_HOME: undefined,
+          APPDATA: appData,
+          LOCALAPPDATA: localAppData,
+          USERPROFILE: undefined,
+          HOME: undefined,
+        },
+        () => {
+          expect(chatsModule.resolveSessionDb()).toBe(roamingDatabase);
+          rmSync(roamingDatabase);
+          expect(chatsModule.resolveSessionDb()).toBe(localDatabase);
+        }
+      );
+    } finally {
+      rmSync(appData, { recursive: true, force: true });
+      rmSync(localAppData, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('the CLI staleness check', () => {
   const { equivalent } = await_import_cli();

@@ -369,13 +369,15 @@ overlay and its handles do render (`MoveToolArea.tsx` — the `useRect({ isMoveT
 and then a later pass swung it to `missing`, which is the opposite error: `types.ts` names
 "a control welded to one of its states" as a `partial` marker, and a row whose behaviour is
 permanently on is not a capability the app lacks. What renders in that same place
-(`MoveToolArea.tsx` — the `useRect({ isMoveTool: true })` call) is a **plain resize rectangle** on
-whichever layer is active, unconditionally: no checkbox gates it, so the citation is the behaviour
-and not a control, and that is what the row's `appRef` names. It is a resize rect — no rotation outside the box, no
-numeric W/H, no reference point. The geometric half of the tool is gone, and with it the two
-things `Cmd+T` and Move are supposed to share. **Auto-Select** is the same shape and is argued at
-length further down: the `layerUnderPointerId` hit test in `handlePointerDown()` always runs, and
-its `appRef` is that call for the same reason.
+(`MoveToolArea.tsx` — the `useRect({ isMoveTool: true })` call) is a **transform rectangle** on the
+active layer, unconditionally: no checkbox gates it, so the citation is the behaviour and not a
+control, and that is what the row's `appRef` names. Selected vector-shape layers with orthogonal
+retained affine frames have a rotation grip and an outside rotation band; their cursor follows the
+pointer tangent in eight 45-degree steps and uses a white under-stroke for contrast. Skewed shapes,
+raster and text layers retain their existing Move behavior; text continues to rotate in the Text tool.
+There is no numeric W/H or reference point. **Auto-Select** is the same shape and is argued at length
+further down: the `layerUnderPointerId` hit test in `handlePointerDown()` always runs, and its `appRef`
+is that call for the same reason.
 
 **The align buttons** are where the pre-existing corpus had a single row of widget names and no
 behaviour, and the behaviour is the interesting part:

@@ -28,13 +28,41 @@ const GROQ_MODELS = 'https://api.groq.com/openai/v1/models';
 const GROQ_CHAT = 'https://api.groq.com/openai/v1/chat/completions';
 export const CONTROL_PLANE_TIMEOUT_MS = 15_000;
 const MAX_ATTEMPTS_PER_SOURCE = 3;
+const MAX_OPENROUTER_RETRY_AFTER_MS = 60_000;
 const MAX_PROMPT_CHARS = 120_000;
 const MAX_PROMPT_FILE_BYTES = 480 * 1024;
 const MAX_OPENCODE_OUTPUT_BYTES = 1024 * 1024;
+const MAX_OPENCODE_TIMEOUT_MS = COMPLETION_TIMEOUT_MS;
 export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
 const NEMOTRON_3_ULTRA_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
 const XINGCHEN_XING4_MODEL = 'xingchen-agi/xing4.0-29b-a4b:free';
+const HTTP_DATE_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const HTTP_SHORT_DAY_PATTERN = 'Mon|Tue|Wed|Thu|Fri|Sat|Sun';
+const HTTP_LONG_DAY_PATTERN = 'Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday';
+const HTTP_MONTH_PATTERN = '(?:' + HTTP_DATE_MONTHS.join('|') + ')';
+const HTTP_WEEKDAY_NAMES = [
+  ['Sun', 'Sunday'],
+  ['Mon', 'Monday'],
+  ['Tue', 'Tuesday'],
+  ['Wed', 'Wednesday'],
+  ['Thu', 'Thursday'],
+  ['Fri', 'Friday'],
+  ['Sat', 'Saturday'],
+];
+const IMF_FIXDATE_PATTERN = new RegExp(
+  '^(?:' + HTTP_SHORT_DAY_PATTERN + '), (\\d{2}) (' + HTTP_MONTH_PATTERN + ') (\\d{4}) (\\d{2}):(\\d{2}):(\\d{2}) GMT$'
+);
+const RFC850_DATE_PATTERN = new RegExp(
+  '^(?:' + HTTP_LONG_DAY_PATTERN + '), (\\d{2})-(' + HTTP_MONTH_PATTERN + ')-(\\d{2}) (\\d{2}):(\\d{2}):(\\d{2}) GMT$'
+);
+const ASCTIME_DATE_PATTERN = new RegExp(
+  '^(?:' +
+    HTTP_SHORT_DAY_PATTERN +
+    ') (' +
+    HTTP_MONTH_PATTERN +
+    ') (?:([0-9]{2})| ([0-9])) (\\d{2}):(\\d{2}):(\\d{2}) (\\d{4})$'
+);
 const DISABLED_MODEL_PREFIXES = ['poolside/laguna'];
 const MIN_REASONING_COMPLETION_TOKENS = 1024;
 const PREFERRED_KILO_MODELS = [NEMOTRON_3_ULTRA_MODEL, XINGCHEN_XING4_MODEL];
@@ -42,6 +70,75 @@ const PREFERRED_OPENROUTER_MODELS = [NEMOTRON_3_ULTRA_MODEL, XINGCHEN_XING4_MODE
 const GROQ_FREE_MODEL = 'openai/gpt-oss-120b';
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
+
+function runWindowsCommand(command, args, timeoutMs = 7_000) {
+  return new Promise((resolve) => {
+    let child;
+    let timer;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    try {
+      child = spawn(command, args, { stdio: 'ignore', windowsHide: true });
+    } catch (error) {
+      finish({ error });
+      return;
+    }
+    child.once('error', (error) => finish({ error }));
+    child.once('close', (code, signal) => finish({ code, signal }));
+    timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {}
+      finish({ error: new Error(`${command} timed out after ${timeoutMs}ms`) });
+    }, timeoutMs);
+  });
+}
+
+async function terminateWindowsProcessTree(pid) {
+  const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
+  const taskkill = await runWindowsCommand(join(systemRoot, 'System32', 'taskkill.exe'), [
+    '/PID',
+    String(pid),
+    '/T',
+    '/F',
+  ]);
+  if (taskkill.code === 0) return;
+
+  const script = [
+    '$ErrorActionPreference = "Stop"',
+    `$rootPid = ${pid}`,
+    '$knownIds = @($rootPid)',
+    '$deadline = [DateTime]::UtcNow.AddSeconds(5)',
+    'do {',
+    '  $processes = @(Get-CimInstance Win32_Process)',
+    '  do {',
+    '    $previousCount = $knownIds.Count',
+    '    foreach ($process in $processes) {',
+    '      if (($knownIds -contains [int]$process.ParentProcessId) -and ($knownIds -notcontains [int]$process.ProcessId)) { $knownIds += [int]$process.ProcessId }',
+    '    }',
+    '  } while ($knownIds.Count -gt $previousCount)',
+    '  for ($index = $knownIds.Count - 1; $index -ge 0; $index--) { Stop-Process -Id $knownIds[$index] -Force -ErrorAction SilentlyContinue }',
+    '  Start-Sleep -Milliseconds 100',
+    '  $current = @(Get-CimInstance Win32_Process)',
+    '  $remaining = @($current | Where-Object { $knownIds -contains [int]$_.ProcessId -or $knownIds -contains [int]$_.ParentProcessId })',
+    '} while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)',
+    'if ($remaining.Count -gt 0) { exit 1 }',
+  ].join('\n');
+  const powerShell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const fallback = await runWindowsCommand(powerShell, ['-NoProfile', '-NonInteractive', '-Command', script]);
+  if (fallback.code === 0) return;
+
+  const describeFailure = (name, result) =>
+    `${name}: ${result.error?.message ?? `exited ${result.code ?? result.signal}`}`;
+  throw new Error(
+    `Windows process-tree termination failed (${describeFailure('taskkill', taskkill)}; ${describeFailure('PowerShell fallback', fallback)})`
+  );
+}
 
 // Reject unknown override conditions instead of guessing whether a paid price applies.
 const PRICING_OVERRIDE_CONDITIONS = new Set(['min_prompt_tokens', 'utc_days', 'utc_end', 'utc_start']);
@@ -247,6 +344,19 @@ function isExactZero(value) {
   return typeof value === 'string' && /^0+(?:\.0+)?$/.test(value);
 }
 
+function isNemotron3UltraCandidate(candidate) {
+  return /\bnemotron[\s.-]+3(?![\d.])[\s.-]+ultra\b/i.test(`${candidate.model} ${candidate.name ?? ''}`);
+}
+
+function prioritizeCandidatesByModel(candidates) {
+  const nemotron3Ultra = [];
+  const remaining = [];
+  for (const candidate of candidates) {
+    (isNemotron3UltraCandidate(candidate) ? nemotron3Ultra : remaining).push(candidate);
+  }
+  return [...nemotron3Ultra, ...remaining];
+}
+
 export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
   const rows = Array.isArray(data) ? data : (data?.data ?? []);
   const candidates = rows
@@ -295,10 +405,12 @@ export async function loadCatalogs({
     ? await loadQuarantineState(quarantineFile)
     : await readQuarantineState(quarantineFile);
   const quarantinedKeys = activeQuarantineKeys(quarantineState);
-  const sources = [{ source: 'kilo', url: KILO_MODELS }];
+  const sources = [
+    { source: 'opencode', url: OPENCODE_MODELS },
+    { source: 'kilo', url: KILO_MODELS },
+  ];
   if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
   if (groqKeys.length > 0 || includeGroq) sources.push({ source: 'groq', url: GROQ_MODELS, groqKeys });
-  sources.push({ source: 'opencode', url: OPENCODE_MODELS });
   const results = await Promise.allSettled(
     sources.map(async ({ source, url, groqKeys: sourceGroqKeys }) => {
       const headers = {};
@@ -353,11 +465,12 @@ export async function loadCatalogs({
       );
     })
   );
-  return results.flatMap((result, index) => {
+  const candidates = results.flatMap((result, index) => {
     if (result.status === 'fulfilled') return result.value;
     onCatalogError(sources[index].source, result.reason);
     return [];
   });
+  return prioritizeCandidatesByModel(candidates);
 }
 
 export async function probeOpenRouterQuota({
@@ -405,6 +518,95 @@ function retryAfterHint(response) {
     ?.get?.('retry-after')
     ?.replace(/[\r\n]/g, ' ')
     .slice(0, 100);
+}
+
+function utcHttpDateTimestamp(year, monthName, day, hour, minute, second) {
+  const month = HTTP_DATE_MONTHS.indexOf(monthName);
+  if (month < 0 || second > 60 || (second === 60 && (hour !== 23 || minute !== 59))) return null;
+
+  const normalizedSecond = Math.min(second, 59);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month, day);
+  date.setUTCHours(hour, minute, normalizedSecond, 0);
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month ||
+    date.getUTCDate() !== day ||
+    date.getUTCHours() !== hour ||
+    date.getUTCMinutes() !== minute ||
+    date.getUTCSeconds() !== normalizedSecond
+  ) {
+    return null;
+  }
+  return date.getTime() + (second === 60 ? 1000 : 0);
+}
+
+function httpDateWeekdayMatches(value, timestamp, second) {
+  if (!Number.isFinite(timestamp)) return false;
+  const commaIndex = value.indexOf(',');
+  const spaceIndex = value.indexOf(' ');
+  const weekday = value.slice(0, commaIndex >= 0 ? commaIndex : spaceIndex);
+  const dateTimestamp = timestamp - (second === 60 ? 1000 : 0);
+  return HTTP_WEEKDAY_NAMES[new Date(dateTimestamp).getUTCDay()]?.includes(weekday) ?? false;
+}
+
+function parseHttpDateTimestamp(value, now) {
+  let match = value.match(IMF_FIXDATE_PATTERN);
+  if (match) {
+    const timestamp = utcHttpDateTimestamp(
+      Number(match[3]),
+      match[2],
+      Number(match[1]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6])
+    );
+    return httpDateWeekdayMatches(match[0], timestamp, Number(match[6])) ? timestamp : null;
+  }
+
+  match = value.match(RFC850_DATE_PATTERN);
+  if (match) {
+    const currentYear = new Date(now).getUTCFullYear();
+    const year = Math.floor(currentYear / 100) * 100 + Number(match[3]);
+    const dateParts = [match[2], Number(match[1]), Number(match[4]), Number(match[5]), Number(match[6])];
+    let retryAt = utcHttpDateTimestamp(year, ...dateParts);
+    if (!Number.isFinite(retryAt)) return null;
+
+    const fiftyYearsLater = new Date(now);
+    fiftyYearsLater.setUTCFullYear(currentYear + 50);
+    if (retryAt > fiftyYearsLater.getTime()) retryAt = utcHttpDateTimestamp(year - 100, ...dateParts);
+    return httpDateWeekdayMatches(match[0], retryAt, dateParts[4]) ? retryAt : null;
+  }
+
+  match = value.match(ASCTIME_DATE_PATTERN);
+  if (match) {
+    const timestamp = utcHttpDateTimestamp(
+      Number(match[7]),
+      match[1],
+      Number(match[2] ?? match[3]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6])
+    );
+    return httpDateWeekdayMatches(match[0], timestamp, Number(match[6])) ? timestamp : null;
+  }
+
+  return undefined;
+}
+
+export function retryAfterDelayMs(response, now = Date.now()) {
+  const value = response?.headers?.get?.('retry-after')?.trim();
+  if (!value) return null;
+
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
+    const delayMs = seconds * 1000;
+    return Number.isSafeInteger(delayMs) ? delayMs : Number.MAX_SAFE_INTEGER;
+  }
+  if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value)) return null;
+
+  const retryAt = parseHttpDateTimestamp(value, now);
+  return Number.isFinite(retryAt) ? Math.max(0, retryAt - now) : null;
 }
 
 function failureReason(response, payload) {
@@ -572,12 +774,21 @@ const OPENCODE_TOOL_DENY_CONFIG = JSON.stringify({
   policies: [{ action: 'tool.use', resource: '*', effect: 'deny' }],
 });
 
-export async function runOpenCodeCompletion({ command = 'opencode', model, prompt, maxTokens = 1200 }) {
+export async function runOpenCodeCompletion({
+  command = 'opencode',
+  model,
+  prompt,
+  maxTokens = 1200,
+  timeoutMs = MAX_OPENCODE_TIMEOUT_MS,
+}) {
   if (typeof model !== 'string' || !/^[A-Za-z0-9._/-]+-free$/.test(model)) {
     return { error: 'OpenCode model is not an eligible free catalog ID' };
   }
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
     return { error: 'Invalid token limit' };
+  }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_OPENCODE_TIMEOUT_MS) {
+    return { error: 'Invalid OpenCode timeout' };
   }
   const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-'));
   const promptPath = join(directory, 'request.txt');
@@ -602,26 +813,67 @@ export async function runOpenCodeCompletion({ command = 'opencode', model, promp
         promptPath,
         `Answer the attached request concisely (about ${maxTokens} tokens or fewer). Do not use tools.`,
       ];
-      const commandShim = resolveCommandShim(command, args);
+      const commandShim = resolveCommandShim(command, args, { env, cwd: directory });
       const child = spawn(commandShim.command, commandShim.args, {
         cwd: directory,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,
+        detached: process.platform !== 'win32',
+        windowsHide: true,
         ...commandShim.spawnOptions,
       });
       const chunks = [];
       let outputBytes = 0;
+      let stopping = false;
+      let timedOut = false;
+      let outputExceeded = false;
+      let terminationError = null;
       let killTimer;
+      let killPromise = Promise.resolve();
       const stopChild = () => {
-        child.kill('SIGTERM');
-        killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+        if (stopping) return killPromise;
+        stopping = true;
+        if (process.platform === 'win32') {
+          killPromise = terminateWindowsProcessTree(child.pid).catch((error) => {
+            terminationError = error;
+            try {
+              child.kill('SIGKILL');
+            } catch {}
+            clearTimeout(timer);
+            reject(new Error(`OpenCode process termination failed: ${terminationError.message}`));
+          });
+          return killPromise;
+        }
+        try {
+          process.kill(-child.pid, 'SIGTERM');
+        } catch (error) {
+          if (error?.code !== 'ESRCH') terminationError = error;
+        }
+        killPromise = new Promise((resolveKill) => {
+          killTimer = setTimeout(() => {
+            try {
+              process.kill(-child.pid, 'SIGKILL');
+            } catch (error) {
+              if (error?.code !== 'ESRCH') terminationError = error;
+            }
+            resolveKill();
+          }, 2_000);
+        });
+        return killPromise;
       };
-      const timer = setTimeout(stopChild, COMPLETION_TIMEOUT_MS);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        void stopChild();
+      }, timeoutMs);
       child.stdout.on('data', (chunk) => {
         outputBytes += chunk.byteLength;
-        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) stopChild();
-        else chunks.push(chunk);
+        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) {
+          outputExceeded = true;
+          void stopChild();
+        } else {
+          chunks.push(chunk);
+        }
       });
       child.stderr.on('data', () => {});
       child.once('error', (error) => {
@@ -631,34 +883,35 @@ export async function runOpenCodeCompletion({ command = 'opencode', model, promp
       });
       child.once('close', (code, signal) => {
         clearTimeout(timer);
-        clearTimeout(killTimer);
-        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) {
-          reject(new Error(`OpenCode output exceeded ${MAX_OPENCODE_OUTPUT_BYTES} bytes`));
-          return;
-        }
-        let parsed;
-        try {
-          parsed = Buffer.concat(chunks)
-            .toString('utf8')
-            .split(/\r?\n/)
-            .filter(Boolean)
-            .map((line) => JSON.parse(line));
-        } catch {
-          reject(new Error('OpenCode returned malformed JSONL output'));
-          return;
-        }
-        if (code !== 0) {
-          const providerError = parsed.find((event) => event.type === 'error')?.error;
-          const type =
-            typeof providerError?.type === 'string' && /^[a-z0-9._-]+$/i.test(providerError.type)
-              ? providerError.type
-              : '';
-          const status = Number(providerError?.status);
-          const statusText = Number.isInteger(status) && status >= 100 && status <= 599 ? ` (HTTP ${status})` : '';
-          reject(new Error(`OpenCode exited ${code ?? signal}${type ? `: ${type}${statusText}` : ''}`));
-          return;
-        }
-        resolve(parsed);
+        void (async () => {
+          if (stopping) await killPromise;
+          clearTimeout(killTimer);
+          if (terminationError) throw new Error(`OpenCode process termination failed: ${terminationError.message}`);
+          if (timedOut) throw new Error(`OpenCode timed out after ${timeoutMs}ms`);
+          if (outputExceeded) throw new Error(`OpenCode output exceeded ${MAX_OPENCODE_OUTPUT_BYTES} bytes`);
+
+          let parsed;
+          try {
+            parsed = Buffer.concat(chunks)
+              .toString('utf8')
+              .split(/\r?\n/)
+              .filter(Boolean)
+              .map((line) => JSON.parse(line));
+          } catch {
+            throw new Error('OpenCode returned malformed JSONL output');
+          }
+          if (code !== 0) {
+            const providerError = parsed.find((event) => event.type === 'error')?.error;
+            const type =
+              typeof providerError?.type === 'string' && /^[a-z0-9._-]+$/i.test(providerError.type)
+                ? providerError.type
+                : '';
+            const status = Number(providerError?.status);
+            const statusText = Number.isInteger(status) && status >= 100 && status <= 599 ? ` (HTTP ${status})` : '';
+            throw new Error(`OpenCode exited ${code ?? signal}${type ? `: ${type}${statusText}` : ''}`);
+          }
+          return parsed;
+        })().then(resolve, reject);
       });
     });
     if (
@@ -727,6 +980,7 @@ export async function completeWithFreeModel(
     runOpenCode = runOpenCodeCompletion,
     checkOpenRouterQuota = false,
     maxTokens = 1200,
+    waitForRetryAfter = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     initializeLegacyQuarantine = true,
     onCatalogError = () => {},
@@ -788,23 +1042,36 @@ export async function completeWithFreeModel(
       );
     }
   }
-  const handleOpenRouterFailure = async (status, model, response) => {
+  const handleOpenRouterFailure = async (status, model, response, hasNextCandidate) => {
     if (status === 401 || status === 402) {
       exhausted.add('openrouter');
-      return;
+      return null;
     }
-    if (status !== 429) return;
+    if (status !== 429 && status !== 503) return 0;
 
-    const remainingHeader = response?.headers?.get?.('x-ratelimit-remaining');
-    if (typeof remainingHeader === 'string' && remainingHeader.trim() !== '') {
-      const remaining = Number(remainingHeader);
-      if (Number.isFinite(remaining) && remaining <= 0) {
-        exhausted.add('openrouter');
-        stderr.write(
-          `OpenRouter rate-limit headers report no remaining requests for ${model}; skipping this source for the run.\n`
-        );
-        return;
+    if (status === 429) {
+      const remainingHeader = response?.headers?.get?.('x-ratelimit-remaining');
+      if (typeof remainingHeader === 'string' && remainingHeader.trim() !== '') {
+        const remaining = Number(remainingHeader);
+        if (Number.isFinite(remaining) && remaining <= 0) {
+          exhausted.add('openrouter');
+          stderr.write(
+            `OpenRouter rate-limit headers report no remaining requests for ${model}; skipping this source for the run.\n`
+          );
+          return null;
+        }
       }
+    }
+
+    if (!hasNextCandidate) return 0;
+
+    const retryAfterMs = retryAfterDelayMs(response);
+    if (retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
+      exhausted.add('openrouter');
+      stderr.write(
+        `OpenRouter returned HTTP ${status} with Retry-After above ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this source for the run.\n`
+      );
+      return null;
     }
 
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
@@ -813,24 +1080,28 @@ export async function completeWithFreeModel(
       if (quota.remaining <= 0) {
         exhausted.add('openrouter');
         stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter models.\n');
-      } else {
+        return null;
+      }
+      if (status === 429) {
         stderr.write(
           `OpenRouter model ${model} returned HTTP 429 with ${quota.remaining} daily free requests remaining; trying another verified-free model.\n`
         );
       }
-      return;
-    }
-    if (quota.reason === 'http_401' || quota.reason === 'http_402') {
+    } else if (quota.reason === 'http_401' || quota.reason === 'http_402') {
       exhausted.add('openrouter');
       stderr.write(`OpenRouter quota check returned ${quota.reason}; skipping OpenRouter for this run.\n`);
-      return;
+      return null;
+    } else {
+      stderr.write(
+        `OpenRouter model ${model} returned HTTP ${status}; daily quota is unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}), so continuing within the per-run limit.\n`
+      );
     }
 
-    stderr.write(
-      `OpenRouter model ${model} returned HTTP 429; daily quota is unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}), so trying another verified-free model within the per-run limit.\n`
-    );
+    if (retryAfterMs === null || retryAfterMs === 0) return 0;
+    stderr.write(`Honoring OpenRouter Retry-After (${Math.ceil(retryAfterMs / 1000)}s) before trying another model.\n`);
+    return retryAfterMs;
   };
-  for (const candidate of available) {
+  for (const [candidateIndex, candidate] of available.entries()) {
     if (exhausted.has(candidate.source)) continue;
     const sourceAttempts = attempts.get(candidate.source) ?? 0;
     if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
@@ -1027,7 +1298,13 @@ export async function completeWithFreeModel(
       errors.push(
         `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
-      if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
+      const hasNextOpenRouterCandidate =
+        available.slice(candidateIndex + 1).some((entry) => entry.source === 'openrouter') &&
+        (attempts.get('openrouter') ?? 0) < MAX_ATTEMPTS_PER_SOURCE;
+      const retryAfterMs =
+        candidate.source === 'openrouter'
+          ? await handleOpenRouterFailure(response.status, candidate.model, response, hasNextOpenRouterCandidate)
+          : 0;
       if (
         response.status === 401 ||
         (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
@@ -1035,7 +1312,8 @@ export async function completeWithFreeModel(
         exhausted.add(candidate.source);
       const attemptNumber = attempts.get(candidate.source) ?? 0;
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      await delay(backoffMs);
+      if (retryAfterMs > 0) await waitForRetryAfter(Math.max(backoffMs, retryAfterMs));
+      else await delay(backoffMs);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
@@ -1089,7 +1367,13 @@ export async function completeWithFreeModel(
       ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
       : failureReason(response, payload);
     errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
-    if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
+    const hasNextOpenRouterCandidate =
+      available.slice(candidateIndex + 1).some((entry) => entry.source === 'openrouter') &&
+      (attempts.get('openrouter') ?? 0) < MAX_ATTEMPTS_PER_SOURCE;
+    const retryAfterMs =
+      candidate.source === 'openrouter'
+        ? await handleOpenRouterFailure(response.status, candidate.model, response, hasNextOpenRouterCandidate)
+        : 0;
     if (
       response.status === 401 ||
       (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
@@ -1097,7 +1381,8 @@ export async function completeWithFreeModel(
       exhausted.add(candidate.source);
     const attemptNumber = attempts.get(candidate.source) ?? 0;
     const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-    await delay(backoffMs);
+    if (retryAfterMs > 0) await waitForRetryAfter(Math.max(backoffMs, retryAfterMs));
+    else await delay(backoffMs);
   }
   throw new Error(
     `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.map((e) => sanitizeErrorMessage(e)).join(' | ') || 'No eligible free models were available.'}`

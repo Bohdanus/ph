@@ -88,12 +88,14 @@ const POLL_BUDGET_AFTER_DUE_MS = 1500;
  * first place.
  *
  * `aria-haspopup="menu"` is the app's own statement that a tile HAS a flyout
- * (`SidebarLeft.tsx:645`), so it is the filter rather than a name list — a tile with no group
- * behind it carries no such attribute and is not a subject here.
+ * (the SidebarLeft tile renderer sets it), and `data-toolbar-fit-plan-visible` separates the
+ * visible rail tiles from collapsed buttons that remain mounted for layout measurement.
+ * The overflow tile is visible when groups are folded and is included here; the hidden tool
+ * buttons are not long-press targets.
  */
 const flyoutTiles = async (page: Page): Promise<string[]> =>
   page
-    .locator('[data-toolbar-tile][aria-haspopup="menu"]')
+    .locator('[data-toolbar-tile][aria-haspopup="menu"][data-toolbar-fit-plan-visible="true"]')
     .evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute('data-testid') ?? ''));
 
 /**
@@ -347,15 +349,13 @@ test.describe('SidebarLeft - long-press flyout is not a timing race', () => {
     expect(await getPageScroll(page)).toEqual(before);
   });
 
-  test('opens every grouped tile, repeatedly', async ({ page }) => {
+  test('opens every visible flyout tile, repeatedly', async ({ page }) => {
     // The helper is called once per test by the suite, so a helper that only works the first
     // time in a page — because of state it left behind — passes every existing spec.
     //
-    // The tile list is read from the DOM, so this covers whatever flyout tiles the rail
-    // actually has at this viewport, the three-dots tile included. It used to be a typed list
-    // of five tool names, of which four were folded out of the rail at the time — three still are,
-    // now that the fit takes the whole slot. Each of those took the three-dots branch and
-    // reopened the SAME menu, so the test exercised one tile five times and reported it as five.
+    // The fit plan keeps collapsed buttons mounted, so only tiles it marks visible are real
+    // pointer targets. This covers every visible group plus the three-dots tile; responsive-shell
+    // separately proves the folded groups are available from its menu.
     const tiles = await flyoutTiles(page);
     expect(tiles.length, 'the rail must have flyout tiles for this to test anything').toBeGreaterThan(0);
 

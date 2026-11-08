@@ -88,6 +88,10 @@ function describeWorktree(finding) {
   if (finding.readError)
     lines.push(`    NOT READ: ${finding.readError}. This is not a statement that nothing is happening here.`);
 
+  if (finding.branch === 'main' && finding.operations.length > 0) {
+    lines.push('    Identify the landing owner from a task worktree with `npm run main:landing -- status`.');
+  }
+
   for (const operation of finding.operations) {
     lines.push(`    in progress: ${operation.operation}  [${operation.marker}]`);
     if (operation.value) lines.push(`      ${operation.operation} target: ${operation.value}`);

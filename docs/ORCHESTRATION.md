@@ -79,10 +79,11 @@ required for cross-module, persistence, migration, or high-risk changes.
 
 `main-worktree-guard` is post-write; worktrees must exist before fan-out. Swarm leases renew on
 swarm commands, not during long waits. Inventory omits branch-only refs; `branches:orphan` reports
-but does not decide them. Prepare every clean merge in any worktree with
-`git merge --no-commit --no-ff <sha>`, then record it with `git commit`; the direct
-self-committing merge hook cannot identify the incoming commit and refuses it. On `main`, also
-set the reviewed parent and tree pins. Pins are operator-supplied review evidence, not a
+but does not decide them. Prepare clean feature merges in their task worktree with
+`git merge --no-commit --no-ff <sha>`, then record them with `git commit`; the direct
+self-committing merge hook cannot identify the incoming commit and refuses it. On `main`, use
+the owner-tracked landing wrapper and supply reviewed parent and tree pins. Pins are review
+evidence, not a
 cryptographic approval token. Fast-forwards and `git merge --squash -X ours` bypass the blocking
 hooks.
 
@@ -188,15 +189,15 @@ rogue commits nobody can attribute" into "a dirty tree the next `git status`
 names" — the write side is the process rule above, and the guard is the floor
 under it.
 
-A separate merge-hook rule applies in every worktree: prepare clean merges with
+A separate merge-hook rule applies in every worktree: prepare clean feature merges with
 `git merge --no-commit --no-ff <full-sha>` and record them with `git commit`.
 The `pre-merge-commit` hook unconditionally refuses direct self-committing merges;
 prepare them with `--no-commit` so the next hook can inspect `MERGE_HEAD`. Feature merges may omit the five
-landing pins; a merge into `main` requires them. If a direct merge is refused,
+landing pins; a merge into `main` uses the owner-tracked wrapper and requires them. If a direct merge is refused,
 check whether Git left `MERGE_HEAD` and abort only that exact attempt before
-retrying through the documented prepared-merge flow. Commit a main landing with
-`node scripts/commit-reviewed-landing.mjs` so Git reads the reviewed private
-index snapshot after its hooks run. Land one candidate at a time; octopus merges
+retrying through the documented prepared-merge flow. Land a main candidate with
+`npm run main:landing -- land ...`; the wrapper calls `commit-reviewed-landing.mjs` after taking
+an owner lease. Land one candidate at a time; octopus merges
 are refused because their multiple incoming commits cannot be checked against a
 single candidate SHA.
 
@@ -221,16 +222,15 @@ first snapshot, marker removal is detected and the commit is refused.
 
 Three things stay allowed, each deliberately:
 
-- **A pinned landing.** Prepare a clean merge in `main` with
-  `git merge --no-commit --no-ff <reviewed-sha>`, then commit from the reviewed
-  private index snapshot with `node scripts/commit-reviewed-landing.mjs`.
-  `pre-commit` verifies `HEAD`, the actual `MERGE_HEAD`, the staged tree, and
-  reviewed snapshot marker before allowing the commit. `commit-msg` repeats the
-  snapshot checks and verifies the final message after `prepare-commit-msg` has
-  run. The `pre-merge-commit` hook refuses direct self-committing merges on every
-  supported Git version; a fast-forward invokes no
-  blocking hook, so neither path is a landing procedure. The merge still invokes
-  the non-blocking `post-merge` hook after it is recorded.
+- **A pinned landing.** Use `npm run main:landing -- land ...` with the reviewed parent,
+  candidate, tree, source branch, and chat pins. The wrapper prepares the clean merge in `main`,
+  takes the exclusive owner lease, refreshes shared hook dispatchers, and commits from the reviewed
+  private index snapshot. The hooks still compare `HEAD`, Git's actual `MERGE_HEAD`, the staged
+  result tree, and the snapshot marker against the reviewed pins. The marker helps detect accidental
+  alternate-index use; a same-user caller can deliberately construct it, so it is not an
+  authentication boundary. The helper requires matching `Branch:` and `Chat:` trailers and checks
+  that the source branch still resolves to the reviewed incoming SHA. Fast-forward and squash
+  merges bypass this blocking check and are not the harvest landing path.
 - **An operator hotfix the operator asked for on `main` by name** —
   `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`, because a truthiness test
   would read `ALLOW_MAIN_COMMIT=0` as permission and turn a spelling that looks
@@ -240,51 +240,141 @@ Three things stay allowed, each deliberately:
   broken environment, not a decision, and blocking there would trade a real gate
   for a phantom one.
 
+### Main landing ownership and deadlock recovery
+
+Use `npm run main:landing -- status` before a main landing. The command reports the owner branch,
+chat ID, script, owner/child PIDs, current step, lease, age, and any unowned Git operation. All
+reviewed main landings go through `npm run main:landing -- land ...`; the exclusive lease lives in
+the common Git directory and remains when a failed wrapper leaves Git state behind. The wrapper
+refreshes shared hook dispatchers before it commits. A pinned landing commit without a current
+lease is refused by the commit helper and message guard.
+
+A detached watcher posts a shared swarm note when the lease reaches 15 minutes and four hours.
+At 15 minutes, every other agent should mention the blocker in its own current chat and continue
+unrelated work. It must not wait for the landing owner or modify the occupied worktree.
+
+If the operator confirms the owner process tree has stopped and `main:landing status` reports a
+clean main checkout with no Git operation, the operator can release the abandoned reservation
+immediately. `release-stale` archives the owner record and refuses to run if main is dirty or has
+operation markers:
+
+```sh
+npm run main:landing -- release-stale --token "$LEASE" --confirm-owner-stopped
+```
+
+If `status` reports a lease directory with no owner record, the landing process may have stopped
+between creating the directory and writing its owner file. After confirming the full holder process
+tree has stopped, use this guarded command only when `status` also shows clean `main` with no Git
+operation. It archives the directory, and refuses if an owner record or unexpected files appeared;
+it does not resolve or discard Git state:
+
+```sh
+npm run main:landing -- release-incomplete \
+  --confirm-holder-stopped \
+  --confirm-no-other-recovery
+```
+
+If `status` reports an owner-control lock left by a stopped recovery command, first confirm its
+recorded process is stopped and that no other recovery command is running. Then clear only that
+coordination file with the guarded command below; this does not release the landing lease or
+change Git state. Do not use it to clear the owner lease directory:
+
+```sh
+npm run main:landing -- clear-control-lock \
+  --confirm-control-process-stopped \
+  --confirm-no-other-recovery
+```
+
+For dirty or unmerged state, keep the lease and use the four-hour recovery path unless the operator
+personally takes responsibility for an earlier preservation and recovery.
+
+At four hours, an agent that sees the alert must check the owning chat's structured host liveness
+and the full holder process tree without opening transcripts. The reported PIDs are direct
+processes, not proof that every descendant has exited. If the chat is confirmed dead and the
+landing process tree has stopped, launch the required Luna 6 (`gpt-6-luna`, `xhigh`) recovery subagent. This is
+the user-authorized paid recovery exception; research and routine reviews remain free-first. The
+`takeover` command records a new recovery lease only after the agent supplies both confirmations
+and the old lease token. A live owner or child PID can be overridden only with its separate
+`--confirm-owner-pid-reused` or `--confirm-child-pid-reused` flag after verifying that PID belongs to
+an unrelated process and the full landing process tree is stopped. The model and PID-reuse flags
+are assertions, not host authentication; the agent launcher must actually
+use Luna xhigh. Create and verify a dedicated recovery task worktree before launching Luna, and
+give it the absolute path, old lease token, and a recovery-only write set. Resolve the new chat ID
+with the current host's instructions in `CHAT-ID.md`.
+
+From Luna's recovery task worktree, claim the lease with the command below, using the token shown
+by `main:landing status` and Luna's verified branch and chat ID:
+
+```sh
+npm run main:landing -- takeover \
+  --token "$OLD_LEASE" \
+  --branch "$RECOVERY_BRANCH" \
+  --chat "$RECOVERY_CHAT_ID" \
+  --model gpt-6-luna \
+  --reasoning xhigh \
+  --confirm-owner-stopped \
+  --confirm-chat-dead
+```
+
+The takeover changes no Git files, refs, index, or operation markers. First run `repo:state`, inspect
+`main:landing status`, and preserve the old worktree and its administrative Git directory. The
+preferred recovery is to establish a new clean main landing worktree while leaving the occupied
+worktree untouched:
+
+```sh
+# From the verified recovery task worktree, with NEW_MAIN under .kilo/worktrees/.
+# If the registered main path is C:/..., use Git for Windows and Windows Node even when the task
+# worktree is opened through /mnt/c. For native Linux clones, use WSL Git and Node.
+git worktree add --force "$NEW_MAIN" refs/heads/main
+cd "$NEW_MAIN"
+node scripts/install-git-hooks.js
+git rev-parse --show-toplevel
+git rev-parse --git-dir --git-common-dir
+git status --short
+```
+
+`--force` deliberately allows the same `main` branch to remain checked out in the old worktree
+([Git worktree documentation](https://git-scm.com/docs/git-worktree)).
+Use it only after confirming the old holder is stopped and preserving its dirty files, index, and
+Git admin directory; keep that old worktree untouched as the recovery source. Installing hooks
+from the new checkout updates the designated-main registration. The new lease invalidates the
+old token in both the commit helper and final message guard. Verify that `main:landing status`
+reports this path, `main` and a clean Git state before releasing the new lease with
+`npm run main:landing -- release --token "$NEW_LEASE"`. Do not remove or prune the old worktree as
+part of this takeover. If a clean replacement is not viable, copy every dirty and untracked file
+plus the exact operation metadata into a dedicated recovery worktree before any cleaning or
+resolution, then resume through the normal reviewed landing flow. Never use `git stash` or
+reset/abort an operation whose owner or state is unclear.
+
 ### Landing
 
 - **The main worktree is a landing, not a negotiation.** A branch merges into
   `main` only after `main` has already been merged or rebased **into the branch,
   in the branch's own worktree**, and the gates re-run there. The merge into
-  `main` is then a mechanical two-parent commit with nothing to decide, prepared
-  with `--no-commit --no-ff` so its actual `MERGE_HEAD` can be checked. Merging a
+  `main` is then a mechanical two-parent commit with nothing to decide. The
+  owner-tracked wrapper prepares it with `--no-commit --no-ff` so its actual `MERGE_HEAD` can be checked. Merging a
   stale branch straight into `main` puts the conflicts in a
   shared checkout where every other session is committing.
 - **A harvest must pin both merge parents, its tree, source branch, and chat.** Before review
-  and gates, record the exact `main` SHA, candidate SHA/tree, source branch, and chat ID. Prepare
-  the final non-fast-forward landing with `git merge --no-commit --no-ff <full-reviewed-sha>`,
-  then pass `KILO_EXPECTED_MAIN_SHA`, `KILO_EXPECTED_INCOMING_SHA`, `KILO_EXPECTED_TREE_SHA`,
-  `KILO_EXPECTED_BRANCH`, and `KILO_EXPECTED_CHAT_ID` to
-  `node scripts/commit-reviewed-landing.mjs` as shown in
-  `.skills/worktree-merge-harvest.md` §Step 6. The helper requires exactly matching `Branch:`
-  and `Chat:` trailers, verifies that the source branch still resolves to the reviewed incoming
-  SHA, and creates a mode-restricted workflow marker for its private index snapshot. The marker
-  helps detect accidental alternate-index use; a same-user caller can deliberately construct
-  it, so it is not an authentication boundary. In the project main
-  worktree, `main-worktree-guard.mjs` and `merge-takeover-guard.mjs` compare the pins with
-  `HEAD`, Git's actual `MERGE_HEAD`, the staged result tree, and that marker before creating the
-  merge commit. The `commit-msg` hook checks the final `Branch:` and `Chat:` trailers after
-  `prepare-commit-msg`, which can rewrite the message after `pre-commit`. The pins bind the
-  prepared operation to the reviewed record; they do not
-  authenticate who supplied them. Reflog text is caller-controlled and is not used to identify
-  the incoming side.
-  A board claim coordinates paths but is not a main-ref lock. Fast-forward and
-  squash merges bypass this blocking check and are not the harvest landing path.
-- **The landing checkout must be clean before the merge starts.** Run `git status --short` and
-  `git diff --cached --stat`; any path you do not own is a hard stop.
-  Do not stage, stash, reset, abort, or resolve another session's work to make the
-  landing appear clean. Wait for its owner; do not create a second checkout to
-  update the same `main` branch ref.
-- **Refresh shared hook dispatchers when a candidate adds a hook.** After preparing a
-  conflict-free merge that adds the tracked hook file, run `node scripts/install-git-hooks.js`
-  from the candidate worktree and verify its dispatcher exists in the common Git directory,
-  before creating the landing commit. If a non-main linked worktree has not synced the tracked
-  hook yet, the shared dispatcher still requires exactly one non-empty `Chat:` trailer; it
-  skips only the main landing checks. It fails closed on `main`.
+  and gates, record the exact `main` SHA, candidate SHA/tree, source branch, and chat ID. Pass
+  those pins to `npm run main:landing -- land ...` as shown in
+  `.skills/worktree-merge-harvest.md` §Step 6. The source branch must still resolve to the reviewed
+  candidate SHA. Pins are review evidence, not a cryptographic approval token; reflog text is not
+  used to identify the incoming side. A board claim coordinates paths but is not a main-ref lock.
+- **The landing checkout must be clean before the merge starts.** Run `npm run main:landing -- status`;
+  any path you do not own is a hard stop. Do not stage, stash,
+  reset, abort, or resolve another session's work to make the landing appear clean. Report the
+  holder in your current chat and continue unrelated work; do not wait or edit `MAIN`.
+- The landing wrapper refreshes shared hook dispatchers after preparing the merge and before the
+  landing commit. If a non-main linked worktree has not synced the tracked hook yet, the shared
+  dispatcher still requires exactly one non-empty `Chat:` trailer; it skips only the main landing
+  checks and fails closed on `main`.
 - **Never resolve a conflict in the main worktree**, and never repair one there
   with `reset --hard`, `checkout --ours`/`--theirs`, `hash-object`, or
   `update-index`. The first two destroy another session's uncommitted work; the
   last two write an index entry no later `git status` reconciles. If a merge
-  conflicts in `main`, `git merge --abort` and redo it in the worktree.
+  conflicts in `main`, preserve the owner lease and state, then follow the main landing recovery
+  procedure; never let a second session abort an operation whose state may belong to another agent.
 - **Do not use `git merge --squash -X ours` or equivalent history-dropping merges.**
   Fast-forwards and this squash shape bypass the takeover hooks; the latter can
   produce no commit or `MERGE_HEAD`, so there is no event for the guard to inspect.
@@ -500,22 +590,9 @@ repo:state` is what reports an operation in progress, and it separates the two s
   evidence that all writers are gone.
   ```
 - **After any interrupted or abandoned merge**, run `git rev-parse -q --verify
- MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
+MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` with no `MERGE_HEAD`,
   and `git commit` then lands a single-parent commit that reads as a resolution.
-- **Whenever a `git pull` (or `git fetch` + `git merge`) brings new commits into
-  the main worktree, record the incoming commits in `docs/INCOMING_COMMITS.md`.**
-  Each entry must include: the date, the source remote/branch, the commit SHAs
-  (short and full), the commit subjects, and the author. This document is the
-  audit trail for what landed on `main` from outside. The file is tracked and
-  committed alongside the merge. Example entry format:
-  ```
-  ## 2026-10-10 — origin/main (fetch + merge)
-  - a1b2c3d (a1b2c3d4e5f6...) "Fix: handle empty selection in crop tool" — Author Name
-  - f6e5d4c (f6e5d4c3b2a1...) "feat: add new levels adjustment" — Author Name
-  ```
-  If the pull is a fast-forward, the same recording applies — the commits that
-  moved `main` forward are still incoming from the remote.
 
 ### Four traps that cost real debugging time
 
