@@ -621,22 +621,9 @@ repo:state` is what reports an operation in progress, and it separates the two s
   evidence that all writers are gone.
   ```
 - **After any interrupted or abandoned merge**, run `git rev-parse -q --verify
- MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
+MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` with no `MERGE_HEAD`,
   and `git commit` then lands a single-parent commit that reads as a resolution.
-- **Whenever a `git pull` (or `git fetch` + `git merge`) brings new commits into
-  the main worktree, record the incoming commits in `docs/INCOMING_COMMITS.md`.**
-  Each entry must include: the date, the source remote/branch, the commit SHAs
-  (short and full), the commit subjects, and the author. This document is the
-  audit trail for what landed on `main` from outside. The file is tracked and
-  committed alongside the merge. Example entry format:
-  ```
-  ## 2026-10-10 — origin/main (fetch + merge)
-  - a1b2c3d (a1b2c3d4e5f6...) "Fix: handle empty selection in crop tool" — Author Name
-  - f6e5d4c (f6e5d4c3b2a1...) "feat: add new levels adjustment" — Author Name
-  ```
-  If the pull is a fast-forward, the same recording applies — the commits that
-  moved `main` forward are still incoming from the remote.
 
 ### Four traps that cost real debugging time
 
