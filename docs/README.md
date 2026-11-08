@@ -47,11 +47,12 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 ## System
 
-| Document                                       | Its one job                                                                   |
-| ---------------------------------------------- | ----------------------------------------------------------------------------- |
-| [`FEATURES.md`](FEATURES.md)                   | Capability inventory against Photoshop, including what the platform cannot do |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)           | The store, the layer model, both history systems, rendering, file I/O         |
-| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md) | The durable-history migration contract and cutover sequence                   |
+| Document                                                                     | Its one job                                                                   |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [`FEATURES.md`](FEATURES.md)                                                 | Capability inventory against Photoshop, including what the platform cannot do |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                                         | The store, the layer model, both history systems, rendering, file I/O         |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)                               | The durable-history migration contract and cutover sequence                   |
+| [`HISTORY-MIGRATION-AUDIT-20261107.md`](HISTORY-MIGRATION-AUDIT-20261107.md) | Dated audit of durable-history parity gates and open export findings          |
 
 ## Working practice
 
