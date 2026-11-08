@@ -590,7 +590,7 @@ repo:state` is what reports an operation in progress, and it separates the two s
   evidence that all writers are gone.
   ```
 - **After any interrupted or abandoned merge**, run `git rev-parse -q --verify
-  MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
+MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` with no `MERGE_HEAD`,
   and `git commit` then lands a single-parent commit that reads as a resolution.
 
