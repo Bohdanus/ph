@@ -29,7 +29,9 @@ const h = vi.hoisted(() => ({
   setToolArgs: vi.fn(),
   setActiveLayer: vi.fn(),
   beginTextLayerEdit: vi.fn(),
-  publishSmallCapsTextDraftPreview: vi.fn(() => true),
+  publishSmallCapsTextDraftPreview: vi.fn(
+    (): 'rendered' | 'deferred' | 'unavailable' | 'overlay-deferred' | 'failed' => 'rendered'
+  ),
   clearSmallCapsTextDraftPreview: vi.fn(),
   requestTextEditFocus: vi.fn(),
   commitDirtyTool: vi.fn(),
@@ -204,7 +206,7 @@ describe('TextToolArea', () => {
     h.setActiveLayer.mockReset();
     h.beginTextLayerEdit.mockReset();
     h.publishSmallCapsTextDraftPreview.mockReset();
-    h.publishSmallCapsTextDraftPreview.mockReturnValue(true);
+    h.publishSmallCapsTextDraftPreview.mockReturnValue('rendered');
     h.clearSmallCapsTextDraftPreview.mockReset();
     h.requestTextEditFocus.mockReset();
     h.commitDirtyTool.mockReset();
@@ -799,64 +801,117 @@ describe('TextToolArea', () => {
       expect(drawOverflowIndicator).toHaveBeenCalledWith(ctx, previewRect, '#0000ff');
     });
 
-    it('keeps Small Caps ink on the overlay when the shared preview renderer is unavailable', () => {
+    it.each(['unavailable', 'failed'] as const)(
+      'keeps a new Small Caps draft visible on the overlay when compositor publication is %s',
+      (publication) => {
+        const ctx = makeMockCtx();
+        const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
+        toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true });
+        h.publishSmallCapsTextDraftPreview.mockReturnValue(publication);
+
+        renderArea({ current: ctx });
+        act(() => h.useRectProps.current!.onRepaint!(rect));
+
+        expect(h.publishSmallCapsTextDraftPreview).toHaveBeenCalledWith(toolArgs, rect);
+        expect(renderText).toHaveBeenCalledWith(ctx, expect.objectContaining({ smallCaps: true }), {
+          overflowIndicator: true,
+        });
+      }
+    );
+
+    it('keeps a deferred Small Caps draft compositor-owned when publication later succeeds', () => {
       const ctx = makeMockCtx();
       const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
       toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true });
-      h.publishSmallCapsTextDraftPreview.mockReturnValue(false);
+      h.publishSmallCapsTextDraftPreview.mockReturnValueOnce('deferred').mockReturnValueOnce('rendered');
 
       renderArea({ current: ctx });
+      act(() => h.useRectProps.current!.onRepaint!(rect));
       act(() => h.useRectProps.current!.onRepaint!(rect));
 
       expect(h.publishSmallCapsTextDraftPreview).toHaveBeenCalledWith(toolArgs, rect);
-      expect(renderText).toHaveBeenCalledWith(ctx, expect.objectContaining({ smallCaps: true }), {
-        overflowIndicator: true,
-      });
+      expect(renderText).not.toHaveBeenCalled();
+      expect(ctx.fillText).not.toHaveBeenCalled();
     });
 
-    it('matches the committed point-text origin when compositor publication is refused', () => {
+    it('repaints the overlay fallback after a deferred cleanup clears stale compositor ink', () => {
       const ctx = makeMockCtx();
-      const rect = { x1: 105, y1: 206, x2: 150, y2: 230 };
-      const measuredRect = { x1: 110, y1: 215, x2: 132, y2: 239 };
-      const affine = { a: 2, b: 0, c: 0, d: 2, e: 3, f: 4 };
-      toolArgs = makeTextArgs({
-        text: 'i',
-        rect,
-        smallCaps: true,
-        angle: 30,
-        kind: 'point',
-        editingLayerId: 'text-1',
-      });
-      h.layers = {
-        'text-1': {
-          pos: { x: 100, y: 200, width: 50, height: 30 },
-          operations: [{ id: 'affine-1', kind: 'affine-transform', transform: affine, enabled: true }],
-        },
-      };
-      h.publishSmallCapsTextDraftPreview.mockReturnValue(false);
-      vi.mocked(calculateNewRect).mockReturnValue(measuredRect);
+      const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
+      toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true });
+      h.publishSmallCapsTextDraftPreview.mockReturnValueOnce('overlay-deferred').mockReturnValueOnce('unavailable');
+      vi.useFakeTimers();
 
-      renderArea({ current: ctx });
-      act(() => h.useRectProps.current!.onRepaint!(rect));
+      const rendered = renderArea({ current: ctx });
+      try {
+        act(() => h.useRectProps.current!.onRepaint!(rect));
+        expect(renderText).not.toHaveBeenCalled();
 
-      expect(calculateNewRect).toHaveBeenCalledWith(
-        expect.objectContaining({ rect, text: 'i', kind: 'point' }),
-        h.toolOverlayRef,
-        { width: 100, height: 100 }
-      );
-      expect(ctx.translate).toHaveBeenCalledWith(110, 215);
-      expect(ctx.transform).toHaveBeenCalledWith(2, 0, 0, 2, 3, 4);
-      expect(ctx.rotate).toHaveBeenCalledWith(Math.PI / 6);
-      expect(vi.mocked(ctx.transform).mock.invocationCallOrder[0]).toBeLessThan(
-        vi.mocked(ctx.rotate).mock.invocationCallOrder[0]
-      );
-      expect(renderText).toHaveBeenCalledWith(
-        ctx,
-        expect.objectContaining({ rect: { x1: 0, y1: 0, x2: 22, y2: 24 } }),
-        { overflowIndicator: true }
-      );
-      expect(ctx.restore).toHaveBeenCalled();
+        act(() => vi.advanceTimersByTime(250));
+        expect(renderText).toHaveBeenCalledWith(ctx, expect.objectContaining({ smallCaps: true }), {
+          overflowIndicator: true,
+        });
+      } finally {
+        rendered.unmount();
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
     });
+
+    it('keeps the committed source hidden when a failed Small Caps edit returns to DOM text', () => {
+      const ctx = makeMockCtx();
+      const overlayCtxRef = { current: ctx };
+      const rect = { x1: 105, y1: 206, x2: 150, y2: 230 };
+      toolArgs = makeTextArgs({ text: 'Updated', rect, smallCaps: true, editingLayerId: 'text-1' });
+      h.publishSmallCapsTextDraftPreview.mockReturnValue('failed');
+
+      const rendered = renderArea(overlayCtxRef);
+      act(() => h.useRectProps.current!.onRepaint!(rect));
+      expect(renderText).not.toHaveBeenCalled();
+
+      toolArgs = { ...toolArgs, smallCaps: false };
+      rendered.rerender(<TextToolArea overlayCtxRef={overlayCtxRef} />);
+      expect(h.clearSmallCapsTextDraftPreview).toHaveBeenLastCalledWith('text-1', 'hide-committed');
+
+      act(() => h.useRectProps.current!.onRepaint!(rect));
+      expect(h.clearSmallCapsTextDraftPreview).toHaveBeenLastCalledWith('text-1', 'hide-committed');
+    });
+
+    it.each(['unavailable', 'failed'] as const)(
+      'does not paint an existing Small Caps draft above its layer composite when publication is %s',
+      (publication) => {
+        const ctx = makeMockCtx();
+        const rect = { x1: 105, y1: 206, x2: 150, y2: 230 };
+        toolArgs = makeTextArgs({
+          text: 'i',
+          rect,
+          smallCaps: true,
+          angle: 30,
+          kind: 'point',
+          editingLayerId: 'text-1',
+        });
+        h.layers = {
+          'text-1': {
+            visible: true,
+            opacity: 0.5,
+            blendMode: 'multiply',
+            order: 1,
+            pos: { x: 100, y: 200, width: 50, height: 30 },
+            operations: [{ id: 'filter-1', kind: 'filter', enabled: true }],
+          },
+          above: { visible: true, order: 2, pos: { x: 0, y: 0, width: 100, height: 100 } },
+        };
+        h.publishSmallCapsTextDraftPreview.mockReturnValue(publication);
+
+        renderArea({ current: ctx });
+        act(() => h.useRectProps.current!.onRepaint!(rect));
+
+        expect(renderText).not.toHaveBeenCalled();
+        expect(ctx.translate).not.toHaveBeenCalled();
+        expect(ctx.transform).not.toHaveBeenCalled();
+        expect(ctx.rotate).not.toHaveBeenCalled();
+        expect(ctx.drawImage).not.toHaveBeenCalled();
+      }
+    );
 
     it('draws the overflow indicator in the tool colour when layoutText reports overflow', () => {
       const ctx = makeMockCtx();

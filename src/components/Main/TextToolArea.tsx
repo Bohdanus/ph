@@ -14,18 +14,13 @@ import {
   type TextToolArgs,
 } from '../../tools/text.ts';
 import { useRect } from '../../hooks/useRect.ts';
-import { calculateNewRect, canvasRectToLocal, sortRect, sortedRectToPos } from '../../util/rect.ts';
+import { calculateNewRect } from '../../util/rect.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
-import { getLayerAffineTransform, isPointInLayer } from '../../contexts/affine-transform.ts';
-import {
-  canvasToDocumentPoint,
-  canvasToDocumentPos,
-  documentFrameFromSize,
-  documentToCanvasPos,
-} from '../../contexts/document-frame.ts';
+import { isPointInLayer } from '../../contexts/affine-transform.ts';
+import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { isTextLayerSource, textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 import type { Ctx2D, RectXY, RectXYSorted } from '../../contexts/general-types.ts';
 
@@ -33,6 +28,9 @@ type TextToolAreaProps = {
   className?: string;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
 };
+
+const SMALL_CAPS_OVERLAY_RETRY_BASE_DELAY_MS = 250;
+const SMALL_CAPS_OVERLAY_RETRY_MAX_DELAY_MS = 2_000;
 
 export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) => {
   const [{ containerRef, toolOverlayRef, totalSize, layers, activeLayerId, documentFrame: currentFrame }] = useStore();
@@ -48,12 +46,53 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
 
   const args = toolArgs as TextToolArgs;
   const argsRef = useRef(args);
+  const smallCapsOverlayRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const smallCapsOverlayRetryAttemptRef = useRef(0);
+  const smallCapsOverlayRetryRectRef = useRef<RectXY | null>(null);
+  const smallCapsOverlayRetryCallbackRef = useRef<((rect: RectXY) => void) | null>(null);
   useEffect(() => {
     argsRef.current = args;
     if (!args.text || !args.rect || !args.smallCaps || args.allCaps) {
-      clearSmallCapsTextDraftPreview(args.editingLayerId);
+      if (smallCapsOverlayRetryTimerRef.current !== null) clearTimeout(smallCapsOverlayRetryTimerRef.current);
+      smallCapsOverlayRetryTimerRef.current = null;
+      smallCapsOverlayRetryAttemptRef.current = 0;
+      smallCapsOverlayRetryRectRef.current = null;
+      clearSmallCapsTextDraftPreview(args.editingLayerId, args.editingLayerId ? 'hide-committed' : 'preserve');
     }
   }, [args, clearSmallCapsTextDraftPreview]);
+
+  useEffect(
+    () => () => {
+      if (smallCapsOverlayRetryTimerRef.current !== null) clearTimeout(smallCapsOverlayRetryTimerRef.current);
+      smallCapsOverlayRetryTimerRef.current = null;
+      smallCapsOverlayRetryAttemptRef.current = 0;
+      smallCapsOverlayRetryRectRef.current = null;
+      smallCapsOverlayRetryCallbackRef.current = null;
+    },
+    []
+  );
+
+  const cancelSmallCapsOverlayRetry = () => {
+    if (smallCapsOverlayRetryTimerRef.current !== null) clearTimeout(smallCapsOverlayRetryTimerRef.current);
+    smallCapsOverlayRetryTimerRef.current = null;
+    smallCapsOverlayRetryAttemptRef.current = 0;
+    smallCapsOverlayRetryRectRef.current = null;
+  };
+
+  const scheduleSmallCapsOverlayRetry = (rect: RectXY) => {
+    smallCapsOverlayRetryRectRef.current = rect;
+    if (smallCapsOverlayRetryTimerRef.current !== null) return;
+    const delay = Math.min(
+      SMALL_CAPS_OVERLAY_RETRY_BASE_DELAY_MS * 2 ** smallCapsOverlayRetryAttemptRef.current,
+      SMALL_CAPS_OVERLAY_RETRY_MAX_DELAY_MS
+    );
+    smallCapsOverlayRetryAttemptRef.current += 1;
+    smallCapsOverlayRetryTimerRef.current = setTimeout(() => {
+      smallCapsOverlayRetryTimerRef.current = null;
+      const retryRect = smallCapsOverlayRetryRectRef.current;
+      if (retryRect) smallCapsOverlayRetryCallbackRef.current?.(retryRect);
+    }, delay);
+  };
 
   // The press and the release in CLIENT pixels, which is the space `POINT_TYPE_MAX_DRAG_PX` is
   // defined in — CSS px, unscaled by the contain fit. `useRect` reports document px, which
@@ -301,39 +340,29 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     if (!ctx) return;
 
     if (currentArgs.smallCaps && !currentArgs.allCaps) {
-      const published = publishSmallCapsTextDraftPreview(currentArgs, rect);
-      if (!published) {
-        const editingLayer = currentArgs.editingLayerId ? layers[currentArgs.editingLayerId] : undefined;
-        if (editingLayer) {
-          const fallbackRect = sortRect(rect);
-          const measuredRect =
-            calculateNewRect({ ...currentArgs, rect: fallbackRect }, toolOverlayRef, totalSize) ?? fallbackRect;
-          const position = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
-          const canvasPos = documentToCanvasPos(position, documentFrame);
-          const localRect = sortRect(canvasRectToLocal(measuredRect, position, documentFrame));
-          const affine = getLayerAffineTransform(editingLayer);
-          ctx.save();
-          try {
-            ctx.translate(canvasPos.x, canvasPos.y);
-            ctx.transform(affine.a, affine.b, affine.c, affine.d, affine.e, affine.f);
-            renderText(
-              ctx as Ctx2D,
-              {
-                ...currentArgs,
-                rect: localRect,
-              },
-              { overflowIndicator: true }
-            );
-          } finally {
-            ctx.restore();
-          }
-        } else {
+      const publication = publishSmallCapsTextDraftPreview(currentArgs, rect);
+      if (publication === 'overlay-deferred' && !currentArgs.editingLayerId) {
+        scheduleSmallCapsOverlayRetry(rect);
+        return;
+      }
+      cancelSmallCapsOverlayRetry();
+      if (publication !== 'rendered') {
+        // The overlay is above the full document canvas, so it cannot faithfully replace an
+        // existing layer when opacity, blend mode, filters, or higher layers affect its pixels.
+        // If the shared renderer cannot publish, keep the committed source visible and avoid
+        // displaying draft ink in the wrong composite. A new layer has no existing compositing
+        // properties to preserve, so it can still use the direct overlay fallback.
+        if (!currentArgs.editingLayerId && publication !== 'deferred') {
           renderText(ctx as Ctx2D, { ...currentArgs, rect: rect as RectXYSorted }, { overflowIndicator: true });
         }
         return;
       }
     } else {
-      clearSmallCapsTextDraftPreview(currentArgs.editingLayerId);
+      cancelSmallCapsOverlayRetry();
+      clearSmallCapsTextDraftPreview(
+        currentArgs.editingLayerId,
+        currentArgs.editingLayerId ? 'hide-committed' : 'preserve'
+      );
     }
 
     const style = resolveTextStyle(currentArgs);
@@ -341,6 +370,10 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     const { overflow } = layoutText(ctx as Ctx2D, style, text, wrapWidth, rect.y2 - rect.y1);
     if (overflow) drawOverflowIndicator(ctx as Ctx2D, rect as RectXYSorted, style.color);
   }
+
+  useEffect(() => {
+    smallCapsOverlayRetryCallbackRef.current = redrawDraftChrome;
+  });
 
   return <div className={`${className} cursor-text`} data-rotation={args.angle ?? 0} {...trackedPointerHandlers} />;
 };
