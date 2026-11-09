@@ -549,7 +549,12 @@ describe('useRect', () => {
           result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 25, target }))
         ).toBe(true);
       });
-      expect(target.style.cursor).toMatch(/url\(.*rotate.*\) 24 24, ew-resize/);
+      const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+      expect(encodedSvg).toBeDefined();
+      const svg = decodeURIComponent(encodedSvg!);
+      expect(svg).toContain('<image href="data:image/png;base64,');
+      expect(svg).toContain('rotate(0 32 32)');
+      expect(target.style.cursor).toMatch(/\) 32 32, ew-resize$/);
 
       act(() => {
         result.current.pointerHandlers.onPointerDown(
@@ -594,10 +599,9 @@ describe('useRect', () => {
         const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
         const svg = decodeURIComponent(encodedSvg!);
-        expect(svg).toContain(`rotate(${cursorAngle} 16 16)`);
-        expect(svg).toContain('stroke="#fff" stroke-width="6"');
-        expect(svg).toContain('stroke="#111" stroke-width="2.5"');
-        expect(target.style.cursor).toMatch(new RegExp(`\\) 24 24, ${fallback}$`));
+        expect(svg).toContain('<image href="data:image/png;base64,');
+        expect(svg).toContain(`rotate(${cursorAngle} 32 32)`);
+        expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
       }
     );
 
@@ -617,7 +621,7 @@ describe('useRect', () => {
 
         const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
-        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45 16 16)');
+        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45 32 32)');
       } finally {
         viewStateRef.current.rotation = originalViewRotation;
       }
