@@ -171,20 +171,42 @@ describe('toolDescriptions', () => {
     }
   });
 
-  it('keeps the general 32-bit blend-mode count separate from each tool’s available modes', () => {
+  it('records Adobe’s conflicting 32-bit blend-mode lists without assigning them to each tool', () => {
+    const blendModeGuide =
+      'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html';
+    const hdrSupportGuide =
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html';
+
     for (const name of ['brush', 'pencil', 'paint-bucket', 'clone-stamp'] as const) {
       const mode = toolDescriptions[name].options.find((option) => option.control === 'Mode');
-      expect(mode?.detail, `${name}: the general 32-bit list is not tool-specific`).toMatch(
-        /general 32-bit list contains 11 modes; availability can be narrower for each tool/i
+      expect(mode?.detail, `${name}: the blending-mode page's count is attributed`).toMatch(
+        /blending-mode page gives an 11-mode list for 32-bit images; the separate 32-bpc HDR support page gives a 15-mode list for 32-bpc HDR images/i
       );
+      expect(toolDescriptions[name].sources).toContain(blendModeGuide);
+      expect(toolDescriptions[name].sources).toContain(hdrSupportGuide);
+
+      if (name === 'paint-bucket') {
+        expect(mode?.detail).toMatch(/HDR page’s tool list marks Paint Bucket unsupported/i);
+        expect(mode?.detail).toMatch(/blending-mode page separately lists Clear for Paint Bucket/i);
+      } else {
+        expect(mode?.detail, `${name}: the HDR support page's count is attributed`).toMatch(
+          /32-bpc HDR support page gives a 15-mode list/i
+        );
+        expect(mode?.detail).toMatch(/blending-mode page warns that mode availability varies by tool and image mode/i);
+      }
     }
+
     const sharpenMode = toolDescriptions.sharpen.options.find((option) => option.control === 'Mode');
     expect(sharpenMode?.detail).toMatch(
-      /general blending guide lists 11 modes for 32-bit images, but does not establish Sharpen’s tool-specific set/i
+      /blending-mode page gives an 11-mode list for 32-bit images; the separate 32-bpc HDR support page gives a 15-mode list for 32-bpc HDR images/i
     );
+    expect(sharpenMode?.detail).toMatch(/neither page enumerates Sharpen’s tool-specific blend-mode set/i);
+    expect(sharpenMode?.detail).toMatch(/HDR page includes Sharpen among supported tools/i);
+    expect(toolDescriptions.sharpen.sources).toContain(blendModeGuide);
+    expect(toolDescriptions.sharpen.sources).toContain(hdrSupportGuide);
   });
 
-  it('does not infer a Blur Mode from the general 32-bit list while its control is unconfirmed', () => {
+  it('does not infer a Blur Mode from global blend-mode lists while its control is unconfirmed', () => {
     expect(toolDescriptions.blur.options.find((option) => option.control === 'Mode')).toBeUndefined();
     expect(toolDescriptions.blur.purpose).toMatch(/Blur-specific control remains unconfirmed/i);
   });

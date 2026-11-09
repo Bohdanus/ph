@@ -42,7 +42,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          'The blend mode for painted pixels. Behind is available only for the Brush tool. Clear is available for Brush, Pencil, Paint Bucket, Fill and Stroke, and for shape tools when a fill region is selected. These special modes require Lock Transparency to be deselected. Adobe’s general 32-bit list contains 11 modes; availability can be narrower for each tool. Normal is the default.',
+          'The blend mode for painted pixels. Behind is available only for the Brush tool. Clear is available for Brush, Pencil, Paint Bucket, Fill and Stroke, and for shape tools when a fill region is selected. These special modes require Lock Transparency to be deselected. Adobe’s blending-mode page gives an 11-mode list for 32-bit images; the separate 32-bpc HDR support page gives a 15-mode list for 32-bpc HDR images. The blending-mode page warns that mode availability varies by tool and image mode. Normal is the default.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:131',
       },
@@ -145,6 +145,7 @@ export const paintDescriptions: Record<
       'https://web.archive.org/web/20201111235536/https:/helpx.adobe.com/photoshop/using/whats-new/2018.html',
       'https://helpx.adobe.com/photoshop/using/paint-symmetry.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html',
       'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants',
       'https://helpx.adobe.com/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html',
@@ -184,7 +185,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          'The blend mode for painted pixels. Clear is available for Pencil when Lock Transparency is deselected; Behind is Brush-only. Adobe’s general 32-bit list contains 11 modes; availability can be narrower for each tool. Normal is the default.',
+          'The blend mode for painted pixels. Clear is available for Pencil when Lock Transparency is deselected; Behind is Brush-only. Adobe’s blending-mode page gives an 11-mode list for 32-bit images; the separate 32-bpc HDR support page gives a 15-mode list for 32-bpc HDR images. The blending-mode page warns that mode availability varies by tool and image mode. Normal is the default.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:131',
       },
@@ -292,6 +293,7 @@ export const paintDescriptions: Record<
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/auto-erase-with-the-pencil-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html',
       'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants',
       'https://helpx.adobe.com/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html',
@@ -672,7 +674,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          'The blend mode for the fill. Adobe’s general 32-bit list contains 11 modes; availability can be narrower for each tool. Clear is available for Paint Bucket when Lock Transparency is deselected; Behind is Brush-only. The app renders no Mode control for the Paint Bucket. Normal is the default.',
+          'The blend mode for the fill. Adobe’s blending-mode page gives an 11-mode list for 32-bit images; the separate 32-bpc HDR support page gives a 15-mode list for 32-bpc HDR images. The HDR page’s tool list marks Paint Bucket unsupported. The blending-mode page separately lists Clear for Paint Bucket when Lock Transparency is deselected; Behind is Brush-only. The app renders no Mode control for the Paint Bucket. Normal is the default.',
         status: 'missing',
       },
       {
@@ -729,6 +731,7 @@ export const paintDescriptions: Record<
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/fill-paint-bucket-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants',
       'https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=359',
       'https://www.underwaterphotography.com/photoshop/photoshop/1_12_8_0.html',
@@ -761,7 +764,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          'The blend mode the copied pixels composite with. Adobe’s general 32-bit list contains 11 modes; availability can be narrower for each tool. Neither special mode is available: Behind is Brush-only, and Clear is limited to Brush, Pencil, Paint Bucket, Fill and Stroke, and shape tools when a fill region is selected. These modes require Lock Transparency to be deselected. The app renders no Mode control for the Clone Stamp. Normal is the default.',
+          'The blend mode the copied pixels composite with. Adobe’s blending-mode page gives an 11-mode list for 32-bit images; the separate 32-bpc HDR support page gives a 15-mode list for 32-bpc HDR images. The blending-mode page warns that mode availability varies by tool and image mode. Neither special mode is available: Behind is Brush-only, and Clear is limited to Brush, Pencil, Paint Bucket, Fill and Stroke, and shape tools when a fill region is selected. These modes require Lock Transparency to be deselected. The app renders no Mode control for the Clone Stamp. Normal is the default.',
         status: 'missing',
       },
       {
@@ -879,6 +882,7 @@ export const paintDescriptions: Record<
       'https://helpx.adobe.com/photoshop/using/tool-techniques/clone-stamp-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/create-tool-preset.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants',
       'https://adobe.manymanuals.com/software/photoshop-cs4/user-manual-35148/209',
       'https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=211',

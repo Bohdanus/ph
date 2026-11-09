@@ -76,7 +76,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       {
         control: 'Mode',
         detail:
-          'A blend Mode for the sharpened result. Adobe’s current Romanian desktop guide lists this control; its current US guide lists other brush controls but omits Mode. Adobe’s general blending guide lists 11 modes for 32-bit images, but does not establish Sharpen’s tool-specific set. The sources do not establish whether the page difference reflects a locale, version, or documentation gap.',
+          'A blend Mode for the sharpened result. Adobe’s current Romanian desktop guide lists this control; its current US guide lists other brush controls but omits Mode. Adobe’s blending-mode page gives an 11-mode list for 32-bit images; the separate 32-bpc HDR support page gives a 15-mode list for 32-bpc HDR images. The HDR page includes Sharpen among supported tools, but neither page enumerates Sharpen’s tool-specific blend-mode set. The sources do not establish whether the page differences reflect a locale, version, or documentation gap.',
         status: 'missing',
       },
       {
@@ -117,6 +117,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       'https://helpx.adobe.com/photoshop/desktop/effects-filters/blur-sharpen-filters/enhance-edge-contrast-with-the-sharpen-tool.html',
       'https://helpx.adobe.com/ro/photoshop/desktop/effects-filters/blur-sharpen-filters/increase-sharpness-in-selected-image-areas.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html',
       'https://helpx.adobe.com/photoshop/desktop/whats-new/photoshop-on-desktop-release-notes.html',
       'https://www.deke.com/content/advanced-sharpening-techniques-or-close-to-the-edge-part-deux',
       'https://insider.kelbyone.com/living-on-the-edge-an-exploration-of-the-sharpening-tools-in-photoshop-by-scott-valentine/',
