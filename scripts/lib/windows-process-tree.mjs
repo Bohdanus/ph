@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
+const POWERSHELL_DEADLINE_RATIO = 0.85;
+
 function runWindowsCommand(command, args, timeoutMs, spawnImpl) {
   return new Promise((resolve) => {
     let child;
@@ -50,7 +52,8 @@ export async function terminateWindowsProcessTree(
   );
   if (taskkill.code === 0) return;
 
-  const fallbackDeadlineMs = Math.floor(commandTimeoutMs * 0.85);
+  // Leave time after the script deadline for PowerShell to exit before its outer timeout.
+  const fallbackDeadlineMs = Math.floor(commandTimeoutMs * POWERSHELL_DEADLINE_RATIO);
   const script = [
     '$ErrorActionPreference = "Stop"',
     `$rootPid = ${pid}`,

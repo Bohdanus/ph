@@ -75,8 +75,8 @@ describe('Windows process-tree termination', () => {
       return child;
     });
 
-    await expect(terminateWindowsProcessTree(4321, { spawnImpl, commandTimeoutMs: 5 })).rejects.toThrow(
-      /taskkill: .*timed out after 5ms; PowerShell fallback: .*timed out after 5ms/
+    await expect(terminateWindowsProcessTree(4321, { spawnImpl, commandTimeoutMs: 100 })).rejects.toThrow(
+      /taskkill: .*timed out after 100ms; PowerShell fallback: .*timed out after 100ms/
     );
     expect(children).toHaveLength(2);
     for (const child of children) expect(child.kill).toHaveBeenCalledTimes(1);
@@ -84,7 +84,7 @@ describe('Windows process-tree termination', () => {
 
   it('rejects invalid process IDs before spawning a command', async () => {
     const spawnImpl = vi.fn();
-    for (const pid of [0, -1, 1.5, '4321']) {
+    for (const pid of [0, -1, 1.5, '4321', Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
       await expect(terminateWindowsProcessTree(pid, { spawnImpl })).rejects.toThrow(
         'Process ID must be a positive safe integer'
       );
