@@ -117,47 +117,107 @@ describe('toolDescriptions', () => {
     }
   });
 
-  it('does not tell the reader to press a key these selection tools do not read', () => {
-    // A tripwire for named claims, not a general property — nothing in `src/` can decide whether a
-    // row is implemented, since that needs the gesture the row describes. What can be checked is
-    // that the removed rows and the prose that shipped them stay gone, in EVERY surface a reader
-    // sees them: the tooltip summary, the `modifiers` table, and the `options` control detail.
-    //
-    // `PolygonClickToolArea`, which draws the freehand and the polygonal lasso alike, registers
-    // Escape, Enter, Backspace and Delete and reads no `shiftKey`, `altKey`, `metaKey` or
-    // `ctrlKey` anywhere in the file. `QuickSelectionToolArea` and the quick-selection options bar
-    // read no modifier key either. The app's only `Space` keydown that matters to a tool is the
-    // Shape tool's mid-drag pan (`ShapeToolArea.tsx:52`), which pans the shape being drawn
-    // rather than switching to the Hand tool. A user who read any of these rows and tried it got
-    // nothing.
-    const lassoNames: readonly ToolName[] = ['freehand-lasso', 'polygonal-lasso'];
-    const rows = lassoNames.flatMap((name) =>
-      toolDescriptions[name].modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)
+  it('documents Photoshop lasso and Quick Selection modifiers separately from app support', () => {
+    const polygon = toolDescriptions['polygonal-lasso'];
+    const polygonRows = polygon.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`);
+    expect(polygonRows).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Shift:.*45 degrees/i),
+        expect.stringMatching(/Alt:.*drag.*freehand/i),
+        expect.stringMatching(/Shift:.*Add to Selection/i),
+        expect.stringMatching(/Alt:.*Subtract From Selection/i),
+        expect.stringMatching(/Shift\+Alt:.*Intersect With Selection/i),
+        expect.stringMatching(/Ctrl\/Command:.*closes.*away from the starting point/i),
+      ])
     );
-    const unImplemented = /45°|freehand segment|straight segment rather than a magnetic one|Hand tool/;
+    expect(polygonRows).not.toEqual(expect.arrayContaining([expect.stringMatching(/Alt.*double-click/i)]));
+    expect(polygon.summary).toMatch(/double-click.*right-click.*Enter/i);
+    expect(polygon.summary).not.toMatch(/Ctrl\/Command|starting point/i);
+    expect(polygon.summary).not.toMatch(/Return/i);
+    expect(polygon.purpose).toMatch(/Ctrl-clicking on Windows \/ Command-clicking on macOS/i);
+    expect(polygon.purpose).not.toMatch(/Enter|Return/i);
+    expect(polygon.shortcuts.map((shortcut) => shortcut.keys)).not.toContain('Return');
+    expect(polygon.appNotes).toMatch(/modifier keys.*Ctrl\/Command-click closure.*absent/i);
 
-    expect(
-      rows.filter((row) => unImplemented.test(row)),
-      'a lasso modifier row promises a gesture its tool area never reads'
-    ).toEqual([]);
+    const magnetic = toolDescriptions['feather-magnetic-lasso'];
+    expect(magnetic.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
+      expect.arrayContaining([expect.stringMatching(/Alt:.*double-click.*straight segment/i)])
+    );
 
-    // The quick-selection surface is three shapes, and an earlier pass fixed only the first: the
-    // summary said "Alt-drag to subtract" while the same entry's `modifiers` and `options` prose
-    // still described an Alt gesture, so the fix had to be made three times or not at all.
     const quick = toolDescriptions['quick-selection'];
-    expect(quick.summary, 'the quick-selection tooltip names Alt, which is never read').not.toMatch(/\bAlt\b/);
-    expect(
-      quick.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`),
-      'a quick-selection modifier row promises a gesture neither its bar nor its tool area reads'
-    ).toEqual([]);
-    // Matched on the ASSERTION of a binding, not on the bare word `Alt` — the corrected row says
-    // "binds no Alt/Option modifier", which is the truth and must not trip this.
-    expect(
-      quick.options
-        .map((option) => option.detail)
-        .filter((detail) => /holding (?:Alt|Option)\b|with Alt held/i.test(detail)),
-      'a quick-selection control row describes a modifier gesture the app does not bind'
-    ).toEqual([]);
+    expect(quick.modifiers.map((modifier) => modifier.keys)).toEqual(['Shift', 'Alt']);
+    expect(quick.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Shift:.*temporarily adds.*while brushing/i),
+        expect.stringMatching(/Alt:.*temporarily subtracts.*while brushing/i),
+      ])
+    );
+    expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option while brushing to subtract/i);
+    expect(quick.appNotes).toMatch(/Temporary modifier gestures.*absent/i);
+    expect(quick.summary, 'the Quick Selection tooltip must not promise an unimplemented modifier gesture').not.toMatch(
+      /\bAlt\b/i
+    );
+  });
+
+  it('documents the fill-region condition for Clear on shape tools', () => {
+    for (const name of ['shape', 'rectangle', 'ellipse', 'line', 'triangle', 'polygon', 'custom-shape'] as const) {
+      const mode = toolDescriptions[name].options
+        .filter((option) => option.control === 'Mode')
+        .find((option) => /second of the two controls Adobe names Mode/i.test(option.detail));
+      expect(mode?.detail, `${name}: Clear is available only when a fill region is selected`).toMatch(
+        /Clear is available when a fill region is selected/i
+      );
+      expect(mode?.detail, `${name}: Clear requires Lock Transparency to be deselected`).toMatch(
+        /Lock Transparency is deselected/i
+      );
+      expect(toolDescriptions[name].sources).toContain(
+        'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html'
+      );
+    }
+  });
+
+  it('records Adobe’s conflicting 32-bit blend-mode lists without assigning them to each tool', () => {
+    const blendModeGuide =
+      'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html';
+    const hdrSupportGuide =
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html';
+
+    for (const name of ['brush', 'pencil', 'paint-bucket', 'clone-stamp'] as const) {
+      const mode = toolDescriptions[name].options.find((option) => option.control === 'Mode');
+      expect(mode?.detail, `${name}: Adobe's overlapping 32-bit scopes and conflicting counts are attributed`).toMatch(
+        /blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images\. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts/i
+      );
+      expect(toolDescriptions[name].sources).toContain(blendModeGuide);
+      expect(toolDescriptions[name].sources).toContain(hdrSupportGuide);
+
+      if (name === 'paint-bucket') {
+        expect(mode?.detail).toMatch(/HDR page’s tool list marks Paint Bucket unsupported/i);
+        expect(mode?.detail).toMatch(/blending-mode page separately lists Clear for Paint Bucket/i);
+        expect(mode?.detail).toMatch(/neither page establishes that Clear is available to Paint Bucket in 32-bpc HDR/i);
+      } else {
+        expect(mode?.detail, `${name}: Adobe's tool and image-mode qualification is retained`).toMatch(
+          /blending-mode page says availability varies by tool and image mode/i
+        );
+      }
+    }
+
+    const sharpenMode = toolDescriptions.sharpen.options.find((option) => option.control === 'Mode');
+    expect(sharpenMode?.detail).toMatch(
+      /blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images\. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts/i
+    );
+    expect(sharpenMode?.detail).toMatch(/October 2026 desktop guide lists this control/i);
+    expect(sharpenMode?.detail).toMatch(/neither page enumerates Sharpen’s tool-specific blend-mode set/i);
+    expect(sharpenMode?.detail).toMatch(/HDR page includes Sharpen among supported tools/i);
+    expect(toolDescriptions.sharpen.sources).toContain(blendModeGuide);
+    expect(toolDescriptions.sharpen.sources).toContain(hdrSupportGuide);
+    expect(toolDescriptions.sharpen.sources).toContain(
+      'https://helpx.adobe.com/photoshop/desktop/effects-filters/blur-sharpen-filters/increase-sharpness-in-selected-image-areas.html'
+    );
+  });
+
+  it('does not infer a Blur Mode from global blend-mode lists while its control is unconfirmed', () => {
+    expect(toolDescriptions.blur.options.find((option) => option.control === 'Mode')).toBeUndefined();
+    expect(toolDescriptions.blur.purpose).toMatch(/Blur-specific control remains unconfirmed/i);
   });
 
   it('resolves a shape figure to its own description rather than the generic one', () => {

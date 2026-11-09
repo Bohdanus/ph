@@ -42,7 +42,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          'The blend mode the stroke composites with. The app offers sixteen canvas compositing operations: Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Overlay, Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color and Luminosity. Photoshop additionally offers Behind for the Brush and Clear for the painting tools, but those values are not present in this bar. Default Normal.',
+          'The blend mode for painted pixels. Behind is available only for the Brush tool. Clear is available for Brush, Pencil, Paint Bucket, Fill and Stroke, and for shape tools when a fill region is selected. These special modes require Lock Transparency to be deselected. Adobe’s blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts. The blending-mode page says availability varies by tool and image mode. Normal is the default.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:131',
       },
@@ -134,7 +134,7 @@ export const paintDescriptions: Record<
       'src/components/Common/AppKeyboardShortcuts.tsx:538',
     ],
     appNotes:
-      'A real painting tool, and the closest of the seven: a drag paints the foreground colour, one mouse-up is one history state, and Opacity behaves as Photoshop’s per-stroke ceiling because the stroke is a single alpha-weighted pass over the whole path, though the bar seeds it at 100 percent, matching Photoshop’s 100. The divergences are structural. There is no Flow and therefore no within-stroke build-up; there is no tip, so no Hardness, Spacing, angle, roundness, shape dynamics, scattering or texture, and so no Brush Angle; there is no Airbrush, no stylus pressure, no symmetry and no Brush Settings panel. Mode offers sixteen canvas compositing operations rather than Photoshop’s 29 for this tool, and it is applied to the layer the stroke creates rather than to the stroke’s own pixels. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here, both living in the Brush Preset picker popout and the Brush Settings panel — and it is capped at 500 px, not the 5000 the picker offers, because a stroke is rasterized into a canvas padded by the full tip width and committed as its own layer. Smoothing is real but a different algorithm: it pulls each sampled interior point toward the midpoint of its neighbours, whereas Photoshop’s is a trailing anchor over the raw input stream, so the app has no catch-up and no pulled-string slack. The largest divergence is not in the bar at all — a brush stroke is committed by creating a NEW layer rather than by painting the active one. One caveat on the bindings above, and it is narrower than an earlier version of this record claimed: `B` selects the tool, and the four shortcut rows that follow it ARE implemented. `AppKeyboardShortcuts.tsx` keeps a per-tool `tipSizeField` table and a per-tool `opacityField` table, the brush appears in both, and `[`, `]`, `0` and `1` are registered against them — so `[` and `]` step the tip size by one pixel and `0` and `1` set Opacity to 100 and 10 percent, which is exactly what those four rows describe. What the app binds none of is the two MODIFIER rows: no Alt eyedropper swap and no Shift straight-line constraint on a stroke, because `DrawToolArea.tsx` reads no modifier at all and `AppKeyboardShortcuts.tsx` registers no Alt-bearing keybinding for any paint tool.',
+      'A real painting tool, and the closest of the seven: a drag paints the foreground colour, one mouse-up is one history state, and Opacity behaves as Photoshop’s per-stroke ceiling because the stroke is a single alpha-weighted pass over the whole path, though the bar seeds it at 100 percent, matching Photoshop’s 100. The divergences are structural. There is no Flow and therefore no within-stroke build-up; there is no tip, so no Hardness, Spacing, angle, roundness, shape dynamics, scattering or texture, and so no Brush Angle; there is no Airbrush, no stylus pressure, no symmetry and no Brush Settings panel. The app offers sixteen canvas compositing operations, omits Photoshop’s Behind and Clear modes, and applies the selected mode to the layer the stroke creates rather than to the stroke’s own pixels. Photoshop’s available modes vary by image color mode, and Behind/Clear also have transparency-lock conditions. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here, both living in the Brush Preset picker popout and the Brush Settings panel — and it is capped at 500 px, not the 5000 the picker offers, because a stroke is rasterized into a canvas padded by the full tip width and committed as its own layer. Smoothing is real but a different algorithm: it pulls each sampled interior point toward the midpoint of its neighbours, whereas Photoshop’s is a trailing anchor over the raw input stream, so the app has no catch-up and no pulled-string slack. The largest divergence is not in the bar at all — a brush stroke is committed by creating a NEW layer rather than by painting the active one. One caveat on the bindings above, and it is narrower than an earlier version of this record claimed: `B` selects the tool, and the four shortcut rows that follow it ARE implemented. `AppKeyboardShortcuts.tsx` keeps a per-tool `tipSizeField` table and a per-tool `opacityField` table, the brush appears in both, and `[`, `]`, `0` and `1` are registered against them — so `[` and `]` step the tip size by one pixel and `0` and `1` set Opacity to 100 and 10 percent, which is exactly what those four rows describe. What the app binds none of is the two MODIFIER rows: no Alt eyedropper swap and no Shift straight-line constraint on a stroke, because `DrawToolArea.tsx` reads no modifier at all and `AppKeyboardShortcuts.tsx` registers no Alt-bearing keybinding for any paint tool.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://asktimgrey.com/2023/09/01/flow-versus-opacity-for-brushes',
@@ -145,6 +145,8 @@ export const paintDescriptions: Record<
       'https://web.archive.org/web/20201111235536/https:/helpx.adobe.com/photoshop/using/whats-new/2018.html',
       'https://helpx.adobe.com/photoshop/using/paint-symmetry.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html',
+      'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants',
       'https://helpx.adobe.com/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html',
       'https://www.tipsquirrel.com/5-awesome-icon-buttons-might-know-photoshop/',
@@ -183,7 +185,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          'The blend mode the stroke composites with. The app offers sixteen canvas compositing operations: Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Overlay, Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color and Luminosity. Photoshop additionally offers Clear for the Pencil, but that value is not present in this bar; Behind is Brush-only. Default Normal.',
+          'The blend mode for painted pixels. Clear is available for Pencil when Lock Transparency is deselected; Behind is Brush-only. Adobe’s blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts. The blending-mode page says availability varies by tool and image mode. Normal is the default.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:131',
       },
@@ -286,11 +288,13 @@ export const paintDescriptions: Record<
       'src/components/Common/AppKeyboardShortcuts.tsx:538',
     ],
     appNotes:
-      'The app renders the Pencil through the same bar factory as the Brush, with its own three synthetic presets, and its stroke is one round-capped pass of the same painter. That reproduces the hard edge, so the two agree on the one property that distinguishes them, but it is a hard edge by construction rather than by a hard tip: a round cap is aliased because the canvas rasterizes it that way, and there is no tip model that could be made soft. The Pencil’s one own feature, Auto Erase, is absent entirely — there is no background color in the app’s tool state, so the checkbox has nothing to decide between, and no component renders it. Mode offers sixteen canvas operations and is applied to the layer the stroke creates, not to the stroke’s pixels. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here — and it is capped at 500 px rather than the 5000 the picker offers, and the shared bar seeds Opacity at 100 percent, matching Photoshop’s 100. The `Alt` and `Shift` modifiers above are Photoshop’s own and the app binds neither: `AppKeyboardShortcuts.tsx` is the complete global table, it registers no Alt override and no Shift constraint for any paint tool, and `altKey` in a pointer handler is read only by the shape, the magnetic lasso, the elliptical selection and the clone stamp. The `[`, `]`, `0` and `1` shortcut rows, by contrast, ARE implemented: the global table’s `tipSizeField` and `opacityField` maps both list the pencil. The Pencil has no keyboard shortcut of its own here for the tool-select row: it is reached by cycling the Brush tile with Shift+B, where Photoshop binds it to N. As with the Brush, each stroke creates a new layer rather than painting the active one.',
+      'The app renders the Pencil through the same bar factory as the Brush, with its own three synthetic presets, and its stroke is one round-capped pass of the same painter. That reproduces the hard edge, so the two agree on the one property that distinguishes them, but it is a hard edge by construction rather than by a hard tip: a round cap is aliased because the canvas rasterizes it that way, and there is no tip model that could be made soft. The Pencil’s one own feature, Auto Erase, is absent entirely — there is no background color in the app’s tool state, so the checkbox has nothing to decide between, and no component renders it. The app offers sixteen canvas compositing operations, omits Photoshop’s Clear mode, and applies the selected mode to the layer the stroke creates rather than to the stroke’s own pixels. Photoshop’s available modes vary by image color mode, and Clear requires transparency locking to be off. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here — and it is capped at 500 px rather than the 5000 the picker offers, and the shared bar seeds Opacity at 100 percent, matching Photoshop’s 100. The `Alt` and `Shift` modifiers above are Photoshop’s own and the app binds neither: `AppKeyboardShortcuts.tsx` is the complete global table, it registers no Alt override and no Shift constraint for any paint tool, and `altKey` in a pointer handler is read only by the shape, the magnetic lasso, the elliptical selection and the clone stamp. The `[`, `]`, `0` and `1` shortcut rows, by contrast, ARE implemented: the global table’s `tipSizeField` and `opacityField` maps both list the pencil. The Pencil has no keyboard shortcut of its own here for the tool-select row: it is reached by cycling the Brush tile with Shift+B, where Photoshop binds it to N. As with the Brush, each stroke creates a new layer rather than painting the active one.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/auto-erase-with-the-pencil-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html',
+      'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants',
       'https://helpx.adobe.com/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html',
       'https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=337',
@@ -670,7 +674,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          "The blend mode for the fill. Photoshop offers the 27 layer blend modes — Dissolve among them — plus Clear, the one extra this tool gets; Behind is the Brush's alone. The app renders no Mode control for the Paint Bucket. Default Normal.",
+          'The blend mode for the fill. Adobe’s blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts. The blending-mode page says availability varies by tool and image mode. The HDR page’s tool list marks Paint Bucket unsupported for 32-bpc HDR. The blending-mode page separately lists Clear for Paint Bucket when Lock Transparency is deselected, but neither page establishes that Clear is available to Paint Bucket in 32-bpc HDR. Behind is Brush-only. The app renders no Mode control for the Paint Bucket. Normal is the default.',
         status: 'missing',
       },
       {
@@ -727,6 +731,7 @@ export const paintDescriptions: Record<
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/fill-paint-bucket-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants',
       'https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=359',
       'https://www.underwaterphotography.com/photoshop/photoshop/1_12_8_0.html',
@@ -759,7 +764,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          "The blend mode the copied pixels composite with. Photoshop offers the 27 layer blend modes, Dissolve among them, and neither of the two extras the painting tools add: Behind is the Brush's alone and Clear goes to the shape tools, the Paint Bucket, the Brush, the Pencil, the Fill command and the Stroke command, so the Clone Stamp gets neither. The app renders no Mode control for the Clone Stamp. Default Normal.",
+          'The blend mode the copied pixels composite with. Adobe’s blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts. The blending-mode page says availability varies by tool and image mode. Neither page enumerates the Clone Stamp’s exact Mode choices. Neither special mode is available: Behind is Brush-only, and Clear is limited to Brush, Pencil, Paint Bucket, Fill and Stroke, and shape tools when a fill region is selected. These modes require Lock Transparency to be deselected. The app renders no Mode control for the Clone Stamp. Normal is the default.',
         status: 'missing',
       },
       {
@@ -877,6 +882,7 @@ export const paintDescriptions: Record<
       'https://helpx.adobe.com/photoshop/using/tool-techniques/clone-stamp-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/create-tool-preset.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants',
       'https://adobe.manymanuals.com/software/photoshop-cs4/user-manual-35148/209',
       'https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=211',

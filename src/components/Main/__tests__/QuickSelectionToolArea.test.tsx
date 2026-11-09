@@ -279,6 +279,82 @@ describe('QuickSelectionToolArea', () => {
     expect(rasterizeSelectionState).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { mode: 'add' as const, modifier: 'shiftKey' as const },
+    { mode: 'add' as const, modifier: 'altKey' as const },
+    { mode: 'subtract' as const, modifier: 'shiftKey' as const },
+    { mode: 'subtract' as const, modifier: 'altKey' as const },
+  ])('keeps the options-bar $mode mode while $modifier is held', ({ mode, modifier }) => {
+    toolState.toolArgs = { ...toolState.toolArgs!, mode };
+    growAlongStrokeSpy = vi.spyOn(quickSelectionUtil, 'growAlongStroke');
+    const toolArea = renderQuickSelectionArea();
+    const heldModifier = { [modifier]: true };
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5, ...heldModifier });
+    fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 8, clientY: 8, ...heldModifier });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 8, clientY: 8, ...heldModifier });
+
+    const strokeModes = growAlongStrokeSpy.mock.calls.map((call: unknown[]) => (call[3] as { mode: string }).mode);
+    expect(strokeModes.length).toBeGreaterThan(0);
+    expect(new Set(strokeModes)).toEqual(new Set([mode]));
+  });
+
+  it.each([
+    { mode: 'add' as const, modifier: 'altKey' as const },
+    { mode: 'subtract' as const, modifier: 'shiftKey' as const },
+  ])('ignores $modifier pressed after a $mode stroke starts', ({ mode, modifier }) => {
+    toolState.toolArgs = { ...toolState.toolArgs!, mode };
+    growAlongStrokeSpy = vi.spyOn(quickSelectionUtil, 'growAlongStroke');
+    const toolArea = renderQuickSelectionArea();
+    const pressedModifier = { [modifier]: true };
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 8, clientY: 8, ...pressedModifier });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 8, clientY: 8, ...pressedModifier });
+
+    const strokeModes = growAlongStrokeSpy.mock.calls.map((call: unknown[]) => (call[3] as { mode: string }).mode);
+    expect(strokeModes.length).toBeGreaterThan(0);
+    expect(new Set(strokeModes)).toEqual(new Set([mode]));
+  });
+
+  it('uses the updated options-bar mode for the next stroke', () => {
+    growAlongStrokeSpy = vi.spyOn(quickSelectionUtil, 'growAlongStroke');
+    const view = renderQuickSelectionView();
+
+    fireEvent.pointerDown(view.toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(view.toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    expect(new Set(growAlongStrokeSpy.mock.calls.map((call: unknown[]) => (call[3] as { mode: string }).mode))).toEqual(
+      new Set(['add'])
+    );
+
+    growAlongStrokeSpy.mockClear();
+    toolState.toolArgs = { ...toolState.toolArgs!, mode: 'subtract' };
+    view.rerender();
+
+    fireEvent.pointerDown(view.toolArea, { button: 0, pointerId: 2, clientX: 8, clientY: 8 });
+    fireEvent.pointerMove(view.toolArea, { pointerId: 2, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(view.toolArea, { button: 0, pointerId: 2, clientX: 10, clientY: 10 });
+
+    const nextStrokeModes = growAlongStrokeSpy.mock.calls.map((call: unknown[]) => (call[3] as { mode: string }).mode);
+    expect(nextStrokeModes.length).toBeGreaterThan(0);
+    expect(new Set(nextStrokeModes)).toEqual(new Set(['subtract']));
+  });
+
+  it('keeps the pointer-down mode when the options-bar mode changes mid-stroke', () => {
+    growAlongStrokeSpy = vi.spyOn(quickSelectionUtil, 'growAlongStroke');
+    const view = renderQuickSelectionView();
+
+    fireEvent.pointerDown(view.toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    toolState.toolArgs = { ...toolState.toolArgs!, mode: 'subtract' };
+    view.rerender();
+    fireEvent.pointerMove(view.toolArea, { pointerId: 1, clientX: 8, clientY: 8 });
+    fireEvent.pointerUp(view.toolArea, { button: 0, pointerId: 1, clientX: 8, clientY: 8 });
+
+    const strokeModes = growAlongStrokeSpy.mock.calls.map((call: unknown[]) => (call[3] as { mode: string }).mode);
+    expect(strokeModes.length).toBeGreaterThan(0);
+    expect(new Set(strokeModes)).toEqual(new Set(['add']));
+  });
+
   it('does not capture the pointer or read stale pixels while replay is pending', () => {
     storeState.renderSelector = { source: 'pending' };
     const toolArea = renderQuickSelectionArea();
