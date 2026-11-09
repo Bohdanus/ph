@@ -422,22 +422,13 @@ const HANDLE_SIZE_DOC_PX = 12;
 const FRAME_OVERHANG_CSS_PX = HANDLE_SIZE_DOC_PX;
 
 /**
- * How far two independently measured ink widths may differ and still be the same ink, in CSS px.
- *
- * MEASURED, not guessed, and the measurement is one-directional: the committed layer's ink comes
- * back consistently NARROWER than a reference drawn at document size. `'First'` measures 115.0 CSS px
- * on screen against a 117.6 CSS px reference — 2.6 px — and the reference is drawn by this page's own
- * `fillText` at the app's own font size, so the difference is not a different glyph and not a
- * different string: the document canvas is rasterised at document px and then DISPLAYED at the
- * contain fit of 0.97, and the antialiased fringe on each glyph edge falls below the red predicate's
- * thresholds on the way down. It is therefore a bias in one direction, not a spread in both, and 4
- * covers it with 1.4 px of slack.
- *
- * Nothing here leans on the slack to tell two strings apart. The SMALLEST gap between any two
- * references this file compares is 148 CSS px (`Kept` against `Discarded`), and the other is 207 and
- * 234; the tolerance would have to grow by a factor of thirty-seven to let a wrong string through.
+ * The largest expected difference from independently clipped screenshots of the same rendered
+ * glyphs, in CSS px. Both the reference and committed layer pass through the browser's canvas
+ * compositing and screenshot scaling before their ink bounds are measured. A one-pixel allowance
+ * covers the inclusive-pixel-to-CSS conversion in `imageBoundsToCss`; it does not absorb the old
+ * pre-scale versus post-scale rasterization difference.
  */
-const INK_WIDTH_TOLERANCE_CSS_PX = 4;
+const INK_WIDTH_TOLERANCE_CSS_PX = 1;
 
 /** The page region a box-relative rectangle covers, grown by `margin` on every side. */
 function regionOf(box: BoundingBox, rect: DraftRect, margin: number): PageRegion {
@@ -541,96 +532,134 @@ async function regionInk(page: Page, region: PageRegion): Promise<RegionInk> {
 }
 
 /**
- * How wide each candidate string's ink is, measured by THIS page's own canvas and reported in the
- * same CSS px the screenshot measurement above reports.
+ * How wide each candidate string's ink is, measured through the same browser composition and
+ * screenshot path as the committed layer, in the same CSS px as {@link inkWidthIn}.
  *
  * This is how a committed text layer's string is read, and it is worth being explicit about why
  * nothing simpler was available: a text layer's content lives in `layer.source.args`, which no
  * surface in the DOM renders — the Layers panel row shows the layer's NAME (`text 2`), not its text,
  * and the History panel shows a history entry's name. So the ink is the only observable, and it is a
  * good one: rendered by the app's own `renderText` in the app's own face, over a canvas that IS the
- * layer, composited into the document. Measuring it against a reference this page drew with the same
- * `fillText`, the same font shorthand and the same pixel predicate turns "some red pixels appeared"
- * into a statement about WHICH string.
- *
- * The predicate crosses the boundary as three numbers rather than as a function, because
- * `page.evaluate` serialises the callback and cannot carry a closure.
+ * layer, composited into the document. The reference uses the workspace canvas's backing dimensions
+ * and HiDPI transform, and paints the same white starter-document background before the glyphs. It
+ * is overlaid at the same CSS box and object-fit scale. Measuring both with `page.screenshot` sends
+ * the reference through the same browser compositor instead of multiplying a document-pixel
+ * measurement by the contain-fit scale and assuming that preserves antialiased edge pixels.
  */
 async function referenceInkWidths(
   page: Page,
   strings: string[],
-  options: { fontSize: number; fontFamily: string; scale: number }
+  options: { fontSize: number; fontFamily: string; fit: Fit; box: BoundingBox }
 ): Promise<Record<string, number>> {
-  const { fontSize, fontFamily, scale } = options;
-  return await page.evaluate(
-    ({ texts, size, family, fit, thresholds, padding }) => {
-      const longest = texts.reduce((widest, text) => Math.max(widest, text.length), 1);
-      const width = Math.ceil(size * 1.2 * longest) + 4 * padding;
-      const height = Math.ceil(size * 2.5);
+  const { fontSize, fontFamily, fit, box } = options;
+  const reference = await page.evaluate(
+    ({ size, family, documentWidth, documentHeight, workspaceBox }) => {
+      const workspaceCanvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+      if (!workspaceCanvas) throw new Error('referenceInkWidths: no workspace canvas');
       const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      // `willReadFrequently` is what keeps this context from logging Chromium's "multiple readback
-      // operations using getImageData" console warning: the ink scan below reads this same context
-      // once per candidate string, which is exactly the pattern the warning is about, and the suite's
-      // `consolePolice` fixture surfaces stray console output.
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      canvas.dataset.e2eReferenceInk = 'true';
+      canvas.width = workspaceCanvas.width;
+      canvas.height = workspaceCanvas.height;
+      Object.assign(canvas.style, {
+        position: 'fixed',
+        left: `${workspaceBox.x}px`,
+        top: `${workspaceBox.y}px`,
+        width: `${workspaceBox.width}px`,
+        height: `${workspaceBox.height}px`,
+        objectFit: getComputedStyle(workspaceCanvas).objectFit,
+        zIndex: '2147483647',
+        pointerEvents: 'none',
+      });
+      const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('referenceInkWidths: no 2d context');
+      const hidpiScale = Number(workspaceCanvas.getAttribute('data-hidpi-ratio') ?? 1);
+      if (!Number.isFinite(hidpiScale) || hidpiScale <= 0) {
+        throw new Error(`referenceInkWidths: invalid workspace backing scale ${hidpiScale}`);
+      }
+      ctx.setTransform(hidpiScale, 0, 0, hidpiScale, 0, 0);
       ctx.font = `${size}px ${family}`;
       ctx.textBaseline = 'alphabetic';
+      ctx.textAlign = 'start';
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+      // `page.goto('/')` starts the app's default white bedrock document. This matters because
+      // `isRedInk` sees antialiased edge colors after browser composition: a transparent reference
+      // over the checkerboard could accept a different fringe than committed red ink over white.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, documentWidth, documentHeight);
       ctx.fillStyle = '#ff0000';
-      // `renderText` puts a line's baseline at `rect.y1 + TEXT_PADDING + ascent`, so the reference
-      // is drawn at the same baseline the app drew its layer at. The baseline only has to be INSIDE
-      // the canvas for the bounds to come out whole; it is reproduced so the reference is the app's
-      // own placement and not a convenient one.
+      // `renderText` puts a line's baseline at `rect.y1 + TEXT_PADDING + ascent`.
       const ascent = ctx.measureText('').fontBoundingBoxAscent ?? size * 0.8;
-      ctx.fillText(texts[0] ?? '', padding, padding + ascent);
-
-      const out: Record<string, number> = {};
-      for (const text of texts) {
-        ctx.clearRect(0, 0, width, height);
-        ctx.fillText(text, padding, padding + ascent);
-        const data = ctx.getImageData(0, 0, width, height).data;
-        let left = -1;
-        let right = -1;
-        // EVERY ROW, and that is the half this got wrong first: a scan of row 0 alone reads an empty
-        // strip above the first baseline and finds no ink at all, because the reference draws its
-        // text at `TEXT_PADDING + ascent`, not in the top scanline.
-        for (let y = 0; y < height; y++) {
-          for (let x = 0; x < width; x++) {
-            const i = (y * width + x) * 4;
-            const alpha = data[i + 3];
-            const isInk =
-              alpha !== 0 &&
-              data[i] > thresholds.redMin &&
-              data[i + 1] < thresholds.greenMax &&
-              data[i + 2] < thresholds.blueMax;
-            if (!isInk) continue;
-            if (left < 0 || x < left) left = x;
-            if (x > right) right = x;
-          }
-        }
-        if (left < 0) throw new Error(`referenceInkWidths: the reference drew no ink for ${JSON.stringify(text)}`);
-        // Reported in CSS px, which is the space `inkWidthIn` reports in: the layer is rendered at
-        // DOCUMENT px and the document is displayed at the contain fit, so the same ink is `fit`
-        // times narrower on screen.
-        out[text] = (right - left + 1) * fit;
-      }
-      return out;
+      const previousVisibility = workspaceCanvas.style.visibility;
+      document.body.appendChild(canvas);
+      const bounds = canvas.getBoundingClientRect();
+      workspaceCanvas.style.visibility = 'hidden';
+      return {
+        left: bounds.left,
+        top: bounds.top,
+        width: bounds.width,
+        height: bounds.height,
+        ascent,
+        previousVisibility,
+      };
     },
     {
-      texts: strings,
       size: fontSize,
       family: fontFamily,
-      fit: scale,
-      padding: TEXT_PADDING_DOC_PX,
-      thresholds: {
-        redMin: RED_PIXEL_RED_MIN,
-        greenMax: RED_PIXEL_GREEN_MAX,
-        blueMax: RED_PIXEL_BLUE_MAX,
-      },
+      documentWidth: fit.documentWidth,
+      documentHeight: fit.documentHeight,
+      workspaceBox: box,
     }
   );
+
+  const clip = { x: reference.left, y: reference.top, width: reference.width, height: reference.height };
+  const region = {
+    left: reference.left,
+    top: reference.top,
+    right: reference.left + reference.width,
+    bottom: reference.top + reference.height,
+  };
+  try {
+    const out: Record<string, number> = {};
+    for (const text of strings) {
+      await page.evaluate(
+        ({ value, ascent, padding, documentWidth, documentHeight }) => {
+          const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-e2e-reference-ink="true"]');
+          const ctx = canvas?.getContext('2d');
+          if (!canvas || !ctx) throw new Error('referenceInkWidths: temporary canvas disappeared');
+          // The context is scaled by the workspace's HiDPI ratio. Repaint the logical document
+          // white to clear the prior candidate without mixing backing-pixel and context coordinates.
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, documentWidth, documentHeight);
+          ctx.fillStyle = '#ff0000';
+          ctx.fillText(value, padding, padding + ascent);
+        },
+        {
+          value: text,
+          ascent: reference.ascent,
+          padding: TEXT_PADDING_DOC_PX,
+          documentWidth: fit.documentWidth,
+          documentHeight: fit.documentHeight,
+        }
+      );
+      const image = await loadImageData(await page.screenshot({ clip }));
+      const bounds = await scanPixelsForBounds(image, isRedInk);
+      if (!bounds.found) throw new Error(`referenceInkWidths: the reference drew no ink for ${JSON.stringify(text)}`);
+      const cssBounds = imageBoundsToCss(
+        { width: image.width, height: image.height },
+        { x: region.left, y: region.top, width: clip.width, height: clip.height },
+        bounds
+      );
+      out[text] = cssBounds.right - cssBounds.left;
+    }
+    return out;
+  } finally {
+    await page.evaluate((previousVisibility) => {
+      const workspaceCanvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+      const canvas = document.querySelector('canvas[data-e2e-reference-ink="true"]');
+      if (workspaceCanvas) workspaceCanvas.style.visibility = previousVisibility;
+      canvas?.remove();
+    }, reference.previousVisibility);
+  }
 }
 
 /** The type size the tool is actually rendering with, read off the CONTROLLED input that owns it. */
@@ -971,7 +1000,8 @@ test.describe('Text tool in-place editing', () => {
     const references = await referenceInkWidths(page, ['Kept', 'Discarded'], {
       fontSize,
       fontFamily: 'Arial',
-      scale: fit.scale,
+      fit,
+      box,
     });
     const measured = await inkWidthIn(page, box, { x1: 120, y1: 150, x2: 620, y2: 340 }, 20, 'the Escape commit');
     expect(
@@ -1118,7 +1148,8 @@ test.describe('Text tool in-place editing', () => {
     const references = await referenceInkWidths(page, [FIRST_TEXT, SECOND_TEXT, PLACEHOLDER], {
       fontSize,
       fontFamily: 'Arial',
-      scale: fit.scale,
+      fit,
+      box,
     });
 
     for (const [region, own, label] of [
@@ -1740,6 +1771,45 @@ test.describe('Text tool in-place editing', () => {
     await expect(layerRows.nth(0).getByTestId('layer-name'), 'the restored layer is not a text layer').toHaveText(
       /^text \d+$/
     );
+  });
+
+  test.describe('committed ink reference at HiDPI', () => {
+    test.use({ deviceScaleFactor: 2 });
+
+    test('matches the committed text after 2x backing-store rendering', async ({ page }) => {
+      const box = await canvasBox(page);
+      await clickToPlace(page, box, CARET_CLICK);
+      await page.keyboard.type('Retina');
+      await page.keyboard.press('Escape');
+      await expect(overlay(page), 'the 2x draft remained open after commit').toHaveCount(0);
+
+      const canvasScale = await getWorkspaceCanvas(page).evaluate((node) => ({
+        devicePixelRatio: window.devicePixelRatio,
+        backingScale: node.getAttribute('data-hidpi-ratio'),
+      }));
+      expect(canvasScale.devicePixelRatio, 'the test context did not apply its 2x device scale').toBe(2);
+      expect(canvasScale.backingScale, 'the workspace renderer did not publish its 2x backing scale').toBe('2');
+
+      const fit = await readFit(page);
+      const references = await referenceInkWidths(page, ['Retina'], {
+        fontSize: await toolFontSize(page),
+        fontFamily: 'Arial',
+        fit,
+        box,
+      });
+      const measuredBounds = await inkBoundsIn(page, {
+        left: box.x,
+        top: box.y,
+        right: box.x + box.width,
+        bottom: box.y + box.height,
+      });
+      if (!measuredBounds) throw new Error('the 2x committed text has no measurable ink');
+      const measuredWidth = measuredBounds.right - measuredBounds.left;
+      expect(
+        Math.abs(measuredWidth - references.Retina),
+        `the 2x committed ink is ${measuredWidth.toFixed(1)} CSS px wide, not the reference width ${references.Retina.toFixed(1)}`
+      ).toBeLessThanOrEqual(INK_WIDTH_TOLERANCE_CSS_PX);
+    });
   });
 });
 

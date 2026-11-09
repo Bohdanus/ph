@@ -4181,6 +4181,46 @@ test.describe('Crop history', () => {
       };
       const result = await compareCropRenderers(page, fixture);
       const adapterDiagnostics = [];
+      const transformed = result.layerTransformResults[0];
+      const frameTransition = result.transitionResults[0];
+      const summarizeMaterialization = (comparisons: readonly CropParityLayerComparison[], stage: string) =>
+        comparisons.map((comparison) => ({
+          stage,
+          layerId: comparison.layerId,
+          positions: comparison.positions,
+          compositing: comparison.compositing,
+          affineTransforms: comparison.affineTransforms,
+          expectedBounds: comparison.expectedBounds,
+          materializedBounds: comparison.materializedBounds,
+          bitmapSize: comparison.bitmapSize,
+          frameDifferingBytes: comparison.frameDifferingBytes,
+          frameDifferingSamples: comparison.frameDifferingSamples,
+          offscreenFrameDifferingBytes: comparison.offscreenFrameDifferingBytes,
+          offscreenFrameDifferingSamples: comparison.offscreenFrameDifferingSamples,
+          tightBitmapRawDifferingBytes: comparison.tightBitmapRawDifferingBytes,
+          tightBitmapRawDifferingSamples: comparison.tightBitmapRawDifferingSamples,
+          tightBitmapPremultipliedDifferingBytes: comparison.tightBitmapPremultipliedDifferingBytes,
+          tightBitmapDifferingPixels: comparison.tightBitmapDifferingPixels,
+          tightBitmapNonEdgeDifferingPixels: comparison.tightBitmapNonEdgeDifferingPixels,
+          tightBitmapDifferingSamples: comparison.tightBitmapDifferingSamples,
+          offscreenTightBitmapRawDifferingBytes: comparison.offscreenTightBitmapRawDifferingBytes,
+          offscreenTightBitmapRawDifferingSamples: comparison.offscreenTightBitmapRawDifferingSamples,
+          offscreenTightBitmapPremultipliedDifferingBytes: comparison.offscreenTightBitmapPremultipliedDifferingBytes,
+          offscreenTightBitmapDifferingPixels: comparison.offscreenTightBitmapDifferingPixels,
+          offscreenTightBitmapNonEdgeDifferingPixels: comparison.offscreenTightBitmapNonEdgeDifferingPixels,
+          offscreenTightBitmapDifferingSamples: comparison.offscreenTightBitmapDifferingSamples,
+        }));
+      await testInfo.attach('affine-raster-materialization-diagnostics.json', {
+        body: JSON.stringify(
+          [
+            ...summarizeMaterialization(transformed?.materializedLayerComparisons ?? [], 'affine cursor'),
+            ...summarizeMaterialization(frameTransition?.materializedLayerComparisons ?? [], 'frame transition'),
+          ],
+          null,
+          2
+        ),
+        contentType: 'application/json',
+      });
       const normalComposite = await compareCropRenderers(page, {
         ...fixture,
         caseName: 'normal composite control for affine raster opacity and blend',
@@ -4191,7 +4231,6 @@ test.describe('Crop history', () => {
       });
 
       expect(result.layerTransformResults).toHaveLength(1);
-      const transformed = result.layerTransformResults[0];
       const assertForegroundMaterialization = (comparisons: readonly CropParityLayerComparison[], stage: string) => {
         expect(comparisons, stage + ' materialized foreground count').toHaveLength(1);
         const comparison = comparisons[0];
@@ -4446,7 +4485,6 @@ test.describe('Crop history', () => {
 
       expect(result.transitionResults).toHaveLength(1);
       expect(result.transitionResults[0]?.differingBytes, 'frame composite must remain byte-identical').toBe(0);
-      const frameTransition = result.transitionResults[0];
       if (frameTransition) {
         assertForegroundMaterialization(frameTransition.materializedLayerComparisons, 'frame transition');
         const projectedOutputs = frameTransition.projectedOutputParity;
