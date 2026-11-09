@@ -405,6 +405,7 @@ describe('ShapeToolArea', () => {
       const restores = vi.mocked(storeMocks.ctx.restore).mock.invocationCallOrder;
       expect(saves).toHaveLength(2);
       expect(restores).toHaveLength(2);
+      expect(restores[0]).toBeLessThan(saves[1]);
       // `setShapeCtx` runs INSIDE the bracket, not before it: configured outside, the `restore()`
       // would discard exactly the stroke settings `drawShape` reads.
       expect(vi.mocked(setShapeCtxMock).mock.invocationCallOrder[0]).toBeGreaterThan(saves[1]);
