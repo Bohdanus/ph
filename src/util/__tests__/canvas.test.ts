@@ -276,6 +276,41 @@ describe('clearCanvasBackingStore', () => {
     expect(clearState).toEqual([{ args: [0, 0, 40, 20], transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } }]);
     expect(transform).toEqual({ a: 0.4, b: 0, c: 0, d: 0.4, e: 0, f: 0 });
   });
+
+  it('restores the caller save stack when clearing throws', () => {
+    const canvas = { width: 40, height: 20 } as HTMLCanvasElement;
+    const identity = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+    let transform = { ...identity };
+    const savedTransforms: (typeof transform)[] = [];
+    const ctx = {
+      canvas,
+      save: vi.fn(() => savedTransforms.push({ ...transform })),
+      setTransform: vi.fn((a: number, b: number, c: number, d: number, e: number, f: number) => {
+        transform = { a, b, c, d, e, f };
+      }),
+      clearRect: vi.fn(() => {
+        throw new Error('clear failed');
+      }),
+      restore: vi.fn(() => {
+        transform = savedTransforms.pop()!;
+      }),
+    } as unknown as Ctx2D;
+
+    ctx.save();
+    ctx.setTransform(0.4, 0, 0, 0.4, 0, 0);
+    const callerTransform = { ...transform };
+
+    expect(() => clearCanvasBackingStore(ctx)).toThrow('clear failed');
+    expect(ctx.save).toHaveBeenCalledTimes(2);
+    expect(ctx.restore).toHaveBeenCalledTimes(1);
+    expect(savedTransforms).toHaveLength(1);
+    expect(transform).toEqual(callerTransform);
+
+    ctx.restore();
+
+    expect(savedTransforms).toHaveLength(0);
+    expect(transform).toEqual(identity);
+  });
 });
 
 describe('resizeCanvas fail-closed tripwires (known gaps this hardens)', () => {
