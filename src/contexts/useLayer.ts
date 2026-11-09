@@ -32,6 +32,7 @@ import {
   type ToolResult,
 } from '../tools/toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
+import { clearCanvasBackingStore } from '../util/canvas.ts';
 import { calculateNewRect, reduceRect, sortRect, sortRoundRect, sortedRectToPos } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
 import { isTextToolArgs } from '../util/typeGuards.ts';
@@ -493,7 +494,7 @@ export const useLayers = () => {
     }
     const overlayCtx = toolOverlayRef.current?.getContext('2d');
     if (!overlayCtx) return;
-    overlayCtx.clearRect(0, 0, totalSize.width, totalSize.height);
+    clearCanvasBackingStore(overlayCtx);
   }
 
   const _addLayer = (

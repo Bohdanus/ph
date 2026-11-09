@@ -11,7 +11,7 @@ import {
   getActiveSelection,
 } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, type DocumentFrame } from '../../contexts/document-frame.ts';
-import { resetOverlayAlpha } from '../../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../../util/canvas.ts';
 import { readCanvasImageDataAtLogicalSize } from '../../util/canvas-image-data.ts';
 import { createSelectionRasterOutlineCanvas, type SelectionRasterOutline } from '../../hooks/useSelectionAnts.ts';
 import {
@@ -191,7 +191,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
       const ctx = overlayCtxRef.current;
       if (!ctx) return;
 
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      clearCanvasBackingStore(ctx);
       resetOverlayAlpha(ctx);
       if (previewSize && (previewRaster || (previewPoints && previewPoints.length > 0))) {
         ctx.save();
@@ -527,7 +527,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
       resetGesture();
       releasePointerRef.current();
       if (ctx) {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [cancelSelectionDraft, overlayCtxRef, resetGesture]);
