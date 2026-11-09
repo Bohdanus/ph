@@ -188,6 +188,7 @@ describe('toolDescriptions', () => {
       if (name === 'paint-bucket') {
         expect(mode?.detail).toMatch(/HDR page’s tool list marks Paint Bucket unsupported/i);
         expect(mode?.detail).toMatch(/blending-mode page separately lists Clear for Paint Bucket/i);
+        expect(mode?.detail).toMatch(/neither page establishes that Clear is available to Paint Bucket in 32-bpc HDR/i);
       } else {
         expect(mode?.detail, `${name}: the HDR support page's count is attributed`).toMatch(
           /32-bpc HDR support page gives a 15-mode list/i
