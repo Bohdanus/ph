@@ -112,16 +112,21 @@ combinations; other retained-affine operation combinations and angles, blank opa
 text styling/rotation, and exact fractional bounds across the wider source matrix remain unproven.
 The three-transition mixed-source fixture pins composite pixels byte-for-byte after every frame
 transition. Do not infer exact per-layer or export parity from that gate. A separate transformed
-raster with layer opacity 0.58 and `multiply` blend mode has exact raw materialization and direct
-composite parity. Its normal admission check refuses retained operations, so the product continues
-to use legacy rendering and export. A local Chrome diagnostic that manually invokes the refused
-runtime/export adapters records 42 differing channel bytes at the affine cursor and 46 after the
-fractional frame in runtime, export-canvas, and decoded PNG pixels. PSD has zero composite/layer
-differences at the affine cursor; after the fractional frame, the composite differs by 8 bytes, the
-background layer by 7, and the foreground layer by zero. These refused-adapter results are not proof
-of a current product-output defect; their cause remains unknown. The earlier 146-byte isolated-layer
-comparison over transparency is not a valid blend-mode oracle. Keep retained-operation admission
-closed and follow the isolation steps in `docs/HISTORY-MIGRATION-NEXT.md` before changing the gate.
+raster with layer opacity 0.58 and `multiply` blend mode has zero differences under the test's exact
+re-premultiplication of `getImageData()` bytes, plus direct-composite parity. Raw RGBA readback counts
+remain diagnostic: Canvas stores premultiplied pixels, and conversion to non-premultiplied readback
+can lose precision.
+Its normal admission check refuses retained operations, so the product continues to use legacy
+rendering and export. A local Chrome diagnostic that manually invokes the refused runtime/export
+adapters records 42 differing channel bytes at the affine cursor and 46 after the fractional frame in
+runtime, export-canvas, and decoded PNG pixels. PSD has zero composite/layer differences at the affine
+cursor; after the fractional frame, the composite differs by 8 bytes, the background layer by 7, and
+the foreground layer by zero. Mirror macOS 26 ARM64 Chrome 157 reproduced 12 raw readback differences
+with zero premultiplied-byte differences; its refused fractional-frame projection had 13 PSD composite
+and 11 background-layer differences. These refused-adapter results are not proof of a current
+product-output defect; their cause remains unknown. The earlier 146-byte isolated-layer comparison
+over transparency is not a valid blend-mode oracle. Keep retained-operation admission closed and
+follow the isolation steps in `docs/HISTORY-MIGRATION-NEXT.md` before changing the gate.
 Do not add `SET_DOCUMENT_FRAME_ACTION` to background
 presentation until the full frame gate is explicit.
 The UI test intentionally continues to observe legacy presentation on commit and

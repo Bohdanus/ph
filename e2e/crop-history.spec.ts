@@ -4247,18 +4247,10 @@ test.describe('Crop history', () => {
           legacyBlendMode: 'multiply',
           durableBlendMode: 'multiply',
         });
-        expect(
-          comparison.tightBitmapRawDifferingBytes,
-          stage +
-            ' isolated tight bitmap raw bytes differ at ' +
-            JSON.stringify(comparison.tightBitmapRawDifferingSamples)
-        ).toBe(0);
-        expect(
-          comparison.offscreenTightBitmapRawDifferingBytes,
-          stage +
-            ' OffscreenCanvas tight bitmap raw bytes differ at ' +
-            JSON.stringify(comparison.offscreenTightBitmapRawDifferingSamples)
-        ).toBe(0);
+        // These raw channels come from getImageData(), which reads the canvas's
+        // premultiplied bitmap through a lossy conversion to non-premultiplied
+        // ImageData. Preserve raw differences in the diagnostic attachment, but
+        // gate pixel parity on the exact re-premultiplied-readback comparison below.
         expect(
           comparison.tightBitmapPremultipliedDifferingBytes,
           stage + ' isolated tight bitmap differs at ' + JSON.stringify(comparison.tightBitmapDifferingSamples)
