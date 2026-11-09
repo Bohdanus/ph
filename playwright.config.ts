@@ -23,7 +23,12 @@ const testBaseUrl = (() => {
   if (!configuredBaseUrl) return baseUrl;
   try {
     const url = new URL(configuredBaseUrl);
-    if (url.protocol === 'http:' && url.hostname === 'localhost' && url.port === port) {
+    const localServerUrl = new URL(baseUrl);
+    // Keep a same-port localhost override working while ensuring the browser uses
+    // the exact IPv4 loopback address Vite is bound to below.
+    // Compare parsed ports from both URLs: WHATWG URL normalizes explicit default
+    // HTTP port 80 to an empty `port`, so both sides need the same normalization.
+    if (url.protocol === 'http:' && url.hostname === 'localhost' && url.port === localServerUrl.port) {
       url.hostname = '127.0.0.1';
       return url.toString();
     }

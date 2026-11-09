@@ -1164,6 +1164,19 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
       vi.resetModules();
       const aliasConfig = await loadPlaywrightConfig();
       expect(aliasConfig.use?.baseURL).toBe('http://127.0.0.1:5197/app');
+
+      process.env.PLAYWRIGHT_PORT = '80';
+      process.env.PLAYWRIGHT_BASE_URL = 'http://localhost:80/app';
+      vi.resetModules();
+      const defaultPortConfig = await loadPlaywrightConfig();
+      const defaultPortWebServer = defaultPortConfig.webServer as { command?: string; url?: string } | undefined;
+      expect(defaultPortWebServer?.url).toBe('http://127.0.0.1:80');
+      expect(defaultPortConfig.use?.baseURL).toBe('http://127.0.0.1/app');
+
+      expect(
+        new URL(String(defaultPortConfig.use?.baseURL)).origin,
+        'the browser target and local server must resolve to the same origin at the default HTTP port'
+      ).toBe(new URL(String(defaultPortWebServer?.url)).origin);
     } finally {
       if (previousPort === undefined) delete process.env.PLAYWRIGHT_PORT;
       else process.env.PLAYWRIGHT_PORT = previousPort;
