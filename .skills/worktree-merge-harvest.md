@@ -487,8 +487,7 @@ dirty candidate. Re-read the main ref and occupancy:
 (cd "$TASK_WORKTREE" && npm run repo:state)
 (cd "$TASK_WORKTREE" && node scripts/worktree-inventory.mjs)
 (cd "$TASK_WORKTREE" && npm run branches:orphan)
-(cd "$TASK_WORKTREE" && npm run swarm -- status)
-(cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
+  (cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
 test "$(git -C "$MAIN" rev-parse HEAD)" = "$REVIEWED_MAIN_SHA"
 node "$TASK_WORKTREE/scripts/main-landing.mjs" status
 ```

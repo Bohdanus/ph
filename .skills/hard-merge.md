@@ -159,7 +159,8 @@ npm run swarm -- note "<branch>: hard merge, resolving <n> conflicts"   # before
 npm run swarm -- check <paths>                                         # exits 1 and names the holder
 ```
 
-`.skills/worktree-merge-harvest.md` §Step 4 is the one home for the board protocol.
+`docs/ORCHESTRATION.md` §The swarm board is the authoritative protocol; `.skills/worktree-merge-harvest.md`
+§Step 4 shows its reviewer-coordination application.
 
 **Two traps that belong to the landing rather than to the resolution.** Never `git add -A` in a
 worktree whose root checkout is dirty: the root is a different checkout of a different `HEAD`, so
