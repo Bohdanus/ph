@@ -547,7 +547,7 @@ describe('Reasoning parameter is not sent to any provider', () => {
       source: 'kilo',
       model,
       prompt: 'prompt',
-      maxTokens: 4000,
+      maxTokens: 65536,
       timeoutMs: 12 * 60 * 1000,
     });
     expect(chat).not.toHaveBeenCalled();

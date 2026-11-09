@@ -83,12 +83,22 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 ### Skills
 
 This is the entrypoint for repository procedures. Codex must open the selected `.skills/*.md`
-playbook explicitly; Kilo runtime copies live under `.kilo/skills/*/SKILL.md`. Tool permission
-profiles live under `.kilo/agent/`.
+playbook explicitly; applicable Codex runtime skills live at
+`$CODEX_HOME/skills/<skill-name>/SKILL.md` (default `~/.codex/skills/`). Kilo runtime copies live
+under `.kilo/skills/*/SKILL.md`. Tool permission profiles live under `.kilo/agent/`.
 
-The agent procedures live outside this directory, under `.skills/`, one file per
-procedure. `AGENTS.md` states the rules, a skill states a procedure, and an agent profile defines
-its tool permissions.
+The tracked `.skills/` files are canonical for every procedure and its supporting files. General
+skills must be complete, byte-identical copies across `.skills/`, `.kilo/skills/`, and the Codex
+skill directory. Keep Kilo-only skills out of Codex, Codex-only skills out of Kilo, and track every
+host-specific skill in `.skills/` so it survives independently of ignored runtime copies. Kilo
+runtime skills are full copies, not abbreviated loaders. `AGENTS.md` states repository rules, a
+skill states a procedure, and an agent profile defines its tool permissions.
+
+Kilo-only skills, excluded from Codex, are `chat-loose-end-scan`, `e2e-hardening-cron`,
+`free-model-agent-rotation`, `free-model-chat-sweep`, `kilo-chat-history`, `overnight-sweep`, and
+`parallel-test-hardening`. `codex-chat-history` is Codex-only and must not be installed in Kilo.
+The Copilot-specific `copilot-chat-history` and `copilot-subagent-launch` remain tracked and
+available in Kilo for Copilot workflows, but are not Codex skills.
 
 | Skill                                                                                  | Its one job                                                                                                                                                                                                                                                               |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -100,6 +110,7 @@ its tool permissions.
 | [`../.skills/chat-loose-end-scan.md`](../.skills/chat-loose-end-scan.md)               | Find loose ends in recent top-level Kilo chats — chats that died on a network loss, a token wall or a tool error, and reviews whose findings nobody answered                                                                                                              |
 | [`../.skills/codex-chat-history.md`](../.skills/codex-chat-history.md)                 | Locate and query OpenAI Codex CLI session history from local SQLite state database and JSONL rollout files. Read-only, local-first                                                                                                                                        |
 | [`../.skills/copilot-chat-history.md`](../.skills/copilot-chat-history.md)             | Locate and query GitHub Copilot Chat panel and Agent sessions from Chronicle, agent-host, and JSONL stores. Read-only, local-first                                                                                                                                        |
+| [`../.skills/copilot-subagent-launch.md`](../.skills/copilot-subagent-launch.md)       | Launch and troubleshoot task-scoped subagents in GitHub Copilot Chat for VS Code                                                                                                                                                                                          |
 | [`../.skills/free-model-agent-rotation.md`](../.skills/free-model-agent-rotation.md)   | Route bounded research, text-sweep, and simple review subtasks through currently free model providers without paid fallback                                                                                                                                               |
 | [`../.skills/free-model-chat-sweep.md`](../.skills/free-model-chat-sweep.md)           | Review Kilo and Codex history for free-model failure patterns, then apply evidence-backed expiring quarantine actions                                                                                                                                                     |
 | [`../.skills/hard-merge.md`](../.skills/hard-merge.md)                                 | Merge two branches with overlapping features, recovering requirements from chat history and arbitrating conflicts against Photoshop                                                                                                                                       |

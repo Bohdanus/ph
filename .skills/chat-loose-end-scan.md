@@ -51,7 +51,7 @@ finding and you will report a closed issue as open.
 
 ```bash
 cd /path/to/repo
-python3 .kilo/skills/chat-loose-end-scan/scan.py --hours 4 --root "$PWD"
+python3 .skills/chat-loose-end-scan/scan.py --hours 4 --root "$PWD"
 ```
 
 Useful flags: `--start 2026-10-05T08:00:00Z` overrides `--hours`; `--batches 6
@@ -135,7 +135,7 @@ One analyst reading 30 tails will skim. Chunk by **characters**, not by chat
 count — chat tails range from 200 to 9000 chars.
 
 ```bash
-python3 .kilo/skills/chat-loose-end-scan/scan.py --hours 4 --root "$PWD" \
+python3 .skills/chat-loose-end-scan/scan.py --hours 4 --root "$PWD" \
   --batches 6 --batch-dir /tmp/loose/b --out /tmp/loose/bundle.json
 ```
 

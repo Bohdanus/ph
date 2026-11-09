@@ -48,8 +48,10 @@ export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
 const NEMOTRON_3_ULTRA_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
 const NEMOTRON_TIMEOUT_MS = 12 * 60 * 1000;
+const MIN_NEMOTRON_MAX_TOKENS = 4096;
+const MAX_COMPLETION_TOKENS = 65536;
 const DEFAULT_MAX_TOKENS = 1200;
-const DEFAULT_NEMOTRON_MAX_TOKENS = 4000;
+const DEFAULT_NEMOTRON_MAX_TOKENS = MAX_COMPLETION_TOKENS;
 const XINGCHEN_XING4_MODEL = 'xingchen-agi/xing4.0-29b-a4b:free';
 const HTTP_DATE_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const HTTP_SHORT_DAY_PATTERN = 'Mon|Tue|Wed|Thu|Fri|Sat|Sun';
@@ -914,7 +916,7 @@ export async function runOpenCodeCompletion({
   ) {
     return { error: 'OpenCode model is not an eligible free catalog ID' };
   }
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS) {
     return { error: 'Invalid token limit' };
   }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_OPENCODE_TIMEOUT_MS) {
@@ -938,7 +940,7 @@ export async function runOpenCodeCompletion({
         '--format',
         'json',
         '--model',
-        `opencode/${model}`,
+        `opencode/${model}${verifiedNemotron ? '#high' : ''}`,
         '--file',
         promptPath,
         `Answer the attached request concisely (about ${maxTokens} tokens or fewer). Do not use tools.`,
@@ -1130,8 +1132,8 @@ export async function completeWithFreeModel(prompt, options = {}) {
   if (typeof prompt !== 'string' || prompt.length === 0 || prompt.length > MAX_PROMPT_CHARS) {
     throw new Error(`Prompt must contain 1 to ${MAX_PROMPT_CHARS} characters`);
   }
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
-    throw new Error('maxTokens must be an integer from 1 to 4000');
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS) {
+    throw new Error(`maxTokens must be an integer from 1 to ${MAX_COMPLETION_TOKENS}`);
   }
   const effectiveKiloCommand = kiloCommand === '' ? '' : (kiloCommand ?? (await resolveKiloCli()));
   const groqKeys = normalizeGroqKeys(groqApiKey, groqApiKeys);
@@ -1350,6 +1352,21 @@ export async function completeWithFreeModel(prompt, options = {}) {
     }
     return { retry: true, delayMs: retryAfterMs ?? (status === 429 ? 1000 : 0) };
   };
+  const queueNemotronLengthRetry = (candidate, candidateIndex, maxTokens) => {
+    if (
+      candidate.model !== NEMOTRON_3_ULTRA_MODEL ||
+      candidate.nemotronLengthRetry === true ||
+      maxTokens >= MAX_COMPLETION_TOKENS
+    ) {
+      return false;
+    }
+    available.splice(candidateIndex + 1, 0, {
+      ...candidate,
+      nemotronLengthRetry: true,
+      nemotronRetryMaxTokens: Math.min(maxTokens * 2, MAX_COMPLETION_TOKENS),
+    });
+    return true;
+  };
   for (let candidateIndex = 0; candidateIndex < available.length; candidateIndex += 1) {
     const candidate = available[candidateIndex];
     if (exhausted.has(candidate.source)) continue;
@@ -1360,8 +1377,13 @@ export async function completeWithFreeModel(prompt, options = {}) {
     if (candidate.source === 'groq' && (!groqKeys.length || !groqFreePlan)) continue;
     if (candidate.source === 'opencode' && !opencodeCommand) continue;
     attempts.set(candidate.source, sourceAttempts + 1);
+    const requestedMaxTokens =
+      candidate.nemotronRetryMaxTokens ??
+      (candidate.model === NEMOTRON_3_ULTRA_MODEL && !maxTokensExplicit ? DEFAULT_NEMOTRON_MAX_TOKENS : maxTokens);
     const routeMaxTokens =
-      candidate.model === NEMOTRON_3_ULTRA_MODEL && !maxTokensExplicit ? DEFAULT_NEMOTRON_MAX_TOKENS : maxTokens;
+      candidate.model === NEMOTRON_3_ULTRA_MODEL
+        ? Math.max(requestedMaxTokens, MIN_NEMOTRON_MAX_TOKENS)
+        : requestedMaxTokens;
     const routeTimeoutMs = candidate.model === NEMOTRON_3_ULTRA_MODEL ? NEMOTRON_TIMEOUT_MS : COMPLETION_TIMEOUT_MS;
     if (candidate.source === 'kilo') {
       try {
@@ -1377,6 +1399,13 @@ export async function completeWithFreeModel(prompt, options = {}) {
           await stopForReportedCost(candidate);
         }
         if (isContentPolicyError(result)) stopForContentPolicy(candidate);
+        if (result?.finishReason === 'length' && queueNemotronLengthRetry(candidate, candidateIndex, routeMaxTokens)) {
+          continue;
+        }
+        if (result?.finishReason === 'length') {
+          errors.push(`kilo/${candidate.model}: incomplete completion (finish_reason=length)`);
+          continue;
+        }
         if (result?.status === 429) {
           await persistKiloRateLimit();
         }
@@ -1540,6 +1569,9 @@ export async function completeWithFreeModel(prompt, options = {}) {
           await stopForReportedCost(candidate);
         }
         if (isContentPolicyError(result)) stopForContentPolicy(candidate);
+        if (result?.finishReason === 'length' && queueNemotronLengthRetry(candidate, candidateIndex, routeMaxTokens)) {
+          continue;
+        }
         if (result?.content && result.finishReason === 'stop') {
           const resolvedModel = result.model ?? candidate.model;
           if (!available.some((entry) => entry.source === 'opencode' && entry.model === resolvedModel)) {
@@ -1624,6 +1656,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
           model: candidate.model,
           messages: [{ role: 'user', content: prompt }],
           max_tokens: effectiveMaxTokens,
+          ...(candidate.model === NEMOTRON_3_ULTRA_MODEL ? { reasoning: { effort: 'high' } } : {}),
         }),
       });
     } catch (error) {
@@ -1680,6 +1713,13 @@ export async function completeWithFreeModel(prompt, options = {}) {
     const choice = payload?.choices?.[0];
     const content = choice?.message?.content;
     const finishReason = choice?.finish_reason;
+    if (
+      response.ok &&
+      finishReason === 'length' &&
+      queueNemotronLengthRetry(candidate, candidateIndex, routeMaxTokens)
+    ) {
+      continue;
+    }
     if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
       const resolvedModel = payload.model;
       const stillFree = available.some((entry) => entry.source === candidate.source && entry.model === resolvedModel);
@@ -1753,7 +1793,7 @@ function usage() {
     '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
     '--list fetches public model catalogs; configured=null means local CLI credentials were not checked.\n' +
     'configured=false means provider credentials/opt-in are missing, not that a model is invalid.\n' +
-    '--max-tokens defaults to 4,000 for Nemotron when omitted and 1,200 for other routes; explicit Nemotron values are preserved.\n' +
+    '--max-tokens requests up to 65,536 for Nemotron by default (floor 4,096) and 1,200 for other routes; provider allocation is not guaranteed.\n' +
     'Kilo completions use the authenticated Kilo CLI; set KILO_CLI only when its automatic discovery fails.\n' +
     'Inference uses five minutes by default and twelve minutes for Nemotron 3 Ultra; catalog and quota checks use 15 seconds.\n' +
     'Groq routing requires GROQ_API_KEY and GROQ_FREE_PLAN=1 because its catalog does not expose free pricing.\n' +
@@ -1926,8 +1966,8 @@ export async function main(
     return 2;
   }
   const maxTokens = tokenAt >= 0 ? Number(args[tokenAt + 1]) : DEFAULT_MAX_TOKENS;
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
-    stderr.write('--max-tokens must be an integer from 1 to 4000.\n');
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS) {
+    stderr.write(`--max-tokens must be an integer from 1 to ${MAX_COMPLETION_TOKENS}.\n`);
     return 2;
   }
   const result = await completeWithFreeModel(prompt, {
