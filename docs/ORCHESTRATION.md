@@ -280,8 +280,10 @@ unmerged state, retain the lease and use the four-hour recovery path below.
 When `land` arms this wait, it prints `landing pending` and exits with code 75; this is not a
 successful landing. Code 75 is returned only after the detached watcher reads the matching lease
 and acknowledges readiness; watcher startup failure retains the lease and returns an error instead
-of reporting pending. Do not run post-merge parent/tree checks until `main:landing status` shows the
-lease released and the pinned merge is present in `main`.
+of reporting pending. The watcher refreshes the owner heartbeat while polling but is not supervised
+after readiness; if that heartbeat stops advancing, use the four-hour recovery procedure rather
+than assuming the pinned retry will run. Do not run post-merge parent/tree checks until
+`main:landing status` shows the lease released and the pinned merge is present in `main`.
 
 If the operator confirms the owner process tree has stopped and `main:landing status` reports a
 clean main checkout with no Git operation, the operator can release the abandoned reservation

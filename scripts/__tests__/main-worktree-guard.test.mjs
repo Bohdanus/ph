@@ -413,6 +413,7 @@ describe('the guard tells a main worktree from a linked one on a real repository
       const attemptedRecoveryPaths = [];
       let replacementPath = null;
       let landedPins = null;
+      let resetHeartbeatAt = null;
       const result = await watch(paths, owner.leaseId, {
         sleep: async (milliseconds) => {
           clock += milliseconds;
@@ -423,7 +424,11 @@ describe('the guard tells a main worktree from a linked one on a real repository
         recoveryOptions: {
           now: () => clock,
           startHeartbeat: () => null,
-          note: () => {},
+          note: () => {
+            if (worktreeCreationAttempts === 1) {
+              resetHeartbeatAt = JSON.parse(readFileSync(ownerPath, 'utf8')).heartbeatAt;
+            }
+          },
           runLanding: async (replacement, _activeOwner, pins) => {
             expect(replacement.mainPath).toBe(replacementPath);
             landedPins = pins;
@@ -458,6 +463,7 @@ describe('the guard tells a main worktree from a linked one on a real repository
 
       expect(result).toBe(0);
       expect(clock - observedSince).toBe(60 * 60_000);
+      expect(resetHeartbeatAt).toBe(new Date(observedSince + 30 * 60_000).toISOString());
       expect(worktreeCreationAttempts).toBe(2);
       expect(attemptedRecoveryPaths[0]).not.toBe(attemptedRecoveryPaths[1]);
       expect(existsSync(attemptedRecoveryPaths[0])).toBe(false);

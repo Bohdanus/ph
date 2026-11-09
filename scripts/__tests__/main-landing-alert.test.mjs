@@ -61,10 +61,15 @@ describe('main landing alert claims', () => {
     const child = new EventEmitter();
     let unrefed = false;
     let stdoutDestroyed = false;
+    let stderrDestroyed = false;
     child.pid = 12345;
     child.stdout = new EventEmitter();
     child.stdout.destroy = () => {
       stdoutDestroyed = true;
+    };
+    child.stderr = new EventEmitter();
+    child.stderr.destroy = () => {
+      stderrDestroyed = true;
     };
     child.kill = () => {};
     child.unref = () => {
@@ -83,7 +88,7 @@ describe('main landing alert claims', () => {
       return pid;
     });
 
-    expect(spawnOptions).toMatchObject({ detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    expect(spawnOptions).toMatchObject({ detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.emit('data', 'incomplete watcher startup');
     expect(settled).toBe(false);
     child.stdout.emit('data', 'KILO_MAIN_LANDING_WATCHER_READY:lease-token\n');
@@ -91,6 +96,7 @@ describe('main landing alert claims', () => {
     await expect(pending).resolves.toBe(12345);
     expect(unrefed).toBe(true);
     expect(stdoutDestroyed).toBe(true);
+    expect(stderrDestroyed).toBe(true);
   });
 
   it('rejects when the detached watcher exits before readiness', async () => {
@@ -99,6 +105,8 @@ describe('main landing alert claims', () => {
     child.pid = 12345;
     child.stdout = new EventEmitter();
     child.stdout.destroy = () => {};
+    child.stderr = new EventEmitter();
+    child.stderr.destroy = () => {};
     child.kill = () => {
       killed = true;
     };
@@ -108,9 +116,10 @@ describe('main landing alert claims', () => {
       readyTimeoutMs: 1_000,
       spawnProcess: () => child,
     });
+    child.stderr.emit('data', 'Error: Cannot find module startup-dependency');
     child.emit('close', 1, null);
 
-    await expect(pending).rejects.toThrow('exited before readiness');
+    await expect(pending).rejects.toThrow('Error: Cannot find module startup-dependency');
     expect(killed).toBe(true);
   });
 });

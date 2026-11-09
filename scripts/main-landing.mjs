@@ -821,6 +821,7 @@ export function startWatcher(paths, leaseId, { spawnProcess = spawn, readyTimeou
     let child;
     let settled = false;
     let output = '';
+    let stderrOutput = '';
     let timer;
     const readyToken = 'KILO_MAIN_LANDING_WATCHER_READY:' + leaseId + '\n';
     const fail = (error) => {
@@ -839,7 +840,7 @@ export function startWatcher(paths, leaseId, { spawnProcess = spawn, readyTimeou
       child = spawnProcess(process.execPath, [SCRIPT_PATH, 'watch', leaseId], {
         cwd: paths.cwd,
         detached: true,
-        stdio: ['ignore', 'pipe', 'ignore'],
+        stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
       });
     } catch (error) {
@@ -847,25 +848,46 @@ export function startWatcher(paths, leaseId, { spawnProcess = spawn, readyTimeou
       return;
     }
 
-    timer = setTimeout(
-      () => fail(new Error('detached alert watcher did not become ready within ' + readyTimeoutMs + 'ms')),
-      readyTimeoutMs
-    );
+    timer = setTimeout(() => {
+      const details = stderrOutput.trim();
+      fail(
+        new Error(
+          'detached alert watcher did not become ready within ' +
+            readyTimeoutMs +
+            'ms' +
+            (details ? ': ' + safeText(details, 2_000) : '')
+        )
+      );
+    }, readyTimeoutMs);
     child.stdout.on('data', (chunk) => {
       output = (output + String(chunk)).slice(-readyToken.length);
       if (!output.includes(readyToken) || settled) return;
       settled = true;
       clearTimeout(timer);
       child.stdout.destroy();
+      child.stderr.destroy();
       child.unref();
       resolvePromise(child.pid);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderrOutput = (stderrOutput + String(chunk)).slice(-2_000);
     });
     child.once('error', (error) =>
       fail(new Error('could not start the detached alert watcher: ' + error.message, { cause: error }))
     );
     child.once('close', (code, signal) => {
-      if (!settled)
-        fail(new Error('detached alert watcher exited before readiness (code ' + code + ', signal ' + signal + ')'));
+      if (settled) return;
+      const details = stderrOutput.trim();
+      fail(
+        new Error(
+          'detached alert watcher exited before readiness (code ' +
+            code +
+            ', signal ' +
+            signal +
+            ')' +
+            (details ? ': ' + safeText(details, 2_000) : '')
+        )
+      );
     });
   });
 }
@@ -1562,6 +1584,11 @@ export async function watch(
     }
     if (!owner || owner.leaseId !== leaseId) return 0;
     try {
+      if (owner.mode === 'landing') {
+        owner = updateOwnedRecord(paths, leaseId, (current) =>
+          current.mode === 'landing' ? { ...current, heartbeatAt: new Date(now()).toISOString() } : current
+        );
+      }
       if (owner.mode === 'landing' && !owner.autoMergeFailoverAttempted && owner.incomingSha && owner.treeSha) {
         const currentPaths = resolvePaths(paths.cwd);
         if (owner.originalMainPath && !samePath(currentPaths.mainPath, owner.originalMainPath)) {
