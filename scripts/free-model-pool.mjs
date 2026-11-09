@@ -1140,6 +1140,7 @@ export async function runOpenCodeCompletion({
           if ((processFailure || code !== 0) && reportedCosts.some((cost) => !isExactZeroCost(cost))) {
             const error = new Error('OpenCode reported non-zero or invalid cost');
             error.safetyStop = true;
+            error.reportedCost = true;
             throw error;
           }
           if (processFailure) {
@@ -1306,10 +1307,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
     } catch (error) {
       const failure = new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
       failure.safetyStop = true;
+      failure.costSafetyStopHandled = true;
       throw failure;
     }
     const error = new Error(message);
     error.safetyStop = true;
+    error.costSafetyStopHandled = true;
     throw error;
   };
   const stopForContentPolicy = (candidate) => {
@@ -1544,12 +1547,13 @@ export async function completeWithFreeModel(prompt, options = {}) {
         errors.push(`kilo/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
         if (result?.exhaustSource) exhausted.add(candidate.source);
       } catch (error) {
+        if (error.costSafetyStopHandled) throw error;
+        if (error.reportedCost === true || hasReportedNonZeroCost(error.usage)) {
+          await stopForReportedCost(candidate);
+        }
         if (error.safetyStop) throw error;
         if (error.status === 429) {
           await persistKiloRateLimit();
-        }
-        if (error.safetyStop || hasReportedNonZeroCost(error.usage)) {
-          await stopForReportedCost(candidate);
         }
         if (isContentPolicyError(error)) stopForContentPolicy(candidate);
         await recordAttributableFailure(candidate, error);
@@ -1729,6 +1733,10 @@ export async function completeWithFreeModel(prompt, options = {}) {
           }
         }
       } catch (error) {
+        if (error.costSafetyStopHandled) throw error;
+        if (error.reportedCost === true || hasReportedNonZeroCost(error.usage)) {
+          await stopForReportedCost(candidate);
+        }
         if (error.safetyStop) throw error;
         if (isContentPolicyError(error)) stopForContentPolicy(candidate);
         errors.push(`opencode/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);

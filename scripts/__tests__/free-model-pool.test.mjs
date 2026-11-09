@@ -1114,7 +1114,7 @@ process.stdout.write('x'.repeat(2 * 1024 * 1024));`
     try {
       await expect(
         runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
-      ).rejects.toMatchObject({ safetyStop: true });
+      ).rejects.toMatchObject({ safetyStop: true, reportedCost: true });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -1584,6 +1584,40 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     }
   });
 
+  it('quarantines OpenCode reported cost on an abnormal process exit before Groq fallback', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-opencode-cost-exit-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.01 } }));
+process.stdout.write('x'.repeat(2 * 1024 * 1024));`
+    );
+    const chat = vi.fn();
+    const fetchImpl = catalogFetch({
+      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      groq: [{ id: 'openai/gpt-oss-120b' }],
+      chat,
+    });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', {
+          fetchImpl,
+          opencodeCommand: command,
+          groqApiKey: 'gk',
+          groqFreePlan: true,
+          quarantineFile,
+        })
+      ).rejects.toThrow(/refusing further requests/);
+      expect(chat).not.toHaveBeenCalled();
+      expect((await readQuarantineState(quarantineFile)).entries['opencode:beam-free']).toMatchObject({
+        reason: 'non_zero_cost',
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed on Kilo content-policy rejection without trying OpenRouter', async () => {
     const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     const chat = vi.fn();
@@ -1616,6 +1650,34 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           fetchImpl,
           kiloCommand: '/fake-kilo',
           runKilo: vi.fn().mockResolvedValue({ error: 'paid response', safetyStop: true }),
+          quarantineFile,
+        })
+      ).rejects.toThrow(/quarantine is operator-managed; refusing further requests/);
+      expect(chat).not.toHaveBeenCalled();
+      expect((await readQuarantineState(quarantineFile)).entries[`kilo:${model}`]).toBeUndefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed on Kilo thrown usage-cost errors before trying another provider', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-kilo-cost-error-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const chat = vi.fn();
+    const fetchImpl = catalogFetch({ kilo: [kiloRow(model)], openrouter: [openRouterRow('o1')], chat });
+    const costError = Object.assign(new Error('Kilo process reported a charge'), {
+      safetyStop: true,
+      usage: { cost: 0.01 },
+    });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', {
+          fetchImpl,
+          kiloCommand: '/fake-kilo',
+          runKilo: vi.fn().mockRejectedValue(costError),
+          openRouterKey: 'rk',
           quarantineFile,
         })
       ).rejects.toThrow(/quarantine is operator-managed; refusing further requests/);
