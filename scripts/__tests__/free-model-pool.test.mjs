@@ -911,6 +911,248 @@ process.exit(1);`
     }
   });
 
+  it('preserves a later OpenCode account quota event after a model-specific error on a non-zero exit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, message: 'Model rate limited' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'RateLimit.FreeUsageLimitError', message: 'Free usage limit reached' } }));
+process.exit(1);`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toMatchObject({
+        errorType: 'provider.error',
+        status: null,
+        accountQuota: true,
+        modelAttributable: false,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves later OpenCode account quota events on a clean CLI exit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, message: 'Model rate limited' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', status: 429, message: 'Free usage limit reached' } }));
+console.log(JSON.stringify({ type: 'text', part: { text: 'partial answer' } }));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).resolves.toMatchObject({
+        errorType: 'provider.free-limit',
+        status: 429,
+        accountQuota: true,
+        modelAttributable: false,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps content-policy rejection fail-closed when OpenCode emits multiple errors', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', status: 429, message: 'Free usage limit reached' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'CONTENT.FILTER', message: 'Provider rejected this request' } }));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).resolves.toMatchObject({
+        errorType: 'provider.error',
+        accountQuota: true,
+        contentPolicyRejected: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not turn a model-specific 429 into account quota when content policy also rejects', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, message: 'Model rate limited' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'content_filter', message: 'Provider rejected this request' } }));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).resolves.toMatchObject({
+        errorType: 'provider.error',
+        status: null,
+        accountQuota: false,
+        contentPolicyRejected: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a later model-specific 429 and its retry metadata after a generic OpenCode error', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.request-error', status: 500, message: 'Request failed' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-upstream-error', status: 500, message: 'Model upstream error' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'provider.model-rate-limit', status: 429, retryAfter: '2', message: 'Model rate limited' } }));
+process.exit(1);`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toMatchObject({
+        errorType: 'provider.error',
+        status: 429,
+        retryAfter: '2',
+        retryAfterMs: 2000,
+        modelAttributable: true,
+        accountQuota: false,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the longest valid OpenCode model 429 delay across retry metadata shapes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, retryAfter: '2', message: 'Model rate limited' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, retryAfterMs: '3500', message: 'Model rate limited' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, responseHeaders: { 'Retry-After': '4', 'Retry-After-Ms': '5000' }, message: 'Model rate limited' } }));
+process.exit(1);`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toMatchObject({
+        errorType: 'provider.model-rate-limit',
+        status: 429,
+        retryAfter: '2',
+        retryAfterMs: 5000,
+        modelAttributable: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed on an OpenCode content-filter step finish without an error event', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'partial answer' } }));
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'content-filter' } }));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).resolves.toMatchObject({ errorType: 'content_filter', contentPolicyRejected: true });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a typed OpenCode quota event when another JSONL line is malformed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', message: 'Free usage limit reached' } }));
+console.log('not-json');
+process.exit(1);`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toMatchObject({ errorType: 'provider.free-limit', status: null, accountQuota: true });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a content-policy event before OpenCode output exceeds its cap', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'content_filter', message: 'Blocked by policy' } }));
+process.stdout.write('x'.repeat(2 * 1024 * 1024));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toMatchObject({ errorType: 'content_filter', contentPolicyRejected: true });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed on a reported OpenCode cost even when later output exceeds its cap', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.01 } }));
+process.stdout.write('x'.repeat(2 * 1024 * 1024));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toMatchObject({ safetyStop: true, reportedCost: true });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['number zero', 0, false, true],
+    ['string zero', '0', false, true],
+    ['boolean false', false, false, false],
+    ['empty string', '', false, false],
+    ['whitespace string', ' ', true, false],
+    ['array', [], true, false],
+  ])('accepts only exact zero OpenCode cost metadata: %s', async (_label, cost, overflow, shouldAccept) => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const overflowScript = overflow ? "\nprocess.stdout.write('x'.repeat(2 * 1024 * 1024));" : '';
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: ${JSON.stringify(cost)} } }));${overflowScript}`
+    );
+
+    try {
+      const completion = runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 });
+      if (overflow) {
+        await expect(completion).rejects.toMatchObject({ safetyStop: true });
+      } else if (shouldAccept) {
+        await expect(completion).resolves.toMatchObject({ content: 'answer', finishReason: 'stop' });
+      } else {
+        await expect(completion).resolves.toMatchObject({
+          error: 'OpenCode reported non-zero or invalid cost',
+          safetyStop: true,
+        });
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('rejects non-free OpenCode IDs before starting the CLI', async () => {
     await expect(
       runOpenCodeCompletion({ command: '/missing-opencode', model: 'beam', prompt: 'prompt', maxTokens: 8 })
@@ -977,18 +1219,28 @@ process.exit(1);`
     }
   }, 15_000);
 
-  it('rejects an explicit non-zero OpenCode cost even for a free catalog ID', async () => {
+  it.each([
+    [
+      'a successful terminal event',
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));\nconsole.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`,
+    ],
+    [
+      'a clean-exit provider error event',
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.request-error' }, cost: 0.001 }));`,
+    ],
+    ['a tool event', `console.log(JSON.stringify({ type: 'tool_use', part: { type: 'tool' }, cost: 0.001 }));`],
+    [
+      'a nested provider error cost',
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.request-error', cost: 0.001 } }));`,
+    ],
+  ])('rejects reported OpenCode costs before accepting or classifying %s', async (_scenario, source) => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
-    const command = await writeFakeOpenCode(
-      directory,
-      `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));
-console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`
-    );
+    const command = await writeFakeOpenCode(directory, source);
 
     try {
       await expect(
         runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
-      ).resolves.toMatchObject({ error: 'OpenCode reported non-zero or invalid cost' });
+      ).resolves.toMatchObject({ error: 'OpenCode reported non-zero or invalid cost', safetyStop: true });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -1194,6 +1446,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-opencode-limit-'));
     const quarantineFile = join(directory, 'quarantine.json');
     const poolStateFile = join(directory, 'pool-state.json');
+    const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -1203,15 +1456,18 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       }),
     });
     const fetchImpl = catalogFetch({
-      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      opencode: [
+        { id: 'beam-free', owned_by: 'opencode' },
+        { id: 'flint-free', owned_by: 'opencode' },
+      ],
       groq: [{ id: 'openai/gpt-oss-120b' }],
       chat,
     });
     const runOpenCode = vi.fn().mockResolvedValue({
       error: 'OpenCode free account limit',
-      errorType: 'provider.free-limit',
+      errorType: 'RateLimit.FreeUsageLimitError',
       status: 429,
-      accountQuota: true,
+      retryAfterMs: 30_000,
     });
 
     try {
@@ -1219,6 +1475,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
         fetchImpl,
         opencodeCommand: '/fake-opencode',
         runOpenCode,
+        waitForRetryAfter,
         groqApiKey: 'gk',
         groqFreePlan: true,
         quarantineFile,
@@ -1227,6 +1484,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
 
       expect(result.source).toBe('groq');
       expect(runOpenCode).toHaveBeenCalledTimes(1);
+      expect(waitForRetryAfter).not.toHaveBeenCalled();
       expect((await readQuarantineState(quarantineFile)).entries['opencode:beam-free']).toBeUndefined();
       await expect(readFile(poolStateFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
@@ -1246,7 +1504,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
         error: 'model rate limited',
         errorType: 'model.rate_limit',
         status: 429,
-        retryAfter: '2',
+        retryAfterMs: 5000,
         modelAttributable: true,
       })
       .mockResolvedValueOnce({ content: 'recovered', finishReason: 'stop', model: 'beam-free' });
@@ -1263,7 +1521,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
 
       expect(result).toMatchObject({ source: 'opencode', model: 'beam-free', content: 'recovered' });
       expect(runOpenCode).toHaveBeenCalledTimes(2);
-      expect(waitForRetryAfter).toHaveBeenCalledWith(2000);
+      expect(waitForRetryAfter).toHaveBeenCalledWith(5000);
       expect(
         JSON.parse(await readFile(poolStateFile, 'utf8')).modelFailures['opencode:beam-free'].failures
       ).toHaveLength(1);
@@ -1326,6 +1584,40 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     }
   });
 
+  it('quarantines OpenCode reported cost on an abnormal process exit before Groq fallback', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-opencode-cost-exit-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.01 } }));
+process.stdout.write('x'.repeat(2 * 1024 * 1024));`
+    );
+    const chat = vi.fn();
+    const fetchImpl = catalogFetch({
+      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      groq: [{ id: 'openai/gpt-oss-120b' }],
+      chat,
+    });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', {
+          fetchImpl,
+          opencodeCommand: command,
+          groqApiKey: 'gk',
+          groqFreePlan: true,
+          quarantineFile,
+        })
+      ).rejects.toThrow(/refusing further requests/);
+      expect(chat).not.toHaveBeenCalled();
+      expect((await readQuarantineState(quarantineFile)).entries['opencode:beam-free']).toMatchObject({
+        reason: 'non_zero_cost',
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed on Kilo content-policy rejection without trying OpenRouter', async () => {
     const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     const chat = vi.fn();
@@ -1358,6 +1650,34 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           fetchImpl,
           kiloCommand: '/fake-kilo',
           runKilo: vi.fn().mockResolvedValue({ error: 'paid response', safetyStop: true }),
+          quarantineFile,
+        })
+      ).rejects.toThrow(/quarantine is operator-managed; refusing further requests/);
+      expect(chat).not.toHaveBeenCalled();
+      expect((await readQuarantineState(quarantineFile)).entries[`kilo:${model}`]).toBeUndefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed on Kilo thrown usage-cost errors before trying another provider', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-kilo-cost-error-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const chat = vi.fn();
+    const fetchImpl = catalogFetch({ kilo: [kiloRow(model)], openrouter: [openRouterRow('o1')], chat });
+    const costError = Object.assign(new Error('Kilo process reported a charge'), {
+      safetyStop: true,
+      usage: { cost: 0.01 },
+    });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', {
+          fetchImpl,
+          kiloCommand: '/fake-kilo',
+          runKilo: vi.fn().mockRejectedValue(costError),
+          openRouterKey: 'rk',
           quarantineFile,
         })
       ).rejects.toThrow(/quarantine is operator-managed; refusing further requests/);
