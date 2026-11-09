@@ -1170,6 +1170,22 @@ test.describe('Text tool in-place editing', () => {
         `${label} carries ${measured.toFixed(1)} CSS px of ink, which is not "${own}" (${references[own].toFixed(1)})`
       ).toBeLessThanOrEqual(INK_WIDTH_TOLERANCE_CSS_PX);
     }
+
+    // The raster-width oracle distinguishes these candidate strings. Re-enter both committed rows
+    // as well so the multi-click transition also proves the exact stored text through the editor.
+    await layerRows.nth(1).dblclick();
+    await expect(overlay(page), 'the first committed layer could not be reopened').toBeVisible();
+    expect(await overlayText(page), 'the first committed layer did not retain its exact text').toBe(FIRST_TEXT);
+    await page.keyboard.press('Escape');
+    await expect(overlay(page), 'the first layer stayed open after the readback').toHaveCount(0);
+    await expect(layerRows, 'reading back the first layer created another row').toHaveCount(3);
+
+    await layerRows.nth(0).dblclick();
+    await expect(overlay(page), 'the second committed layer could not be reopened').toBeVisible();
+    expect(await overlayText(page), 'the second committed layer did not retain its exact text').toBe(SECOND_TEXT);
+    await page.keyboard.press('Escape');
+    await expect(overlay(page), 'the second layer stayed open after the readback').toHaveCount(0);
+    await expect(layerRows, 'reading back the second layer created another row').toHaveCount(3);
   });
 
   /**
