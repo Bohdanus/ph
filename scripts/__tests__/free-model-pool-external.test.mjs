@@ -396,9 +396,9 @@ describe('lazy OpenRouter quota preflight', () => {
       }),
       chat,
     });
-    await expect(
-      completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', checkOpenRouterQuota: true })
-    ).rejects.toThrow(/No free model completed/);
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
+      /No free model completed/
+    );
     const openRouterChatCalls = chat.mock.calls.filter((call) => String(call[0]).includes('openrouter.ai/api/v1/chat'));
     expect(openRouterChatCalls).toHaveLength(0);
   });
@@ -427,7 +427,6 @@ describe('lazy OpenRouter quota preflight', () => {
     const result = await completeWithFreeModel('prompt', {
       fetchImpl,
       openRouterKey: 'rk',
-      checkOpenRouterQuota: true,
       onOpenRouterQuota,
     });
     expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free' });
@@ -441,7 +440,6 @@ describe('lazy OpenRouter quota preflight', () => {
     const result = await completeWithFreeModel('prompt', {
       fetchImpl,
       openRouterKey: 'rk',
-      checkOpenRouterQuota: true,
       kiloCommand: '/fake-kilo',
       runKilo: vi.fn().mockResolvedValue({ content: 'done', finishReason: 'stop' }),
     });
@@ -466,7 +464,6 @@ describe('lazy OpenRouter quota preflight', () => {
     const result = await completeWithFreeModel('prompt', {
       fetchImpl,
       openRouterKey: 'rk',
-      checkOpenRouterQuota: true,
     });
     expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free' });
   });
@@ -486,9 +483,10 @@ describe('lazy OpenRouter quota preflight', () => {
       chat,
     });
 
-    await expect(
-      completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', checkOpenRouterQuota: true })
-    ).resolves.toMatchObject({ source: 'openrouter', model: 'o1:free' });
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).resolves.toMatchObject({
+      source: 'openrouter',
+      model: 'o1:free',
+    });
     expect(chat).toHaveBeenCalledTimes(1);
   });
 

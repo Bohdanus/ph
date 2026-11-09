@@ -516,6 +516,56 @@ describe('free model rotation', () => {
     expect(result.requestCounts).toMatchObject({ kilo: 1, openrouter: 3, opencode: 2, groq: 1 });
   });
 
+  it('caps OpenRouter fallback at three requests per source before rotating to OpenCode', async () => {
+    const attempts = [];
+    const nemotron = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const chat = vi.fn(async (url, options) => {
+      const model = JSON.parse(options.body).model;
+      attempts.push(`openrouter/${model}`);
+      return { ok: false, status: 404, json: async () => ({ error: { message: 'model unavailable' } }) };
+    });
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow(nemotron), kiloRow('kilo:1'), kiloRow('kilo:2'), kiloRow('kilo:3'), kiloRow('kilo:4')],
+      openrouter: ['o1', 'o2', 'o3', 'o4'].map(openRouterRow),
+      opencode: [
+        { id: nemotron, owned_by: 'opencode' },
+        { id: 'beam-free', owned_by: 'opencode' },
+      ],
+      chat,
+    });
+    const runKilo = vi.fn(async ({ model }) => {
+      attempts.push(`kilo/${model}`);
+      return { error: 'model unavailable' };
+    });
+    const runOpenCode = vi.fn(async ({ model }) => {
+      attempts.push(`opencode/${model}`);
+      if (model !== 'beam-free') return { error: 'model unavailable' };
+      return { content: 'OpenCode result', finishReason: 'stop', model };
+    });
+
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'rk',
+      kiloCommand: '/fake-kilo',
+      runKilo,
+      opencodeCommand: '/fake-opencode',
+      runOpenCode,
+    });
+
+    expect(result).toMatchObject({ source: 'opencode', model: 'beam-free', content: 'OpenCode result' });
+    expect(attempts).toEqual([
+      `kilo/${nemotron}`,
+      `opencode/${nemotron}`,
+      'openrouter/o1:free',
+      'openrouter/o2:free',
+      'openrouter/o3:free',
+      'opencode/beam-free',
+    ]);
+    expect(runKilo.mock.calls.map(([options]) => options.model)).toEqual([nemotron]);
+    expect(chat).toHaveBeenCalledTimes(3);
+    expect(result.requestCounts).toMatchObject({ kilo: 1, openrouter: 3, opencode: 2 });
+  });
+
   it('rotates to the next Groq key on HTTP 429 from the first key', async () => {
     const chat = vi.fn(async (url, options) => {
       const auth = options.headers.Authorization;
@@ -1057,15 +1107,31 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     }
   });
 
-  it('persists exhausted OpenRouter quota for the UTC date and skips its next preflight', async () => {
+  it('skips exhausted OpenRouter quota for the UTC date and re-enables it after rollover without a cron', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-openrouter-quota-'));
     const quarantineFile = join(directory, 'quarantine.json');
     const poolStateFile = join(directory, 'pool-state.json');
-    const chat = vi.fn();
-    const keyInfo = vi.fn(() => ({
+    const beforeRollover = Date.parse('2026-11-09T23:59:00.000Z');
+    const afterRollover = Date.parse('2026-11-10T00:00:01.000Z');
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(beforeRollover);
+    const chat = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ data: { free_model_daily_requests: { used: 17, limit: 17, remaining: 0 } } }),
-    }));
+      status: 200,
+      json: async () => ({
+        model: 'vendor/model:free',
+        choices: [{ message: { content: 'next-day result' }, finish_reason: 'stop' }],
+      }),
+    });
+    const keyInfo = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 17, limit: 17, remaining: 0 } } }),
+      }))
+      .mockImplementationOnce(() => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 0, limit: 50, remaining: 50 } } }),
+      }));
     const fetchImpl = catalogFetch({ openrouter: [openRouterRow('vendor/model')], keyInfo, chat });
 
     try {
@@ -1077,10 +1143,22 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       ).rejects.toThrow(/No free model completed/);
 
       const state = JSON.parse(await readFile(poolStateFile, 'utf8'));
-      expect(state.openRouterExhaustedUtcDate).toBe(new Date().toISOString().slice(0, 10));
+      expect(state.openRouterExhaustedUtcDate).toBe('2026-11-09');
       expect(keyInfo).toHaveBeenCalledTimes(1);
       expect(chat).not.toHaveBeenCalled();
+
+      nowSpy.mockReturnValue(afterRollover);
+      const nextDay = await completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'rk',
+        quarantineFile,
+        poolStateFile,
+      });
+      expect(nextDay).toMatchObject({ source: 'openrouter', model: 'vendor/model:free', content: 'next-day result' });
+      expect(keyInfo).toHaveBeenCalledTimes(2);
+      expect(chat).toHaveBeenCalledTimes(1);
     } finally {
+      nowSpy.mockRestore();
       await rm(directory, { recursive: true, force: true });
     }
   });
