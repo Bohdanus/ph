@@ -62,7 +62,7 @@ if (valueAfter('--model') !== 'kilo/nvidia/nemotron-3-ultra-550b-a55b:free') pro
 if (valueAfter('--agent') !== 'free-completion') process.exit(6);
 if (!args.includes('--variant') || valueAfter('--variant') !== 'high') process.exit(7);
 if (args.includes('--file')) process.exit(8);
-if (!message.startsWith('Answer the provided request directly, in plain text, using at most 40 output tokens.')) process.exit(9);
+if (!message.startsWith('Answer the provided request directly, in plain text, using at most 65536 output tokens.')) process.exit(9);
 if (!message.includes('private prompt')) process.exit(10);
 if (args.join(' ').includes('private prompt')) process.exit(11);
 if (process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS || process.env.KILO_CONFIG_CONTENT || process.env.NODE_OPTIONS || process.env.NODE_PATH || process.env.PWD || process.env.UNRELATED_SECRET) process.exit(12);
@@ -78,7 +78,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           command,
           model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
           prompt: 'private prompt',
-          maxTokens: 40,
+          maxTokens: 65536,
           env: {
             PATH: process.env.PATH,
             HOME: '/fixture/home',
@@ -153,6 +153,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'length', cost
     try {
       await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
         error: 'Kilo did not return a complete non-empty response',
+        finishReason: 'length',
       });
     } finally {
       await rm(directory, { recursive: true, force: true });

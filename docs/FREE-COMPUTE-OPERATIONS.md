@@ -72,13 +72,15 @@ and [API rate-limit reference](https://openrouter.ai/docs/api_reference/limits).
 change when other tools use the account.
 
 OpenRouter can return HTTP 200 with no visible text when a reasoning model spends its output budget
-on reasoning. The pool accepts only non-empty completions with `finish_reason: stop`; an incomplete
-answer is discarded and the next eligible provider for that same model is tried before lower-ranked
-models. If `--max-tokens` is omitted, Nemotron 3 Ultra gets 4,000 output tokens and other models get
-1,200. An explicit Nemotron token cap is preserved. Verify the returned model and finish reason.
-OpenRouter's
+on reasoning. Exact Nemotron 3 Ultra calls request `high` reasoning and at least 4,096 completion
+tokens; if `--max-tokens` is omitted, they request up to the current free endpoint ceiling of 65,536.
+Smaller explicit values are raised to the floor, and this request cannot guarantee provider
+allocation. Other models default to 1,200 tokens. A Nemotron response ending with
+`finish_reason: length` is retried once on the same route with twice the output budget (up to 65,536)
+before falling back; truncation alone does not update provider failure or quarantine state. Verify
+the returned model and finish reason. OpenRouter's
 [error guide](https://github.com/OpenRouterTeam/docs/blob/main/api_reference/errors-and-debugging.mdx)
-explains that retrying the same model does not fix a reasoning-budget exhaustion.
+explains that retrying at the same exhausted budget does not fix reasoning-budget exhaustion.
 
 ## OpenCode
 
@@ -200,10 +202,11 @@ npm run free:chat-search -- --prompt-file ./query.txt --since 2026-10-21 --local
 
 Kilo Nemotron 3 Ultra uses the Kilo CLI's `high` variant. The CLI has no provider-side
 `--max-tokens` option, so the runner uses the requested value only as a response-length instruction.
-When omitted, Nemotron receives 4,000 output tokens; other routes default to 1,200. Explicit
-Nemotron values are preserved. GPT-OSS on Groq retains its 1,024-token floor for hidden reasoning
-tokens. Nemotron receives a 12-minute inference timeout across eligible providers; other routes
-receive five minutes. Catalog and quota calls use 15 seconds.
+Exact Nemotron calls request at least 4,096 output tokens and default to a 65,536-token ceiling;
+values below the floor are raised, but delivery is not guaranteed. Other routes default to 1,200.
+GPT-OSS on Groq retains its 1,024-token floor for hidden reasoning tokens. Nemotron receives a
+12-minute inference timeout across eligible providers; other routes receive five minutes. Catalog
+and quota calls use 15 seconds.
 
 ### Catalog ordering
 

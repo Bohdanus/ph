@@ -296,7 +296,7 @@ describe('free model catalog filtering', () => {
       command: '/fake-opencode',
       model,
       prompt: 'prompt',
-      maxTokens: 4000,
+      maxTokens: 65536,
       timeoutMs: 12 * 60 * 1000,
       verifiedNemotron: true,
     });
@@ -339,7 +339,7 @@ describe('free model catalog filtering', () => {
 });
 
 describe('free model rotation', () => {
-  it('preserves an explicit token cap for preferred OpenRouter Nemotron 3 Ultra', async () => {
+  it('floors explicit Nemotron token caps and requests high OpenRouter reasoning', async () => {
     const chat = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -371,12 +371,15 @@ describe('free model rotation', () => {
       model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
       content: 'Nemotron result',
     });
-    expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ max_tokens: 20 });
+    expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({
+      max_tokens: 4096,
+      reasoning: { effort: 'high' },
+    });
     expect(runKilo).not.toHaveBeenCalled();
     expect(runOpenCode).not.toHaveBeenCalled();
   });
 
-  it('uses 4,000 output tokens and a twelve-minute timeout for Nemotron only when the cap is omitted', async () => {
+  it('uses the advertised maximum token budget, high reasoning, and a twelve-minute timeout when omitted', async () => {
     const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     const chat = vi.fn().mockResolvedValue({
       ok: true,
@@ -388,11 +391,33 @@ describe('free model rotation', () => {
 
     try {
       await completeWithFreeModel('safe prompt', { fetchImpl, openRouterKey: 'test' });
-      expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ max_tokens: 4000 });
+      expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({
+        max_tokens: 65536,
+        reasoning: { effort: 'high' },
+      });
       expect(timeoutSpy).toHaveBeenCalledWith(12 * 60 * 1000);
     } finally {
       timeoutSpy.mockRestore();
     }
+  });
+
+  it('retries a truncated Kilo Nemotron completion once at a larger token budget', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const runKilo = vi
+      .fn()
+      .mockResolvedValueOnce({ error: 'incomplete completion', finishReason: 'length' })
+      .mockResolvedValueOnce({ model, content: 'complete result', finishReason: 'stop' });
+    const fetchImpl = catalogFetch({ kilo: [kiloRow(model)] });
+
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      kiloCommand: '/fake-kilo',
+      runKilo,
+      maxTokens: 4096,
+    });
+
+    expect(result).toMatchObject({ source: 'kilo', model, content: 'complete result' });
+    expect(runKilo.mock.calls.map(([options]) => options.maxTokens)).toEqual([4096, 8192]);
   });
 
   it('falls through to OpenCode using its tool-disabled completion adapter', async () => {
@@ -814,6 +839,8 @@ describe('free model rotation', () => {
       directory,
       `const fs = require('node:fs');
 const args = process.argv.slice(2);
+const model = args[args.indexOf('--model') + 1];
+if (model.includes('nemotron') && !model.endsWith('#high')) process.exit(10);
 if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(9);
 if (!fs.readFileSync(args[args.indexOf('--file') + 1], 'utf8').includes('private prompt')) process.exit(8);
 console.log(JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }));
@@ -829,7 +856,7 @@ console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }))
           command,
           model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
           prompt: 'private prompt',
-          maxTokens: 4000,
+          maxTokens: 65536,
           timeoutMs: 12 * 60 * 1000,
           verifiedNemotron: true,
         })
@@ -1440,6 +1467,39 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     const fetchImpl = catalogFetch({ openrouter: [openRouterRow('r1'), openRouterRow('o1')], chat });
     const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
     expect(result.source).toBe('openrouter');
+  });
+
+  it('retries a truncated Nemotron completion once with a larger budget on the same route', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model,
+          choices: [{ message: { content: 'partial result' }, finish_reason: 'length' }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ model, choices: [{ message: { content: 'complete result' }, finish_reason: 'stop' }] }),
+      });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('nvidia/nemotron-3-ultra-550b-a55b')], chat });
+
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'test',
+      maxTokens: 4096,
+    });
+
+    expect(result).toMatchObject({ source: 'openrouter', model, content: 'complete result' });
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(chat.mock.calls.map(([, options]) => JSON.parse(options.body))).toEqual([
+      { model, messages: [{ role: 'user', content: 'prompt' }], max_tokens: 4096, reasoning: { effort: 'high' } },
+      { model, messages: [{ role: 'user', content: 'prompt' }], max_tokens: 8192, reasoning: { effort: 'high' } },
+    ]);
   });
 
   it('rotates after a successful HTTP response with no completion text', async () => {

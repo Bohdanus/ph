@@ -222,7 +222,7 @@ export async function runKiloCompletion({
     return { error: 'Invalid model ID' };
   }
   if (typeof prompt !== 'string' || !prompt) return { error: 'Prompt is empty' };
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) return { error: 'Invalid token limit' };
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 65536) return { error: 'Invalid token limit' };
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return { error: 'Invalid completion timeout' };
 
   const message = `Answer the provided request directly, in plain text, using at most ${maxTokens} output tokens.\n\n${prompt}`;
@@ -352,7 +352,10 @@ export async function runKiloCompletion({
       return { error: 'Kilo reported non-zero or invalid completion cost', exhaustSource: true, safetyStop: true };
     }
     if (terminal?.part?.reason !== 'stop' || !content.trim()) {
-      return { error: 'Kilo did not return a complete non-empty response' };
+      return {
+        error: 'Kilo did not return a complete non-empty response',
+        ...(terminal?.part?.reason === 'length' ? { finishReason: 'length' } : {}),
+      };
     }
     const tokens = terminal.part?.tokens;
     return {
