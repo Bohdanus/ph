@@ -90,8 +90,8 @@ const REVIEWED = {
   },
   'main-worktree-guard.test.mjs': {
     scope:
-      'Git and hook fixtures use temporary repositories; review child cwd and any environment passed to subprocesses.',
-    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=43 filesystem-write:mkdtempSync=8 filesystem-write:writeFileSync=20 filesystem-write:rmSync=11 filesystem-write:mkdirSync=3`,
+      'Git and hook fixtures use temporary repositories, including forced duplicate-main recovery and a watcher retry after one pre-creation failure; review child cwd and any environment passed to subprocesses.',
+    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=45 filesystem-write:mkdtempSync=10 filesystem-write:writeFileSync=35 filesystem-write:rmSync=13 filesystem-write:mkdirSync=5`,
   },
   'main-landing-alert.test.mjs': {
     scope: 'Alert-claim marker fixtures use a unique temporary directory and are removed after the test.',
