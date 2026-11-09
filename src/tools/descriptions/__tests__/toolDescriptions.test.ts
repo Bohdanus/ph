@@ -152,6 +152,9 @@ describe('toolDescriptions', () => {
     );
     expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option while brushing to subtract/i);
     expect(quick.appNotes).toMatch(/Temporary modifier gestures.*absent/i);
+    expect(quick.summary, 'the Quick Selection tooltip must not promise an unimplemented modifier gesture').not.toMatch(
+      /\bAlt\b/i
+    );
   });
 
   it('documents the fill-region condition for Clear on shape tools', () => {
@@ -177,6 +180,11 @@ describe('toolDescriptions', () => {
     expect(sharpenMode?.detail).toMatch(
       /general blending guide lists 11 modes for 32-bit images, but does not establish Sharpen’s tool-specific set/i
     );
+  });
+
+  it('does not infer a Blur Mode from the general 32-bit list while its control is unconfirmed', () => {
+    expect(toolDescriptions.blur.options.find((option) => option.control === 'Mode')).toBeUndefined();
+    expect(toolDescriptions.blur.purpose).toMatch(/Blur-specific control remains unconfirmed/i);
   });
 
   it('resolves a shape figure to its own description rather than the generic one', () => {

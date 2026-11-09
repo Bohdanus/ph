@@ -224,7 +224,9 @@ describe('PolygonClickToolArea', () => {
       const toolArea = renderArea({ current: ctx }).ctx;
 
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
-      fireEvent.pointerMove(toolArea, { clientX: 50, clientY: 20, altKey: true });
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 50, clientY: 20, altKey: true });
+      fireEvent.pointerMove(toolArea, { pointerId: 7, clientX: 70, clientY: 29, altKey: true });
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 7, clientX: 70, clientY: 29, altKey: true });
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 40, shiftKey: true });
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100, shiftKey: true, altKey: true });
       fireEvent.contextMenu(toolArea);
@@ -233,6 +235,7 @@ describe('PolygonClickToolArea', () => {
         points: [
           [
             { x: 1, y: 1 },
+            { x: 41, y: 11 },
             { x: 91, y: 31 },
             { x: 91, y: 91 },
           ],
