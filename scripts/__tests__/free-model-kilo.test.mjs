@@ -231,7 +231,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-process-tree-'));
     const pidFile = join(directory, 'descendant.pid');
     const sentinel = join(directory, 'descendant-survived');
-    const descendantScript = `process.on('SIGTERM', () => {}); setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'), 4000); setInterval(() => {}, 1000);`;
+    const descendantScript = `process.on('SIGTERM', () => {}); setTimeout(() => { require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'); process.exit(0); }, 5000);`;
     const output = trigger === 'output overflow' ? "process.stdout.write('x'.repeat(1024 * 1024 + 1));" : '';
     const command = await writeExecutable(
       join(directory, 'fake-kilo'),
@@ -242,28 +242,19 @@ fs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));
 ${output}
 setInterval(() => {}, 1000);`
     );
-    let descendantPid;
-
     try {
       await expect(
-        runKiloCompletion({ command, model: 'model:free', prompt: 'prompt', timeoutMs: 1000 })
+        runKiloCompletion({ command, model: 'model:free', prompt: 'prompt', timeoutMs: 2000 })
       ).resolves.toEqual({
         error:
           trigger === 'timeout'
-            ? 'Kilo completion exceeded 1000 ms'
+            ? 'Kilo completion exceeded 2000 ms'
             : `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes`,
       });
-      descendantPid = Number(await readFile(pidFile, 'utf8'));
-      await new Promise((resolve) => setTimeout(resolve, 4500));
+      expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(0);
+      await new Promise((resolve) => setTimeout(resolve, 5500));
       expect(existsSync(sentinel)).toBe(false);
     } finally {
-      if (Number.isSafeInteger(descendantPid) && descendantPid > 0) {
-        try {
-          process.kill(descendantPid);
-        } catch (error) {
-          if (error?.code !== 'ESRCH') throw error;
-        }
-      }
       await rm(directory, { recursive: true, force: true });
     }
   }
