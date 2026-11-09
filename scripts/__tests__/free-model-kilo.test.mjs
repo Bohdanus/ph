@@ -332,6 +332,7 @@ process.exitCode = 1;`
     ['a clean CLI exit', { inputError: false, hang: false }],
     ['a stdin error and timeout after the terminal event', { inputError: true, hang: true }],
     ['output overflow after the terminal event', { inputError: false, hang: false, overflow: true }],
+    ['an underscore content-filter terminal', { inputError: false, hang: false, reason: 'content_filter' }],
   ])('fails closed for a Kilo content-filter terminal after %s', async (_scenario, options) => {
     const spawnImpl = () => {
       const child = new EventEmitter();
@@ -340,7 +341,7 @@ process.exitCode = 1;`
       child.stdin = new EventEmitter();
       child.stdin.end = () => {
         const terminal = Buffer.from(
-          `${JSON.stringify({ type: 'step_finish', part: { reason: 'content-filter' } })}\n`
+          `${JSON.stringify({ type: 'step_finish', part: { reason: options.reason ?? 'content-filter' } })}\n`
         );
         const overflow = options.overflow ? Buffer.alloc(MAX_KILO_OUTPUT_BYTES, 'x') : Buffer.alloc(0);
         child.stdout.emit('data', Buffer.concat([terminal, overflow]));
@@ -422,24 +423,55 @@ process.exitCode = 1;`
     }
   });
 
-  it('rejects a reported non-zero cost and stops that provider for the run', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
-    const command = await writeExecutable(
-      join(directory, 'fake-kilo'),
-      `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));
-console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`
-    );
+  it.each([
+    [
+      'provider error event',
+      `console.log(JSON.stringify({ type: 'error', error: { code: 'request_failed' }, cost: 0.001 }));\nprocess.exitCode = 1;`,
+    ],
+    [
+      'malformed JSONL after a cost event',
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));\nconsole.log('{malformed json');`,
+    ],
+    [
+      'output overflow after a cost event',
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));\nprocess.stdout.write('x'.repeat(2 * 1024 * 1024));`,
+    ],
+    [
+      'timeout after an invalid cost event',
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: false } }));\nsetInterval(() => {}, 1000);`,
+      500,
+    ],
+    [
+      'conflicting top-level and part costs',
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0 }, cost: 0.001 }));`,
+    ],
+    [
+      'cost nested in a provider error object',
+      `console.log(JSON.stringify({ type: 'error', error: { code: 'request_failed', cost: 0.001 } }));`,
+    ],
+    [
+      'cost reported on stderr',
+      `console.error(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`,
+    ],
+  ])(
+    'rejects every reported invalid Kilo cost before process failure handling: %s',
+    async (_scenario, source, timeoutMs = 1000) => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+      const command = await writeExecutable(join(directory, 'fake-kilo'), source);
 
-    try {
-      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
-        error: 'Kilo reported non-zero or invalid completion cost',
-        exhaustSource: true,
-        safetyStop: true,
-      });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
+      try {
+        await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt', timeoutMs })).resolves.toEqual(
+          {
+            error: 'Kilo reported non-zero or invalid completion cost',
+            exhaustSource: true,
+            safetyStop: true,
+          }
+        );
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
   it('aborts a stalled request at its configured inference timeout', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));

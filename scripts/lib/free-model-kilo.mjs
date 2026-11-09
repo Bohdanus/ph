@@ -220,7 +220,15 @@ const CONTENT_POLICY_MESSAGE_PATTERNS = [
 
 function contentPolicyRejected(events, stderrText = '') {
   const allEvents = [...events, ...parseEvents(stderrText).events];
-  if (allEvents.some((event) => event?.type === 'step_finish' && event?.part?.reason === 'content-filter')) {
+  if (
+    allEvents.some(
+      (event) =>
+        event?.type === 'step_finish' &&
+        String(event.part?.reason ?? '')
+          .toLowerCase()
+          .replaceAll('_', '-') === 'content-filter'
+    )
+  ) {
     return true;
   }
   const errorEvents = allEvents.filter((event) => event?.type === 'error');
@@ -363,6 +371,13 @@ export async function runKiloCompletion({
       }
     );
 
+    const stderrEvents = parseEvents(stderrText).events;
+    const costs = [...events, ...stderrEvents].flatMap((event) =>
+      [event?.part?.cost, event?.cost, event?.error?.cost].filter((cost) => cost !== undefined)
+    );
+    if (costs.some((cost) => !isExactZeroCost(cost))) {
+      return { error: 'Kilo reported non-zero or invalid completion cost', exhaustSource: true, safetyStop: true };
+    }
     if (contentPolicyRejected(events, stderrText)) {
       return { error: 'Kilo provider content policy rejected or filtered this request', contentPolicyRejected: true };
     }
@@ -380,12 +395,6 @@ export async function runKiloCompletion({
       .filter((event) => event?.type === 'text')
       .map((event) => (typeof event?.part?.text === 'string' ? event.part.text : (event.text ?? '')))
       .join('');
-    const costs = events
-      .map((event) => (event?.part?.cost !== undefined ? event.part.cost : event?.cost))
-      .filter((cost) => cost !== undefined);
-    if (costs.some((cost) => !isExactZeroCost(cost))) {
-      return { error: 'Kilo reported non-zero or invalid completion cost', exhaustSource: true, safetyStop: true };
-    }
     if (terminal?.part?.reason !== 'stop' || !content.trim()) {
       return {
         error: 'Kilo did not return a complete non-empty response',
