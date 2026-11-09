@@ -407,8 +407,7 @@ export const selectionDescriptions: Record<
 
   'polygonal-lasso': {
     photoshopName: 'Polygonal Lasso Tool',
-    summary:
-      'Click to lay straight-edged anchors around a shape; close at the starting point, double-click, or Ctrl/Command-click away from it.',
+    summary: 'Click to add straight-sided polygon anchors; close with a double-click, right-click, or Enter.',
     purpose:
       'The Polygonal Lasso tool draws a selection border out of straight segments, which is the right tool for anything with corners: a building edge, a piece of type, a flat geometric shape. Click to add a corner anchor, move, and click again. Hold Shift while selecting to constrain segments to multiples of 45 degrees; hold Alt/Option and drag to temporarily switch to freehand drawing. Close the border by selecting the starting point, double-clicking, or Ctrl-clicking on Windows / Command-clicking on macOS away from the starting point. These gestures are documented in Adobe’s current desktop guide.',
     options: [
@@ -442,6 +441,11 @@ export const selectionDescriptions: Record<
       { keys: 'Shift', action: 'Sets the gesture to Add to Selection.' },
       { keys: 'Alt', action: 'Set as the combination mode, sets the gesture to Subtract From Selection.' },
       { keys: 'Shift+Alt', action: 'Sets the gesture to Intersect With Selection.' },
+      {
+        keys: 'Ctrl/Command',
+        action:
+          'Closes the polygon by clicking away from the starting point (Ctrl-click on Windows, Command-click on macOS).',
+      },
     ],
     shortcuts: [
       {
@@ -464,7 +468,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:53',
     ],
     appNotes:
-      'The tool commits a closed polygon selection using click-to-add-anchor, double-click, right-click, or Enter to close; Delete removes the latest anchor and Escape cancels the draft. Its options bar has an app-specific Outline/Fill toggle and no Photoshop selection controls. `PolygonClickToolArea` reads no modifier keys, so the selection-combination modes, Shift-constrained segments, and Alt/Option-drag freehand behavior documented above are absent in the app. Adobe documents Alt/Option-double-click straight closure for the Magnetic Lasso, not the Polygonal Lasso. The app has no Feather field or Select and Mask route from this tool, so a committed polygon cannot be feathered here.',
+      'The tool commits a closed polygon selection using click-to-add-anchor, double-click, right-click, or Enter to close; Delete removes the latest anchor and Escape cancels the draft. Its options bar has an app-specific Outline/Fill toggle and no Photoshop selection controls. `PolygonClickToolArea` reads no modifier keys, so the Ctrl/Command-click closure, selection-combination modes, Shift-constrained segments, and Alt/Option-drag freehand behavior documented above are absent in the app. Adobe documents Alt/Option-double-click straight closure for the Magnetic Lasso, not the Polygonal Lasso. The app has no Feather field or Select and Mask route from this tool, so a committed polygon cannot be feathered here.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/isolate-specific-areas-in-images-with-lasso-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/freehand-selections/draw-straight-edged-segments-of-a-selection-border.html',

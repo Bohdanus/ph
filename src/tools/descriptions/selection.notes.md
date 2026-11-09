@@ -412,13 +412,14 @@ or Ctrl-click on Windows / Command-click on macOS when away from the starting po
 document Enter/Return as a Polygonal Lasso close gesture. Those keys close the Magnetic Lasso; this
 app's Enter binding is recorded separately in `appNotes`.
 
-**Two gestures the data file was missing, both Adobe's, both now added.** (a) The 45° constraint:
+**Two modifier facts the data file was missing, both Adobe's, both now added.** (a) The 45° constraint:
 "To draw a straight line at a multiple of 45°, hold down Shift as you move to select the next
 segment." The data file's `modifiers` listed only "Shift — Sets the gesture to Add to Selection",
 which is also true and also documented, so Shift now carries **two** entries rather than one. (b)
-The Ctrl/Command-click close away from the starting point. The updated `purpose` lists the three
-documented close methods: select the starting point, double-click, or Ctrl/Command-click.
-Alt/Option-double-click belongs to the Magnetic Lasso and remains documented there.
+Ctrl/Command-click closure away from the starting point was already in `purpose`, but missing from
+`modifiers`; it now has a modifier row too. The data records the Photoshop behavior while `appNotes`
+states that the app does not implement the gesture. The toolbar tooltip uses only app-supported close
+methods. Alt/Option-double-click belongs to the Magnetic Lasso and remains documented there.
 
 ### Options table
 
@@ -438,8 +439,9 @@ lasso bars beside it both render.
 
 **Modifier gap, and it is larger than the combination modes.** `PolygonClickToolArea` reads no
 modifier key, so _none_ of this tool's `modifiers[]` rows is implemented: not the 45° constraint
-added in an earlier pass, not the `Alt`-drag freehand segment, not the `Alt`-double-click straight
-close, and not the three combination modes. The `Enter` and `Delete` `shortcuts[]` rows **are**
+added in an earlier pass, not the `Alt`-drag freehand segment, not the Ctrl/Command-click closure,
+and not the three combination modes. The `Alt`-double-click straight close belongs to the Magnetic
+Lasso and is not a Polygonal Lasso modifier. The `Enter` and `Delete` `shortcuts[]` rows **are**
 bound (the `useKeyDownShortcut` registrations keyed `'Enter'` and `'Delete'` in
 `PolygonClickToolArea`); the `Return` row's Feather-focus half is not, because the bar has no
 Feather field to focus. The rows stay and the absence is stated in `appNotes`.

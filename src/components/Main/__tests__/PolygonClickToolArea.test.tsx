@@ -231,16 +231,14 @@ describe('PolygonClickToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100, shiftKey: true, altKey: true });
       fireEvent.contextMenu(toolArea);
 
-      expect(committedSelection()).toMatchObject({
-        points: [
-          [
-            { x: 1, y: 1 },
-            { x: 41, y: 11 },
-            { x: 91, y: 31 },
-            { x: 91, y: 91 },
-          ],
+      expect(committedSelection().points).toEqual([
+        [
+          { x: 1, y: 1 },
+          { x: 41, y: 11 },
+          { x: 91, y: 31 },
+          { x: 91, y: 91 },
         ],
-      });
+      ]);
     });
 
     it('ignores non-primary mouse buttons', () => {

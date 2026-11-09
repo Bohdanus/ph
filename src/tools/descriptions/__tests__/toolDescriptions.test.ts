@@ -127,15 +127,17 @@ describe('toolDescriptions', () => {
         expect.stringMatching(/Shift:.*Add to Selection/i),
         expect.stringMatching(/Alt:.*Subtract From Selection/i),
         expect.stringMatching(/Shift\+Alt:.*Intersect With Selection/i),
+        expect.stringMatching(/Ctrl\/Command:.*closes.*away from the starting point/i),
       ])
     );
     expect(polygonRows).not.toEqual(expect.arrayContaining([expect.stringMatching(/Alt.*double-click/i)]));
-    expect(polygon.summary).toMatch(/starting point.*double-click.*Ctrl\/Command-click/i);
-    expect(polygon.summary).not.toMatch(/Enter|Return/i);
+    expect(polygon.summary).toMatch(/double-click.*right-click.*Enter/i);
+    expect(polygon.summary).not.toMatch(/Ctrl\/Command|starting point/i);
+    expect(polygon.summary).not.toMatch(/Return/i);
     expect(polygon.purpose).toMatch(/Ctrl-clicking on Windows \/ Command-clicking on macOS/i);
     expect(polygon.purpose).not.toMatch(/Enter|Return/i);
     expect(polygon.shortcuts.map((shortcut) => shortcut.keys)).not.toContain('Return');
-    expect(polygon.appNotes).toMatch(/modifier keys.*absent/i);
+    expect(polygon.appNotes).toMatch(/modifier keys.*Ctrl\/Command-click closure.*absent/i);
 
     const magnetic = toolDescriptions['feather-magnetic-lasso'];
     expect(magnetic.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
