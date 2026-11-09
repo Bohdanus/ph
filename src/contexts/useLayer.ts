@@ -1749,7 +1749,11 @@ export const useLayers = () => {
       smallCapsDraftCanvasRef.current = draftCanvas;
       const draftContext = draftCanvas.getContext('2d');
       if (!draftContext) {
-        return clearAndReportUnavailable();
+        const result = clearAndReportUnavailable();
+        // A canvas that failed to create its 2D context remains unusable. Drop it only
+        // after clearing previews so that cleanup can still match layers to this canvas.
+        if (smallCapsDraftCanvasRef.current === draftCanvas) smallCapsDraftCanvasRef.current = null;
+        return result;
       }
       draftContext.clearRect(0, 0, draftCanvas.width, draftCanvas.height);
       renderText(draftContext as Ctx2D, { ...sourceArgs, rect: localRect }, { overflowIndicator: false });
