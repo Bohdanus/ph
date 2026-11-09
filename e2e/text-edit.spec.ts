@@ -468,7 +468,11 @@ async function inkBoundsIn(page: Page, region: PageRegion): Promise<CssBounds | 
   );
 }
 
-/** The measured width of a region of red ink. */
+/**
+ * The measured width of red ink inside a region, using the full canvas clip the reference uses.
+ * A pixel-space ROI isolates the target layer without changing screenshot rounding or scale between
+ * the reference and committed measurements.
+ */
 async function inkWidthIn(
   page: Page,
   box: BoundingBox,
@@ -476,8 +480,34 @@ async function inkWidthIn(
   margin: number,
   label: string
 ): Promise<number> {
-  const bounds = await inkBoundsIn(page, regionOf(box, rect, margin));
-  if (!bounds) throw new Error(`${label}: no committed ink in the ${rect.x1},${rect.y1}..${rect.x2},${rect.y2} region`);
+  const region = regionOf(box, rect, margin);
+  const image = await loadImageData(
+    await page.screenshot({ clip: { x: box.x, y: box.y, width: box.width, height: box.height } })
+  );
+  const leftPixel = Math.max(0, Math.floor(((region.left - box.x) * image.width) / box.width));
+  const topPixel = Math.max(0, Math.floor(((region.top - box.y) * image.height) / box.height));
+  const rightPixel = Math.min(image.width, Math.ceil(((region.right - box.x) * image.width) / box.width));
+  const bottomPixel = Math.min(image.height, Math.ceil(((region.bottom - box.y) * image.height) / box.height));
+  let left = image.width;
+  let top = image.height;
+  let right = -1;
+  let bottom = -1;
+  for (let y = topPixel; y < bottomPixel; y++) {
+    for (let x = leftPixel; x < rightPixel; x++) {
+      const offset = (y * image.width + x) * 4;
+      if (!isRedInk(image.data[offset], image.data[offset + 1], image.data[offset + 2], image.data[offset + 3])) {
+        continue;
+      }
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x);
+      bottom = Math.max(bottom, y);
+    }
+  }
+  if (right < 0) {
+    throw new Error(`${label}: no committed ink in the ${rect.x1},${rect.y1}..${rect.x2},${rect.y2} region`);
+  }
+  const bounds = imageBoundsToCss({ width: image.width, height: image.height }, box, { left, top, right, bottom });
   return bounds.right - bounds.left;
 }
 
@@ -591,16 +621,8 @@ async function referenceInkWidths(
       const ascent = ctx.measureText('').fontBoundingBoxAscent ?? size * 0.8;
       const previousVisibility = workspaceCanvas.style.visibility;
       document.body.appendChild(canvas);
-      const bounds = canvas.getBoundingClientRect();
       workspaceCanvas.style.visibility = 'hidden';
-      return {
-        left: bounds.left,
-        top: bounds.top,
-        width: bounds.width,
-        height: bounds.height,
-        ascent,
-        previousVisibility,
-      };
+      return { ascent, previousVisibility };
     },
     {
       size: fontSize,
@@ -611,13 +633,7 @@ async function referenceInkWidths(
     }
   );
 
-  const clip = { x: reference.left, y: reference.top, width: reference.width, height: reference.height };
-  const region = {
-    left: reference.left,
-    top: reference.top,
-    right: reference.left + reference.width,
-    bottom: reference.top + reference.height,
-  };
+  const clip = { x: box.x, y: box.y, width: box.width, height: box.height };
   try {
     const out: Record<string, number> = {};
     for (const text of strings) {
@@ -644,11 +660,7 @@ async function referenceInkWidths(
       const image = await loadImageData(await page.screenshot({ clip }));
       const bounds = await scanPixelsForBounds(image, isRedInk);
       if (!bounds.found) throw new Error(`referenceInkWidths: the reference drew no ink for ${JSON.stringify(text)}`);
-      const cssBounds = imageBoundsToCss(
-        { width: image.width, height: image.height },
-        { x: region.left, y: region.top, width: clip.width, height: clip.height },
-        bounds
-      );
+      const cssBounds = imageBoundsToCss({ width: image.width, height: image.height }, box, bounds);
       out[text] = cssBounds.right - cssBounds.left;
     }
     return out;
