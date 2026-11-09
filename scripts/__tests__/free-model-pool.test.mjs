@@ -1219,18 +1219,28 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     }
   }, 15_000);
 
-  it('rejects an explicit non-zero OpenCode cost even for a free catalog ID', async () => {
+  it.each([
+    [
+      'a successful terminal event',
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));\nconsole.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`,
+    ],
+    [
+      'a clean-exit provider error event',
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.request-error' }, cost: 0.001 }));`,
+    ],
+    ['a tool event', `console.log(JSON.stringify({ type: 'tool_use', part: { type: 'tool' }, cost: 0.001 }));`],
+    [
+      'a nested provider error cost',
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.request-error', cost: 0.001 } }));`,
+    ],
+  ])('rejects reported OpenCode costs before accepting or classifying %s', async (_scenario, source) => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
-    const command = await writeFakeOpenCode(
-      directory,
-      `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));
-console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`
-    );
+    const command = await writeFakeOpenCode(directory, source);
 
     try {
       await expect(
         runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
-      ).resolves.toMatchObject({ error: 'OpenCode reported non-zero or invalid cost' });
+      ).resolves.toMatchObject({ error: 'OpenCode reported non-zero or invalid cost', safetyStop: true });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

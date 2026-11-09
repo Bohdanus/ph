@@ -724,6 +724,12 @@ function isExactZeroCost(cost) {
   return typeof cost === 'string' && /^0+(?:\.0+)?$/.test(cost.trim());
 }
 
+function openCodeReportedCosts(events) {
+  return events.flatMap((event) =>
+    [event?.part?.cost, event?.cost, event?.error?.cost].filter((cost) => cost !== undefined && cost !== null)
+  );
+}
+
 function openCodeErrorMetadata(value) {
   if (!value || typeof value !== 'object') return {};
   const metadata = value.error && typeof value.error === 'object' ? value.error : value;
@@ -1116,9 +1122,7 @@ export async function runOpenCodeCompletion({
             }
           }
           const metadata = openCodeCompletionFailureMetadata(parsed);
-          const reportedCosts = parsed
-            .filter((event) => event.part?.cost !== undefined && event.part?.cost !== null)
-            .map((event) => event.part.cost);
+          const reportedCosts = openCodeReportedCosts(parsed);
           const processFailure = terminationError
             ? `OpenCode process termination failed: ${terminationError.message}`
             : timedOut
@@ -1156,6 +1160,10 @@ export async function runOpenCodeCompletion({
         })().then(resolve, reject);
       });
     });
+    const reportedCosts = openCodeReportedCosts(events);
+    if (reportedCosts.some((cost) => !isExactZeroCost(cost))) {
+      return { error: 'OpenCode reported non-zero or invalid cost', safetyStop: true };
+    }
     const errorMetadata = openCodeCompletionFailureMetadata(events);
     if (Object.keys(errorMetadata).length > 0) {
       return {
@@ -1185,12 +1193,6 @@ export async function runOpenCodeCompletion({
       .map((event) => event.part.text)
       .join('');
     const finishedSteps = events.filter((event) => event.type === 'step_finish');
-    const reportedCosts = events
-      .filter((event) => event.part?.cost !== undefined && event.part?.cost !== null)
-      .map((event) => event.part.cost);
-    if (reportedCosts.some((cost) => !isExactZeroCost(cost))) {
-      return { error: 'OpenCode reported non-zero or invalid cost', safetyStop: true };
-    }
     if (!terminal || !content.trim()) return { error: 'OpenCode did not return a complete non-empty response' };
     const tokens = finishedSteps.at(-1)?.part?.tokens;
     return {
