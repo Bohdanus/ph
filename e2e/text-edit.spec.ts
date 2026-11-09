@@ -99,6 +99,13 @@ interface Fit {
   documentHeight: number;
 }
 
+interface TextLayerRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 async function readFit(page: Page): Promise<Fit> {
   const container = page.getByTestId('workspace-container');
   await expect(container, 'the tool area publishes the contain fit').toHaveAttribute('data-fit-scale', /.+/);
@@ -118,6 +125,82 @@ async function readFit(page: Page): Promise<Fit> {
       documentHeight: read('data-fit-document-height'),
     };
   });
+}
+
+/** The active editor's document-space rectangle, before the new layer is committed. */
+async function draftLayerRect(page: Page, fit: Fit): Promise<TextLayerRect> {
+  return await overlay(page).evaluate((node, { scale, offsetX, offsetY }) => {
+    const style = getComputedStyle(node);
+    const read = (name: 'left' | 'top' | 'width' | 'height') => {
+      const value = Number.parseFloat(style[name]);
+      if (!Number.isFinite(value)) throw new Error(`text-edit: the draft has no finite CSS ${name}`);
+      return value;
+    };
+    const left = read('left');
+    const top = read('top');
+    const width = read('width');
+    const height = read('height');
+    if (scale <= 0 || width <= 0 || height <= 0) {
+      throw new Error(`text-edit: the draft has unusable fit or dimensions (${scale}, ${width}, ${height})`);
+    }
+    return {
+      x: (left - offsetX) / scale,
+      y: (top - offsetY) / scale,
+      width: width / scale,
+      height: height / scale,
+    };
+  }, fit);
+}
+
+/** The document-space point reached by a workspace-canvas click, using the app-published fit. */
+async function documentPointAt(
+  page: Page,
+  fit: Fit,
+  box: BoundingBox,
+  at: { x: number; y: number }
+): Promise<{ x: number; y: number }> {
+  return await page.getByTestId('workspace-container').evaluate(
+    (node, { scale, offsetX, offsetY, clientX, clientY }) => {
+      const read = (name: string) => {
+        const raw = node.getAttribute(name);
+        if (raw === null) throw new Error(`text-edit: the workspace did not publish ${name}`);
+        const value = Number(raw);
+        if (!Number.isFinite(value)) throw new Error(`text-edit: ${name} is not finite (${raw})`);
+        return value;
+      };
+      const bounds = node.getBoundingClientRect();
+      const effectiveZoom = read('data-view-effective-zoom');
+      if (scale <= 0 || effectiveZoom <= 0) {
+        throw new Error(`text-edit: the workspace has unusable fit or view scale (${scale}, ${effectiveZoom})`);
+      }
+
+      // Match getLocalCoordsFromClientPoint: first undo view pan/zoom/rotation around the
+      // workspace center, then undo the document contain fit. The test anchor must stay
+      // independent of the text box width, which changes with the candidate string.
+      const centerX = bounds.width / 2;
+      const centerY = bounds.height / 2;
+      const viewX = clientX - bounds.left + node.scrollLeft - centerX - read('data-view-pan-x');
+      const viewY = clientY - bounds.top + node.scrollTop - centerY - read('data-view-pan-y');
+      const translatedX = viewX / effectiveZoom;
+      const translatedY = viewY / effectiveZoom;
+      const radians = (-read('data-view-rotation') * Math.PI) / 180;
+      const cos = Math.cos(radians);
+      const sin = Math.sin(radians);
+      const untransformedX = centerX + translatedX * cos - translatedY * sin;
+      const untransformedY = centerY + translatedX * sin + translatedY * cos;
+      return {
+        x: (untransformedX - offsetX) / scale,
+        y: (untransformedY - offsetY) / scale,
+      };
+    },
+    {
+      scale: fit.scale,
+      offsetX: fit.offsetX,
+      offsetY: fit.offsetY,
+      clientX: box.x + at.x,
+      clientY: box.y + at.y,
+    }
+  );
 }
 
 /** The workspace canvas element's own box, in page CSS. Every gesture below is expressed in it. */
@@ -565,25 +648,32 @@ async function regionInk(page: Page, region: PageRegion): Promise<RegionInk> {
  * How wide each candidate string's ink is, measured through the same browser composition and
  * screenshot path as the committed layer, in the same CSS px as {@link inkWidthIn}.
  *
- * This is how a committed text layer's string is read, and it is worth being explicit about why
- * nothing simpler was available: a text layer's content lives in `layer.source.args`, which no
- * surface in the DOM renders — the Layers panel row shows the layer's NAME (`text 2`), not its text,
- * and the History panel shows a history entry's name. So the ink is the only observable, and it is a
- * good one: rendered by the app's own `renderText` in the app's own face, over a canvas that IS the
- * layer, composited into the document. The reference uses the workspace canvas's backing dimensions
- * and HiDPI transform, and paints the same white starter-document background before the glyphs. It
- * is overlaid at the same CSS box and object-fit scale. Measuring both with `page.screenshot` sends
- * the reference through the same browser compositor instead of multiplying a document-pixel
- * measurement by the contain-fit scale and assuming that preserves antialiased edge pixels.
+ * This is how the committed text layer's string is distinguished from the other candidates without
+ * reopening it for editing. Its source text is not otherwise exposed by the Layers or History panels.
+ * The independent reference measures each candidate with the HTML canvas context, as the app sizes
+ * point layers, then rasterizes it in its own OffscreenCanvas, as the creator does. It gives that
+ * point string its natural bounds around the original placement click, then composites at those
+ * fractional document bounds onto a DPR-matched canvas over the same white starter document with
+ * smoothing disabled. Candidate-sized bounds avoid clipping a longer comparison string to the actual
+ * layer's width. Both captures use the same workspace clip and `page.screenshot`, so the width
+ * comparison sees the same layer allocation, subpixel placement, contain-fit scaling and browser
+ * compositor.
  */
 async function referenceInkWidths(
   page: Page,
   strings: string[],
-  options: { fontSize: number; fontFamily: string; fit: Fit; box: BoundingBox }
+  options: {
+    fontSize: number;
+    fontFamily: string;
+    fit: Fit;
+    box: BoundingBox;
+    draftBounds: Pick<TextLayerRect, 'y' | 'height'>;
+    anchor: { x: number; y: number };
+  }
 ): Promise<Record<string, number>> {
-  const { fontSize, fontFamily, fit, box } = options;
+  const { fontSize, fontFamily, fit, box, draftBounds, anchor } = options;
   const reference = await page.evaluate(
-    ({ size, family, documentWidth, documentHeight, workspaceBox }) => {
+    ({ workspaceBox }) => {
       const workspaceCanvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
       if (!workspaceCanvas) throw new Error('referenceInkWidths: no workspace canvas');
       const canvas = document.createElement('canvas');
@@ -607,28 +697,12 @@ async function referenceInkWidths(
         throw new Error(`referenceInkWidths: invalid workspace backing scale ${hidpiScale}`);
       }
       ctx.setTransform(hidpiScale, 0, 0, hidpiScale, 0, 0);
-      ctx.font = `${size}px ${family}`;
-      ctx.textBaseline = 'alphabetic';
-      ctx.textAlign = 'start';
-      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
-      // `page.goto('/')` starts the app's default white bedrock document. This matters because
-      // `isRedInk` sees antialiased edge colors after browser composition: a transparent reference
-      // over the checkerboard could accept a different fringe than committed red ink over white.
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, documentWidth, documentHeight);
-      ctx.fillStyle = '#ff0000';
-      // `renderText` puts a line's baseline at `rect.y1 + TEXT_PADDING + ascent`.
-      const ascent = ctx.measureText('').fontBoundingBoxAscent ?? size * 0.8;
       const previousVisibility = workspaceCanvas.style.visibility;
       document.body.appendChild(canvas);
       workspaceCanvas.style.visibility = 'hidden';
-      return { ascent, previousVisibility };
+      return { previousVisibility };
     },
     {
-      size: fontSize,
-      family: fontFamily,
-      documentWidth: fit.documentWidth,
-      documentHeight: fit.documentHeight,
       workspaceBox: box,
     }
   );
@@ -638,23 +712,64 @@ async function referenceInkWidths(
     const out: Record<string, number> = {};
     for (const text of strings) {
       await page.evaluate(
-        ({ value, ascent, padding, documentWidth, documentHeight }) => {
+        ({ value, size, family, padding, documentWidth, documentHeight, draftBounds: draftGeometry, clickAnchor }) => {
           const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-e2e-reference-ink="true"]');
           const ctx = canvas?.getContext('2d');
           if (!canvas || !ctx) throw new Error('referenceInkWidths: temporary canvas disappeared');
-          // The context is scaled by the workspace's HiDPI ratio. Repaint the logical document
-          // white to clear the prior candidate without mixing backing-pixel and context coordinates.
+          if (!value || value.includes('\n')) {
+            throw new Error('referenceInkWidths: expected a non-empty, single-line point-text candidate');
+          }
+
+          // Point text grows to the candidate's own measured ink width plus padding. Reproduce
+          // that sizing independently for every candidate so a short actual layer cannot clip a
+          // longer reference and make the wrong source string appear to match.
+          const measureCanvas = document.createElement('canvas');
+          const measureCtx = measureCanvas.getContext('2d');
+          if (!measureCtx) throw new Error('referenceInkWidths: no measurement context');
+          measureCtx.font = `${size}px ${family}`;
+          measureCtx.textBaseline = 'alphabetic';
+          measureCtx.textAlign = 'start';
+          if ('letterSpacing' in measureCtx) measureCtx.letterSpacing = '0px';
+          const candidateWidth = measureCtx.measureText(value).width + padding * 2;
+          if (!Number.isFinite(candidateWidth) || candidateWidth <= padding * 2) {
+            throw new Error(`referenceInkWidths: invalid measured point width ${candidateWidth}`);
+          }
+          const candidateRect = {
+            x: Math.min(Math.max(0, clickAnchor.x - candidateWidth / 2), documentWidth),
+            y: draftGeometry.y,
+            width: candidateWidth,
+            height: draftGeometry.height,
+          };
+
+          // The creator rounds source allocation up, then the compositor draws it into the
+          // fractional point-text bounds with smoothing disabled. Match both steps.
+          const layerCanvas = new OffscreenCanvas(Math.ceil(candidateRect.width), Math.ceil(candidateRect.height));
+          const layerCtx = layerCanvas.getContext('2d');
+          if (!layerCtx) throw new Error('referenceInkWidths: no layer 2d context');
+          layerCtx.font = `${size}px ${family}`;
+          layerCtx.textBaseline = 'alphabetic';
+          layerCtx.textAlign = 'start';
+          if ('letterSpacing' in layerCtx) layerCtx.letterSpacing = '0px';
+          const ascent = layerCtx.measureText('').fontBoundingBoxAscent ?? size * 0.8;
+          layerCtx.fillStyle = '#ff0000';
+          layerCtx.fillText(value, padding, padding + ascent);
+
+          // Repaint the logical document white to clear the prior candidate without mixing
+          // backing-pixel and context coordinates. The app's starter document is white bedrock.
           ctx.fillStyle = '#ffffff';
           ctx.fillRect(0, 0, documentWidth, documentHeight);
-          ctx.fillStyle = '#ff0000';
-          ctx.fillText(value, padding, padding + ascent);
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(layerCanvas, candidateRect.x, candidateRect.y, candidateRect.width, candidateRect.height);
         },
         {
           value: text,
-          ascent: reference.ascent,
+          size: fontSize,
+          family: fontFamily,
           padding: TEXT_PADDING_DOC_PX,
           documentWidth: fit.documentWidth,
           documentHeight: fit.documentHeight,
+          draftBounds,
+          clickAnchor: anchor,
         }
       );
       const image = await loadImageData(await page.screenshot({ clip }));
@@ -986,10 +1101,14 @@ test.describe('Text tool in-place editing', () => {
   test('Escape commits the draft instead of discarding it', async ({ page }) => {
     const layerRows = page.getByTitle('Drag to reorder');
     const box = await canvasBox(page);
+    const fit = await readFit(page);
+    const fontSize = await toolFontSize(page);
+    const anchor = await documentPointAt(page, fit, box, CARET_CLICK);
 
     await clickToPlace(page, box, CARET_CLICK);
     await expect(overlay(page)).toBeVisible();
     await page.keyboard.type('Kept');
+    const layerRect = await draftLayerRect(page, fit);
 
     // Adobe's shipped default, not the historical folklore: "Note that the Esc key is set to commit
     // text by default. You can change this to cancel the changes by going to Edit > Preferences >
@@ -1007,13 +1126,13 @@ test.describe('Text tool in-place editing', () => {
       /^text \d+$/
     );
 
-    const fit = await readFit(page);
-    const fontSize = await toolFontSize(page);
     const references = await referenceInkWidths(page, ['Kept', 'Discarded'], {
       fontSize,
       fontFamily: 'Arial',
       fit,
       box,
+      draftBounds: layerRect,
+      anchor,
     });
     const measured = await inkWidthIn(page, box, { x1: 120, y1: 150, x2: 620, y2: 340 }, 20, 'the Escape commit');
     expect(
@@ -1070,10 +1189,15 @@ test.describe('Text tool in-place editing', () => {
   test('a click elsewhere on the canvas COMMITS the open draft and then places a new box', async ({ page }) => {
     const layerRows = page.getByTitle('Drag to reorder');
     const box = await canvasBox(page);
+    const fit = await readFit(page);
+    const fontSize = await toolFontSize(page);
+    const firstAnchor = await documentPointAt(page, fit, box, FIRST_BOX_CLICK);
+    const secondAnchor = await documentPointAt(page, fit, box, SECOND_BOX_CLICK);
 
     await clickToPlace(page, box, FIRST_BOX_CLICK);
     await expect(overlay(page)).toBeVisible();
     await page.keyboard.type(FIRST_TEXT);
+    const firstLayerRect = await draftLayerRect(page, fit);
     await expect(layerRows, 'the open draft is not a layer yet').toHaveCount(1);
 
     // THE DATA-LOSS FIX. `TextToolArea`'s `onChangeEnd` used to overwrite `args` with a fresh box on
@@ -1119,6 +1243,7 @@ test.describe('Text tool in-place editing', () => {
     // three failure shapes at once: the placeholder still present, the first box's words still there,
     // and the typed characters appended after them.
     await page.keyboard.type(SECOND_TEXT);
+    const secondLayerRect = await draftLayerRect(page, fit);
     expect(await overlayText(page), 'typing into the new draft did not land as the typed string alone').toBe(
       SECOND_TEXT
     );
@@ -1149,25 +1274,39 @@ test.describe('Text tool in-place editing', () => {
      * measured through `isRedInk`. A dim does not move a string or change its width, but it empties
      * that oracle outright, so the two subjects would be sharing one measurement.
      *
-     * The Layers panel shows a layer's NAME, never its text, and `layer.source.args.text` reaches no DOM
-     * surface at all, so the ink is the only observable — and a good one: rendered by the app's own
-     * `renderText` into a canvas that IS the layer, then composited into the document. Measured against
-     * references this page drew with the same `fillText`, the same font shorthand and the same pixel
-     * predicate, it says which string landed.
+     * The Layers panel shows a layer's NAME, never its text, and the pixel capture confirms the
+     * committed layer actually drew ink. The independent references use each candidate's natural
+     * point-text bounds, the same HTML-to-OffscreenCanvas rendering path, fractional compositing,
+     * font shorthand and pixel predicate, so this still tells which candidate string was drawn
+     * without relying on a DOM text copy.
      */
-    const fit = await readFit(page);
-    const fontSize = await toolFontSize(page);
-    const references = await referenceInkWidths(page, [FIRST_TEXT, SECOND_TEXT, PLACEHOLDER], {
+    const referenceStrings = [FIRST_TEXT, SECOND_TEXT, PLACEHOLDER];
+    const firstReferences = await referenceInkWidths(page, referenceStrings, {
       fontSize,
       fontFamily: 'Arial',
       fit,
       box,
+      draftBounds: firstLayerRect,
+      anchor: firstAnchor,
+    });
+    const secondReferences = await referenceInkWidths(page, referenceStrings, {
+      fontSize,
+      fontFamily: 'Arial',
+      fit,
+      box,
+      draftBounds: secondLayerRect,
+      anchor: secondAnchor,
     });
 
-    for (const [region, own, label] of [
-      [FIRST_BOX_REGION, FIRST_TEXT, 'the committed first box'],
-      [SECOND_BOX_REGION, SECOND_TEXT, 'the committed second box'],
-    ] as const) {
+    for (const { region, own, label, references } of [
+      { region: FIRST_BOX_REGION, own: FIRST_TEXT, label: 'the committed first box', references: firstReferences },
+      {
+        region: SECOND_BOX_REGION,
+        own: SECOND_TEXT,
+        label: 'the committed second box',
+        references: secondReferences,
+      },
+    ]) {
       const measured = await inkWidthIn(page, box, region, REGION_MARGIN, label);
       // Against the OTHER TWO strings, so a measurement that happened to fit more than one cannot pass.
       for (const other of [FIRST_TEXT, SECOND_TEXT, PLACEHOLDER].filter((candidate) => candidate !== own)) {
@@ -1790,8 +1929,12 @@ test.describe('Text tool in-place editing', () => {
 
     test('matches the committed text after 2x backing-store rendering', async ({ page }) => {
       const box = await canvasBox(page);
+      const fit = await readFit(page);
+      const fontSize = await toolFontSize(page);
+      const anchor = await documentPointAt(page, fit, box, CARET_CLICK);
       await clickToPlace(page, box, CARET_CLICK);
       await page.keyboard.type('Retina');
+      const layerRect = await draftLayerRect(page, fit);
       await page.keyboard.press('Escape');
       await expect(overlay(page), 'the 2x draft remained open after commit').toHaveCount(0);
 
@@ -1802,12 +1945,13 @@ test.describe('Text tool in-place editing', () => {
       expect(canvasScale.devicePixelRatio, 'the test context did not apply its 2x device scale').toBe(2);
       expect(canvasScale.backingScale, 'the workspace renderer did not publish its 2x backing scale').toBe('2');
 
-      const fit = await readFit(page);
       const references = await referenceInkWidths(page, ['Retina'], {
-        fontSize: await toolFontSize(page),
+        fontSize,
         fontFamily: 'Arial',
         fit,
         box,
+        draftBounds: layerRect,
+        anchor,
       });
       const measuredBounds = await inkBoundsIn(page, {
         left: box.x,
