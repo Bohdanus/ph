@@ -256,6 +256,7 @@ const CONTEXT_METHODS = [
   'stroke',
   'save',
   'restore',
+  'setTransform',
   'translate',
   'transform',
   'scale',
@@ -865,10 +866,11 @@ describe('CloneStampToolArea', () => {
       expect(pointerState.activePointer).toBeNull();
       expect(tempUpdateLayerMock).not.toHaveBeenCalled();
       expect(updateLayerByToolMock).not.toHaveBeenCalled();
-      // Mounting with Alt up draws the overlay's clear and nothing else — the `if (!visible)`
-      // early return — so no ring and no crosshair exist yet.
+      // Mounting with Alt up clears the overlay and takes the `if (!visible)` early return, so no
+      // ring or crosshair is drawn. The clear helper still brackets its transform change.
       expect(overlay.context.clearRect.mock.calls).toEqual([[0, 0, 640, 480]]);
-      expect(overlay.context.save).not.toHaveBeenCalled();
+      expect(overlay.context.save).toHaveBeenCalledTimes(1);
+      expect(overlay.context.restore).toHaveBeenCalledTimes(1);
       expect(overlay.strokes).toEqual([]);
     });
 
@@ -945,9 +947,10 @@ describe('CloneStampToolArea', () => {
         { strokeStyle: 'rgba(0, 0, 0, 0.85)', lineWidth: 3 },
         { strokeStyle: '#ffffff', lineWidth: 1 },
       ]);
-      // Drawn inside one save/restore pair, so the shared overlay's own state survives.
-      expect(overlay.context.save).toHaveBeenCalledTimes(1);
-      expect(overlay.context.restore).toHaveBeenCalledTimes(1);
+      // One pair brackets the backing-store clear and another brackets marker painting, so the
+      // shared overlay's transform and drawing state both survive.
+      expect(overlay.context.save).toHaveBeenCalledTimes(2);
+      expect(overlay.context.restore).toHaveBeenCalledTimes(2);
       // The double seeds `'round'`, so this is the marker's own write and not the seed: deleting
       // `ctx.lineCap = 'butt'` leaves `'round'` here and fails.
       expect(overlay.context.lineCap).toBe('butt');
@@ -1111,7 +1114,8 @@ describe('CloneStampToolArea', () => {
       // that exists only while the modifier is held. The ring must not be left over the next tool.
       expect(overlay.context.clearRect.mock.calls).toEqual([[0, 0, 640, 480]]);
       expect(overlay.strokes).toEqual([]);
-      expect(overlay.context.restore).not.toHaveBeenCalled();
+      expect(overlay.context.save).toHaveBeenCalledTimes(1);
+      expect(overlay.context.restore).toHaveBeenCalledTimes(1);
     });
 
     it('clears the marker when the window loses focus with Alt held', () => {

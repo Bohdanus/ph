@@ -167,6 +167,7 @@ function createOverlayContext(): CanvasRenderingContext2D {
     arc: vi.fn(),
     save: vi.fn(),
     restore: vi.fn(),
+    setTransform: vi.fn(),
     setLineDash: vi.fn(),
     getLineDash: vi.fn(() => []),
     drawImage: vi.fn(),

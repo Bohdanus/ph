@@ -349,7 +349,7 @@ describe('useLayers createLayerFromTool geometry', () => {
     processor.mockRestore();
   });
 
-  it('keeps an explicit document position and clears the tool overlay', () => {
+  it('keeps an explicit document position and clears the full tool overlay backing store', () => {
     const raster = new OffscreenCanvas(20, 10);
     const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [raster]);
     const { result } = setup({
@@ -376,7 +376,7 @@ describe('useLayers createLayerFromTool geometry', () => {
       });
     });
 
-    expect(overlayContext.clearRect).toHaveBeenCalledWith(0, 0, 200, 100);
+    expect(overlayContext.clearRect).toHaveBeenCalledWith(0, 0, overlay.width, overlay.height);
 
     const newLayer = created as Layer | null;
     expect(newLayer).not.toBeNull();

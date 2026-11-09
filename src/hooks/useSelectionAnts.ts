@@ -1,8 +1,8 @@
 import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { RasterSelectionMask, Selection } from '../contexts/general-types.ts';
-import { type DocumentFrame, documentFrameSize, documentToCanvasPoint } from '../contexts/document-frame.ts';
+import { type DocumentFrame, documentToCanvasPoint } from '../contexts/document-frame.ts';
 
-import { resetOverlayAlpha } from '../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../util/canvas.ts';
 import { DASH_LENGTH, GAP_LENGTH, LINE_WIDTH, SPEED } from './useAnts.ts';
 import { readSelectionDragPreview } from './selection-drag-preview.ts';
 import {
@@ -339,8 +339,7 @@ export function useSelectionMarchingAnts({
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
-    const { width, height } = documentFrameSize(documentFrameRef.current);
-    ctx.clearRect(0, 0, width, height);
+    clearCanvasBackingStore(ctx);
   }, [overlayRef]);
 
   // Reads the latest shapes and frame through refs rather than closing over them, so that
@@ -377,8 +376,7 @@ export function useSelectionMarchingAnts({
         return;
       }
 
-      const { width, height } = documentFrameSize(documentFrameRef.current);
-      ctx.clearRect(0, 0, width, height);
+      clearCanvasBackingStore(ctx);
       const offset = dashOffsetRef.current;
 
       ctx.save();
