@@ -3,6 +3,7 @@ import {
   activeQuarantineKeys,
   DEFAULT_QUARANTINE_FILE,
   DEFAULT_QUARANTINE_HOURS,
+  isOperatorOnlyQuarantine,
   MAX_QUARANTINE_HOURS,
   quarantineKey,
   loadQuarantineState,
@@ -185,6 +186,25 @@ describe('free-model quarantine lifecycle', () => {
     expect(() =>
       upsertQuarantine(state, { source: 'openrouter', model: 'x:free', reason: 'context_exhausted', now })
     ).toThrow(/supported quarantine reason/);
+  });
+
+  it('keeps Kilo Nemotron 3 Ultra operator-managed without blocking manual quarantine', () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    expect(isOperatorOnlyQuarantine('kilo', model)).toBe(true);
+    expect(isOperatorOnlyQuarantine('kilo', model.slice(0, -':free'.length))).toBe(true);
+    expect(isOperatorOnlyQuarantine('openrouter', model)).toBe(false);
+    expect(isOperatorOnlyQuarantine('kilo', 'vendor/other-model:free')).toBe(false);
+
+    const state = { schemaVersion: 1, entries: {} };
+    const key = upsertQuarantine(state, {
+      source: 'kilo',
+      model,
+      reason: 'non_zero_cost',
+      hours: 6,
+      now: Date.parse('2026-10-26T12:00:00.000Z'),
+    });
+    expect(key).toBe(`kilo:${model}`);
+    expect(state.entries[key]).toMatchObject({ source: 'kilo', model, reason: 'non_zero_cost' });
   });
 
   it('makes expired routes eligible and prunes them only on request', () => {

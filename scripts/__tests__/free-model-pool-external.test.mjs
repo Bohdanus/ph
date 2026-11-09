@@ -179,10 +179,13 @@ function readableFetch(fetchImpl) {
   return vi.fn(async (...args) => responseWithReadableBody(await fetchImpl(...args)));
 }
 
-function catalogFetch({ kilo = [], openrouter = [], keyInfo, chat }) {
+function catalogFetch({ kilo = [], openrouter = [], opencode = [], keyInfo, chat }) {
   return readableFetch(async (url, options = {}) => {
     if (url.endsWith('/models') && url.includes('openrouter')) {
       return { ok: true, json: async () => ({ data: openrouter }) };
+    }
+    if (url.endsWith('/models') && url.includes('opencode')) {
+      return { ok: true, json: async () => opencode };
     }
     if (url.endsWith('/models')) return { ok: true, json: async () => kilo };
     if (url.includes('api/v1/key')) {
@@ -550,6 +553,131 @@ describe('Reasoning parameter is not sent to any provider', () => {
       timeoutMs: 12 * 60 * 1000,
     });
     expect(chat).not.toHaveBeenCalled();
+  });
+});
+
+describe('Kilo Nemotron 3 Ultra operator-managed quarantine', () => {
+  it('fails closed after reported cost without automatically quarantining Nemotron 3 Ultra', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-kilo-cost-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const poolStateFile = join(directory, 'pool-state.json');
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const chat = vi.fn();
+    const fetchImpl = catalogFetch({ kilo: [kiloRow(model)], chat });
+    const runKilo = vi.fn().mockResolvedValue({
+      error: 'provider reported non-zero cost',
+      safetyStop: true,
+      usage: { cost: 0.01 },
+    });
+
+    try {
+      await expect(
+        completeWithFreeModel('test', {
+          fetchImpl,
+          kiloCommand: '/fake-kilo',
+          openRouterKey: '',
+          quarantineFile,
+          poolStateFile,
+          runKilo,
+        })
+      ).rejects.toThrow(/quarantine is operator-managed; refusing further requests/);
+
+      expect(runKilo).toHaveBeenCalledTimes(1);
+      expect(chat).not.toHaveBeenCalled();
+      expect((await readQuarantineState(quarantineFile)).entries[`kilo:${model}`]).toBeUndefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('OpenCode model-specific rate-limit retry', () => {
+  const nemotron = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+
+  it('retries one model-attributable 429 before rotating to the fallback provider', async () => {
+    const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+    const runOpenCode = vi
+      .fn()
+      .mockResolvedValueOnce({
+        error: 'model rate limited',
+        errorType: 'model.rate_limit',
+        status: 429,
+        retryAfter: '2',
+        modelAttributable: true,
+      })
+      .mockResolvedValueOnce({
+        error: 'model rate limited again',
+        errorType: 'model.rate_limit',
+        status: 429,
+        modelAttributable: true,
+      });
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'fallback:free',
+        choices: [{ message: { content: 'fallback result' }, finish_reason: 'stop' }],
+      }),
+    });
+    const fetchImpl = catalogFetch({
+      openrouter: [openRouterRow('fallback')],
+      opencode: [{ id: nemotron, owned_by: 'opencode' }],
+      chat,
+    });
+
+    const result = await completeWithFreeModel('test', {
+      fetchImpl,
+      openRouterKey: 'rk',
+      kiloCommand: '',
+      opencodeCommand: '/fake-opencode',
+      runOpenCode,
+      waitForRetryAfter,
+    });
+
+    expect(result).toMatchObject({ source: 'openrouter', model: 'fallback:free', content: 'fallback result' });
+    expect(runOpenCode).toHaveBeenCalledTimes(2);
+    expect(runOpenCode.mock.calls.map(([options]) => options.model)).toEqual([nemotron, nemotron]);
+    expect(waitForRetryAfter).toHaveBeenCalledTimes(1);
+    expect(waitForRetryAfter).toHaveBeenCalledWith(2000);
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry an unattributed OpenCode 429', async () => {
+    const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+    const runOpenCode = vi.fn().mockResolvedValue({
+      error: 'provider rate limited',
+      errorType: 'provider.rate_limit',
+      status: 429,
+      retryAfter: '2',
+      modelAttributable: false,
+    });
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'fallback:free',
+        choices: [{ message: { content: 'fallback result' }, finish_reason: 'stop' }],
+      }),
+    });
+    const fetchImpl = catalogFetch({
+      openrouter: [openRouterRow('fallback')],
+      opencode: [{ id: nemotron, owned_by: 'opencode' }],
+      chat,
+    });
+
+    const result = await completeWithFreeModel('test', {
+      fetchImpl,
+      openRouterKey: 'rk',
+      kiloCommand: '',
+      opencodeCommand: '/fake-opencode',
+      runOpenCode,
+      waitForRetryAfter,
+    });
+
+    expect(result).toMatchObject({ source: 'openrouter', model: 'fallback:free' });
+    expect(runOpenCode).toHaveBeenCalledTimes(1);
+    expect(waitForRetryAfter).not.toHaveBeenCalled();
+    expect(chat).toHaveBeenCalledTimes(1);
   });
 });
 

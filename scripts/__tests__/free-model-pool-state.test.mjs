@@ -134,4 +134,33 @@ describe('free-model pool persistent state', () => {
       );
     });
   });
+
+  it('leaves Kilo Nemotron 3 Ultra quarantine decisions to the operator', async () => {
+    await withStateFiles(async ({ quarantineFile, stateFile }) => {
+      const now = Date.parse('2026-10-26T12:00:00.000Z');
+      let outcome;
+      for (let index = 0; index < 251; index += 1) {
+        outcome = await recordModelFailure({
+          source: 'kilo',
+          model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+          quarantineFile,
+          stateFile,
+          now: now + index,
+        });
+      }
+
+      expect(outcome).toMatchObject({
+        failureCount: 250,
+        rateLimitCount: 0,
+        quarantineHours: null,
+        operatorManaged: true,
+      });
+      expect(
+        (await readFreeModelPoolState(stateFile)).modelFailures['kilo:nvidia/nemotron-3-ultra-550b-a55b:free'].failures
+      ).toHaveLength(250);
+      expect(
+        (await readQuarantineState(quarantineFile)).entries['kilo:nvidia/nemotron-3-ultra-550b-a55b:free']
+      ).toBeUndefined();
+    });
+  });
 });

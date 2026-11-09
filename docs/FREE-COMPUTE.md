@@ -1,22 +1,48 @@
 # Free and Low-Cost Model Compute
 
-**Policy checked: 2026-11-08.** Catalogs, pricing, terms, and quotas change; refresh before use.
+**Policy and routing checked: 2026-11-08.** Catalogs, pricing, terms, and quotas change; refresh
+before use. The dated observations below are point-in-time results, not a fresh availability check.
 
 ## Model preferences
 
-| Model                              | Rating   | Notes                                                                          |
-| ---------------------------------- | -------- | ------------------------------------------------------------------------------ |
-| **NVIDIA Nemotron 3 Ultra (free)** | **Best** | Strong reasoning, reliable completions, preferred for all free inference tasks |
+| Model                              | Routing priority | Notes                                                                                   |
+| ---------------------------------- | ---------------- | --------------------------------------------------------------------------------------- |
+| **NVIDIA Nemotron 3 Ultra (free)** | **First**        | Operator-selected model priority; not a claim of current benchmark rank or availability |
 
 ## Routing
 
-1. **Prefer Kilo Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b:free`) when the live catalog verifies exact-zero pricing.** This is the operator's current strongest-free-model choice; availability and capacity still require a live check.
-2. When a preferred route is unavailable or exhausted, use another candidate only if the live catalog confirms that exact model/provider pair is free. There is no fixed fallback; stop rather than silently use a paid route.
+1. **Try the exact Nemotron 3 Ultra route first** on Kilo, then OpenRouter, then OpenCode. Kilo and OpenRouter candidates must have exact-zero pricing; OpenCode must be provider-owned and match the exact canonical Nemotron ID. Catalog eligibility does not prove authentication or capacity.
+2. If all Nemotron routes fail, fallback order is other OpenRouter models, other OpenCode models, then Groq. Lower-ranked Kilo models are not fallback routes. Groq requires the explicit Free-plan opt-in and permits only `openai/gpt-oss-120b`. Stop rather than silently use a paid route.
 3. Use free models for bounded research, extraction, code search, and simple reviews. Check response text and `finish_reason`; HTTP 200 can still mean empty output.
 
-The completion runner is model-first. It tries the exact Nemotron 3 Ultra model on each eligible Kilo, OpenRouter, and OpenCode route before changing models. Fallback order is other OpenRouter models, other OpenCode models, then Groq; lower-ranked Kilo models are not used. Kilo and OpenRouter use live exact-zero catalogs. OpenCode's public inference catalog has no price fields, so the runner accepts provider-owned `-free` IDs and calls the headless CLI with tool use denied. OpenCode Nemotron is eligible only for an exact canonical model ID, not a similar display name. Groq's catalog also omits pricing; the runner permits only GPT-OSS 120B after `GROQ_API_KEY` and an explicit Free-plan opt-in. A key alone does not establish free pricing. On 2026-10-27, all three saved Groq keys returned HTTP 200 from `/models`; with the operator confirming all three are Free-tier, one real runner completion returned `GROQ_LIVE_OK` with `finish_reason=stop` and one Groq request. OpenCode's headless CLI returned `LIVE_OK` once without the desktop UI; its V2 JSON stream omitted the final `step_finish`. A later adapter call reached OpenCode and returned `provider.free-limit` HTTP 429. The runner uses the CLI, not a generic HTTP API. That account-quota event now skips OpenCode for the current run without a long-lived cooldown or retry. OpenRouter uses its live daily `used`, `limit`, and `remaining` values; if remaining is zero, its current UTC date is persisted so it automatically becomes eligible after midnight UTC. A platform-rate-limit 429 skips OpenRouter for the run without blaming a model. Confirmed upstream/model failures can trigger bounded model quarantine. Non-zero or invalid cost and content-policy rejections stop fallback across providers.
+The completion runner is model-first: it tries exact Nemotron on Kilo, OpenRouter, and OpenCode before
+considering weaker models. OpenCode Nemotron requires the canonical provider-owned ID; a similar
+display name is insufficient. Groq's catalog omits pricing, so only `openai/gpt-oss-120b` is permitted
+after `GROQ_API_KEY` and an explicit Free-plan opt-in. A key alone does not establish free pricing.
+On 2026-10-27, all three saved Groq keys returned HTTP 200 from `/models`; with the operator
+confirming all three were Free-tier, one real runner completion returned `GROQ_LIVE_OK` with
+`finish_reason=stop` and one Groq request. OpenCode's headless CLI returned `LIVE_OK` once without the
+desktop UI; its V2 JSON stream omitted the final `step_finish`. The adapter accepts a clean exit with
+text from a catalog-verified `-free` model and surfaces provider error codes. Later, OpenCode returned
+`provider.free-limit` HTTP 429. The runner uses the CLI, not a generic HTTP API; that account-quota
+event skips OpenCode for the current run without a long-lived cooldown or retry, and the account
+quota was exhausted before a positive completion through the adapter could be repeated.
+
+OpenRouter uses a lazy `GET /api/v1/key` check and its live daily `used`, `limit`, and `remaining`
+values. Its local exhaustion marker is keyed by UTC date, so the runner becomes eligible after the
+server-side quota rolls over at 00:00 UTC; no scheduled reset job is needed. If the quota probe is
+unknown, the runner permits at most one inference attempt and does not use the quota-present retry
+path. OpenRouter 401/402 and platform 429s with zero remaining requests skip the source; a verified
+positive quota permits one bounded retry, with at most three inference attempts per source. Platform
+429s skip OpenRouter without blaming a model; only confirmed upstream/model failures can trigger
+bounded model quarantine. Kilo 401/402 stops Kilo for the run, and Kilo 429s use a separate one-hour
+source cooldown, not a model quarantine. Non-zero or invalid cost and content-policy rejections stop
+fallback across providers. The exact Kilo Nemotron 3 Ultra route is never automatically quarantined;
+quarantine for it is operator-managed.
 
 ## Observed results
+
+Each row records a historical or dated observation; none establishes current provider capacity.
 
 | Route                          | Evidence                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -11,6 +11,7 @@ import { sanitizeForLogging, sanitizeErrorMessage, sanitizeErrorStack } from './
 import {
   activeQuarantineKeys,
   DEFAULT_QUARANTINE_FILE,
+  isOperatorOnlyQuarantine,
   loadQuarantineState,
   loadQuarantineStateLocked,
   MAX_QUARANTINE_HOURS,
@@ -356,6 +357,19 @@ function isExactZero(value) {
   return typeof value === 'string' && /^0+(?:\.0+)?$/.test(value);
 }
 
+function isNemotron3UltraCandidate(candidate) {
+  return /\bnemotron[\s.-]+3(?![\d.])[\s.-]+ultra\b/i.test(`${candidate.model} ${candidate.name ?? ''}`);
+}
+
+function prioritizeCandidatesByModel(candidates) {
+  const nemotron3Ultra = [];
+  const remaining = [];
+  for (const candidate of candidates) {
+    (isNemotron3UltraCandidate(candidate) ? nemotron3Ultra : remaining).push(candidate);
+  }
+  return [...nemotron3Ultra, ...remaining];
+}
+
 export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
   const rows = Array.isArray(data) ? data : (data?.data ?? []);
   const candidates = rows
@@ -430,10 +444,12 @@ export async function loadCatalogs({
     ? await loadQuarantineState(quarantineFile)
     : await readQuarantineState(quarantineFile);
   const quarantinedKeys = activeQuarantineKeys(quarantineState);
-  const sources = [{ source: 'kilo', url: KILO_MODELS }];
+  const sources = [
+    { source: 'opencode', url: OPENCODE_MODELS },
+    { source: 'kilo', url: KILO_MODELS },
+  ];
   if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
   if (groqKeys.length > 0 || includeGroq) sources.push({ source: 'groq', url: GROQ_MODELS, groqKeys });
-  sources.push({ source: 'opencode', url: OPENCODE_MODELS });
   const results = await Promise.allSettled(
     sources.map(async ({ source, url, groqKeys: sourceGroqKeys }) => {
       const headers = {};
@@ -488,11 +504,12 @@ export async function loadCatalogs({
       );
     })
   );
-  return results.flatMap((result, index) => {
+  const candidates = results.flatMap((result, index) => {
     if (result.status === 'fulfilled') return result.value;
     onCatalogError(sources[index].source, result.reason);
     return [];
   });
+  return prioritizeCandidatesByModel(candidates);
 }
 
 export async function probeOpenRouterQuota({
@@ -813,6 +830,7 @@ function hasReportedNonZeroCost(usage) {
 }
 
 async function quarantineReportedCost(source, model, quarantineFile) {
+  if (isOperatorOnlyQuarantine(source, model)) return;
   await withQuarantineWriteLock(quarantineFile, async (saveState) => {
     const state = await loadQuarantineStateLocked(quarantineFile);
     upsertQuarantine(state, {
@@ -1161,7 +1179,10 @@ export async function completeWithFreeModel(prompt, options = {}) {
     return counts;
   };
   const stopForReportedCost = async (candidate, detail = 'provider reported non-zero or invalid completion cost') => {
-    const message = `${candidate.source}/${candidate.model}: ${detail}; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
+    const quarantineNote = isOperatorOnlyQuarantine(candidate.source, candidate.model)
+      ? '; quarantine is operator-managed'
+      : '';
+    const message = `${candidate.source}/${candidate.model}: ${detail}${quarantineNote}; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
     try {
       await quarantineReportedCost(candidate.source, candidate.model, quarantineFile);
     } catch (error) {
@@ -1224,7 +1245,6 @@ export async function completeWithFreeModel(prompt, options = {}) {
   let openRouterQuotaKnownPositive = false;
   let openRouterQuotaInitiallyUnknown = false;
   let openRouterRetryUsed = false;
-  let openCodeRetryUsed = false;
   const ensureOpenRouterAvailable = async () => {
     if (exhausted.has('openrouter')) return false;
     if (!openRouterQuotaChecked) {
@@ -1548,10 +1568,14 @@ export async function completeWithFreeModel(prompt, options = {}) {
           const failure = await recordAttributableFailure(candidate, metadata, { include429: true });
           if (failure && failure.quarantineHours !== null) continue;
         }
-        if (metadata.status === 429 && !metadata.accountQuota && !candidate.retryAttempt && !openCodeRetryUsed) {
+        if (
+          metadata.status === 429 &&
+          metadata.modelAttributable &&
+          !metadata.accountQuota &&
+          !candidate.retryAttempt
+        ) {
           const retryAfterMs = retryAfterValueDelayMs(metadata.retryAfter);
           if (retryAfterMs === null || retryAfterMs <= MAX_OPENCODE_RETRY_AFTER_MS) {
-            openCodeRetryUsed = true;
             await waitForRetryAfter(retryAfterMs ?? 1000);
             available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
           }
@@ -1567,10 +1591,14 @@ export async function completeWithFreeModel(prompt, options = {}) {
           const failure = await recordAttributableFailure(candidate, metadata, { include429: true });
           if (failure && failure.quarantineHours !== null) continue;
         }
-        if (metadata.status === 429 && !metadata.accountQuota && !candidate.retryAttempt && !openCodeRetryUsed) {
+        if (
+          metadata.status === 429 &&
+          metadata.modelAttributable &&
+          !metadata.accountQuota &&
+          !candidate.retryAttempt
+        ) {
           const retryAfterMs = retryAfterValueDelayMs(metadata.retryAfter);
           if (retryAfterMs === null || retryAfterMs <= MAX_OPENCODE_RETRY_AFTER_MS) {
-            openCodeRetryUsed = true;
             await waitForRetryAfter(retryAfterMs ?? 1000);
             available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
           }

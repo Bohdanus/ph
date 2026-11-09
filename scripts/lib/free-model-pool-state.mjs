@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_QUARANTINE_FILE,
+  isOperatorOnlyQuarantine,
   loadQuarantineStateLocked,
   quarantineKey,
   QUARANTINE_SOURCES,
@@ -220,12 +221,14 @@ export async function recordModelFailure({
   }
   if (rateLimit && source !== 'openrouter')
     throw new Error('Rate-limit windows are tracked only for OpenRouter models');
+  const operatorManaged = isOperatorOnlyQuarantine(source, model);
 
   return withQuarantineWriteLock(quarantineFile, async (saveQuarantineState) => {
     const state = await readFreeModelPoolState(stateFile);
     pruneFailureTimes(state, now);
     const key = quarantineKey(source, model);
     const entry = (state.modelFailures[key] ??= { failures: [], rateLimits: [] });
+    if (operatorManaged && entry.failures.length >= MODEL_FAILURE_THRESHOLD) entry.failures.shift();
     entry.failures.push(now);
     if (rateLimit) entry.rateLimits.push(now);
     const failureCount = entry.failures.length;
@@ -239,6 +242,7 @@ export async function recordModelFailure({
       quarantineHours = OPENROUTER_RATE_LIMIT_QUARANTINE_HOURS;
       reason = 'rate_limit';
     }
+    if (operatorManaged) quarantineHours = null;
     if (quarantineHours !== null) {
       const quarantineState = await loadQuarantineStateLocked(quarantineFile, now);
       upsertQuarantine(quarantineState, { source, model, reason, hours: quarantineHours, now });
@@ -248,6 +252,11 @@ export async function recordModelFailure({
     pruneFailureTimes(state, now);
     boundTrackedModels(state);
     await writeStateAtomically(state, stateFile);
-    return { failureCount, rateLimitCount, quarantineHours };
+    return {
+      failureCount,
+      rateLimitCount,
+      quarantineHours,
+      ...(operatorManaged ? { operatorManaged: true } : {}),
+    };
   });
 }

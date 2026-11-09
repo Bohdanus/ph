@@ -32,6 +32,16 @@ const INITIAL_QUARANTINES = [
   { source: 'kilo', model: 'recursive/flint-v1.0:free', reason: 'poor_performance' },
 ];
 
+const KILO_NEMOTRON_3_ULTRA_ID = 'nvidia/nemotron-3-ultra-550b-a55b';
+
+export function isOperatorOnlyQuarantine(source, model) {
+  return (
+    source === 'kilo' &&
+    typeof model === 'string' &&
+    model.toLowerCase().replace(/:free$/, '') === KILO_NEMOTRON_3_ULTRA_ID
+  );
+}
+
 export function quarantineKey(source, model) {
   return `${source}:${model}`;
 }

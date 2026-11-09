@@ -5,9 +5,13 @@ Current operating instructions for the free-model runner. Historical measurement
 
 ## Model preferences
 
-The runner prefers NVIDIA Nemotron 3 Ultra when it is present in the live catalog at exact-zero
-pricing. This is an ordering preference, not a benchmark claim. The available free models change;
-use `npm run free:models -- --list` to see the current provider/model pairs before a run.
+The runner prioritizes the exact NVIDIA Nemotron 3 Ultra route across Kilo, OpenRouter, then OpenCode.
+OpenCode is eligible for Nemotron only when its live catalog provides the exact canonical model ID.
+If those routes fail, fallback order is other OpenRouter models, other OpenCode models, then Groq;
+lower-ranked Kilo models are not fallback routes. This is an operator routing preference, not a
+benchmark claim. The available free models change; use `npm run free:models -- --list` to see current
+provider/model pairs before a run. Kilo and OpenRouter keep their explicit preferred-catalog ordering
+within their own model lists.
 
 ## Find credentials safely
 
@@ -161,17 +165,20 @@ node scripts/free-model-pool.mjs --openrouter-quota
 node scripts/free-research.mjs --prompt-file ./prompt.txt --url-list ./urls.txt --output-file ./summary.md --max-tokens 1500
 ```
 
-The inference order is model-first: try the exact Nemotron model on Kilo, OpenRouter, and OpenCode
-before changing models; then try other OpenRouter models, other OpenCode models, and Groq. Lower
-ranked Kilo models are not fallback routes. Catalog checks can run in parallel; inference is
-sequential and capped at three attempts per source. The pool never falls back to paid models. Kilo
-401/402 stops Kilo for the run; a 429 also records a one-hour Kilo cooldown. Groq retires a supplied
-key on 401/402/429 and stops when all supplied keys are exhausted. OpenRouter uses the live daily
-counter and platform headers as described above. `provider.free-limit` skips OpenCode for the run
-without a persistent provider cooldown. Non-zero or invalid reported cost and explicit content-policy
-rejections fail closed across all providers, including Kilo and OpenCode; HTTP 200 with
-`finish_reason: content_filter` also stops routing. `--list` refreshes public catalogs and does not
-send an inference request.
+The inference order is model-first: exact Nemotron on Kilo, OpenRouter, then OpenCode; fallback is
+other OpenRouter models, other OpenCode models, then Groq. Lower-ranked Kilo models are not fallback
+routes. Catalog checks can run in parallel; inference is sequential and capped at three attempts per
+source. The pool never falls back to paid models. Kilo 401/402 stops Kilo for the run; a 429 records a
+one-hour source cooldown. Groq retires a supplied key on 401/402/429 and stops when all supplied keys
+are exhausted. OpenRouter uses the live daily counter and platform headers as described above;
+401/402 or a zero platform remaining count skips the source for the run, and transient/upstream
+failures receive at most one bounded retry when quota is known positive. `provider.free-limit` skips
+OpenCode for the run without a persistent provider cooldown; a transient model-attributable 429 may
+be retried once. Non-zero or invalid reported cost and explicit content-policy rejections fail closed
+across providers, including Kilo and OpenCode; HTTP 200 with `finish_reason: content_filter` also
+stops routing. Reported cost from Kilo Nemotron 3 Ultra still stops the run but is not automatically
+quarantined; that exact Kilo route is operator-managed. `--list` refreshes public catalogs and does
+not send an inference request.
 `--openrouter-quota` reads OpenRouter's daily counter only; it does not report Kilo's separate
 IP-based free-model limit. See [MODELS.md](../MODELS.md) for published limits. The URL runner
 accepts at most 20 public HTTPS URLs and writes only its condensed result. Quarantine operations are
@@ -200,11 +207,12 @@ receive five minutes. Catalog and quota calls use 15 seconds.
 
 ### Catalog ordering
 
-Within the Nemotron tier, provider order is Kilo, OpenRouter, then OpenCode, and every candidate
-must be live and verified. In fallback, OpenRouter precedes OpenCode, with Groq last; lower Kilo
-models are not attempted. OpenCode Nemotron requires an exact canonical ID match. Other candidates
-retain each provider's catalog order; disabled model families are filtered before ordering. Do not
-assume a named alternative remains available: refresh the catalog for each run.
+The exact Nemotron tier uses Kilo, OpenRouter, then OpenCode; fallback uses other OpenRouter models,
+other OpenCode models, then Groq. Lower-ranked Kilo models are not attempted. OpenCode Nemotron
+requires an exact canonical ID match. Kilo and OpenRouter keep their configured preferred models
+first within each catalog; remaining candidates retain live catalog order. Disabled model families
+are filtered before ordering. Refresh catalogs for each run rather than assuming a named alternative
+remains available.
 
 ### Report-only failure sweep
 
