@@ -403,12 +403,12 @@ describe('ShapeToolArea', () => {
 
       const saves = vi.mocked(storeMocks.ctx.save).mock.invocationCallOrder;
       const restores = vi.mocked(storeMocks.ctx.restore).mock.invocationCallOrder;
-      expect(saves).toHaveLength(1);
-      expect(restores).toHaveLength(1);
+      expect(saves).toHaveLength(2);
+      expect(restores).toHaveLength(2);
       // `setShapeCtx` runs INSIDE the bracket, not before it: configured outside, the `restore()`
       // would discard exactly the stroke settings `drawShape` reads.
-      expect(vi.mocked(setShapeCtxMock).mock.invocationCallOrder[0]).toBeGreaterThan(saves[0]);
-      expect(vi.mocked(drawShapeMock).mock.invocationCallOrder[0]).toBeLessThan(restores[0]);
+      expect(vi.mocked(setShapeCtxMock).mock.invocationCallOrder[0]).toBeGreaterThan(saves[1]);
+      expect(vi.mocked(drawShapeMock).mock.invocationCallOrder[0]).toBeLessThan(restores[1]);
     });
 
     it('stores fromCenter flag based on altKey', () => {
