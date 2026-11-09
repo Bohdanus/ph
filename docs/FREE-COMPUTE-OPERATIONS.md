@@ -96,16 +96,17 @@ The runner accepts provider-owned model IDs ending in `-free`, denies tool use, 
 CLI exit with non-empty text. The exact canonical Nemotron ID is the only suffix exception, and only
 when the live catalog marks it provider-owned. Display-name similarity is insufficient. OpenCode CLI
 JSON output can omit its final `step_finish` event; a clean exit, text response, and free catalog ID
-are sufficient when no explicit error, tool call, or non-zero cost was reported. The
-`provider.free-limit` error is a service quota event for the account, workspace, and network, even
-when it has no HTTP status or OpenCode emitted an earlier model-specific error. Skip OpenCode for
-the current run without a long-lived cooldown or retry. Check `opencode --version` and use v2;
+are sufficient when no explicit error, tool call, or non-zero cost was reported.
+The typed `provider.free-limit` event and upstream `FreeUsageLimitError` alias both signal a service
+quota for the account, workspace, and network. This remains a source-wide stop when there is no HTTP
+status or when an earlier model-specific error came first. Skip OpenCode for the current run without
+a long-lived cooldown or retry. Check `opencode --version` and use v2;
 OpenCode v1 no longer supports free models ([free-tier guidance](https://github.com/anomalyco/opencode/issues/59387)).
 Other transient/model-specific 429s may receive at most one retry per route. Honor OpenCode's
 `retryAfterMs`, `Retry-After-Ms`, and `Retry-After` metadata, including timing nested in
 `responseHeaders`; across multiple model 429 events, wait for the longest requested delay. The
-wait is capped at 60 seconds, and a longer server delay skips that retry. `provider.free-limit`
-still skips OpenCode immediately regardless of any retry timing ([retry timing issue](https://github.com/anomalyco/opencode/issues/33955)).
+wait is capped at 60 seconds, and a longer server delay skips that retry. Both quota error types
+skip OpenCode immediately regardless of any retry timing ([retry timing issue](https://github.com/anomalyco/opencode/issues/33955)).
 
 ## Groq
 

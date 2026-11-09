@@ -916,7 +916,7 @@ process.exit(1);`
     const command = await writeFakeOpenCode(
       directory,
       `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, message: 'Model rate limited' } }));
-console.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', message: 'Free usage limit reached' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'RateLimit.FreeUsageLimitError', message: 'Free usage limit reached' } }));
 process.exit(1);`
     );
 
@@ -924,7 +924,7 @@ process.exit(1);`
       await expect(
         runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
       ).rejects.toMatchObject({
-        errorType: 'provider.free-limit',
+        errorType: 'RateLimit.FreeUsageLimitError',
         status: null,
         accountQuota: true,
         modelAttributable: false,
@@ -1456,16 +1456,18 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       }),
     });
     const fetchImpl = catalogFetch({
-      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      opencode: [
+        { id: 'beam-free', owned_by: 'opencode' },
+        { id: 'flint-free', owned_by: 'opencode' },
+      ],
       groq: [{ id: 'openai/gpt-oss-120b' }],
       chat,
     });
     const runOpenCode = vi.fn().mockResolvedValue({
       error: 'OpenCode free account limit',
-      errorType: 'provider.free-limit',
+      errorType: 'RateLimit.FreeUsageLimitError',
       status: 429,
       retryAfterMs: 30_000,
-      accountQuota: true,
     });
 
     try {

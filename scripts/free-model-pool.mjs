@@ -778,7 +778,10 @@ function openCodeErrorMetadata(value) {
     retryAfter: normalizedRetryAfter,
     retryAfterMs: retryAfterDelays.length > 0 ? Math.max(...retryAfterDelays) : null,
     accountQuota:
-      metadata.accountQuota === true || value.accountQuota === true || normalizedType === 'provider.free-limit',
+      metadata.accountQuota === true ||
+      value.accountQuota === true ||
+      normalizedType === 'provider.free-limit' ||
+      /(?:^|[._])freeusagelimiterror$/.test(normalizedType),
     modelAttributable:
       metadata.modelAttributable === true ||
       value.modelAttributable === true ||
