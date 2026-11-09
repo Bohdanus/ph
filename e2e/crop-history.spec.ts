@@ -4472,12 +4472,25 @@ test.describe('Crop history', () => {
         }
         return { stage, admission: output.admission, pixelParity };
       };
+      if (transformed?.projectedOutputParity) {
+        adapterDiagnostics.push(await inspectProjectedOutputParity(transformed.projectedOutputParity, 'affine cursor'));
+      }
+      if (frameTransition?.projectedOutputParity) {
+        adapterDiagnostics.push(
+          await inspectProjectedOutputParity(frameTransition.projectedOutputParity, 'fractional frame cursor')
+        );
+      }
+      await testInfo.attach('affine-raster-opacity-blend-adapter-diagnostics.json', {
+        body: JSON.stringify(adapterDiagnostics, null, 2),
+        contentType: 'application/json',
+      });
+      console.info(`[crop-history] affine opacity/blend adapter diagnostics: ${JSON.stringify(adapterDiagnostics)}`);
+
       expect(transformed?.differingBytes, 'affine composite must preserve opacity and blend byte-for-byte').toBe(0);
       if (transformed) {
         assertForegroundMaterialization(transformed.materializedLayerComparisons, 'affine cursor');
         const projectedOutputs = transformed.projectedOutputParity;
         if (!projectedOutputs) throw new Error('Missing projected output parity result at affine cursor');
-        adapterDiagnostics.push(await inspectProjectedOutputParity(projectedOutputs, 'affine cursor'));
         expect(projectedOutputs.admission.reasons.foreground).toContain('not pixel-parity approved');
       }
       expect(transformed?.legacyDiffersFromUntransformed).toBe(true);
@@ -4489,7 +4502,6 @@ test.describe('Crop history', () => {
         assertForegroundMaterialization(frameTransition.materializedLayerComparisons, 'frame transition');
         const projectedOutputs = frameTransition.projectedOutputParity;
         if (!projectedOutputs) throw new Error('Missing projected output parity result at fractional frame cursor');
-        adapterDiagnostics.push(await inspectProjectedOutputParity(projectedOutputs, 'fractional frame cursor'));
         expect(projectedOutputs.admission.reasons.foreground).toContain('not pixel-parity approved');
       }
       expect(result.durablePixels).toEqual(result.legacyPixels);
@@ -4497,11 +4509,6 @@ test.describe('Crop history', () => {
       expect(result.transitionResults[0]?.durablePixels).not.toEqual(
         normalComposite.transitionResults[0]?.durablePixels
       );
-      await testInfo.attach('affine-raster-opacity-blend-adapter-diagnostics.json', {
-        body: JSON.stringify(adapterDiagnostics, null, 2),
-        contentType: 'application/json',
-      });
-      console.info(`[crop-history] affine opacity/blend adapter diagnostics: ${JSON.stringify(adapterDiagnostics)}`);
     });
 
     test('a retained styled text transform matches through a sequence of frame transforms', async ({ page }) => {
