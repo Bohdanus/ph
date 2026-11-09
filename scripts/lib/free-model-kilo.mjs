@@ -156,17 +156,52 @@ function parseEvents(output) {
 
 function sanitizedProcessError(events, stderrText, code, signal) {
   const status = reportedStatus(events, stderrText);
-  if (status === 401) return { error: 'Kilo authentication was rejected', exhaustSource: true };
+  if (status === 401) return { error: 'Kilo authentication was rejected', exhaustSource: true, status };
   if (status === 402 || status === 429) {
-    return { error: `Kilo provider quota or rate limit returned HTTP ${status}`, exhaustSource: true };
+    return { error: `Kilo provider quota or rate limit returned HTTP ${status}`, exhaustSource: true, status };
   }
   if (/\bfree model usage limit reached\b/i.test(stderrText)) {
     return { error: 'Kilo provider quota or rate limit was reached', exhaustSource: true };
   }
+  const modelAttributable =
+    status !== null &&
+    events.some((event) => {
+      if (event?.type !== 'error') return false;
+      const error = event.error && typeof event.error === 'object' ? event.error : event;
+      const identity = [error.code, error.type, event.code].filter((value) => typeof value === 'string').join(' ');
+      return /(?:^|[._-])(?:model|upstream_model)(?:[._-]|$)/i.test(identity);
+    });
   if (events.some((event) => event?.type === 'error')) {
-    return { error: 'Kilo CLI reported a provider or completion error', exhaustSource: false };
+    return {
+      error: 'Kilo CLI reported a provider or completion error',
+      exhaustSource: false,
+      status,
+      modelAttributable,
+    };
   }
-  return { error: `Kilo CLI exited ${code ?? signal ?? 'without a status'}`, exhaustSource: false };
+  return {
+    error: `Kilo CLI exited ${code ?? signal ?? 'without a status'}`,
+    exhaustSource: false,
+    status,
+    modelAttributable,
+  };
+}
+
+function contentPolicyRejected(events) {
+  return events.some((event) => {
+    if (event?.type !== 'error') return false;
+    const error = event.error && typeof event.error === 'object' ? event.error : event;
+    const code = [error.code, error.type, event.code, event.type]
+      .filter((value) => typeof value === 'string')
+      .join(' ')
+      .toLowerCase()
+      .replaceAll('-', '_');
+    const message = String(error.message ?? event.message ?? (typeof event.error === 'string' ? event.error : ''));
+    return (
+      /content_filter|content_policy|moderation|safety_violation|prompt_injection/.test(code) ||
+      /content|safety|moderation|prompt injection/i.test(message)
+    );
+  });
 }
 
 export async function runKiloCompletion({
@@ -187,7 +222,7 @@ export async function runKiloCompletion({
     return { error: 'Invalid model ID' };
   }
   if (typeof prompt !== 'string' || !prompt) return { error: 'Prompt is empty' };
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) return { error: 'Invalid token limit' };
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 65536) return { error: 'Invalid token limit' };
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return { error: 'Invalid completion timeout' };
 
   const message = `Answer the provided request directly, in plain text, using at most ${maxTokens} output tokens.\n\n${prompt}`;
@@ -298,7 +333,11 @@ export async function runKiloCompletion({
     if (malformed) return { error: 'Kilo CLI returned malformed JSONL output', exhaustSource: true };
     if (hasToolActivity(events))
       return { error: 'Kilo attempted a tool call; the completion was rejected', exhaustSource: true };
-    if (events.some((event) => event?.type === 'error')) return sanitizedProcessError(events, stderrText, code, signal);
+    if (events.some((event) => event?.type === 'error')) {
+      const failure = sanitizedProcessError(events, stderrText, code, signal);
+      if (contentPolicyRejected(events)) failure.contentPolicyRejected = true;
+      return failure;
+    }
     if (code !== 0) return sanitizedProcessError(events, stderrText, code, signal);
 
     const terminal = events.filter((event) => event?.type === 'step_finish').at(-1);
@@ -310,10 +349,13 @@ export async function runKiloCompletion({
       .map((event) => (event?.part?.cost !== undefined ? event.part.cost : event?.cost))
       .filter((cost) => cost !== undefined);
     if (costs.some((cost) => !isExactZeroCost(cost))) {
-      return { error: 'Kilo reported non-zero or invalid completion cost', exhaustSource: true };
+      return { error: 'Kilo reported non-zero or invalid completion cost', exhaustSource: true, safetyStop: true };
     }
     if (terminal?.part?.reason !== 'stop' || !content.trim()) {
-      return { error: 'Kilo did not return a complete non-empty response' };
+      return {
+        error: 'Kilo did not return a complete non-empty response',
+        ...(terminal?.part?.reason === 'length' ? { finishReason: 'length' } : {}),
+      };
     }
     const tokens = terminal.part?.tokens;
     return {

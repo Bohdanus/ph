@@ -253,6 +253,38 @@ A detached watcher posts a shared swarm note when the lease reaches 15 minutes a
 At 15 minutes, every other agent should mention the blocker in its own current chat and continue
 unrelated work. It must not wait for the landing owner or modify the occupied worktree.
 
+There is one automatic exception to the four-hour recovery path: a landing lease may encounter an
+orphan `AUTO_MERGE` in the designated main checkout after the commit guard refuses the reviewed
+landing. If the only reported operation is `AUTO_MERGE`, the marker names a valid tree, and the same
+main SHA plus marker tree remain continuously observable for 30 minutes, the detached watcher
+revalidates the pinned candidate and waits for the landing wrapper and its recorded Git child to
+stop. It then creates a unique replacement under `.kilo/worktrees` with `git worktree add --force
+<path> main`, installs the hooks there, rechecks all pins, and retries the same reviewed landing.
+`main:landing status` reports the observation and replacement path. This does not unlink the marker,
+clean files or the index, remove the old worktree, or bypass the commit guards; the damaged checkout
+and its Git administrative directory remain untouched for a later sweep. A changed marker or main
+SHA restarts the 30-minute observation. Other operation markers, an invalid marker, changed candidate
+pins, or an owner/child process that is live or cannot be proven stopped do not qualify.
+The watcher runs the reviewed candidate's hook installer with the replacement path explicitly selected;
+ordinary hook installs with duplicate `main` checkouts preserve the saved designated-main identity.
+If the designated main path changes outside the active lease, the automatic failover stops and
+preserves the owner record for review. If replacement creation fails before any new worktree exists,
+the watcher restores the original owner and starts a fresh 30-minute observation. Once a replacement
+path exists, automatic creation is one-shot; a hook or landing failure preserves the lease and paths
+for the four-hour recovery process rather than creating competing main checkouts.
+
+If the orphan marker clears before the threshold and main is clean, the watcher releases the landing
+lease and tells the operator to retry the same pinned landing. If it changes into any other dirty or
+unmerged state, retain the lease and use the four-hour recovery path below.
+
+When `land` arms this wait, it prints `landing pending` and exits with code 75; this is not a
+successful landing. Code 75 is returned only after the detached watcher reads the matching lease
+and acknowledges readiness; watcher startup failure retains the lease and returns an error instead
+of reporting pending. The watcher refreshes the owner heartbeat while polling but is not supervised
+after readiness; if that heartbeat stops advancing, use the four-hour recovery procedure rather
+than assuming the pinned retry will run. Do not run post-merge parent/tree checks until
+`main:landing status` shows the lease released and the pinned merge is present in `main`.
+
 If the operator confirms the owner process tree has stopped and `main:landing status` reports a
 clean main checkout with no Git operation, the operator can release the abandoned reservation
 immediately. `release-stale` archives the owner record and refuses to run if main is dirty or has
@@ -285,8 +317,9 @@ npm run main:landing -- clear-control-lock \
   --confirm-no-other-recovery
 ```
 
-For dirty or unmerged state, keep the lease and use the four-hour recovery path unless the operator
-personally takes responsibility for an earlier preservation and recovery.
+For dirty or unmerged state other than the exact orphan `AUTO_MERGE` case above, keep the lease and
+use the four-hour recovery path unless the operator personally takes responsibility for an earlier
+preservation and recovery.
 
 At four hours, an agent that sees the alert must check the owning chat's structured host liveness
 and the full holder process tree without opening transcripts. The reported PIDs are direct
@@ -325,7 +358,7 @@ worktree untouched:
 # From the verified recovery task worktree, with NEW_MAIN under .kilo/worktrees/.
 # If the registered main path is C:/..., use Git for Windows and Windows Node even when the task
 # worktree is opened through /mnt/c. For native Linux clones, use WSL Git and Node.
-git worktree add --force "$NEW_MAIN" refs/heads/main
+git worktree add --force "$NEW_MAIN" main
 cd "$NEW_MAIN"
 node scripts/install-git-hooks.js
 git rev-parse --show-toplevel

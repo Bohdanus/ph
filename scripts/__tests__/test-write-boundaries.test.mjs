@@ -55,17 +55,22 @@ const REVIEWED = {
     patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=9 filesystem-write:rm=9`,
   },
   'free-model-pool-external.test.mjs': {
-    scope: 'External-provider fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=2 filesystem-write:rm=2`,
+    scope: 'External-provider and Kilo cost-stop fixtures use unique OS temporary directories with finally cleanup.',
+    patterns: `filesystem-write:mkdtemp=3 filesystem-write:rm=3`,
   },
   'free-model-pool.test.mjs': {
     scope:
       'Model/provider fixtures use unique OS temporary directories; PATH overrides are restored in finally blocks.',
-    patterns: `filesystem-write:mkdtemp=12 filesystem-write:rm=12 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
+    patterns: `filesystem-write:mkdtemp=18 filesystem-write:rm=18 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
+  },
+  'free-model-pool-state.test.mjs': {
+    scope:
+      'Persistent pool-state regression fixtures use unique OS temporary directories and are removed after each test.',
+    patterns: `filesystem-write:mkdtemp=1 filesystem-write:rm=1`,
   },
   'free-model-quarantine.test.mjs': {
     scope: 'Quarantine fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=7 filesystem-write:rm=7`,
+    patterns: `filesystem-write:mkdtemp=8 filesystem-write:rm=8`,
   },
   'free-model-sweep.test.mjs': {
     scope: 'Sweep and quarantine fixtures use unique OS temporary directories.',
@@ -85,8 +90,8 @@ const REVIEWED = {
   },
   'main-worktree-guard.test.mjs': {
     scope:
-      'Git and hook fixtures use temporary repositories; review child cwd and any environment passed to subprocesses.',
-    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=43 filesystem-write:mkdtempSync=8 filesystem-write:writeFileSync=20 filesystem-write:rmSync=11 filesystem-write:mkdirSync=3`,
+      'Git and hook fixtures use temporary repositories, including forced duplicate-main recovery and a watcher retry after one pre-creation failure; review child cwd and any environment passed to subprocesses.',
+    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=45 filesystem-write:mkdtempSync=10 filesystem-write:writeFileSync=35 filesystem-write:rmSync=13 filesystem-write:mkdirSync=5`,
   },
   'main-landing-alert.test.mjs': {
     scope: 'Alert-claim marker fixtures use a unique temporary directory and are removed after the test.',
