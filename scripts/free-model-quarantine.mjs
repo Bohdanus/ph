@@ -2,6 +2,7 @@
 import {
   DEFAULT_QUARANTINE_FILE,
   loadQuarantineState,
+  loadQuarantineStateLocked,
   MAX_QUARANTINE_HOURS,
   QUARANTINE_REASONS,
   QUARANTINE_SOURCES,
@@ -99,7 +100,7 @@ export async function main(args = process.argv.slice(2), io = process, deps = {}
       return 0;
     }
     const outcome = await withQuarantineWriteLock(filePath, async (saveState) => {
-      const state = await loadQuarantineState(filePath);
+      const state = await loadQuarantineStateLocked(filePath);
       if (command === 'add') {
         const hours = options.hours === undefined ? undefined : Number(options.hours);
         const key = upsertQuarantine(state, {

@@ -170,7 +170,11 @@ process.exit(1);`
 
     try {
       const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });
-      expect(result).toEqual({ error: 'Kilo provider quota or rate limit returned HTTP 429', exhaustSource: true });
+      expect(result).toEqual({
+        error: 'Kilo provider quota or rate limit returned HTTP 429',
+        exhaustSource: true,
+        status: 429,
+      });
       expect(JSON.stringify(result)).not.toContain('private provider details');
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -186,7 +190,11 @@ process.exit(1);`
 
     try {
       const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });
-      expect(result).toEqual({ error: 'Kilo provider quota or rate limit returned HTTP 429', exhaustSource: true });
+      expect(result).toEqual({
+        error: 'Kilo provider quota or rate limit returned HTTP 429',
+        exhaustSource: true,
+        status: 429,
+      });
       expect(JSON.stringify(result)).not.toContain('private provider body');
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -205,6 +213,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
         error: 'Kilo reported non-zero or invalid completion cost',
         exhaustSource: true,
+        safetyStop: true,
       });
     } finally {
       await rm(directory, { recursive: true, force: true });
