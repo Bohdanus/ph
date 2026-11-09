@@ -1,5 +1,4 @@
 import { type PointerEvent, type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import rotationCursorArtwork from '../assets/rotation-cursor.png?inline';
 import type { Point, Pos, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
 import { clearSelectionDragPreview, publishSelectionDragPreview } from './selection-drag-preview.ts';
@@ -145,6 +144,8 @@ const ROTATE_OUTER_HOTZONE = 90;
 export const ROTATE_HANDLE_OFFSET = 36;
 const ROTATION_SNAP_INCREMENT = 15;
 
+const ROTATION_CURSOR_PATHS =
+  '<path d="M24 16a8 8 0 1 1-1.7-5.9"/><path d="M8 16a8 8 0 1 0 1.7 5.9"/><path d="M24 8l4-4-4-4"/><path d="M8 24l-4 4 4 4"/>';
 const ROTATION_CURSOR_FALLBACKS = [
   'ew-resize',
   'nwse-resize',
@@ -157,8 +158,8 @@ const ROTATION_CURSOR_FALLBACKS = [
 ] as const;
 const ROTATION_CURSORS = ROTATION_CURSOR_FALLBACKS.map((fallback, index) => {
   const angle = index * 45;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><image href="${rotationCursorArtwork}" x="8" y="21" width="48" height="22" transform="rotate(${angle} 32 32)"/></svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 32 32, ${fallback}`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><g transform="translate(12 12) scale(.75)"><g transform="rotate(${angle} 16 16)"><g fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">${ROTATION_CURSOR_PATHS}</g><g fill="none" stroke="#111" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${ROTATION_CURSOR_PATHS}</g></g></g></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 24 24, ${fallback}`;
 });
 
 function shortestAngleDelta(degrees: number): number {
