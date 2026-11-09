@@ -278,6 +278,24 @@ describe('QuickSelectionToolArea', () => {
     expect(rasterizeSelectionState).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { mode: 'add' as const, modifier: 'altKey' as const },
+    { mode: 'subtract' as const, modifier: 'shiftKey' as const },
+  ])('uses the options-bar $mode mode when $modifier is held', ({ mode, modifier }) => {
+    toolState.toolArgs = { ...toolState.toolArgs!, mode };
+    growAlongStrokeSpy = vi.spyOn(quickSelectionUtil, 'growAlongStroke');
+    const toolArea = renderQuickSelectionArea();
+    const heldModifier = { [modifier]: true };
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5, ...heldModifier });
+    fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 8, clientY: 8, ...heldModifier });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 8, clientY: 8, ...heldModifier });
+
+    const strokeModes = growAlongStrokeSpy.mock.calls.map((call: unknown[]) => (call[3] as { mode: string }).mode);
+    expect(strokeModes.length).toBeGreaterThan(0);
+    expect(new Set(strokeModes)).toEqual(new Set([mode]));
+  });
+
   it('does not capture the pointer or read stale pixels while replay is pending', () => {
     storeState.renderSelector = { source: 'pending' };
     const toolArea = renderQuickSelectionArea();

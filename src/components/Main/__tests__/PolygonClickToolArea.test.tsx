@@ -219,6 +219,27 @@ describe('PolygonClickToolArea', () => {
       expect(ctx.lineTo).toHaveBeenCalledWith(100, 100);
     });
 
+    it('does not apply Photoshop Shift or Alt gestures to polygonal lasso anchors', () => {
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 50, clientY: 20, altKey: true });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 40, shiftKey: true });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100, shiftKey: true, altKey: true });
+      fireEvent.contextMenu(toolArea);
+
+      expect(committedSelection()).toMatchObject({
+        points: [
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 31 },
+            { x: 91, y: 91 },
+          ],
+        ],
+      });
+    });
+
     it('ignores non-primary mouse buttons', () => {
       const ctx = createMockContext();
       const toolArea = renderArea({ current: ctx }).ctx;
