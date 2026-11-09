@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { normalizeOwnServerBaseUrl } from './e2e/global-setup/foreign-origin.ts';
 
 /**
  * See https://playwright.dev/docs/test-configuration.
@@ -19,19 +20,7 @@ import { defineConfig, devices } from '@playwright/test';
 const port = process.env.PLAYWRIGHT_PORT ?? '5173';
 const baseUrl = `http://127.0.0.1:${port}`;
 const configuredBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
-const testBaseUrl = (() => {
-  if (!configuredBaseUrl) return baseUrl;
-  try {
-    const url = new URL(configuredBaseUrl);
-    if (url.protocol === 'http:' && url.hostname === 'localhost' && url.port === port) {
-      url.hostname = '127.0.0.1';
-      return url.toString();
-    }
-  } catch {
-    // Leave malformed values for the existing own-server guard to refuse.
-  }
-  return configuredBaseUrl;
-})();
+const testBaseUrl = normalizeOwnServerBaseUrl(configuredBaseUrl, baseUrl);
 
 export default defineConfig({
   testDir: './e2e',
