@@ -3700,6 +3700,14 @@ re-emit costs one turn.
 The command list, the local-versus-CI split, and the lifecycle of each hook are in `AGENTS.md`.
 This section carries only the parts a tool author cannot read off that file.
 
+### 8.0 Required independent review
+
+Every non-trivial tool change needs a fresh read-only review. A tool addition that crosses modules,
+changes durable history/replay, or carries broad regression risk needs two independent reviewers,
+as required by `AGENTS.md` and `docs/ORCHESTRATION.md`. This is common for new tools: split the
+reviews across Photoshop behavior/history correctness and scope/architecture conventions. Fix
+blocking findings and have the affected concern re-reviewed before landing.
+
 ### 8.1 What the commands do not tell you
 
 **There is no `npm run audit` script** — do not invent one; CI runs the binary directly. **Do not
