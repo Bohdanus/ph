@@ -40,10 +40,13 @@ and [`KILO.md`](KILO.md).
 
 ## Main landing recovery
 
-Follow the 15-minute and four-hour owner alerts in
+Follow the 15-minute owner alert in
 [`ORCHESTRATION.md#main-landing-ownership-and-deadlock-recovery`](ORCHESTRATION.md#main-landing-ownership-and-deadlock-recovery).
-The user explicitly authorizes one paid recovery case: when a four-hour landing alert names a
-confirmed-dead owner chat and the recorded landing process has stopped, launch a `gpt-6-luna`
+An orphan `AUTO_MERGE` on the designated main checkout is handled by the landing watcher after 30
+continuous minutes: it preserves the old checkout, creates a replacement main worktree, revalidates
+the same landing pins, and retries without requiring the owner chat to be dead. Exit 75 means pending,
+not landed. Do not clear the marker or remove the old worktree. For other four-hour landing alerts, the user explicitly authorizes
+one paid recovery case: when the alert names a confirmed-dead owner chat and the recorded landing process has stopped, launch a `gpt-6-luna`
 subagent with `xhigh` reasoning to take recovery ownership. Verify liveness from structured host
 metadata and confirm the full holder process tree stopped; never inspect the dead chat transcript. The active agent that sees the alert is
 responsible for launching the delegate, since a repository script cannot invoke the host's

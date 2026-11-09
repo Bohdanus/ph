@@ -270,13 +270,11 @@ export function resolveWorktree(cwd = process.cwd()) {
       // A repository that has not registered main has no saved identity token yet.
     }
     const worktreePath = gitConfigPath(realpathSync(cwd));
-    if (
-      isMainWorktree &&
-      (registeredMainGitDir !== gitDir ||
-        registeredMainPath !== worktreePath ||
-        !registeredMainIdentity ||
-        registeredMainIdentity !== readMainWorktreeIdentity(gitDir))
-    ) {
+    if (isMainWorktree && !registeredMainGitDir && !registeredMainPath && !registeredMainIdentity) {
+      // First-use discovery is safe only before a designated checkout exists. A
+      // forced recovery checkout can intentionally share refs/heads/main with a
+      // preserved damaged worktree; inspecting the old checkout must not steal the
+      // shared designation back from the explicitly installed replacement.
       registerMainWorktree(cwd);
     }
     const hasRegisteredMainIdentity =

@@ -476,7 +476,12 @@ test "$MAIN_TREE" != "$MERGE_TREE"
 
 Immediately before the landing, run the fresh gates from the coordinator worktree and inspect every
 reported operation, claim, and owner. Leave unrelated operations untouched; an operation or dirty
-state in `MAIN` or `WORKTREE` is a stop. Re-read the main ref and occupancy:
+state in `WORKTREE` is a stop. A `repo:state` failure is also a stop unless its sole finding is the
+exact orphan `AUTO_MERGE` operation in the path reported as designated main by
+`npm run main:landing -- status --json`. For only that finding, preserve the old checkout and still
+invoke the pinned landing wrapper below; it arms the 30-minute watcher and retries from a replacement
+main checkout. Do not waive findings in another worktree, other Git operations, changed pins, or a
+dirty candidate. Re-read the main ref and occupancy:
 
 ```bash
 (cd "$TASK_WORKTREE" && npm run repo:state)
@@ -488,8 +493,9 @@ test "$(git -C "$MAIN" rev-parse HEAD)" = "$REVIEWED_MAIN_SHA"
 node "$TASK_WORKTREE/scripts/main-landing.mjs" status
 ```
 
-The status must say the landing worktree is free. If another landing is active, report its owner in
-your current chat and continue unrelated work; do not wait or edit `MAIN`. The landing wrapper
+The status must say the landing worktree is free, except when its only Git operation is the exact
+orphan `AUTO_MERGE` case above. If another landing is active, report its owner in your current chat
+and continue unrelated work; do not wait or edit `MAIN`. The landing wrapper
 rechecks the pins and cleanliness, takes an exclusive lease, prepares the merge, refreshes shared
 Git hook dispatchers, and creates the reviewed commit. If the source candidate conflicts, the
 wrapper refuses before merging; if Git state changes unexpectedly after it starts, it preserves
@@ -506,6 +512,10 @@ the worktree and lease for recovery. Never resolve a conflict in `MAIN`.
     --chat "$CHAT_ID"
 )
 ```
+
+If this command prints `landing pending` and exits 75, stop the post-merge checks here. The detached
+watcher owns the 30-minute observation and pinned retry; resume parent/tree/trailer verification only
+after `main:landing status` shows the lease released and `main` contains the reviewed merge.
 
 This command uses the candidate's wrapper because the feature branch may be the first one to add
 it to `main`. After it lands, `npm run main:landing -- land ...` is the shorter equivalent. The
@@ -526,8 +536,9 @@ git -C "$MAIN" show -s --format=%B HEAD
 The first parent must be `REVIEWED_MAIN_SHA`, the second `REVIEWED_CANDIDATE_SHA`, and the tree
 must equal `REVIEWED_TREE`; the message must contain both `Branch: $BRANCH` and `Chat: $CHAT_ID`.
 If the wrapper or a guard refuses, inspect `repo:state` and `main:landing status`, then preserve the
-owner lease and Git state for the recovery procedure. Do not abort or resolve the operation in
-`main`.
+owner lease and Git state. The exact orphan `AUTO_MERGE` case is retried by the watcher after 30
+continuous minutes; other operations use the recovery procedure. Do not abort or resolve an
+operation in `main`.
 
 - **Re-read `git status` and `git log --oneline -10` immediately before staging,
   every time.** Other sessions commit into `main` concurrently, and `git add -A`

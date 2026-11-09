@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { decide, resolveWorktree, run, OVERRIDE_VAR } from '../main-worktree-guard.mjs';
+import { createReplacementMainWorktree, land, watch } from '../main-landing.mjs';
+import { decide, registerMainWorktree, resolveWorktree, run, OVERRIDE_VAR } from '../main-worktree-guard.mjs';
 
 /**
  * This file's budget, and the reason it is not Vitest's default 5s.
@@ -48,6 +49,10 @@ function runHook(dispatcher, args, options) {
 function git(cwd, args) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
   return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function runCommand(command, args, options) {
+  return spawnSync(command, args, options);
 }
 
 function commonDir(cwd) {
@@ -224,6 +229,257 @@ describe('the guard tells a main worktree from a linked one on a real repository
     const worktree = resolveWorktree(mainLinked);
     expect(worktree).toMatchObject({ branchRef: 'refs/heads/main', isMainWorktree: true });
     expect(decide({ worktree })).toEqual({ action: 'refuse' });
+  });
+
+  it('does not let inspecting a preserved duplicate-main checkout steal replacement designation', () => {
+    const replacement = join(root, 'replacement-main');
+    try {
+      expect(git(root, ['worktree', 'add', '--force', replacement, 'main'])).not.toBeNull();
+      expect(registerMainWorktree(mainLinked, { required: true })).toBe(true);
+      expect(registerMainWorktree(replacement, { required: true })).toBe(true);
+
+      const preserved = resolveWorktree(mainLinked);
+      expect(preserved).toMatchObject({ branchRef: 'refs/heads/main', isMainWorktree: true });
+      expect(git(root, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(realpathSync(replacement));
+      expect(resolveWorktree(replacement)).toMatchObject({ branchRef: 'refs/heads/main', isMainWorktree: true });
+      expect(git(root, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(realpathSync(replacement));
+    } finally {
+      if (existsSync(replacement)) git(root, ['worktree', 'remove', '--force', replacement]);
+      registerMainWorktree(mainLinked, { required: true });
+    }
+  });
+
+  it('creates a clean replacement landing checkout without changing the damaged checkout', async () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-landing-replacement-')));
+    try {
+      mkdirSync(join(fixture, '.kilo', 'worktrees'), { recursive: true });
+      writeFileSync(join(fixture, 'AGENTS.md'), '# test project\n');
+      writeFileSync(join(fixture, '.kilo', 'marker'), 'test project\n');
+      writeFileSync(join(fixture, '.gitignore'), '.kilo/worktrees/\n');
+      writeFileSync(join(fixture, 'base.txt'), 'base\n');
+      expect(git(fixture, ['init', '-q', '-b', 'main'])).not.toBeNull();
+      expect(git(fixture, ['config', 'user.name', 'Git Guard Test'])).not.toBeNull();
+      expect(git(fixture, ['config', 'user.email', 'git-guard@example.invalid'])).not.toBeNull();
+      expect(git(fixture, ['add', '-A'])).not.toBeNull();
+      expect(git(fixture, ['commit', '-qm', 'base'])).not.toBeNull();
+      const mainSha = git(fixture, ['rev-parse', 'HEAD']);
+      const mainTree = git(fixture, ['rev-parse', 'HEAD^{tree}']);
+
+      expect(git(fixture, ['switch', '-qc', 'feature-lane'])).not.toBeNull();
+      writeFileSync(join(fixture, 'feature.txt'), 'reviewed feature\n');
+      expect(git(fixture, ['add', '-A'])).not.toBeNull();
+      expect(git(fixture, ['commit', '-qm', 'feature'])).not.toBeNull();
+      const incomingSha = git(fixture, ['rev-parse', 'HEAD']);
+      const treeSha = git(fixture, ['rev-parse', 'HEAD^{tree}']);
+      expect(git(fixture, ['switch', '-q', 'main'])).not.toBeNull();
+      expect(git(fixture, ['switch', '-qc', 'task/root'])).not.toBeNull();
+      const originalMainPath = join(fixture, '.kilo', 'worktrees', 'landing-main-original');
+      expect(git(fixture, ['worktree', 'add', originalMainPath, 'main'])).not.toBeNull();
+      expect(registerMainWorktree(originalMainPath, { required: true })).toBe(true);
+
+      const commonDir = resolve(fixture, git(fixture, ['rev-parse', '--git-common-dir']));
+      const mainGitDir = realpathSync(git(originalMainPath, ['rev-parse', '--absolute-git-dir']));
+      const autoMergePath = join(mainGitDir, 'AUTO_MERGE');
+      const indexPath = join(mainGitDir, 'index');
+      const wipPath = join(originalMainPath, 'damaged-landing-wip.txt');
+      writeFileSync(autoMergePath, mainTree + '\n');
+      writeFileSync(wipPath, 'preserve this old landing state\n');
+      const originalStatus = git(originalMainPath, ['status', '--porcelain']);
+      const originalIndex = readFileSync(indexPath);
+      const paths = {
+        cwd: originalMainPath,
+        commonDir,
+        mainGitDir,
+        mainPath: originalMainPath,
+        lockDir: join(commonDir, 'main-landing-occupancy'),
+        archiveDir: join(commonDir, 'main-landing-archive'),
+      };
+      const landingOptions = {
+        'main-sha': mainSha,
+        'incoming-sha': incomingSha,
+        'tree-sha': treeSha,
+        branch: 'feature-lane',
+        chat: 'test-chat',
+      };
+      expect(await land(paths, landingOptions, originalMainPath, { watcherStarter: async () => {} })).toBe(75);
+      const owner = JSON.parse(readFileSync(join(paths.lockDir, 'owner.json'), 'utf8'));
+      expect(owner).toMatchObject({ autoMergeRecoveryReady: true, step: 'waiting for persistent orphan AUTO_MERGE' });
+      const replacement = await createReplacementMainWorktree(paths, owner, {
+        run: async (command, args, options) => {
+          if (command !== 'git') {
+            expect(command).toBe(process.execPath);
+            expect(args[0]).toBe(join(REPO_ROOT, 'scripts/install-git-hooks.js'));
+            expect(options.env.KILO_MAIN_LANDING_RECOVERY_PATH).toBe(owner.autoMergeRecoveryPath);
+          }
+          const result = runCommand(command, args, { cwd: options.cwd, env: options.env, encoding: 'utf8' });
+          if (command !== 'git' && result.status === 0) {
+            const preserved = runCommand(process.execPath, [join(REPO_ROOT, 'scripts/install-git-hooks.js')], {
+              cwd: originalMainPath,
+              env: process.env,
+              encoding: 'utf8',
+            });
+            expect(preserved.status).toBe(0);
+          }
+          options.onPid?.(null);
+          return { code: result.status ?? 1, stderr: result.stderr };
+        },
+      });
+
+      expect(replacement.mainPath).toBe(owner.autoMergeRecoveryPath);
+      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(
+        realpathSync(replacement.mainPath)
+      );
+      expect(readFileSync(autoMergePath, 'utf8')).toBe(mainTree + '\n');
+      expect(readFileSync(wipPath, 'utf8')).toBe('preserve this old landing state\n');
+      expect(readFileSync(indexPath)).toEqual(originalIndex);
+      expect(git(originalMainPath, ['status', '--porcelain'])).toBe(originalStatus);
+      expect(git(originalMainPath, ['branch', '--show-current'])).toBe('main');
+      expect(git(replacement.mainPath, ['status', '--porcelain'])).toBe('');
+      expect(git(replacement.mainPath, ['branch', '--show-current'])).toBe('main');
+      expect(git(replacement.mainPath, ['rev-parse', 'HEAD'])).toBe(mainSha);
+      expect(git(replacement.mainPath, ['config', '--local', '--get', 'core.hooksPath'])).toBe(
+        join(commonDir, 'hooks-gate')
+      );
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('retries replacement creation after a fresh 30-minute orphan AUTO_MERGE observation', async () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-landing-watch-retry-')));
+    try {
+      mkdirSync(join(fixture, '.kilo', 'worktrees'), { recursive: true });
+      writeFileSync(join(fixture, 'AGENTS.md'), '# test project\n');
+      writeFileSync(join(fixture, '.kilo', 'marker'), 'test project\n');
+      writeFileSync(join(fixture, '.gitignore'), '.kilo/worktrees/\n');
+      writeFileSync(join(fixture, 'base.txt'), 'base\n');
+      expect(git(fixture, ['init', '-q', '-b', 'main'])).not.toBeNull();
+      expect(git(fixture, ['config', 'user.name', 'Git Guard Test'])).not.toBeNull();
+      expect(git(fixture, ['config', 'user.email', 'git-guard@example.invalid'])).not.toBeNull();
+      expect(git(fixture, ['add', '-A'])).not.toBeNull();
+      expect(git(fixture, ['commit', '-qm', 'base'])).not.toBeNull();
+      const mainSha = git(fixture, ['rev-parse', 'HEAD']);
+      const mainTree = git(fixture, ['rev-parse', 'HEAD^{tree}']);
+
+      expect(git(fixture, ['switch', '-qc', 'feature-lane'])).not.toBeNull();
+      writeFileSync(join(fixture, 'feature.txt'), 'reviewed feature\n');
+      expect(git(fixture, ['add', '-A'])).not.toBeNull();
+      expect(git(fixture, ['commit', '-qm', 'feature'])).not.toBeNull();
+      const incomingSha = git(fixture, ['rev-parse', 'HEAD']);
+      const treeSha = git(fixture, ['rev-parse', 'HEAD^{tree}']);
+      expect(git(fixture, ['switch', '-q', 'main'])).not.toBeNull();
+      expect(git(fixture, ['switch', '-qc', 'task/root'])).not.toBeNull();
+
+      const originalMainPath = join(fixture, '.kilo', 'worktrees', 'landing-main-original');
+      expect(git(fixture, ['worktree', 'add', originalMainPath, 'main'])).not.toBeNull();
+      expect(registerMainWorktree(originalMainPath, { required: true })).toBe(true);
+      const commonDir = resolve(fixture, git(fixture, ['rev-parse', '--git-common-dir']));
+      const mainGitDir = realpathSync(git(originalMainPath, ['rev-parse', '--absolute-git-dir']));
+      const autoMergePath = join(mainGitDir, 'AUTO_MERGE');
+      const indexPath = join(mainGitDir, 'index');
+      const wipPath = join(originalMainPath, 'damaged-landing-wip.txt');
+      writeFileSync(autoMergePath, mainTree + '\n');
+      writeFileSync(wipPath, 'preserve this old landing state\n');
+      const originalStatus = git(originalMainPath, ['status', '--porcelain']);
+      const originalIndex = readFileSync(indexPath);
+      const paths = {
+        cwd: originalMainPath,
+        commonDir,
+        mainGitDir,
+        mainPath: originalMainPath,
+        lockDir: join(commonDir, 'main-landing-occupancy'),
+        archiveDir: join(commonDir, 'main-landing-archive'),
+      };
+      const landingOptions = {
+        'main-sha': mainSha,
+        'incoming-sha': incomingSha,
+        'tree-sha': treeSha,
+        branch: 'feature-lane',
+        chat: 'test-chat',
+      };
+      expect(await land(paths, landingOptions, originalMainPath, { watcherStarter: async () => {} })).toBe(75);
+
+      const ownerPath = join(paths.lockDir, 'owner.json');
+      const owner = JSON.parse(readFileSync(ownerPath, 'utf8'));
+      owner.owner.pid = 0x7fffffff;
+      owner.owner.childPid = null;
+      const observedSince = Date.parse(owner.autoMergeObservedSince);
+      owner.autoMergeLastObservedAt = new Date(observedSince).toISOString();
+      writeFileSync(ownerPath, JSON.stringify(owner, null, 2) + '\n');
+
+      let clock = observedSince;
+      let polls = 0;
+      let worktreeCreationAttempts = 0;
+      const attemptedRecoveryPaths = [];
+      let replacementPath = null;
+      let landedPins = null;
+      let resetHeartbeatAt = null;
+      const result = await watch(paths, owner.leaseId, {
+        sleep: async (milliseconds) => {
+          clock += milliseconds;
+          polls += 1;
+          if (polls > 130) throw new Error('watcher exceeded the two expected observation windows');
+        },
+        now: () => clock,
+        recoveryOptions: {
+          now: () => clock,
+          startHeartbeat: () => null,
+          note: () => {
+            if (worktreeCreationAttempts === 1) {
+              resetHeartbeatAt = JSON.parse(readFileSync(ownerPath, 'utf8')).heartbeatAt;
+            }
+          },
+          runLanding: async (replacement, _activeOwner, pins) => {
+            expect(replacement.mainPath).toBe(replacementPath);
+            landedPins = pins;
+          },
+          run: async (command, args, options) => {
+            if (command === 'git') {
+              if (args[2] === 'worktree' && args[3] === 'add') {
+                worktreeCreationAttempts += 1;
+                replacementPath = args[5];
+                attemptedRecoveryPaths.push(replacementPath);
+                if (worktreeCreationAttempts === 1) {
+                  options.onPid?.(null);
+                  return { code: 1 };
+                }
+              }
+            } else {
+              expect(command).toBe(process.execPath);
+              expect(args[0]).toBe(join(REPO_ROOT, 'scripts/install-git-hooks.js'));
+              expect(options.env.KILO_MAIN_LANDING_RECOVERY_PATH).toBe(replacementPath);
+            }
+
+            const child = spawnSync(command, args, {
+              cwd: options.cwd,
+              env: options.env,
+              encoding: 'utf8',
+            });
+            options.onPid?.(null);
+            return { code: child.status ?? 1, stderr: child.stderr };
+          },
+        },
+      });
+
+      expect(result).toBe(0);
+      expect(clock - observedSince).toBe(60 * 60_000);
+      expect(resetHeartbeatAt).toBe(new Date(observedSince + 30 * 60_000).toISOString());
+      expect(worktreeCreationAttempts).toBe(2);
+      expect(attemptedRecoveryPaths[0]).not.toBe(attemptedRecoveryPaths[1]);
+      expect(existsSync(attemptedRecoveryPaths[0])).toBe(false);
+      expect(existsSync(attemptedRecoveryPaths[1])).toBe(true);
+      expect(landedPins).toEqual({ mainSha, incomingSha, treeSha, branch: 'feature-lane', chatId: 'test-chat' });
+      expect(git(originalMainPath, ['branch', '--show-current'])).toBe('main');
+      expect(git(originalMainPath, ['status', '--porcelain'])).toBe(originalStatus);
+      expect(readFileSync(autoMergePath, 'utf8')).toBe(mainTree + '\n');
+      expect(readFileSync(wipPath, 'utf8')).toBe('preserve this old landing state\n');
+      expect(readFileSync(indexPath)).toEqual(originalIndex);
+      expect(git(replacementPath, ['status', '--porcelain'])).toBe('');
+      expect(git(replacementPath, ['branch', '--show-current'])).toBe('main');
+      expect(existsSync(ownerPath)).toBe(false);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   it('keeps the designated checkout protected if its branch changes from main', () => {
