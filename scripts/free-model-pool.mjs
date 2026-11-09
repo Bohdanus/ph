@@ -733,7 +733,7 @@ function openCodeReportedCosts(events) {
 function openCodeErrorMetadata(value) {
   if (!value || typeof value !== 'object') return {};
   const metadata = value.error && typeof value.error === 'object' ? value.error : value;
-  const errorType = [
+  const errorTypes = [
     metadata.type,
     metadata.code,
     metadata.errorType,
@@ -741,7 +741,8 @@ function openCodeErrorMetadata(value) {
     value.error,
     value.type,
     value.code,
-  ].find((entry) => typeof entry === 'string');
+  ].filter((entry) => typeof entry === 'string');
+  const errorType = errorTypes[0];
   const rawStatus = metadata.status ?? metadata.statusCode ?? value.status ?? value.statusCode;
   const status =
     Number.isInteger(Number(rawStatus)) && Number(rawStatus) >= 100 && Number(rawStatus) <= 599
@@ -771,7 +772,7 @@ function openCodeErrorMetadata(value) {
     (delay) => delay !== null
   );
   const message = String(metadata.message ?? value.message ?? (typeof value.error === 'string' ? value.error : ''));
-  const normalizedType = String(errorType ?? '').toLowerCase();
+  const normalizedTypes = errorTypes.map((type) => type.trim().toLowerCase());
   return {
     errorType: errorType ?? null,
     status,
@@ -780,16 +781,17 @@ function openCodeErrorMetadata(value) {
     accountQuota:
       metadata.accountQuota === true ||
       value.accountQuota === true ||
-      normalizedType === 'provider.free-limit' ||
-      /(?:^|[._])freeusagelimiterror$/.test(normalizedType),
+      normalizedTypes.some((type) => type === 'provider.free-limit' || /(?:^|[._])freeusagelimiterror$/.test(type)),
     modelAttributable:
       metadata.modelAttributable === true ||
       value.modelAttributable === true ||
-      /(?:^|[._-])model(?:[._-]|$)/i.test(normalizedType),
+      normalizedTypes.some((type) => /(?:^|[._-])model(?:[._-]|$)/i.test(type)),
     contentPolicyRejected:
       metadata.contentPolicyRejected === true ||
       value.contentPolicyRejected === true ||
-      CONTENT_POLICY_ERROR_CODES.has(normalizedType.replaceAll('-', '_')) ||
+      normalizedTypes.some((type) =>
+        CONTENT_POLICY_ERROR_CODES.has(type.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''))
+      ) ||
       CONTENT_POLICY_ERROR_PATTERNS.some((pattern) => pattern.test(message)),
   };
 }

@@ -916,7 +916,7 @@ process.exit(1);`
     const command = await writeFakeOpenCode(
       directory,
       `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, message: 'Model rate limited' } }));
-console.log(JSON.stringify({ type: 'error', error: { type: 'RateLimit.FreeUsageLimitError', message: 'Free usage limit reached' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'RateLimit.FreeUsageLimitError', message: 'Free usage limit reached' } }));
 process.exit(1);`
     );
 
@@ -924,7 +924,7 @@ process.exit(1);`
       await expect(
         runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
       ).rejects.toMatchObject({
-        errorType: 'RateLimit.FreeUsageLimitError',
+        errorType: 'provider.error',
         status: null,
         accountQuota: true,
         modelAttributable: false,
@@ -962,14 +962,14 @@ console.log(JSON.stringify({ type: 'text', part: { text: 'partial answer' } }));
     const command = await writeFakeOpenCode(
       directory,
       `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', status: 429, message: 'Free usage limit reached' } }));
-console.log(JSON.stringify({ type: 'error', error: { type: 'content_filter', message: 'Request blocked by content policy' } }));`
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'CONTENT.FILTER', message: 'Provider rejected this request' } }));`
     );
 
     try {
       await expect(
         runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
       ).resolves.toMatchObject({
-        errorType: 'content_filter',
+        errorType: 'provider.error',
         accountQuota: true,
         contentPolicyRejected: true,
       });
@@ -983,14 +983,14 @@ console.log(JSON.stringify({ type: 'error', error: { type: 'content_filter', mes
     const command = await writeFakeOpenCode(
       directory,
       `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, message: 'Model rate limited' } }));
-console.log(JSON.stringify({ type: 'error', error: { type: 'content_filter', message: 'Request blocked by content policy' } }));`
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'content_filter', message: 'Provider rejected this request' } }));`
     );
 
     try {
       await expect(
         runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
       ).resolves.toMatchObject({
-        errorType: 'content_filter',
+        errorType: 'provider.error',
         status: null,
         accountQuota: false,
         contentPolicyRejected: true,
@@ -1006,7 +1006,7 @@ console.log(JSON.stringify({ type: 'error', error: { type: 'content_filter', mes
       directory,
       `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.request-error', status: 500, message: 'Request failed' } }));
 console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-upstream-error', status: 500, message: 'Model upstream error' } }));
-console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, retryAfter: '2', message: 'Model rate limited' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'provider.model-rate-limit', status: 429, retryAfter: '2', message: 'Model rate limited' } }));
 process.exit(1);`
     );
 
@@ -1014,7 +1014,7 @@ process.exit(1);`
       await expect(
         runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
       ).rejects.toMatchObject({
-        errorType: 'provider.model-rate-limit',
+        errorType: 'provider.error',
         status: 429,
         retryAfter: '2',
         retryAfterMs: 2000,
