@@ -63,7 +63,6 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`../AGENTS.md`](../AGENTS.md)                                                                         | Rules every agent reads first                                                                        |
 | [`../MODELS.md`](../MODELS.md)                                                                         | Everyday model/provider policy, safe routing, budget checks, and token-saving research               |
 | [`ORCHESTRATION.md`](ORCHESTRATION.md)                                                                 | Worktrees, delegation, the swarm board, dead-agent recovery                                          |
-| [`../ORCHESTRATION_GOTCHAS_RESEARCH.md`](../ORCHESTRATION_GOTCHAS_RESEARCH.md)                         | Dated evidence and gotchas research for parallel-agent orchestration                                 |
 | [`CODEX-ORCHESTRATION.md`](CODEX-ORCHESTRATION.md)                                                     | Codex subagent tools, context, model routing, cost, and shared-worktree rules                        |
 | [`CHAT-ID.md`](CHAT-ID.md)                                                                             | Resolving the host-native chat ID used in commit trailers                                            |
 | [`KILO.md`](KILO.md)                                                                                   | The agent-facing Kilo config, including the parts no tracked file holds                              |
@@ -168,6 +167,7 @@ hierarchy.
 | `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them               |
 | `HISTORY-MIGRATION-AUDIT-20261107.md`    | Read-only history migration audit at main `659ca8e`; findings are a dated snapshot, not current contract     |
 | `../MERGE-INTEGRITY-AUDIT.md`            | What concurrent-branch work left unresolved: open merges, colliding handoff numbers, gates that miss a class |
+| `../ORCHESTRATION_GOTCHAS_RESEARCH.md`   | Point-in-time evidence audit of parallel-agent coordination research and repository safeguards               |
 | `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
 | `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
 | `HARDENING-HARVEST-HANDOFF-20261017.md`  | Dated handoff for the October 17 hardening sweep; its inventory and worktree dispositions are historical     |
