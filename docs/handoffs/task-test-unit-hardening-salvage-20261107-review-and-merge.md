@@ -1,23 +1,26 @@
-# Review and merge record: test unit hardening salvage
+# Unit-test hardening review and landing
 
 **Branch:** `task/test-unit-hardening-salvage-20261107`
-**Base main:** `8cd115c427b79aafd99bfa1894a6761b466744a4`
-**Sync commit:** `9deeed57cd889bb319bde7603155c390c0ac32e8`
+
+**Reviewed main base:** `d0e5750ce12d19172e048a2318a217387c3d9bd2`
+
+**Sync commit:** `97bcd96d66052faa5d9ba8078a56d75834d848ea`
+
 **Source commits:** `6badc372ea1e21bc0482bc63c56047e2dddd826f`, `b218b555f156045f59af278c43036a71f82c11df`
-**Status:** Candidate synced, reviewed, and validated; protected landing requires clear repository state.
+**State:** Synced with current main. Fresh review and full gates are pending; protected landing is blocked by a separate live worktree operation.
 
-## Provenance and scope
+## Scope and provenance
 
-The source branch `task/test-unit-hardening-20261029` accumulated unrelated commits, so this branch carries only the test and documentation changes selected for salvage. The other unit-test hardening candidate has since landed in `main` as `8cd115c427b79aafd99bfa1894a6761b466744a4`; the source-backed naming fix and history audit index entry are already present there.
+The source branch `task/test-unit-hardening-20261029` accumulated unrelated commits, so this branch carries only the selected test and documentation changes. The source-backed naming fix and history audit index entry were already on main before this sync.
 
-The remaining candidate diff covers nine test files and four documentation files. During sync, the `agents-citations.test.mjs` overlap was resolved to retain the live §152 assertion and explicitly distinguish retired §§147–148. Its focused test passed. No production code changed.
+The candidate adds assertions across unit and E2E-helper tests and updates the related documentation index. It changes no production code in its original test-hardening diff.
 
-## Review and validation
+## Sync resolution and verification
 
-The final full unit run passed: 428 files, 12,480 passed, 227 expected failures, and 2 skipped. `npm run test:e2e:unit -- --reporter=dot --silent=true` passed 22 files, 1,565 tests, and 12 expected failures. `npm run tsc`, `npm run lint:check`, and `npm run build` passed; lint reported 78 warnings and zero errors, and Prettier passed. `npm test -- scripts/__tests__/docs-index.test.mjs --reporter=dot --silent=true` passed 10 tests.
+Current main deleted `docs/INCOMING_COMMITS.md` in `b657d3c7a` when it retired that ledger. The sync preserves the deletion and the current documentation index. The citations test retains an explicit `§148` assertion. The write-boundary manifest now records the 17 temporary-directory setups and cleanups present in the merged Kilo test file.
 
-Completed exact-zero OpenRouter reviews used `nvidia/nemotron-3-ultra-550b-a55b:free`. They identified a missing valid-scale oracle and recovery check, a fixed-length history-row expectation, and stale handoff counts; each was corrected and verified. Concerns about cursor mapping, event targets, centered contain-fit math, and same-directory documentation links were checked against source and tests and were not defects. Length-limited completions and provider 429 responses were excluded as review evidence.
+The focused sync suite passed: `agents-citations.test.mjs`, `test-write-boundaries.test.mjs`, and `docs-index.test.mjs`, 42 tests total. The earlier full-suite results were on main `8cd115c4` and do not validate this synced tree. Fresh independent reviews, the full unit suite, E2E-helper suite, typecheck, lint, and build still need to run on the pinned post-sync candidate.
 
-## Landing gate
+## Landing blocker
 
-At the latest repository-wide preflight, `npm run repo:state` found an independent active merge (`MERGE_HEAD e4c0f3a90849793a77dfcc5c75a8d413809107e4`) in `stale-work-followup-20261107`. Its index has staged changes; the direct unmerged-path check is currently empty, but the merge operation remains open. Preserve that worktree and rerun `repo:state` before landing; do not prepare or commit a main merge while that operation remains active. Once clear, recapture the candidate SHA/tree, verify the exact diff and ancestry, regenerate the worktree inventory, compare the prepared merge tree, and use the protected pinned-landing procedure.
+`npm run repo:state` reports an orphan `AUTO_MERGE` marker in `e2e-hardening-20261110`, whose worktree has uncommitted E2E spec changes. The latest inventory classifies it as live from recent I/O activity. Do not recover, reset, or otherwise alter that worktree. Rerun `repo:state` and regenerate the inventory after its owner finishes; land only through the pinned procedure in `docs/ORCHESTRATION.md`.
