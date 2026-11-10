@@ -56,6 +56,17 @@ describe('Windows process-tree termination', () => {
     );
   });
 
+  it('reports synchronous spawn failures from both termination commands', async () => {
+    const spawnImpl = vi.fn(() => {
+      throw new Error('spawn unavailable');
+    });
+
+    await expect(terminateWindowsProcessTree(4321, { spawnImpl })).rejects.toThrow(
+      /taskkill: spawn unavailable; PowerShell fallback: spawn unavailable/
+    );
+    expect(spawnImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('checks for surviving descendants when taskkill cannot find the root PID', async () => {
     const spawnImpl = vi
       .fn()
