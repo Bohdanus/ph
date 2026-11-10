@@ -474,17 +474,18 @@ test "$MERGE_TREE" = "$REVIEWED_TREE"
 test "$MAIN_TREE" != "$MERGE_TREE"
 ```
 
-Immediately before the landing, run the fresh gates from the coordinator worktree and inspect every
-reported operation, claim, and owner. Leave unrelated operations untouched; an operation or dirty
-state in `WORKTREE` is a stop. A `repo:state` failure is also a stop unless its sole finding is the
-exact orphan `AUTO_MERGE` operation in the path reported as designated main by
-`npm run main:landing -- status --json`. For only that finding, preserve the old checkout and still
-invoke the pinned landing wrapper below; it arms the 30-minute watcher and retries from a replacement
-main checkout. Do not waive findings in another worktree, other Git operations, changed pins, or a
-dirty candidate. Re-read the main ref and occupancy:
+Immediately before the landing, run the scoped repository-wide report from the coordinator worktree.
+It still lists every operation, but only state in the registered main checkout, the selected source
+branch, or an unreadable/unknown worktree blocks this landing. An operation in another known branch
+remains visible and untouched: `main:landing` operates on a private worktree index and verifies the
+reviewed refs and tree, so a feature-branch operation cannot veto an independent landing. A
+designated-main orphan `AUTO_MERGE` with no unmerged paths is handed to the pinned wrapper, which
+revalidates it and uses the 30-minute preserved-checkout failover only when its full safety checks
+pass. The candidate itself must still be clean, reviewed, and pinned. Re-read the main ref and
+occupancy:
 
 ```bash
-(cd "$TASK_WORKTREE" && npm run repo:state)
+(cd "$TASK_WORKTREE" && npm run repo:state -- --for-landing "$BRANCH")
 (cd "$TASK_WORKTREE" && node scripts/worktree-inventory.mjs)
 (cd "$TASK_WORKTREE" && npm run branches:orphan)
   (cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
@@ -534,9 +535,10 @@ git -C "$MAIN" show -s --format=%B HEAD
 
 The first parent must be `REVIEWED_MAIN_SHA`, the second `REVIEWED_CANDIDATE_SHA`, and the tree
 must equal `REVIEWED_TREE`; the message must contain both `Branch: $BRANCH` and `Chat: $CHAT_ID`.
-If the wrapper or a guard refuses, inspect `repo:state` and `main:landing status`, then preserve the
-owner lease and Git state. The exact orphan `AUTO_MERGE` case is retried by the watcher after 30
-continuous minutes; other operations use the recovery procedure. Do not abort or resolve an
+If the wrapper or a guard refuses, inspect the full `repo:state` report and `main:landing status`,
+then preserve the owner lease and Git state. The exact designated-main orphan `AUTO_MERGE` case is
+retried by the watcher after 30 continuous minutes; an operation in the candidate branch blocks this
+landing, while operations in other known branches remain untouched. Do not abort or resolve an
 operation in `main`.
 
 - **Re-read `git status` and `git log --oneline -10` immediately before staging,

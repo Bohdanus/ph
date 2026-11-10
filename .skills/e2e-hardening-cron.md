@@ -108,7 +108,7 @@ host's permission boundary.
   smallest necessary regression test only. No new E2E unless behavior is otherwise unvalidated.
   Never weaken gates or re-record baselines. See `docs/TESTING.md#gates` for commands and
   known failures.
-- Run `npm run repo:state` before landing. For cleanup, also run
+- Run `npm run repo:state -- --for-landing "$BRANCH"` before landing. For cleanup, also run
   `node scripts/worktree-inventory.mjs` and `npm run branches:orphan`; preview
   `npm run swarm -- doctor --dry-run` before any disposal (AGENTS.md). After landing, run
   `npm run tsc`, `npm run build`, and `npm run lint:check` in the designated main worktree to
@@ -346,7 +346,7 @@ Handoff, not to Solve.
 
 ## Phase 4 — Land
 
-1. Run `npm run repo:state` and confirm the worktree and branch are clean and safe to land.
+1. Run `npm run repo:state -- --for-landing "$BRANCH"` and confirm the candidate branch and designated main are clear to land; unrelated findings remain visible but do not block this landing.
 2. Sync current `main` into the candidate branch **in the branch's own worktree**, resolve
    conflicts there using the recovered requirement, rerun gates and review the final
    composition. Then follow `docs/ORCHESTRATION.md` § "Landing" from the designated main
