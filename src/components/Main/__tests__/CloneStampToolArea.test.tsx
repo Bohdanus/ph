@@ -246,6 +246,7 @@ const CONTEXT_METHODS = [
   'putImageData',
   'getImageData',
   'clearRect',
+  'setTransform',
   'fillRect',
   'strokeRect',
   'beginPath',

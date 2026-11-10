@@ -277,6 +277,41 @@ describe('clearCanvasBackingStore', () => {
     expect(transform).toEqual({ a: 0.4, b: 0, c: 0, d: 0.4, e: 0, f: 0 });
   });
 
+  it('preserves the caller clipping region during a backing-store clear', () => {
+    const canvas = { width: 40, height: 20 } as HTMLCanvasElement;
+    let transform = { a: 0.4, b: 0, c: 0, d: 0.4, e: 0, f: 0 };
+    let clippingRegion: string | null = 'selection';
+    const savedStates: Array<{ transform: typeof transform; clippingRegion: string | null }> = [];
+    const clearState: Array<{ args: number[]; transform: typeof transform; clippingRegion: string | null }> = [];
+    const ctx = {
+      canvas,
+      save: vi.fn(() => savedStates.push({ transform: { ...transform }, clippingRegion })),
+      setTransform: vi.fn((a: number, b: number, c: number, d: number, e: number, f: number) => {
+        transform = { a, b, c, d, e, f };
+      }),
+      clearRect: vi.fn((...args: [number, number, number, number]) => {
+        clearState.push({ args, transform: { ...transform }, clippingRegion });
+      }),
+      restore: vi.fn(() => {
+        const saved = savedStates.pop()!;
+        transform = saved.transform;
+        clippingRegion = saved.clippingRegion;
+      }),
+    } as unknown as Ctx2D;
+
+    clearCanvasBackingStore(ctx);
+
+    expect(clearState).toEqual([
+      {
+        args: [0, 0, 40, 20],
+        transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+        clippingRegion: 'selection',
+      },
+    ]);
+    expect(transform).toEqual({ a: 0.4, b: 0, c: 0, d: 0.4, e: 0, f: 0 });
+    expect(clippingRegion).toBe('selection');
+  });
+
   it('restores the caller save stack when clearing throws', () => {
     const canvas = { width: 40, height: 20 } as HTMLCanvasElement;
     const identity = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
