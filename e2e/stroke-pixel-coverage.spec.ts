@@ -8,6 +8,7 @@ import {
 } from './helpers/canvas-helpers';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
+import { PAINT_TOOLS_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 type Point = { x: number; y: number };
 type Pixel = { x: number; y: number; red: number; green: number; blue: number; alpha: number };
@@ -105,8 +106,7 @@ function rowsAt(pixels: Pixel[], ...rows: number[]): Pixel[] {
 function expectIntegerCoverage(pixels: Pixel[], y: number, label: string): void {
   const pathRows = rowsAt(pixels, y - 1, y);
   const outsideRows = pixels.filter((pixel) => pixel.y !== y - 1 && pixel.y !== y);
-  expect(pathRows.some(hasInk), `${label} covers a path row`).toBe(true);
-  expect(pathRows.some(hasPartialCoverage), `${label} records partial coverage at an integer coordinate`).toBe(true);
+  expect(pathRows.every(hasPartialCoverage), `${label} partially covers both rows at an integer coordinate`).toBe(true);
   expect(outsideRows.every(isWhite), `${label} leaves rows outside the centered 1px stroke white`).toBe(true);
 }
 
@@ -117,20 +117,33 @@ function expectHalfIntegerCoverage(pixels: Pixel[], y: number, label: string): v
   expect(compositedLuma(corePixel!), `${label} has a covered core pixel`).toBeLessThan(80);
 
   const outsidePixels = pixels.filter((pixel) => pixel.y !== coreRow);
-  expect(
-    outsidePixels.every((pixel) => compositedLuma(pixel) > 200),
-    `${label} leaves neighboring rows near-white outside its covered core`
-  ).toBe(true);
+  expect(outsidePixels.every(isWhite), `${label} leaves pixels outside its fully covered core row white`).toBe(true);
 }
 
 function expectDiagonalCoverage(pixels: Pixel[], center: Point, label: string): void {
-  // The outer ring is sampling margin; assert ink only near the known path center.
+  // The opposite corners should follow the diagonal while the mirrored corners stay clear.
   const atPathCenter = pixels.filter((pixel) => Math.abs(pixel.x - center.x) <= 1 && Math.abs(pixel.y - center.y) <= 1);
   expect(atPathCenter.some(hasInk), `${label} leaves ink near the diagonal's center point`).toBe(true);
   expect(atPathCenter.some(hasPartialCoverage), `${label} has antialiased edge coverage near its center`).toBe(true);
+
+  const pixelAt = (x: number, y: number): Pixel | undefined => pixels.find((pixel) => pixel.x === x && pixel.y === y);
+  const upperLeft = pixelAt(center.x - 2, center.y - 1);
+  const lowerRight = pixelAt(center.x + 2, center.y + 1);
+  const upperRight = pixelAt(center.x + 2, center.y - 1);
+  const lowerLeft = pixelAt(center.x - 2, center.y + 1);
+
+  expect(upperLeft, `${label} samples the upper-left side of the diagonal`).toBeDefined();
+  expect(compositedLuma(upperLeft!), `${label} follows the diagonal on its upper-left side`).toBeLessThan(90);
+  expect(lowerRight, `${label} samples the lower-right side of the diagonal`).toBeDefined();
+  expect(compositedLuma(lowerRight!), `${label} follows the diagonal on its lower-right side`).toBeLessThan(90);
+  expect(upperRight, `${label} samples the mirrored upper-right pixel`).toBeDefined();
+  expect(upperRight && isWhite(upperRight), `${label} leaves the mirrored upper-right pixel clear`).toBe(true);
+  expect(lowerLeft, `${label} samples the mirrored lower-left pixel`).toBeDefined();
+  expect(lowerLeft && isWhite(lowerLeft), `${label} leaves the mirrored lower-left pixel clear`).toBe(true);
 }
 
 test.describe('1px stroke pixel coverage', () => {
+  test.describe.configure({ timeout: PAINT_TOOLS_TEST_TIMEOUT_MS });
   test.use({ deviceScaleFactor: 1 });
 
   test.beforeEach(async ({ page }) => {
