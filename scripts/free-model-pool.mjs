@@ -696,10 +696,44 @@ function retryAfterValueDelayMs(value, now = Date.now()) {
   return retryAfterDelayMs({ headers: { get: (name) => (name.toLowerCase() === 'retry-after' ? value : null) } }, now);
 }
 
+function retryAfterMillisecondsValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : null;
+  if (typeof value !== 'string' || !/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())) return null;
+  const milliseconds = Number(value.trim());
+  return Number.isFinite(milliseconds) ? milliseconds : null;
+}
+
+function openCodeHeaderValue(headers, name) {
+  if (!headers || typeof headers !== 'object') return undefined;
+  const fromGetter = typeof headers.get === 'function' ? headers.get(name) : undefined;
+  if (fromGetter !== undefined && fromGetter !== null) return fromGetter;
+  const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+  return key === undefined ? undefined : headers[key];
+}
+
+function openCodeRetryDelayMs(metadata) {
+  const delays = [
+    retryAfterMillisecondsValue(metadata.retryAfterMs),
+    retryAfterValueDelayMs(metadata.retryAfter),
+  ].filter((delay) => delay !== null);
+  return delays.length > 0 ? Math.max(...delays) : null;
+}
+
+function isExactZeroCost(cost) {
+  if (typeof cost === 'number') return Number.isFinite(cost) && cost === 0;
+  return typeof cost === 'string' && /^0+(?:\.0+)?$/.test(cost.trim());
+}
+
+function openCodeReportedCosts(events) {
+  return events.flatMap((event) =>
+    [event?.part?.cost, event?.cost, event?.error?.cost].filter((cost) => cost !== undefined && cost !== null)
+  );
+}
+
 function openCodeErrorMetadata(value) {
   if (!value || typeof value !== 'object') return {};
   const metadata = value.error && typeof value.error === 'object' ? value.error : value;
-  const errorType = [
+  const errorTypes = [
     metadata.type,
     metadata.code,
     metadata.errorType,
@@ -707,37 +741,98 @@ function openCodeErrorMetadata(value) {
     value.error,
     value.type,
     value.code,
-  ].find((entry) => typeof entry === 'string');
+  ].filter((entry) => typeof entry === 'string');
+  const errorType = errorTypes[0];
   const rawStatus = metadata.status ?? metadata.statusCode ?? value.status ?? value.statusCode;
   const status =
     Number.isInteger(Number(rawStatus)) && Number(rawStatus) >= 100 && Number(rawStatus) <= 599
       ? Number(rawStatus)
       : null;
-  const headers = metadata.headers ?? value.headers;
+  const headerSources = [metadata.responseHeaders, value.responseHeaders, metadata.headers, value.headers];
   const retryAfter =
     metadata.retryAfter ??
     metadata.retry_after ??
-    headers?.['retry-after'] ??
-    headers?.get?.('retry-after') ??
     value.retryAfter ??
+    value.retry_after ??
+    headerSources.map((headers) => openCodeHeaderValue(headers, 'retry-after')).find((entry) => entry != null) ??
     null;
+  const retryAfterMsValues = [
+    metadata.retryAfterMs,
+    metadata.retry_after_ms,
+    metadata['retry-after-ms'],
+    value.retryAfterMs,
+    value.retry_after_ms,
+    value['retry-after-ms'],
+    ...headerSources.map((headers) => openCodeHeaderValue(headers, 'retry-after-ms')),
+  ]
+    .map(retryAfterMillisecondsValue)
+    .filter((delay) => delay !== null);
+  const normalizedRetryAfter = typeof retryAfter === 'string' ? retryAfter : null;
+  const retryAfterDelays = [...retryAfterMsValues, retryAfterValueDelayMs(normalizedRetryAfter)].filter(
+    (delay) => delay !== null
+  );
   const message = String(metadata.message ?? value.message ?? (typeof value.error === 'string' ? value.error : ''));
-  const normalizedType = String(errorType ?? '').toLowerCase();
+  const normalizedTypes = errorTypes.map((type) => type.trim().toLowerCase());
   return {
     errorType: errorType ?? null,
     status,
-    retryAfter: typeof retryAfter === 'string' ? retryAfter : null,
+    retryAfter: normalizedRetryAfter,
+    retryAfterMs: retryAfterDelays.length > 0 ? Math.max(...retryAfterDelays) : null,
     accountQuota:
-      metadata.accountQuota === true || value.accountQuota === true || normalizedType === 'provider.free-limit',
+      metadata.accountQuota === true ||
+      value.accountQuota === true ||
+      normalizedTypes.some((type) => type === 'provider.free-limit' || /(?:^|[._])freeusagelimiterror$/.test(type)),
     modelAttributable:
       metadata.modelAttributable === true ||
       value.modelAttributable === true ||
-      /(?:^|[._-])model(?:[._-]|$)/i.test(normalizedType),
+      normalizedTypes.some((type) => /(?:^|[._-])model(?:[._-]|$)/i.test(type)),
     contentPolicyRejected:
       metadata.contentPolicyRejected === true ||
       value.contentPolicyRejected === true ||
-      CONTENT_POLICY_ERROR_CODES.has(normalizedType.replaceAll('-', '_')) ||
+      normalizedTypes.some((type) =>
+        CONTENT_POLICY_ERROR_CODES.has(type.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''))
+      ) ||
       CONTENT_POLICY_ERROR_PATTERNS.some((pattern) => pattern.test(message)),
+  };
+}
+
+function openCodeCompletionFailureMetadata(events) {
+  const errors = events.filter((event) => event?.type === 'error').map(openCodeErrorMetadata);
+  const contentFilterTerminal = events.some(
+    (event) =>
+      event?.type === 'step_finish' &&
+      String(event.part?.reason ?? '')
+        .toLowerCase()
+        .replaceAll('_', '-') === 'content-filter'
+  );
+  if (contentFilterTerminal) {
+    errors.unshift({
+      errorType: 'content_filter',
+      status: null,
+      retryAfter: null,
+      accountQuota: false,
+      modelAttributable: false,
+      contentPolicyRejected: true,
+    });
+  }
+  if (errors.length === 0) return {};
+
+  // Preserve policy and source-wide stops first, then metadata needed to retry a model-attributable 429.
+  const primary =
+    errors.find((metadata) => metadata.contentPolicyRejected) ??
+    errors.find((metadata) => metadata.accountQuota) ??
+    errors.find((metadata) => metadata.modelAttributable && metadata.status === 429) ??
+    errors.find((metadata) => metadata.modelAttributable && Number.isInteger(metadata.status)) ??
+    errors[0];
+  const modelRateLimits = errors.filter(
+    (metadata) => metadata.modelAttributable && metadata.status === 429 && !metadata.accountQuota
+  );
+  const retryDelays = modelRateLimits.map(openCodeRetryDelayMs).filter((delay) => delay !== null);
+  return {
+    ...primary,
+    ...(modelRateLimits.length > 0 && retryDelays.length > 0 ? { retryAfterMs: Math.max(...retryDelays) } : {}),
+    accountQuota: errors.some((metadata) => metadata.accountQuota),
+    contentPolicyRejected: errors.some((metadata) => metadata.contentPolicyRejected),
   };
 }
 
@@ -999,12 +1094,14 @@ export async function runOpenCodeCompletion({
         void stopChild();
       }, timeoutMs);
       child.stdout.on('data', (chunk) => {
+        const capturedBytes = Math.max(0, MAX_OPENCODE_OUTPUT_BYTES - outputBytes);
+        if (capturedBytes > 0) {
+          chunks.push(capturedBytes >= chunk.byteLength ? chunk : Buffer.from(chunk.subarray(0, capturedBytes)));
+        }
         outputBytes += chunk.byteLength;
-        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) {
+        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES && !outputExceeded) {
           outputExceeded = true;
           void stopChild();
-        } else {
-          chunks.push(chunk);
         }
       });
       child.stderr.on('data', () => {});
@@ -1018,23 +1115,43 @@ export async function runOpenCodeCompletion({
         void (async () => {
           if (stopping) await killPromise;
           clearTimeout(killTimer);
-          if (terminationError) throw new Error(`OpenCode process termination failed: ${terminationError.message}`);
-          if (timedOut) throw new Error(`OpenCode timed out after ${timeoutMs}ms`);
-          if (outputExceeded) throw new Error(`OpenCode output exceeded ${MAX_OPENCODE_OUTPUT_BYTES} bytes`);
-
-          let parsed;
-          try {
-            parsed = Buffer.concat(chunks)
-              .toString('utf8')
-              .split(/\r?\n/)
-              .filter(Boolean)
-              .map((line) => JSON.parse(line));
-          } catch {
-            throw new Error('OpenCode returned malformed JSONL output');
+          const parsed = [];
+          let malformedJsonl = false;
+          for (const line of Buffer.concat(chunks).toString('utf8').split(/\r?\n/).filter(Boolean)) {
+            try {
+              const event = JSON.parse(line);
+              if (event && typeof event === 'object' && !Array.isArray(event)) parsed.push(event);
+              else malformedJsonl = true;
+            } catch {
+              malformedJsonl = true;
+            }
+          }
+          const metadata = openCodeCompletionFailureMetadata(parsed);
+          const reportedCosts = openCodeReportedCosts(parsed);
+          const processFailure = terminationError
+            ? `OpenCode process termination failed: ${terminationError.message}`
+            : timedOut
+              ? `OpenCode timed out after ${timeoutMs}ms`
+              : outputExceeded
+                ? `OpenCode output exceeded ${MAX_OPENCODE_OUTPUT_BYTES} bytes`
+                : malformedJsonl
+                  ? 'OpenCode returned malformed JSONL output'
+                  : null;
+          if ((processFailure || code !== 0) && reportedCosts.some((cost) => !isExactZeroCost(cost))) {
+            const error = new Error('OpenCode reported non-zero or invalid cost');
+            error.safetyStop = true;
+            error.reportedCost = true;
+            throw error;
+          }
+          if (processFailure) {
+            if (Object.keys(metadata).length > 0) {
+              const error = new Error(processFailure);
+              Object.assign(error, metadata);
+              throw error;
+            }
+            throw new Error(processFailure);
           }
           if (code !== 0) {
-            const providerEvent = parsed.find((event) => event.type === 'error');
-            const metadata = openCodeErrorMetadata(providerEvent);
             const type =
               typeof metadata.errorType === 'string' && /^[a-z0-9._-]+$/i.test(metadata.errorType)
                 ? metadata.errorType
@@ -1049,11 +1166,15 @@ export async function runOpenCodeCompletion({
         })().then(resolve, reject);
       });
     });
-    const errorEvent = events.find((event) => event.type === 'error');
-    if (errorEvent) {
+    const reportedCosts = openCodeReportedCosts(events);
+    if (reportedCosts.some((cost) => !isExactZeroCost(cost))) {
+      return { error: 'OpenCode reported non-zero or invalid cost', safetyStop: true };
+    }
+    const errorMetadata = openCodeCompletionFailureMetadata(events);
+    if (Object.keys(errorMetadata).length > 0) {
       return {
         error: 'OpenCode reported a provider completion error',
-        ...openCodeErrorMetadata(errorEvent),
+        ...errorMetadata,
       };
     }
     if (
@@ -1078,12 +1199,6 @@ export async function runOpenCodeCompletion({
       .map((event) => event.part.text)
       .join('');
     const finishedSteps = events.filter((event) => event.type === 'step_finish');
-    const reportedCosts = events
-      .filter((event) => event.part?.cost !== undefined && event.part?.cost !== null)
-      .map((event) => Number(event.part.cost));
-    if (reportedCosts.some((cost) => !Number.isFinite(cost) || cost !== 0)) {
-      return { error: 'OpenCode reported non-zero or invalid cost', safetyStop: true };
-    }
     if (!terminal || !content.trim()) return { error: 'OpenCode did not return a complete non-empty response' };
     const tokens = finishedSteps.at(-1)?.part?.tokens;
     return {
@@ -1095,7 +1210,9 @@ export async function runOpenCodeCompletion({
             input_tokens: tokens.input,
             output_tokens: tokens.output,
             reasoning_tokens: tokens.reasoning,
-            ...(reportedCosts.length > 0 ? { cost: reportedCosts.reduce((total, cost) => total + cost, 0) } : {}),
+            ...(reportedCosts.length > 0
+              ? { cost: reportedCosts.reduce((total, cost) => total + Number(cost), 0) }
+              : {}),
           }
         : null,
     };
@@ -1190,10 +1307,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
     } catch (error) {
       const failure = new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
       failure.safetyStop = true;
+      failure.costSafetyStopHandled = true;
       throw failure;
     }
     const error = new Error(message);
     error.safetyStop = true;
+    error.costSafetyStopHandled = true;
     throw error;
   };
   const stopForContentPolicy = (candidate) => {
@@ -1428,12 +1547,13 @@ export async function completeWithFreeModel(prompt, options = {}) {
         errors.push(`kilo/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
         if (result?.exhaustSource) exhausted.add(candidate.source);
       } catch (error) {
+        if (error.costSafetyStopHandled) throw error;
+        if (error.reportedCost === true || hasReportedNonZeroCost(error.usage)) {
+          await stopForReportedCost(candidate);
+        }
         if (error.safetyStop) throw error;
         if (error.status === 429) {
           await persistKiloRateLimit();
-        }
-        if (error.safetyStop || hasReportedNonZeroCost(error.usage)) {
-          await stopForReportedCost(candidate);
         }
         if (isContentPolicyError(error)) stopForContentPolicy(candidate);
         await recordAttributableFailure(candidate, error);
@@ -1606,13 +1726,17 @@ export async function completeWithFreeModel(prompt, options = {}) {
           !metadata.accountQuota &&
           !candidate.retryAttempt
         ) {
-          const retryAfterMs = retryAfterValueDelayMs(metadata.retryAfter);
+          const retryAfterMs = openCodeRetryDelayMs(metadata);
           if (retryAfterMs === null || retryAfterMs <= MAX_OPENCODE_RETRY_AFTER_MS) {
             await waitForRetryAfter(retryAfterMs ?? 1000);
             available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
           }
         }
       } catch (error) {
+        if (error.costSafetyStopHandled) throw error;
+        if (error.reportedCost === true || hasReportedNonZeroCost(error.usage)) {
+          await stopForReportedCost(candidate);
+        }
         if (error.safetyStop) throw error;
         if (isContentPolicyError(error)) stopForContentPolicy(candidate);
         errors.push(`opencode/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
@@ -1629,7 +1753,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
           !metadata.accountQuota &&
           !candidate.retryAttempt
         ) {
-          const retryAfterMs = retryAfterValueDelayMs(metadata.retryAfter);
+          const retryAfterMs = openCodeRetryDelayMs(metadata);
           if (retryAfterMs === null || retryAfterMs <= MAX_OPENCODE_RETRY_AFTER_MS) {
             await waitForRetryAfter(retryAfterMs ?? 1000);
             available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });

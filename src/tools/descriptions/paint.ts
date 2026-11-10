@@ -674,7 +674,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          'The blend mode for the fill. Adobe’s blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts. The blending-mode page says availability varies by tool and image mode. The HDR page’s tool list marks Paint Bucket unsupported for 32-bpc HDR. The blending-mode page separately lists Clear for Paint Bucket when Lock Transparency is deselected, but neither page establishes that Clear is available to Paint Bucket in 32-bpc HDR. Behind is Brush-only. The app renders no Mode control for the Paint Bucket. Normal is the default.',
+          'The blend mode for the fill. Adobe’s blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts. The blending-mode page says availability varies by tool and image mode. The HDR page marks Paint Bucket unsupported for 32-bpc HDR, so Clear availability for that tool does not apply in that mode. The blending-mode page separately lists Clear for Paint Bucket when Lock Transparency is deselected. Behind is Brush-only. The app renders no Mode control for the Paint Bucket. Normal is the default.',
         status: 'missing',
       },
       {

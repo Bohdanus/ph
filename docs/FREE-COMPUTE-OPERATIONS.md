@@ -96,9 +96,18 @@ The runner accepts provider-owned model IDs ending in `-free`, denies tool use, 
 CLI exit with non-empty text. The exact canonical Nemotron ID is the only suffix exception, and only
 when the live catalog marks it provider-owned. Display-name similarity is insufficient. OpenCode CLI
 JSON output can omit its final `step_finish` event; a clean exit, text response, and free catalog ID
-are sufficient when no explicit error, tool call, or non-zero cost was reported. The
-`provider.free-limit` error is an account quota event: OpenCode is skipped for the current run with
-no long-lived cooldown. Other transient/model-specific 429s may receive at most one bounded retry.
+are sufficient when no explicit error, tool call, or non-zero cost was reported.
+The typed `provider.free-limit` event and upstream `FreeUsageLimitError` alias both signal a service
+quota for the account, workspace, and network. This remains a source-wide stop when there is no HTTP
+status or when an earlier model-specific error came first. Skip OpenCode for the current run without
+a long-lived cooldown or retry ([quota guidance](https://github.com/anomalyco/opencode/issues/60935)).
+Check `opencode --version` and use v2;
+OpenCode v1 no longer supports free models ([free-tier guidance](https://github.com/anomalyco/opencode/issues/59387)).
+Other transient/model-specific 429s may receive at most one retry per route. Honor OpenCode's
+`retryAfterMs`, `Retry-After-Ms`, and `Retry-After` metadata, including timing nested in
+`responseHeaders`; across multiple model 429 events, wait for the longest requested delay. The
+wait is capped at 60 seconds, and a longer server delay skips that retry. Both quota error types
+skip OpenCode immediately regardless of any retry timing ([retry timing issue](https://github.com/anomalyco/opencode/issues/33955)).
 
 ## Groq
 
@@ -127,7 +136,7 @@ result's provider/model before treating a run as a Groq smoke test.
 **Groq GPT-OSS-120B** is reasoning-capable and fast for bulk text sweeps; verify results before
 relying on them. [OpenAI overview](https://openai.com/index/introducing-gpt-oss/).
 
-**No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) — ~32s for 4.1K tokens, truncated output, false claims. Unusable. Groq is cloud inference, not local processing. Groq says inference data is not retained by default, but reliability and abuse logs may retain inputs and outputs for up to 30 days unless Zero Data Retention is enabled ([data handling](https://console.groq.com/docs/your-data)). In `scripts/free-chat-search.mjs`, `--local-only` is an alias for `--no-summarize`; both skip model inference. The `free-model-pool.mjs` runner does not accept these flags.
+**No local-model fallback.** Local inference was tested at ~32s for 4.1K tokens and produced truncated output and false claims, so it is not a supported route. Groq is cloud inference, not local processing. Groq says inference data is not retained by default, but reliability and abuse logs may retain inputs and outputs for up to 30 days unless Zero Data Retention is enabled ([data handling](https://console.groq.com/docs/your-data)). In `scripts/free-chat-search.mjs`, `--local-only` is an alias for `--no-summarize`; both skip model inference. The `free-model-pool.mjs` runner does not accept these flags.
 
 ## Optional free-subagent wrapper
 

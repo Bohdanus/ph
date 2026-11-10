@@ -414,12 +414,12 @@ app's Enter binding is recorded separately in `appNotes`.
 
 **Two modifier facts the data file was missing, both Adobe's, both now added.** (a) The 45° constraint:
 "To draw a straight line at a multiple of 45°, hold down Shift as you move to select the next
-segment." The data file's `modifiers` listed only "Shift — Sets the gesture to Add to Selection",
-which is also true and also documented, so Shift now carries **two** entries rather than one. (b)
-Ctrl/Command-click closure away from the starting point was already in `purpose`, but missing from
-`modifiers`; it now has a modifier row too. The data records the Photoshop behavior while `appNotes`
-states that the app does not implement the gesture. The toolbar tooltip uses only app-supported close
-methods. Alt/Option-double-click belongs to the Magnetic Lasso and remains documented there.
+segment." The data file already listed Shift as Add to Selection, a general selection-tool gesture;
+it now has a second Shift row for the Polygonal Lasso's 45° constraint. (b) Ctrl/Command-click
+closure away from the starting point was already in `purpose`, but missing from `modifiers`; it now
+has its own row. The data records the Photoshop behavior while `appNotes` states that the app does
+not implement these gestures. The toolbar tooltip uses only app-supported close methods.
+Alt/Option-double-click belongs to the Magnetic Lasso and remains documented there.
 
 ### Options table
 
@@ -1110,7 +1110,10 @@ from the data file's `appNotes`; a gap is cheaper than a broken cross-reference.
    double-clicking, or Ctrl/Command-clicking away from the start. The data file includes those
    verified behaviors and omits the unconfirmed mouse-down drag and Enter/Return close claims.
    Alt/Option-double-click straight closure is documented for the Magnetic Lasso, not this tool.
-   Source: <https://helpx.adobe.com/photoshop/desktop/make-selections/freehand-selections/draw-straight-edged-segments-of-a-selection-border.html>.
+   Sources: <https://helpx.adobe.com/photoshop/desktop/make-selections/freehand-selections/draw-straight-edged-segments-of-a-selection-border.html>
+   for the Polygonal Lasso behaviors, and
+   <https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/isolate-specific-areas-in-images-with-lasso-tool.html>
+   for the Magnetic Lasso's straight-close gesture.
 
 5. **The Magnetic Lasso's fallback on a flat or uniform region**, where there is no gradient to
    snap to. The only statement found is a community wiki ("If no such region can be found, the

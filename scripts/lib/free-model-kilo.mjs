@@ -146,12 +146,16 @@ function parseEvents(output) {
     .split(/\r?\n/)
     .map((line) => line.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').trim())
     .filter((line) => line.startsWith('{'));
-  if (lines.length === 0) return [];
-  try {
-    return lines.map((line) => JSON.parse(line));
-  } catch {
-    throw new Error('Kilo CLI returned malformed JSONL output');
+  const events = [];
+  let malformed = false;
+  for (const line of lines) {
+    try {
+      events.push(JSON.parse(line));
+    } catch {
+      malformed = true;
+    }
   }
+  return { events, malformed };
 }
 
 function sanitizedProcessError(events, stderrText, code, signal) {
@@ -187,21 +191,68 @@ function sanitizedProcessError(events, stderrText, code, signal) {
   };
 }
 
-function contentPolicyRejected(events) {
-  return events.some((event) => {
-    if (event?.type !== 'error') return false;
+const CONTENT_POLICY_ERROR_CODES = new Set([
+  'content_filter',
+  'content_filter_blocked',
+  'content_filter_violation',
+  'content_policy',
+  'content_policy_blocked',
+  'content_policy_violation',
+  'moderation_blocked',
+  'moderation_rejected',
+  'prompt_injection_detected',
+  'safety_filter',
+  'safety_violation',
+]);
+const VERSIONED_CONTENT_POLICY_ERROR_CODE = /^(?:content_filter|content_policy)(?:_(?:blocked|violation))?_v\d+$/;
+
+const CONTENT_POLICY_MESSAGE_PATTERNS = [
+  /flagged as potentially violating (?:our |the )?(?:content|safety|usage) polic(?:y|ies)/i,
+  /(?:content|safety) filter (?:was |has been )?(?:triggered|blocked|rejected|flagged)/i,
+  /(?:content|safety|usage) policy (?:violation|blocked|rejected|flagged)/i,
+  /prompt (?:injection )?patterns? detected/i,
+  /(?:prompt|request|content) (?:was |is )?(?:flagged|rejected|blocked|not allowed) by (?:the )?(?:content|safety|moderation|usage) (?:filter|policy)/i,
+  /(?:prompt|request|content) (?:was |is )?(?:rejected|blocked) for (?:a |the )?(?:content|safety|moderation|usage) policy violation/i,
+  /moderation (?:flagged|blocked|rejected|detected)/i,
+  /content failed moderation/i,
+  /violates? (?:our |the )?(?:content|safety|usage) policy/i,
+];
+
+function contentPolicyRejected(events, stderrText = '') {
+  const allEvents = [...events, ...parseEvents(stderrText).events];
+  if (
+    allEvents.some(
+      (event) =>
+        event?.type === 'step_finish' &&
+        String(event.part?.reason ?? '')
+          .toLowerCase()
+          .replaceAll('_', '-') === 'content-filter'
+    )
+  ) {
+    return true;
+  }
+  const errorEvents = allEvents.filter((event) => event?.type === 'error');
+  for (const event of errorEvents) {
     const error = event.error && typeof event.error === 'object' ? event.error : event;
-    const code = [error.code, error.type, event.code, event.type]
+    const codes = [error.code, error.type, event.code, typeof event.error === 'string' ? event.error : null]
       .filter((value) => typeof value === 'string')
-      .join(' ')
-      .toLowerCase()
-      .replaceAll('-', '_');
-    const message = String(error.message ?? event.message ?? (typeof event.error === 'string' ? event.error : ''));
-    return (
-      /content_filter|content_policy|moderation|safety_violation|prompt_injection/.test(code) ||
-      /content|safety|moderation|prompt injection/i.test(message)
-    );
-  });
+      .map((value) =>
+        value
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '')
+      );
+    if (codes.some((code) => CONTENT_POLICY_ERROR_CODES.has(code) || VERSIONED_CONTENT_POLICY_ERROR_CODE.test(code))) {
+      return true;
+    }
+  }
+  const messages = [stderrText];
+  for (const event of errorEvents) {
+    const error = event.error && typeof event.error === 'object' ? event.error : event;
+    messages.push(String(error.message ?? event.message ?? (typeof event.error === 'string' ? event.error : '')));
+  }
+  return messages.some((message) => CONTENT_POLICY_MESSAGE_PATTERNS.some((pattern) => pattern.test(message)));
 }
 
 export async function runKiloCompletion({
@@ -267,13 +318,14 @@ export async function runKiloCompletion({
           clearTimeout(killTimer);
         };
         child.stdout.on('data', (chunk) => {
+          if (outputOverflow) return;
+          const remainingBytes = MAX_KILO_OUTPUT_BYTES - outputBytes;
           outputBytes += chunk.byteLength;
           if (outputBytes > MAX_KILO_OUTPUT_BYTES) {
-            if (!outputOverflow) {
-              outputOverflow = true;
-              child.kill('SIGTERM');
-              killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
-            }
+            if (remainingBytes > 0) chunks.push(Buffer.from(chunk.subarray(0, remainingBytes)));
+            outputOverflow = true;
+            child.kill('SIGTERM');
+            killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
             return;
           }
           chunks.push(chunk);
@@ -296,22 +348,13 @@ export async function runKiloCompletion({
           settled = true;
           cleanup();
           let events = [];
-          if (!outputOverflow) {
-            try {
-              events = parseEvents(Buffer.concat(chunks).toString('utf8'));
-            } catch {
-              resolve({
-                events: [],
-                stderrText: stderrTail.toString('utf8'),
-                code,
-                signal,
-                timedOut,
-                outputOverflow,
-                inputError,
-                malformed: true,
-              });
-              return;
-            }
+          let malformed = false;
+          try {
+            const parsed = parseEvents(Buffer.concat(chunks).toString('utf8'));
+            events = parsed.events;
+            malformed = parsed.malformed;
+          } catch {
+            malformed = true;
           }
           resolve({
             events,
@@ -321,23 +364,30 @@ export async function runKiloCompletion({
             timedOut,
             outputOverflow,
             inputError,
+            malformed,
           });
         });
         child.stdin.end(message);
       }
     );
 
+    const stderrEvents = parseEvents(stderrText).events;
+    const costs = [...events, ...stderrEvents].flatMap((event) =>
+      [event?.part?.cost, event?.cost, event?.error?.cost].filter((cost) => cost !== undefined)
+    );
+    if (costs.some((cost) => !isExactZeroCost(cost))) {
+      return { error: 'Kilo reported non-zero or invalid completion cost', exhaustSource: true, safetyStop: true };
+    }
+    if (contentPolicyRejected(events, stderrText)) {
+      return { error: 'Kilo provider content policy rejected or filtered this request', contentPolicyRejected: true };
+    }
     if (timedOut) return { error: `Kilo completion exceeded ${timeoutMs} ms` };
     if (outputOverflow) return { error: `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes` };
     if (inputError) return { error: 'Kilo CLI did not accept the complete prompt' };
     if (malformed) return { error: 'Kilo CLI returned malformed JSONL output', exhaustSource: true };
     if (hasToolActivity(events))
       return { error: 'Kilo attempted a tool call; the completion was rejected', exhaustSource: true };
-    if (events.some((event) => event?.type === 'error')) {
-      const failure = sanitizedProcessError(events, stderrText, code, signal);
-      if (contentPolicyRejected(events)) failure.contentPolicyRejected = true;
-      return failure;
-    }
+    if (events.some((event) => event?.type === 'error')) return sanitizedProcessError(events, stderrText, code, signal);
     if (code !== 0) return sanitizedProcessError(events, stderrText, code, signal);
 
     const terminal = events.filter((event) => event?.type === 'step_finish').at(-1);
@@ -345,12 +395,6 @@ export async function runKiloCompletion({
       .filter((event) => event?.type === 'text')
       .map((event) => (typeof event?.part?.text === 'string' ? event.part.text : (event.text ?? '')))
       .join('');
-    const costs = events
-      .map((event) => (event?.part?.cost !== undefined ? event.part.cost : event?.cost))
-      .filter((cost) => cost !== undefined);
-    if (costs.some((cost) => !isExactZeroCost(cost))) {
-      return { error: 'Kilo reported non-zero or invalid completion cost', exhaustSource: true, safetyStop: true };
-    }
     if (terminal?.part?.reason !== 'stop' || !content.trim()) {
       return {
         error: 'Kilo did not return a complete non-empty response',
