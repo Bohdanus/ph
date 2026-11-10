@@ -12,7 +12,7 @@ afterEach(() => {
 
 describe('usePointerPosition fractional viewport mapping', () => {
   it('uses the fractional client width for fitting and pointer mapping', () => {
-    const rect = { left: 50.25, top: 25.5, width: 400.75, height: 200 };
+    const rect = { left: 50.25, top: 25.5, width: 400.75, height: 201 };
     const element = document.createElement('div');
     element.getBoundingClientRect = () =>
       ({
@@ -24,22 +24,22 @@ describe('usePointerPosition fractional viewport mapping', () => {
         bottom: rect.top + rect.height,
       }) as DOMRect;
     Object.defineProperties(element, {
-      clientLeft: { configurable: true, value: 0 },
-      clientTop: { configurable: true, value: 0 },
-      clientWidth: { configurable: true, value: Math.round(rect.width) },
-      clientHeight: { configurable: true, value: rect.height },
-      offsetWidth: { configurable: true, value: Math.round(rect.width) },
-      offsetHeight: { configurable: true, value: rect.height },
+      clientLeft: { configurable: true, value: 1 },
+      clientTop: { configurable: true, value: 1 },
+      clientWidth: { configurable: true, value: 400 },
+      clientHeight: { configurable: true, value: 200 },
+      offsetWidth: { configurable: true, value: 401 },
+      offsetHeight: { configurable: true, value: 201 },
     });
     viewStateRef.current = { ...DEFAULT_VIEW_STATE, fitToScreen: false };
 
     const ref: RefObject<HTMLDivElement | null> = { current: element };
     const { result } = renderHook(() => usePointerPosition({ ref, imageSize: IMAGE }));
     const dimensions = result.current.dimensionsRef.current;
-    const clientX = rect.left + dimensions.offsetX + dimensions.scale * 10;
-    const clientY = rect.top + dimensions.offsetY + dimensions.scale * 20;
+    const clientX = rect.left + element.clientLeft + dimensions.offsetX + dimensions.scale * 10;
+    const clientY = rect.top + element.clientTop + dimensions.offsetY + dimensions.scale * 20;
 
-    expect(dimensions).toMatchObject({ outerWidth: 400.75, outerHeight: 200, scale: 2, offsetX: 100.375, offsetY: 0 });
+    expect(dimensions).toMatchObject({ outerWidth: 399.75, outerHeight: 200, scale: 2, offsetX: 99.875, offsetY: 0 });
     expect(result.current.getLocalCoordsFromClientPoint(clientX, clientY)).toEqual({ x: 10, y: 20 });
   });
 });
