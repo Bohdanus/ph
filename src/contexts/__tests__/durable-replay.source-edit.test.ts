@@ -130,6 +130,19 @@ describe('replayDurableDocument replace-layer-source', () => {
     expect(replay.layers[layerId]?.operations.map((operation) => operation.kind)).toEqual(['apply-filter']);
   });
 
+  it('retains raster processor operations across a source edit', () => {
+    const processor = entry('processor', {
+      kind: 'apply-raster-processor',
+      layerId,
+      processorId: 'blur',
+      version: 1,
+      args: { toolName: 'blur', radius: 4 },
+    });
+    const replay = replayDurableDocument(document([processor, retype()]));
+
+    expect(replay.layers[layerId]?.operations.map((operation) => operation.kind)).toEqual(['apply-raster-processor']);
+  });
+
   it('reverts to the earlier source and box when the cursor walks back', () => {
     const doc = document([retype()]);
 
