@@ -10,6 +10,13 @@
 The preference is a routing choice, not a current benchmark ranking. Free model catalogs and
 availability change; refresh them with `node scripts/free-model-pool.mjs --list` before use.
 
+The host-level `usageLimited` indicator can misreport GPT weekly usage and is not an authoritative
+capacity signal. At route selection, do not exclude a model/provider solely because of this flag.
+Use the live catalog and route policy to determine eligibility; paid inference still requires
+explicit operator authorization. Determine available capacity from the account's quota meter and
+provider responses; when they disagree, follow the provider-specific retry and source-stop rules in
+[Routing](#routing). The flag itself neither establishes free eligibility nor authorizes paid use.
+
 Use live catalogs, not stale model lists. Prefer verified free models for bounded research, text sweeps, code search, and simple reviews. If no free route is available, stop or get explicit operator authorization before using paid inference.
 
 ## Routing
