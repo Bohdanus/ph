@@ -63,6 +63,7 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`../AGENTS.md`](../AGENTS.md)                                                                         | Rules every agent reads first                                                                        |
 | [`../MODELS.md`](../MODELS.md)                                                                         | Everyday model/provider policy, safe routing, budget checks, and token-saving research               |
 | [`ORCHESTRATION.md`](ORCHESTRATION.md)                                                                 | Worktrees, delegation, the swarm board, dead-agent recovery                                          |
+| [`../ORCHESTRATION_GOTCHAS_RESEARCH.md`](../ORCHESTRATION_GOTCHAS_RESEARCH.md)                         | Dated evidence and gotchas research for parallel-agent orchestration                                 |
 | [`CODEX-ORCHESTRATION.md`](CODEX-ORCHESTRATION.md)                                                     | Codex subagent tools, context, model routing, cost, and shared-worktree rules                        |
 | [`CHAT-ID.md`](CHAT-ID.md)                                                                             | Resolving the host-native chat ID used in commit trailers                                            |
 | [`KILO.md`](KILO.md)                                                                                   | The agent-facing Kilo config, including the parts no tracked file holds                              |
