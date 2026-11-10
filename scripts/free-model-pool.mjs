@@ -1423,6 +1423,11 @@ export async function completeWithFreeModel(prompt, options = {}) {
       }
     }
     if (status === 429) {
+      if (openRouterPlatformRemaining(response) === 0) {
+        exhausted.add('openrouter');
+        stderr.write('OpenRouter platform rate limit is exhausted for this run; skipping its remaining routes.\n');
+        return { retry: false };
+      }
       const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
       if (quota.reason === 'ok') {
         onOpenRouterQuota(quota);
@@ -1436,11 +1441,6 @@ export async function completeWithFreeModel(prompt, options = {}) {
       } else {
         openRouterQuotaKnownPositive = false;
         if (quota.reason === 'http_401' || quota.reason === 'http_402') exhausted.add('openrouter');
-      }
-      if (openRouterPlatformRemaining(response) === 0) {
-        exhausted.add('openrouter');
-        stderr.write('OpenRouter platform rate limit is exhausted for this run; skipping its remaining routes.\n');
-        return { retry: false };
       }
     }
     if (openRouterQuotaInitiallyUnknown) exhausted.add('openrouter');
