@@ -213,7 +213,23 @@ process.exit(1);`
     ['error.code versioned base', { type: 'error', error: { code: 'content_filter_v1' } }],
     ['error.code content policy', { type: 'error', error: { code: 'content_policy' } }],
     ['error.type', { type: 'error', error: { code: 'request_failed', type: 'content_filter_blocked' } }],
+    [
+      'error.type uppercase and hyphenated',
+      { type: 'error', error: { code: 'request_failed', type: ' CONTENT-FILTER-BLOCKED ' } },
+    ],
+    [
+      'error.type dotted and versioned',
+      { type: 'error', error: { code: 'request_failed', type: 'content.policy.violation.v3' } },
+    ],
     ['event.code', { type: 'error', code: 'content_filter_blocked', error: { code: 'request_failed' } }],
+    [
+      'event.code uppercase and hyphenated',
+      { type: 'error', code: ' CONTENT-FILTER-BLOCKED ', error: { code: 'request_failed' } },
+    ],
+    [
+      'event.code dotted and versioned',
+      { type: 'error', code: 'content.filter.violation.v2', error: { code: 'request_failed' } },
+    ],
   ])('stops fallback when Kilo reports an explicit policy code in %s', async (_source, sourceEvent) => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
     const event = {
@@ -271,6 +287,27 @@ process.exitCode = 1;`
   ])('stops fallback for an explicit content-policy rejection written only to stderr (%s)', async (_kind, output) => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
     const command = await writeExecutable(join(directory, 'fake-kilo'), `${output}\nprocess.exitCode = 1;`);
+
+    try {
+      const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });
+      expect(result).toEqual({
+        error: 'Kilo provider content policy rejected or filtered this request',
+        contentPolicyRejected: true,
+      });
+      expect(JSON.stringify(result)).not.toContain('private provider body');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('honors a stderr policy rejection alongside valid stdout JSONL', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `console.log(JSON.stringify({ type: 'error', error: { code: 'request_failed', message: 'provider request failed' } }));
+console.error('Prompt was rejected by the content filter: private provider body');
+process.exitCode = 1;`
+    );
 
     try {
       const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });

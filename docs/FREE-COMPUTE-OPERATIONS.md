@@ -136,7 +136,7 @@ result's provider/model before treating a run as a Groq smoke test.
 **Groq GPT-OSS-120B** is reasoning-capable and fast for bulk text sweeps; verify results before
 relying on them. [OpenAI overview](https://openai.com/index/introducing-gpt-oss/).
 
-**No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) — ~32s for 4.1K tokens, truncated output, false claims. Unusable. Groq is cloud inference, not local processing. Groq says inference data is not retained by default, but reliability and abuse logs may retain inputs and outputs for up to 30 days unless Zero Data Retention is enabled ([data handling](https://console.groq.com/docs/your-data)). In `scripts/free-chat-search.mjs`, `--local-only` is an alias for `--no-summarize`; both skip model inference. The `free-model-pool.mjs` runner does not accept these flags.
+**No local-model fallback.** Local inference was tested at ~32s for 4.1K tokens and produced truncated output and false claims, so it is not a supported route. Groq is cloud inference, not local processing. Groq says inference data is not retained by default, but reliability and abuse logs may retain inputs and outputs for up to 30 days unless Zero Data Retention is enabled ([data handling](https://console.groq.com/docs/your-data)). In `scripts/free-chat-search.mjs`, `--local-only` is an alias for `--no-summarize`; both skip model inference. The `free-model-pool.mjs` runner does not accept these flags.
 
 ## Optional free-subagent wrapper
 

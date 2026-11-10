@@ -5,6 +5,7 @@ import {
   dabStep,
   sampleTip,
   buildBlendLut,
+  isBlendLut,
   resolveBlend,
   normalBlend,
   MIN_TIP_SIZE,
@@ -68,11 +69,17 @@ describe('dabStep', () => {
     expect(dabStep(20, 10)).toBe(4);
   });
 
-  it('returns NaN for non-finite radius (radius not clamped, but result clamped to >=1)', () => {
+  it('returns NaN for a NaN radius', () => {
     // radius is not clamped in dabStep, only spacingPct is clamped
     // Math.max(1, ...) clamps the final result to at least 1
     expect(Number.isNaN(dabStep(NaN, 25))).toBe(true);
+  });
+
+  it('returns Infinity for an infinite radius', () => {
     expect(dabStep(Infinity, 25)).toBe(Infinity);
+  });
+
+  it('returns the minimum step for a negative infinite radius', () => {
     expect(dabStep(-Infinity, 25)).toBe(1); // max(1, -Infinity) = 1
   });
 
@@ -129,9 +136,14 @@ describe('sampleTip', () => {
   });
 
   it('applies rotation via cos/sin', () => {
-    const lut = createTestLut({ cos: 0, sin: 1 });
+    const lut = createTestLut({
+      lutX: new Float32Array([0, 0.25, 0.5, 0.75, 1]),
+      lutY: new Float32Array([0, 0.125, 0.25, 0.375, 0.5]),
+      cos: 0,
+      sin: 1,
+    });
     // With 90-degree rotation, dx=1, dy=0 becomes ox=0, oy=-1
-    expect(sampleTip(lut, 1, 0)).toBe(0.5);
+    expect(sampleTip(lut, 1, 0)).toBe(0.0625);
   });
 
   it('uses Chebyshev norm for square tips', () => {
@@ -145,15 +157,13 @@ describe('sampleTip', () => {
     expect(sampleTip(lut, 0, 0)).toBe(1);
     expect(sampleTip(lut, 5, 0)).toBe(1);
     expect(sampleTip(lut, 6, 0)).toBe(0);
-    expect(sampleTip(lut, 3, 3)).toBeCloseTo(1, 5);
+    expect(sampleTip(lut, 3, 3)).toBe(1);
     expect(sampleTip(lut, 5, 5)).toBe(0);
   });
 
   it('applies wet edges reweighting', () => {
     const lut = createTestLut({ wetEdges: 0.5 });
-    const a = 0.5;
-    const expected = a * (1 - 0.5 + 0.5 * a); // 0.5 * 0.75 = 0.375
-    expect(sampleTip(lut, 1, 0)).toBeCloseTo(expected, 5);
+    expect(sampleTip(lut, 1, 0)).toBe(0.375);
   });
 
   it('leaves a=1 untouched with wet edges', () => {
@@ -211,10 +221,10 @@ describe('resolveBlend', () => {
   });
 
   it('clamps indices to valid range', () => {
-    const lut: BlendLut = { size: 4, data: new Float32Array(16).fill(0.5) };
+    const lut: BlendLut = { size: 2, data: new Float32Array([0, 0.25, 0.75, 1]) };
     const fn = resolveBlend(lut);
-    expect(fn(-1, -1)).toBe(0.5);
-    expect(fn(2, 2)).toBe(0.5);
+    expect(fn(-1, -1)).toBe(0);
+    expect(fn(2, 2)).toBe(1);
   });
 
   it('defaults to normalBlend', () => {
@@ -225,12 +235,12 @@ describe('resolveBlend', () => {
 
 describe('isBlendLut', () => {
   it('returns false for a function', () => {
-    expect(typeof normalBlend === 'function').toBe(true);
+    expect(isBlendLut(normalBlend)).toBe(false);
   });
 
   it('returns true for a BlendLut object', () => {
     const lut: BlendLut = { size: 256, data: new Float32Array(256 * 256) };
-    expect(typeof lut !== 'function').toBe(true);
+    expect(isBlendLut(lut)).toBe(true);
   });
 });
 
