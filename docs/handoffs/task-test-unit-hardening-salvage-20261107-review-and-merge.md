@@ -7,7 +7,7 @@
 **Sync commit:** `97bcd96d66052faa5d9ba8078a56d75834d848ea`
 
 **Source commits:** `6badc372ea1e21bc0482bc63c56047e2dddd826f`, `b218b555f156045f59af278c43036a71f82c11df`
-**State:** Synced with current main, reviewed, and all required local gates pass. Protected landing is blocked by a separate live worktree operation.
+**State:** Landed on `main` as merge commit `3df71bd7ba2e8d291592b05d1d34f279dccd36d5` after the pinned landing preflight. The recorded test and review results below are from the synced candidate before landing.
 
 ## Scope and provenance
 
@@ -29,6 +29,8 @@ On the synced candidate after that fix:
 - `npm run lint:check`: passed with 77 warnings and no errors.
 - `npm run build`: passed.
 
-## Landing blocker
+## Landing result
 
-`npm run repo:state` still refuses landing because `/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-hardening-20261110` has an orphan `AUTO_MERGE` marker and six uncommitted E2E spec changes. The inventory generated at `2026-11-10T15:13:06Z` classifies that worktree as in use and derived live from I/O activity. Its owner is not proven stopped. Do not recover, reset, or otherwise alter it. Rerun `repo:state`, regenerate the inventory, and land only through the pinned procedure in `docs/ORCHESTRATION.md` after the operation is resolved.
+The protected landing used the current `main` at `d0e5750ce12d19172e048a2318a217387c3d9bd2`, candidate `0b890ac07fc666deac94209b623d31bf20bc7d34`, and result tree `e39421bef4b6500567cec2b5c4c9c18f906a76bb`. Merge commit `3df71bd7ba2e8d291592b05d1d34f279dccd36d5` has those exact first and second parents and records `Branch: task/test-unit-hardening-salvage-20261107` and `Chat: 01a184c5-f9a6-73a0-ab93-55a32983af8f`.
+
+At landing time, `repo:state` also reported an `AUTO_MERGE` operation in the separate `/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-hardening-20261110` worktree. This landing did not change or resolve that separate operation. The pinned candidate landed independently through the designated `main:landing` procedure; that result does not authorize recovery or reset of the other worktree. Recover it only after proving its owner stopped and following the guarded procedure in `docs/ORCHESTRATION.md`.
