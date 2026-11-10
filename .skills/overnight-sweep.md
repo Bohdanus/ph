@@ -99,7 +99,9 @@ allows it and no suitable free reviewer can do the bounded task.
   smallest necessary regression test only. No new E2E unless behavior is otherwise unvalidated.
   Never weaken gates or re-record baselines. See `docs/TESTING.md#gates` for commands and known
   failures.
-- Run `npm run repo:state -- --for-landing "$BRANCH"` before landing. For cleanup, also run
+- Run `npm run repo:state -- --for-landing "$BRANCH"` after the final sync and immediately before
+  landing. It checks operation scope only; nonzero (including unreadable or unknown state) is a
+  hold. For cleanup, also run
   `node scripts/worktree-inventory.mjs` and `npm run branches:orphan`; preview
   `npm run swarm -- doctor --dry-run` before any disposal (AGENTS.md). After landing, run
   `npm run tsc`, `npm run build`, and `npm run lint:check` in the designated main worktree to

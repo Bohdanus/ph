@@ -108,7 +108,9 @@ host's permission boundary.
   smallest necessary regression test only. No new E2E unless behavior is otherwise unvalidated.
   Never weaken gates or re-record baselines. See `docs/TESTING.md#gates` for commands and
   known failures.
-- Run `npm run repo:state -- --for-landing "$BRANCH"` before landing. For cleanup, also run
+- Run `npm run repo:state -- --for-landing "$BRANCH"` after the final sync and immediately before
+  landing. This checks operation scope, not full landing readiness; nonzero (including unreadable
+  or unknown state) is a hold. For cleanup, also run
   `node scripts/worktree-inventory.mjs` and `npm run branches:orphan`; preview
   `npm run swarm -- doctor --dry-run` before any disposal (AGENTS.md). After landing, run
   `npm run tsc`, `npm run build`, and `npm run lint:check` in the designated main worktree to
@@ -346,11 +348,13 @@ Handoff, not to Solve.
 
 ## Phase 4 — Land
 
-1. Run `npm run repo:state -- --for-landing "$BRANCH"` and confirm the candidate branch and designated main are clear to land; unrelated findings remain visible but do not block this landing.
-2. Sync current `main` into the candidate branch **in the branch's own worktree**, resolve
+1. Sync current `main` into the candidate branch **in the branch's own worktree**, resolve
    conflicts there using the recovered requirement, rerun gates and review the final
-   composition. Then follow `docs/ORCHESTRATION.md` § "Landing" from the designated main
-   worktree only: require a clean checkout, prepare
+   composition.
+2. Run `npm run repo:state -- --for-landing "$BRANCH"`. A nonzero result, including unreadable
+   or unknown state, holds landing; inspect the findings and leave unrelated worktrees untouched.
+   Then follow `docs/ORCHESTRATION.md` § "Landing" from the designated main worktree only: require
+   a clean checkout, prepare
    `git merge --no-commit --no-ff <full-reviewed-sha>`, pin both parents, the prepared result
    tree, branch and chat, and invoke `node scripts/commit-reviewed-landing.mjs`.
 3. Resolve the host-native chat ID using `docs/CHAT-ID.md`; use `session:<id>` only for Kilo

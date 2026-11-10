@@ -733,8 +733,9 @@ a report that answered them with exit 0 would be the surface a person trusts mor
 
 **Run the full report before you believe the repository is quiet.** The default command exits
 non-zero when anything is in progress; use it before a sweep, cleanup, or when you need to inspect
-the whole fleet. For a main landing, run `npm run repo:state -- --for-landing <source-branch>`
-instead of turning an unrelated branch's operation into a repository-wide landing lock.
+the whole fleet. Its exit status is not a main-landing gate. For a main landing, run
+`npm run repo:state -- --for-landing <source-branch>` as the operation-scope check, so an unrelated
+branch operation does not become a manual hard stop on an independent landing.
 
 **A non-zero default report is repository-wide, not a command to stop all independent work.**
 Read the exact worktree paths and operation markers it reports. Do not run
@@ -743,12 +744,15 @@ without first establishing its owner and following that worktree's recovery
 procedure. The `--for-landing` form still reports every finding, but exits non-zero only when
 the registered main checkout or selected candidate branch has operation state, or when a finding
 is unreadable or cannot be assigned to a known branch. An operation in another known branch remains
-visible and untouched; its index and operation markers are worktree-local. The command also
+visible and untouched; its index and operation markers are worktree-local. An unreadable finding,
+a finding without a known branch, or a missing/ambiguous main or candidate worktree remains a hard
+stop. A zero exit means only that the operation scope is clear; it does not certify a clean diff,
+passing gates, a reviewed candidate, or valid landing pins. The command also
 recognizes only the designated-main orphan `AUTO_MERGE` shape as eligible for the pinned
 `main:landing` recovery path; that wrapper revalidates the marker and all landing pins. Re-run the
-scoped report before each landing attempt. `main:landing` independently checks that its designated
-checkout is clean, owns the exclusive landing lease, and revalidates the reviewed parents, candidate,
-source branch, and tree.
+scoped report after the final candidate sync and immediately before each landing attempt. This is a
+point-in-time report, not a lease. `main:landing` checks its designated checkout under its exclusive
+landing lease and revalidates the reviewed parents, candidate, source branch, and tree.
 
 **It is advisory and is wired into no hook, on purpose.** It costs two git spawns per
 worktree, so it scales with the fleet — measured in seconds on a fleet of this

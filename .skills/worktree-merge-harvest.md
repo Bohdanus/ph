@@ -493,6 +493,11 @@ test "$(git -C "$MAIN" rev-parse HEAD)" = "$REVIEWED_MAIN_SHA"
 node "$TASK_WORKTREE/scripts/main-landing.mjs" status
 ```
 
+The scoped report is a point-in-time operation check, not full landing readiness or a lease. A
+nonzero result is a hold: inspect the listed source/main operations and resolve unreadable or
+unknown-state findings before proceeding. Do not waive unknown state or alter an unrelated
+worktree.
+
 The status must say the landing worktree is free, except when its only Git operation is the exact
 orphan `AUTO_MERGE` case above. If another landing is active, report its owner in your current chat
 and continue unrelated work; do not wait or edit `MAIN`. The landing wrapper
