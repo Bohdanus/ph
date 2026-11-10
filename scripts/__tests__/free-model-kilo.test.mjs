@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_KILO_OUTPUT_BYTES, resolveKiloCli, runKiloCompletion } from '../lib/free-model-kilo.mjs';
+
+vi.setConfig({ testTimeout: 15_000 });
 
 async function writeExecutable(filePath, source, { windowsShim = process.platform === 'win32' } = {}) {
   await mkdir(join(filePath, '..'), { recursive: true });
@@ -507,7 +510,6 @@ process.exitCode = 1;`
   );
 
   it('rejects a buffered invalid cost before returning a timeout error', async () => {
-    const killSignals = [];
     const spawnImpl = () => {
       const child = new EventEmitter();
       child.stdout = new EventEmitter();
@@ -520,7 +522,6 @@ process.exitCode = 1;`
         );
       };
       child.kill = (signal) => {
-        killSignals.push(signal);
         queueMicrotask(() => child.emit('close', null, signal));
         return true;
       };
@@ -534,7 +535,6 @@ process.exitCode = 1;`
       exhaustSource: true,
       safetyStop: true,
     });
-    expect(killSignals).toEqual(['SIGTERM']);
   });
 
   it('aborts a stalled request at its configured inference timeout', async () => {
@@ -549,4 +549,44 @@ process.exitCode = 1;`
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  async function expectProcessTreeKilled(trigger) {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-process-tree-'));
+    const pidFile = join(directory, 'descendant.pid');
+    const sentinel = join(directory, 'descendant-survived');
+    const descendantScript = `process.on('SIGTERM', () => {}); setTimeout(() => { require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'); process.exit(0); }, 5000);`;
+    const output = trigger === 'output overflow' ? "process.stdout.write('x'.repeat(1024 * 1024 + 1));" : '';
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' });
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));
+${output}
+setInterval(() => {}, 1000);`
+    );
+    try {
+      await expect(
+        runKiloCompletion({ command, model: 'model:free', prompt: 'prompt', timeoutMs: 2000 })
+      ).resolves.toEqual({
+        error:
+          trigger === 'timeout'
+            ? 'Kilo completion exceeded 2000 ms'
+            : `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes`,
+      });
+      expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(0);
+      await new Promise((resolve) => setTimeout(resolve, 5500));
+      expect(existsSync(sentinel)).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+
+  it('kills the Kilo process tree after a timeout', async () => {
+    await expectProcessTreeKilled('timeout');
+  }, 15_000);
+
+  it('kills the Kilo process tree when output overflows', async () => {
+    await expectProcessTreeKilled('output overflow');
+  }, 15_000);
 });

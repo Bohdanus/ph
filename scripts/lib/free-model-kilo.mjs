@@ -4,6 +4,7 @@ import { access, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { resolveCommandShim } from './windows-command-shim.mjs';
+import { terminateWindowsProcessTree } from './windows-process-tree.mjs';
 
 export const COMPLETION_TIMEOUT_MS = 300_000;
 export const MAX_KILO_OUTPUT_BYTES = 1024 * 1024;
@@ -286,8 +287,8 @@ export async function runKiloCompletion({
     }
     const commandShim = resolveCommandShim(command, args);
 
-    const { events, stderrText, code, signal, timedOut, outputOverflow, malformed, inputError } = await new Promise(
-      (resolve, reject) => {
+    const { events, stderrText, code, signal, timedOut, outputOverflow, malformed, inputError, terminationError } =
+      await new Promise((resolve, reject) => {
         let child;
         try {
           child = spawnImpl(commandShim.command, commandShim.args, {
@@ -295,6 +296,7 @@ export async function runKiloCompletion({
             env: kiloRuntimeEnvironment(env),
             stdio: ['pipe', 'pipe', 'pipe'],
             shell: false,
+            detached: process.platform !== 'win32',
             ...commandShim.spawnOptions,
           });
         } catch {
@@ -309,11 +311,42 @@ export async function runKiloCompletion({
         let outputOverflow = false;
         let inputError = false;
         let settled = false;
+        let stopping = false;
+        let terminationError = null;
         let killTimer;
+        let killPromise = Promise.resolve();
+        const stopChild = () => {
+          if (stopping) return killPromise;
+          stopping = true;
+          if (process.platform === 'win32') {
+            killPromise = terminateWindowsProcessTree(child.pid).catch((error) => {
+              terminationError = error;
+              try {
+                child.kill('SIGKILL');
+              } catch {}
+            });
+            return killPromise;
+          }
+          try {
+            process.kill(-child.pid, 'SIGTERM');
+          } catch (error) {
+            if (error?.code !== 'ESRCH') terminationError = error;
+          }
+          killPromise = new Promise((resolveKill) => {
+            killTimer = setTimeout(() => {
+              try {
+                process.kill(-child.pid, 'SIGKILL');
+              } catch (error) {
+                if (error?.code !== 'ESRCH') terminationError = error;
+              }
+              resolveKill();
+            }, 2_000);
+          });
+          return killPromise;
+        };
         const timer = setTimeout(() => {
           timedOut = true;
-          child.kill('SIGTERM');
-          killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+          void stopChild();
         }, timeoutMs);
         const cleanup = () => {
           clearTimeout(timer);
@@ -325,9 +358,10 @@ export async function runKiloCompletion({
           outputBytes += chunk.byteLength;
           if (outputBytes > MAX_KILO_OUTPUT_BYTES) {
             if (remainingBytes > 0) chunks.push(Buffer.from(chunk.subarray(0, remainingBytes)));
-            outputOverflow = true;
-            child.kill('SIGTERM');
-            killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+            if (!outputOverflow) {
+              outputOverflow = true;
+              void stopChild();
+            }
             return;
           }
           chunks.push(chunk);
@@ -346,32 +380,35 @@ export async function runKiloCompletion({
           reject(Object.assign(new Error('Kilo CLI could not be started'), { code: 'KILO_SPAWN' }));
         });
         child.once('close', (code, signal) => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          let events = [];
-          let malformed = false;
-          try {
-            const parsed = parseEvents(Buffer.concat(chunks).toString('utf8'));
-            events = parsed.events;
-            malformed = parsed.malformed;
-          } catch {
-            malformed = true;
-          }
-          resolve({
-            events,
-            stderrText: stderrTail.toString('utf8'),
-            code,
-            signal,
-            timedOut,
-            outputOverflow,
-            inputError,
-            malformed,
-          });
+          void (async () => {
+            if (stopping) await killPromise;
+            if (settled) return;
+            settled = true;
+            cleanup();
+            let events = [];
+            let malformed = false;
+            try {
+              const parsed = parseEvents(Buffer.concat(chunks).toString('utf8'));
+              events = parsed.events;
+              malformed = parsed.malformed;
+            } catch {
+              malformed = true;
+            }
+            resolve({
+              events,
+              stderrText: stderrTail.toString('utf8'),
+              code,
+              signal,
+              timedOut,
+              outputOverflow,
+              inputError,
+              terminationError,
+              malformed,
+            });
+          })().catch(reject);
         });
         child.stdin.end(message);
-      }
-    );
+      });
 
     const stderrEvents = parseEvents(stderrText).events;
     const costs = [...events, ...stderrEvents].flatMap((event) =>
@@ -383,6 +420,7 @@ export async function runKiloCompletion({
     if (contentPolicyRejected(events, stderrText)) {
       return { error: 'Kilo provider content policy rejected or filtered this request', contentPolicyRejected: true };
     }
+    if (terminationError) return { error: 'Kilo CLI process termination failed' };
     if (timedOut) return { error: `Kilo completion exceeded ${timeoutMs} ms` };
     if (outputOverflow) return { error: `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes` };
     if (inputError) return { error: 'Kilo CLI did not accept the complete prompt' };
