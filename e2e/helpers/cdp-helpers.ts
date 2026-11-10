@@ -51,6 +51,8 @@ export async function captureCanvasScreenshot(
       scrollX: window.scrollX,
       scrollY: window.scrollY,
     }));
+  // `box` was measured by the caller. Snapshot before async setup so a geometry change
+  // while opening the session is rejected too, rather than converting that stale box.
   const pageStateBefore = await readPageState();
   await fs.mkdir(outputDir, { recursive: true });
   // CDP clip coordinates are CSS pixels. The decoded image, however, is NOT at the clip
@@ -166,7 +168,7 @@ export async function captureCanvasScreenshot(
       pageStateBefore.scrollY !== pageStateAfter.scrollY
     ) {
       throw new Error(
-        `captureCanvasScreenshot: page geometry changed during CDP capture (${pageStateBefore.innerWidth}x${pageStateBefore.innerHeight} at ${pageStateBefore.scrollX},${pageStateBefore.scrollY} -> ${pageStateAfter.innerWidth}x${pageStateAfter.innerHeight} at ${pageStateAfter.scrollX},${pageStateAfter.scrollY}); refusing to write or attach an unverified screenshot`
+        `captureCanvasScreenshot: page geometry changed between capture setup and CDP response (${pageStateBefore.innerWidth}x${pageStateBefore.innerHeight} at ${pageStateBefore.scrollX},${pageStateBefore.scrollY} -> ${pageStateAfter.innerWidth}x${pageStateAfter.innerHeight} at ${pageStateAfter.scrollX},${pageStateAfter.scrollY}); refusing to write or attach an unverified screenshot`
       );
     }
     await fs.writeFile(screenshotPath, screenshot);

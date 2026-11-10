@@ -281,7 +281,7 @@ describe('CDP Helpers', () => {
 
       const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'drift'));
 
-      expect(error.message).toContain('page geometry changed during CDP capture');
+      expect(error.message).toContain('page geometry changed between capture setup and CDP response');
       expect(error.message).toContain(before);
       expect(error.message).toContain(after);
       expect(send).toHaveBeenCalledTimes(1);
