@@ -4230,6 +4230,59 @@ test.describe('Crop history', () => {
         ],
       };
       const result = await compareCropRenderers(page, fixture);
+      // Keep the comparison evidence before a strict parity assertion can abort this test.
+      const summarizeMaterialization = (comparisons: readonly CropParityLayerComparison[], fixtureStage: string) =>
+        comparisons.map((comparison) => ({
+          fixtureStage,
+          layerId: comparison.layerId,
+          stage: comparison.stage,
+          positions: comparison.positions,
+          compositing: comparison.compositing,
+          affineTransforms: comparison.affineTransforms,
+          expectedBounds: comparison.expectedBounds,
+          materializedBounds: comparison.materializedBounds,
+          bitmapSize: comparison.bitmapSize,
+          frameDifferingBytes: comparison.frameDifferingBytes,
+          frameDifferingPixels: comparison.frameDifferingPixels,
+          frameNonEdgeDifferingPixels: comparison.frameNonEdgeDifferingPixels,
+          frameDifferingSamples: comparison.frameDifferingSamples,
+          offscreenFrameDifferingBytes: comparison.offscreenFrameDifferingBytes,
+          offscreenFrameDifferingPixels: comparison.offscreenFrameDifferingPixels,
+          offscreenFrameNonEdgeDifferingPixels: comparison.offscreenFrameNonEdgeDifferingPixels,
+          offscreenFrameDifferingSamples: comparison.offscreenFrameDifferingSamples,
+          tightBitmapRawDifferingBytes: comparison.tightBitmapRawDifferingBytes,
+          tightBitmapRawDifferingSamples: comparison.tightBitmapRawDifferingSamples,
+          tightBitmapPremultipliedDifferingBytes: comparison.tightBitmapPremultipliedDifferingBytes,
+          downstreamInvertReadbackDifferingBytes: comparison.downstreamInvertReadbackDifferingBytes,
+          downstreamInvertReadbackDifferingSamples: comparison.downstreamInvertReadbackDifferingSamples,
+          offscreenDownstreamInvertReadbackDifferingBytes: comparison.offscreenDownstreamInvertReadbackDifferingBytes,
+          offscreenDownstreamInvertReadbackDifferingSamples:
+            comparison.offscreenDownstreamInvertReadbackDifferingSamples,
+          tightBitmapDifferingPixels: comparison.tightBitmapDifferingPixels,
+          tightBitmapNonEdgeDifferingPixels: comparison.tightBitmapNonEdgeDifferingPixels,
+          tightBitmapDifferingSamples: comparison.tightBitmapDifferingSamples,
+          offscreenTightBitmapRawDifferingBytes: comparison.offscreenTightBitmapRawDifferingBytes,
+          offscreenTightBitmapRawDifferingSamples: comparison.offscreenTightBitmapRawDifferingSamples,
+          offscreenTightBitmapPremultipliedDifferingBytes: comparison.offscreenTightBitmapPremultipliedDifferingBytes,
+          offscreenTightBitmapDifferingPixels: comparison.offscreenTightBitmapDifferingPixels,
+          offscreenTightBitmapNonEdgeDifferingPixels: comparison.offscreenTightBitmapNonEdgeDifferingPixels,
+          offscreenTightBitmapDifferingSamples: comparison.offscreenTightBitmapDifferingSamples,
+        }));
+      await testInfo.attach('affine-raster-materialization-diagnostics.json', {
+        body: JSON.stringify(
+          [
+            ...result.layerTransformResults.flatMap((transform, index) =>
+              summarizeMaterialization(transform.materializedLayerComparisons, `affine cursor ${index + 1}`)
+            ),
+            ...result.transitionResults.flatMap((transition, index) =>
+              summarizeMaterialization(transition.materializedLayerComparisons, `frame transition ${index + 1}`)
+            ),
+          ],
+          null,
+          2
+        ),
+        contentType: 'application/json',
+      });
       const adapterDiagnostics = [];
       const normalComposite = await compareCropRenderers(page, {
         ...fixture,
