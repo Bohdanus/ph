@@ -84,7 +84,7 @@ malformed lease all produce a message and then a normal run, because the port
 guarantee does not depend on any of it. Two runs at once is survivable: each has
 its own port and its own output directory. Do not "fix" a slow run by making the
 lock load-bearing; that is the change that put an unenforceable mechanism in front
-of a merge gate once already. Board detail: [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md).
+of a merge gate once already. Board detail: [`ORCHESTRATION.md`](ORCHESTRATION.md).
 
 Each run also writes to its own `test-results/runs/<run-id>/`, because Playwright
 **deletes** `outputDir` at the start of every run, and records its port to

@@ -48,11 +48,12 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 ## System
 
-| Document                                       | Its one job                                                                   |
-| ---------------------------------------------- | ----------------------------------------------------------------------------- |
-| [`FEATURES.md`](FEATURES.md)                   | Capability inventory against Photoshop, including what the platform cannot do |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)           | The store, the layer model, both history systems, rendering, file I/O         |
-| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md) | The durable-history migration contract and cutover sequence                   |
+| Document                                                                     | Its one job                                                                   |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [`FEATURES.md`](FEATURES.md)                                                 | Capability inventory against Photoshop, including what the platform cannot do |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                                         | The store, the layer model, both history systems, rendering, file I/O         |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)                               | The durable-history migration contract and cutover sequence                   |
+| [`HISTORY-MIGRATION-AUDIT-20261107.md`](HISTORY-MIGRATION-AUDIT-20261107.md) | Dated audit of durable-history parity gates and open export findings          |
 
 ## Working practice
 
@@ -140,13 +141,14 @@ and remaining unproven work.
 Three homes for an open defect, split by what broke. A defect goes in one of them, not in two —
 `handoffs/` is not one of them; it records a finished review.
 
-| Document                                                                                                           | Its one job                                                                |
-| ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| [`../HANDOFF.md`](../HANDOFF.md)                                                                                   | Open defects in the code                                                   |
-| [`../TEST-FLAKES.md`](../TEST-FLAKES.md)                                                                           | Intermittent and unreliable test behaviour                                 |
-| [`../e2e/OPEN_PROBLEMS.md`](../e2e/OPEN_PROBLEMS.md)                                                               | Latent defects in the e2e suite's own code — none fails a current run      |
-| [`handoffs/`](handoffs/)                                                                                           | One per branch review-and-merge, named `docs/handoffs/<branch>-<topic>.md` |
-| [`handoffs/docs-orchestration-review-gotchas-20261102.md`](handoffs/docs-orchestration-review-gotchas-20261102.md) | Review record for orchestration and code-review guidance                   |
+| Document                                                                                                                                           | Its one job                                                                           |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [`../HANDOFF.md`](../HANDOFF.md)                                                                                                                   | Open defects in the code                                                              |
+| [`../TEST-FLAKES.md`](../TEST-FLAKES.md)                                                                                                           | Intermittent and unreliable test behaviour                                            |
+| [`../e2e/OPEN_PROBLEMS.md`](../e2e/OPEN_PROBLEMS.md)                                                                                               | Latent defects in the e2e suite's own code — none fails a current run                 |
+| [`handoffs/`](handoffs/)                                                                                                                           | One per branch review-and-merge, named `docs/handoffs/<branch>-<topic>.md`            |
+| [`handoffs/docs-orchestration-review-gotchas-20261102.md`](handoffs/docs-orchestration-review-gotchas-20261102.md)                                 | Review record for orchestration and code-review guidance                              |
+| [`handoffs/task-test-unit-hardening-salvage-20261107-review-and-merge.md`](handoffs/task-test-unit-hardening-salvage-20261107-review-and-merge.md) | Review record and verified landing result for the salvaged unit-test hardening branch |
 
 ## Not maintained here
 
@@ -165,6 +167,7 @@ hierarchy.
 | `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them               |
 | `HISTORY-MIGRATION-AUDIT-20261107.md`    | Read-only history migration audit at main `659ca8e`; findings are a dated snapshot, not current contract     |
 | `../MERGE-INTEGRITY-AUDIT.md`            | What concurrent-branch work left unresolved: open merges, colliding handoff numbers, gates that miss a class |
+| `../ORCHESTRATION_GOTCHAS_RESEARCH.md`   | Point-in-time evidence audit of parallel-agent coordination research and repository safeguards               |
 | `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
 | `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
 | `HARDENING-HARVEST-HANDOFF-20261017.md`  | Dated handoff for the October 17 hardening sweep; its inventory and worktree dispositions are historical     |
