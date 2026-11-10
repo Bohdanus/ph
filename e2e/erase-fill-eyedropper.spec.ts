@@ -484,7 +484,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     // form control up to `label.control` — so an `<option>` inside a label-wrapped `<select>` is
     // reported against the SELECT, which is enabled, no matter what the option carries. The
     // attribute plus the enabled set is the same fact read through a channel that is not
-    // retargeted, and it is what a user can actually do. See e2e/OPEN_PROBLEMS.md.
+    // retargeted, and it is what a user can actually do. See docs/TESTING.md.
     await expect(brushOption).not.toHaveAttribute('disabled', '');
     const selectable = await mode
       .locator('option')
