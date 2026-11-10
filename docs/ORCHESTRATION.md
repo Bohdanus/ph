@@ -73,7 +73,8 @@ required for cross-module, persistence, migration, or high-risk changes.
 - Stop only with a validated review-ready commit or an evidence-backed handoff. Crashed dirty work
   is preserved before releasing claims, merging, or removing anything.
 - Sync `main` into the branch, rerun gates, and land only from a clean current checkout. Recheck
-  diff, status, `repo:state`, liveness, and `git cherry` immediately before landing/disposal.
+  diff, status, scoped `repo:state --for-landing`, liveness, and `git cherry` immediately before
+  landing; use the full `repo:state` report when examining or disposing of worktrees.
 
 ### Tool limits
 
@@ -730,17 +731,28 @@ roster it could not read, or a worktree it could not describe, is reported as
 unreadable rather than as clean. `npm run dispose` refuses on exactly those inputs, and
 a report that answered them with exit 0 would be the surface a person trusts more.
 
-**Run it before you believe the repository is quiet.** It exits non-zero when
-anything is in progress, and it is the check to run before a sweep, before a landing,
-and before you conclude that a worktree is finished.
+**Run the full report before you believe the repository is quiet.** The default command exits
+non-zero when anything is in progress; use it before a sweep, cleanup, or when you need to inspect
+the whole fleet. Its exit status is not a main-landing gate. For a main landing, run
+`npm run repo:state -- --for-landing <source-branch>` as the operation-scope check, so an unrelated
+branch operation does not become a manual hard stop on an independent landing.
 
-**A non-zero report is repository-wide, not a command to stop all independent work.**
+**A non-zero default report is repository-wide, not a command to stop all independent work.**
 Read the exact worktree paths and operation markers it reports. Do not run
 `--abort`, clear markers, resolve conflicts, or otherwise alter another worktree
 without first establishing its owner and following that worktree's recovery
-procedure. A blocked landing remains blocked; unrelated research and implementation
-can continue in clean task worktrees. Re-run `repo:state` before each landing attempt,
-because resolving one operation does not prove that the rest of the fleet is clear.
+procedure. The `--for-landing` form still reports every finding, but exits non-zero only when
+the registered main checkout or selected candidate branch has operation state, or when a finding
+is unreadable or cannot be assigned to a known branch. An operation in another known branch remains
+visible and untouched; its index and operation markers are worktree-local. An unreadable finding,
+a finding without a known branch, or a missing/ambiguous main or candidate worktree remains a hard
+stop. A zero exit means only that the operation scope is clear; it does not certify a clean diff,
+passing gates, a reviewed candidate, or valid landing pins. The command also
+recognizes only the designated-main orphan `AUTO_MERGE` shape as eligible for the pinned
+`main:landing` recovery path; that wrapper revalidates the marker and all landing pins. Re-run the
+scoped report after the final candidate sync and immediately before each landing attempt. This is a
+point-in-time report, not a lease. `main:landing` checks its designated checkout under its exclusive
+landing lease and revalidates the reviewed parents, candidate, source branch, and tree.
 
 **It is advisory and is wired into no hook, on purpose.** It costs two git spawns per
 worktree, so it scales with the fleet — measured in seconds on a fleet of this
