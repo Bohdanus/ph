@@ -51,8 +51,8 @@ const REVIEWED = {
     patterns: `filesystem-write:mkdtemp=6 filesystem-write:writeFile=6 filesystem-write:rm=6`,
   },
   'free-model-kilo.test.mjs': {
-    scope: 'Mock CLI and configuration fixtures use temporary directories.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=15 filesystem-write:rm=15`,
+    scope: 'Each fake Kilo CLI and configuration fixture uses a unique OS temp directory with finally cleanup.',
+    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=16 filesystem-write:rm=16`,
   },
   'free-model-pool-external.test.mjs': {
     scope: 'External-provider and Kilo cost-stop fixtures use unique OS temporary directories with finally cleanup.',
