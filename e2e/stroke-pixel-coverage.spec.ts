@@ -8,6 +8,7 @@ import {
 } from './helpers/canvas-helpers';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
+import { PAINT_TOOLS_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 type Point = { x: number; y: number };
 type Pixel = { x: number; y: number; red: number; green: number; blue: number; alpha: number };
@@ -142,6 +143,7 @@ function expectDiagonalCoverage(pixels: Pixel[], center: Point, label: string): 
 }
 
 test.describe('1px stroke pixel coverage', () => {
+  test.describe.configure({ timeout: PAINT_TOOLS_TEST_TIMEOUT_MS });
   test.use({ deviceScaleFactor: 1 });
 
   test.beforeEach(async ({ page }) => {
