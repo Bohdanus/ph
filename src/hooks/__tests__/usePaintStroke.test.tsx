@@ -475,7 +475,7 @@ describe('usePaintStroke', () => {
     expect(isDocumentGestureOpen()).toBe(false);
   });
 
-  it.each(['pointerup', 'pointercancel'] as const)(
+  it.each(['pointerup', 'pointercancel', 'lostpointercapture'] as const)(
     'aborts and releases its claim when disabled before the owning %s',
     (ending) => {
       const callbacks = makeCallbacks();
@@ -487,7 +487,8 @@ describe('usePaintStroke', () => {
       rerender({ enabled: false });
       act(() => {
         if (ending === 'pointerup') result.current.onPointerUp(up(5, 5));
-        else fireEvent.pointerCancel(container, { pointerId: 1 });
+        else if (ending === 'pointercancel') fireEvent.pointerCancel(container, { pointerId: 1 });
+        else fireEvent(container, lostPointerCapture(1));
       });
 
       expect(callbacks.onCancel).toHaveBeenCalledTimes(1);

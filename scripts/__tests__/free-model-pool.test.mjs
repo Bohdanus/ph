@@ -1187,7 +1187,14 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
     const pidFile = join(directory, 'descendant.pid');
     const sentinel = join(directory, 'descendant-survived');
-    const descendantScript = `process.on('SIGTERM', () => {}); setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'), 4000); setInterval(() => {}, 1000);`;
+    // The timeout starts at spawn, so let both Node processes start under a busy Vitest worker.
+    const timeoutMs = 5_000;
+    const sentinelDelayMs = timeoutMs + 5_000;
+    const descendantScript = [
+      "process.on('SIGTERM', () => {});",
+      `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'), ${sentinelDelayMs});`,
+      'setInterval(() => {}, 1000);',
+    ].join(' ');
     const command = await writeFakeOpenCode(
       directory,
       `const { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nconst descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' });\nfs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));\nsetInterval(() => {}, 1000);\n`
@@ -1201,11 +1208,12 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           model: 'beam-free',
           prompt: 'prompt',
           maxTokens: 8,
-          timeoutMs: 1000,
+          timeoutMs,
         })
-      ).rejects.toThrow('OpenCode timed out after 1000ms');
+      ).rejects.toThrow(`OpenCode timed out after ${timeoutMs}ms`);
       descendantPid = Number(await readFile(pidFile, 'utf8'));
-      await new Promise((resolve) => setTimeout(resolve, 4500));
+      // Observe past the latest time the live descendant could create its sentinel.
+      await new Promise((resolve) => setTimeout(resolve, sentinelDelayMs + 1_000));
       expect(existsSync(sentinel)).toBe(false);
     } finally {
       if (Number.isSafeInteger(descendantPid) && descendantPid > 0) {
@@ -1217,7 +1225,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       }
       await rm(directory, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 25_000);
 
   it.each([
     [
