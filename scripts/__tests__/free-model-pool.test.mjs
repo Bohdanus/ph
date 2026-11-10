@@ -1216,14 +1216,25 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       await new Promise((resolve) => setTimeout(resolve, sentinelDelayMs + 1_000));
       expect(existsSync(sentinel)).toBe(false);
     } finally {
-      if (Number.isSafeInteger(descendantPid) && descendantPid > 0) {
-        try {
-          process.kill(descendantPid);
-        } catch (error) {
-          if (error?.code !== 'ESRCH') throw error;
+      try {
+        if (!Number.isSafeInteger(descendantPid) || descendantPid <= 0) {
+          try {
+            descendantPid = Number(await readFile(pidFile, 'utf8'));
+          } catch (error) {
+            if (error?.code !== 'ENOENT') throw error;
+          }
         }
+        if (Number.isSafeInteger(descendantPid) && descendantPid > 0) {
+          try {
+            // The fake descendant ignores SIGTERM; force it down on every assertion path.
+            process.kill(descendantPid, 'SIGKILL');
+          } catch (error) {
+            if (error?.code !== 'ESRCH') throw error;
+          }
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true });
       }
-      await rm(directory, { recursive: true, force: true });
     }
   }, 25_000);
 
