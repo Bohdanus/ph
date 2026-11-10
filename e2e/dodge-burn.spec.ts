@@ -50,10 +50,10 @@ const STROKE_MID_X = (STROKE_START_X + STROKE_END_X) / 2;
 
 const INSIDE = { x: STROKE_MID_X, y: BAND_Y };
 /**
- * A probe 80 document pixels past the end of a 30px tip — five tip radii clear — still inside
- * the drawn band and inside the layer's raster. This is the "brush, not a filter" probe.
+ * A probe 90 document pixels past the end of a 30px tip (15px radius), leaving five radii beyond
+ * its footprint while staying inside the drawn band and layer raster. This is the "brush, not a filter" probe.
  */
-const OUTSIDE = { x: STROKE_END_X + 80, y: BAND_Y };
+const OUTSIDE = { x: STROKE_END_X + 90, y: BAND_Y };
 const OUTSIDE_IS_INSIDE_THE_RASTER = OUTSIDE.x < LAYER_RIGHT;
 
 const DODGE_ITEM: FlyoutItem = { toolName: 'dodge', label: 'Dodge Tool' };
@@ -194,7 +194,7 @@ test.describe('Dodge/Burn Tonal tools - gap coverage', () => {
    * GAP 1: Brush, not a filter.
    *
    * A dodge/burn stroke is a brush over a soft disc, not a per-pixel filter over a buffer. The
-   * probe at OUTSIDE sits 80 document pixels past a 30px tip — five tip radii clear — on the SAME
+   * probe at OUTSIDE sits 90 document pixels past a 30px tip — five tip radii clear — on the SAME
    * layer and inside the SAME raster the processor was handed. A tool that iterated that buffer
    * would have moved it; a brush walk cannot. The comparison is byte equality on the decoded capture.
    */

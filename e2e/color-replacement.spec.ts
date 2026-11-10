@@ -252,6 +252,10 @@ test.describe('Color Replacement tool', () => {
     await drawLine(page, highToleranceBox, DRAG_START_X, STROKE_Y, DRAG_END_X, STROKE_Y, { steps: 12 });
     const afterHigh = await page.screenshot({ clip });
     const highPixel = await readPixel(afterHigh, clip, replacementBox, SAMPLE_X, STROKE_Y);
-    expect(highPixel, 'maximum tolerance should reach the near-red pixel').not.toEqual(tinted);
+    expect(highPixel, 'maximum tolerance should reach the near-red pixel').not.toBeNull();
+    expect(highPixel!.g, 'the green replacement should raise the target pixel green channel').toBeGreaterThan(
+      tinted!.g
+    );
+    expect(highPixel!.g, 'the replaced pixel should be green-dominant').toBeGreaterThan(highPixel!.r);
   });
 });
