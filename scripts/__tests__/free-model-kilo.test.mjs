@@ -460,6 +460,7 @@ process.exitCode = 1;`
     }
   });
 
+  // These cases use real Node child processes; leave startup headroom for a contended Vitest worker.
   it.each([
     [
       'provider error event',
@@ -472,11 +473,6 @@ process.exitCode = 1;`
     [
       'output overflow after a cost event',
       `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));\nprocess.stdout.write('x'.repeat(2 * 1024 * 1024));`,
-    ],
-    [
-      'timeout after an invalid cost event',
-      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: false } }));\nsetInterval(() => {}, 1000);`,
-      500,
     ],
     [
       'conflicting top-level and part costs',
@@ -492,7 +488,7 @@ process.exitCode = 1;`
     ],
   ])(
     'rejects every reported invalid Kilo cost before process failure handling: %s',
-    async (_scenario, source, timeoutMs = 1000) => {
+    async (_scenario, source, timeoutMs = 5000) => {
       const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
       const command = await writeExecutable(join(directory, 'fake-kilo'), source);
 
@@ -509,6 +505,37 @@ process.exitCode = 1;`
       }
     }
   );
+
+  it('rejects a buffered invalid cost before returning a timeout error', async () => {
+    const killSignals = [];
+    const spawnImpl = () => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => {
+        child.stdout.emit(
+          'data',
+          Buffer.from(`${JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: false } })}\n`)
+        );
+      };
+      child.kill = (signal) => {
+        killSignals.push(signal);
+        queueMicrotask(() => child.emit('close', null, signal));
+        return true;
+      };
+      return child;
+    };
+
+    await expect(
+      runKiloCompletion({ command: process.execPath, model: 'model:free', prompt: 'prompt', timeoutMs: 25, spawnImpl })
+    ).resolves.toEqual({
+      error: 'Kilo reported non-zero or invalid completion cost',
+      exhaustSource: true,
+      safetyStop: true,
+    });
+    expect(killSignals).toEqual(['SIGTERM']);
+  });
 
   it('aborts a stalled request at its configured inference timeout', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
