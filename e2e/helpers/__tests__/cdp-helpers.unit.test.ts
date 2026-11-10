@@ -273,7 +273,15 @@ describe('CDP Helpers', () => {
         '1280x700 at 0,0',
         '1280x613 at 0,0',
       ],
-      ['scroll drift', { width: 1280, height: 720 }, { scrollY: 87 }, '1280x720 at 0,0', '1280x720 at 0,87'],
+      [
+        'viewport width drift',
+        { width: 1280, height: 720 },
+        { innerWidth: 1193 },
+        '1280x720 at 0,0',
+        '1193x720 at 0,0',
+      ],
+      ['horizontal scroll drift', { width: 1280, height: 720 }, { scrollX: 87 }, '1280x720 at 0,0', '1280x720 at 87,0'],
+      ['vertical scroll drift', { width: 1280, height: 720 }, { scrollY: 87 }, '1280x720 at 0,0', '1280x720 at 0,87'],
     ] as const)('rejects an unverified capture after %s', async (_, viewport, pageStateAfterCapture, before, after) => {
       const outputDir = await makeOutputDir('geometry-drift');
       const { page, send, detach } = createCdpHarness(outputDir, { viewport, pageStateAfterCapture });
