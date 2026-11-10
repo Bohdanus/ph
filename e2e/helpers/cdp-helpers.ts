@@ -1,7 +1,6 @@
 import { type Page, type TestInfo } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { getPageScroll } from './canvas-helpers';
 import { type ClipOptions, type CssBox as BoundingBox, viewportRectToPageRect } from './screenshot-scale';
 
 /** Captures a canvas region through CDP to avoid headed screenshot hangs. */
@@ -45,8 +44,15 @@ export async function captureCanvasScreenshot(
     );
   }
   const screenshotPath = path.join(outputDir, `${name}.png`);
+  const readPageState = () =>
+    page.evaluate(() => ({
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+    }));
+  const pageStateBefore = await readPageState();
   await fs.mkdir(outputDir, { recursive: true });
-  const cdp = await page.context().newCDPSession(page);
   // CDP clip coordinates are CSS pixels. The decoded image, however, is NOT at the clip
   // extent times the clip scale times the emulated ratio, and it is NOT equivalent to
   // `page.screenshot()`: this comment used to assert both, and the sibling spec measured
@@ -85,7 +91,6 @@ export async function captureCanvasScreenshot(
   // outgrow the viewport at any width. The conversion is still correct and still needed, and
   // this is a much better example for it: `preservingScroll` in `toolbar-helpers.ts` scrolls
   // before an interaction, so a page CAN scroll under a test that never intended to scroll it.
-  const scroll = await getPageScroll(page);
   const captureClip = viewportRectToPageRect(
     {
       x: clip?.x ?? box.x,
@@ -93,8 +98,9 @@ export async function captureCanvasScreenshot(
       width: clip?.width ?? box.width,
       height: clip?.height ?? box.height,
     },
-    scroll
+    { x: pageStateBefore.scrollX, y: pageStateBefore.scrollY }
   );
+  const cdp = await page.context().newCDPSession(page);
 
   // Held rather than returned from the `try`, so the detach below can be told whether the
   // capture is already failing. `finally { await cdp.detach() }` could not, which is the
@@ -148,6 +154,19 @@ export async function captureCanvasScreenshot(
         screenshot === null
           ? `captureCanvasScreenshot: the Page.captureScreenshot response carried no base64 \`data\` to decode (received ${typeof data}), so no screenshot was written or attached`
           : 'captureCanvasScreenshot: the Page.captureScreenshot response decoded to 0 bytes, so no screenshot was written or attached'
+      );
+    }
+    // CDP has intermittently changed the viewport height during a capture. Do not write or
+    // attach an image whose clip was converted under different page or scroll geometry.
+    const pageStateAfter = await readPageState();
+    if (
+      pageStateBefore.innerWidth !== pageStateAfter.innerWidth ||
+      pageStateBefore.innerHeight !== pageStateAfter.innerHeight ||
+      pageStateBefore.scrollX !== pageStateAfter.scrollX ||
+      pageStateBefore.scrollY !== pageStateAfter.scrollY
+    ) {
+      throw new Error(
+        `captureCanvasScreenshot: page geometry changed during CDP capture (${pageStateBefore.innerWidth}x${pageStateBefore.innerHeight} at ${pageStateBefore.scrollX},${pageStateBefore.scrollY} -> ${pageStateAfter.innerWidth}x${pageStateAfter.innerHeight} at ${pageStateAfter.scrollX},${pageStateAfter.scrollY}); refusing to write or attach an unverified screenshot`
       );
     }
     await fs.writeFile(screenshotPath, screenshot);

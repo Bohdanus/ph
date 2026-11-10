@@ -48,6 +48,8 @@ interface HarnessOptions {
   detachError?: Error;
   /** The window offset `captureCanvasScreenshot` reads before it builds its clip. */
   scroll?: { x: number; y: number };
+  viewport?: { width: number; height: number };
+  pageStateAfterCapture?: { innerWidth?: number; innerHeight?: number; scrollX?: number; scrollY?: number };
 }
 
 interface CdpHarness {
@@ -64,11 +66,21 @@ interface CdpHarness {
 }
 
 function createCdpHarness(outputDir: string, options: HarnessOptions = {}): CdpHarness {
+  const scroll = options.scroll ?? { x: 0, y: 0 };
+  const pageState = {
+    scrollX: scroll.x,
+    scrollY: scroll.y,
+    innerWidth: options.viewport?.width ?? 1280,
+    innerHeight: options.viewport?.height ?? 720,
+  };
   const send = vi.fn<(method: string, params: CaptureParams) => Promise<{ data?: string }>>();
   if (options.sendError) {
     send.mockRejectedValue(options.sendError);
   } else {
-    send.mockResolvedValue(options.response ?? { data: PNG_BASE64 });
+    send.mockImplementation(async () => {
+      if (options.pageStateAfterCapture) Object.assign(pageState, options.pageStateAfterCapture);
+      return options.response ?? { data: PNG_BASE64 };
+    });
   }
 
   const detach = vi.fn<() => Promise<void>>();
@@ -84,9 +96,8 @@ function createCdpHarness(outputDir: string, options: HarnessOptions = {}): CdpH
     return { send, detach } as unknown as CDPSession;
   });
   const context = vi.fn<() => BrowserContext>().mockReturnValue({ newCDPSession } as unknown as BrowserContext);
-  const scroll = options.scroll ?? { x: 0, y: 0 };
   const evaluate = vi.fn(async (pageFunction: () => unknown) => pageFunction()) as unknown as Mock<Page['evaluate']>;
-  vi.stubGlobal('window', { scrollX: scroll.x, scrollY: scroll.y });
+  vi.stubGlobal('window', pageState);
 
   return {
     page: createPageMock({ context, evaluate }),
@@ -254,6 +265,31 @@ describe('CDP Helpers', () => {
       });
     });
 
+    it.each([
+      [
+        'viewport height drift',
+        { width: 1280, height: 700 },
+        { innerHeight: 613 },
+        '1280x700 at 0,0',
+        '1280x613 at 0,0',
+      ],
+      ['scroll drift', { width: 1280, height: 720 }, { scrollY: 87 }, '1280x720 at 0,0', '1280x720 at 0,87'],
+    ] as const)('rejects an unverified capture after %s', async (_, viewport, pageStateAfterCapture, before, after) => {
+      const outputDir = await makeOutputDir('geometry-drift');
+      const { page, send, detach } = createCdpHarness(outputDir, { viewport, pageStateAfterCapture });
+      const { testInfo, attach } = createTestInfoMock(outputDir);
+
+      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'drift'));
+
+      expect(error.message).toContain('page geometry changed during CDP capture');
+      expect(error.message).toContain(before);
+      expect(error.message).toContain(after);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(detach).toHaveBeenCalledTimes(1);
+      expect(existsSync(path.join(outputDir, 'drift.png'))).toBe(false);
+      expect(attach).not.toHaveBeenCalled();
+    });
+
     it('declares the capture scope explicitly, rather than inheriting Chrome’s default', async () => {
       const outputDir = await makeOutputDir('capture-scope');
       const { page, send } = createCdpHarness(outputDir);
@@ -416,7 +452,7 @@ describe('CDP Helpers', () => {
       await captureCanvasScreenshot(page, BOX, testInfo, 'first');
       await captureCanvasScreenshot(page, BOX, testInfo, 'second');
 
-      expect((page.evaluate as unknown as Mock).mock.calls.length).toBe(2);
+      expect((page.evaluate as unknown as Mock).mock.calls.length).toBe(4);
       for (const call of send.mock.calls) {
         expect(call[1].clip.y).toBe(BOX.y + 440);
       }
