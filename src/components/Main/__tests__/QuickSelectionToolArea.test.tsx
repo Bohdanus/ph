@@ -814,6 +814,146 @@ describe('QuickSelectionToolArea', () => {
     }
   });
 
+  it('restores the overlay clip when drawing a Quick Selection preview throws', () => {
+    createQuickSelectionPolygonMock.mockReturnValueOnce({
+      points: [
+        [
+          { x: 5, y: 5 },
+          { x: 10, y: 5 },
+          { x: 10, y: 10 },
+        ],
+        [
+          { x: 15, y: 15 },
+          { x: 20, y: 15 },
+          { x: 20, y: 20 },
+        ],
+      ],
+      pixelCount: 50,
+      bounds: { x: 5, y: 5, width: 15, height: 15 },
+      boundaryEdgeCount: 24,
+      hasHoles: null,
+    });
+    const frames: FrameRequestCallback[] = [];
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const { toolArea, overlayCtx } = renderQuickSelectionView();
+    const clipStack: boolean[] = [];
+    let clipped = false;
+    const clearedUnderClip: boolean[] = [];
+    vi.mocked(overlayCtx.save).mockClear();
+    vi.mocked(overlayCtx.restore).mockClear();
+    vi.mocked(overlayCtx.clip).mockClear();
+    vi.mocked(overlayCtx.clearRect).mockClear();
+    vi.mocked(overlayCtx.stroke).mockClear();
+    vi.mocked(overlayCtx.save).mockImplementation(() => {
+      clipStack.push(clipped);
+    });
+    vi.mocked(overlayCtx.restore).mockImplementation(() => {
+      clipped = clipStack.pop() ?? false;
+    });
+    vi.mocked(overlayCtx.clip).mockImplementation(() => {
+      clipped = true;
+    });
+    vi.mocked(overlayCtx.clearRect).mockImplementation(() => {
+      clearedUnderClip.push(clipped);
+    });
+    vi.mocked(overlayCtx.stroke).mockImplementation(() => {
+      throw new Error('preview stroke failed');
+    });
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+      frames.shift()?.(0);
+
+      expect(overlayCtx.closePath).toHaveBeenCalledTimes(2);
+      expect(overlayCtx.stroke).toHaveBeenCalledOnce();
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        'Unable to preview Quick Selection stroke',
+        expect.objectContaining({ message: 'preview stroke failed' })
+      );
+      expect(clearedUnderClip.length).toBeGreaterThanOrEqual(2);
+      expect(clearedUnderClip).not.toContain(true);
+      expect(clipped).toBe(false);
+      expect(clipStack).toEqual([]);
+      expect(overlayCtx.restore).toHaveBeenCalledTimes(vi.mocked(overlayCtx.save).mock.calls.length);
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+    }
+  });
+
+  it('restores the overlay clip when drawing a raster Quick Selection preview throws', () => {
+    createQuickSelectionPolygonMock.mockReturnValueOnce({
+      points: [],
+      rasterMask: { width: 1, height: 1, data: 'AA==' },
+      pixelCount: 1,
+      bounds: { x: 5, y: 5, width: 1, height: 1 },
+      boundaryEdgeCount: 4,
+      hasHoles: null,
+    });
+    const outlineCanvas = document.createElement('canvas');
+    createSelectionRasterOutlineMock.mockReturnValueOnce({
+      canvas: outlineCanvas,
+      width: 1,
+      height: 1,
+      scaleFactor: 1,
+    });
+    const frames: FrameRequestCallback[] = [];
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const { toolArea, overlayCtx } = renderQuickSelectionView();
+    const clipStack: boolean[] = [];
+    let clipped = false;
+    const clearedUnderClip: boolean[] = [];
+    vi.mocked(overlayCtx.save).mockClear();
+    vi.mocked(overlayCtx.restore).mockClear();
+    vi.mocked(overlayCtx.clip).mockClear();
+    vi.mocked(overlayCtx.clearRect).mockClear();
+    vi.mocked(overlayCtx.drawImage).mockClear();
+    vi.mocked(overlayCtx.save).mockImplementation(() => {
+      clipStack.push(clipped);
+    });
+    vi.mocked(overlayCtx.restore).mockImplementation(() => {
+      clipped = clipStack.pop() ?? false;
+    });
+    vi.mocked(overlayCtx.clip).mockImplementation(() => {
+      clipped = true;
+    });
+    vi.mocked(overlayCtx.clearRect).mockImplementation(() => {
+      clearedUnderClip.push(clipped);
+    });
+    vi.mocked(overlayCtx.drawImage).mockImplementation(() => {
+      throw new Error('raster preview draw failed');
+    });
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+      frames.shift()?.(0);
+
+      expect(overlayCtx.drawImage).toHaveBeenCalledOnce();
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        'Unable to preview Quick Selection stroke',
+        expect.objectContaining({ message: 'raster preview draw failed' })
+      );
+      expect(clearedUnderClip.length).toBeGreaterThanOrEqual(2);
+      expect(clearedUnderClip).not.toContain(true);
+      expect(clipped).toBe(false);
+      expect(clipStack).toEqual([]);
+      expect(overlayCtx.restore).toHaveBeenCalledTimes(vi.mocked(overlayCtx.save).mock.calls.length);
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+    }
+  });
+
   it('clears the active selection when a subtract stroke removes its last selected pixel', () => {
     storeState.selections = [activeSelectionInFrame];
     storeState.activeSelectionId = activeSelectionInFrame.id;
