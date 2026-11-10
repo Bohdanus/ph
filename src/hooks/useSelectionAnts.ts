@@ -273,18 +273,21 @@ function drawRasterMaskOutline(
   const { width, height } = outline;
 
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(x, y, width, height);
-  ctx.clip();
-  if (pattern?.setTransform) {
-    const fit = 1 / Math.max(scale, Number.EPSILON);
-    pattern.setTransform({ a: fit, b: 0, c: 0, d: fit, e: offset, f: offset });
+  try {
+    ctx.beginPath();
+    ctx.rect(x, y, width, height);
+    ctx.clip();
+    if (pattern?.setTransform) {
+      const fit = 1 / Math.max(scale, Number.EPSILON);
+      pattern.setTransform({ a: fit, b: 0, c: 0, d: fit, e: offset, f: offset });
+    }
+    ctx.fillStyle = pattern ?? ANT_STROKE_COLOR;
+    ctx.fillRect(x, y, width, height);
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(outline.canvas, x, y, width, height);
+  } finally {
+    ctx.restore();
   }
-  ctx.fillStyle = pattern ?? ANT_STROKE_COLOR;
-  ctx.fillRect(x, y, width, height);
-  ctx.globalCompositeOperation = 'destination-in';
-  ctx.drawImage(outline.canvas, x, y, width, height);
-  ctx.restore();
 }
 
 /**
@@ -378,86 +381,95 @@ export function useSelectionMarchingAnts({
 
       clearCanvasBackingStore(ctx);
       const offset = dashOffsetRef.current;
-
-      ctx.save();
-      // This canvas is its own 2D context, but nothing else in this repository skips the reset
-      // before painting an overlay: `useAnts.ts` resets for the layer outline it draws on the
-      // tool overlay, and `drawSelectionAnchors` resets for the anchors that share the canvas with
-      // it. A stroke with no `globalAlpha` of its own renders at whatever the last painter left
-      // behind, and the ants are two thin strokes — the first thing that would show it.
-      resetOverlayAlpha(ctx);
-      // The divide is per frame rather than once at mount, because the ref is read inside the loop
-      // and the fit changes when the window does. The cycle is recomputed rather than read from a
-      // module constant: the undivided cycle is the WRONG modulus here, because at a scale below 1
-      // the dashes are longer in document px than that, so offsetting by it would make the modulo a
-      // no-op and let the offset grow without bound.
+      const dragged = drag?.kind === 'follow' ? drag.selection : null;
       const scale = scaleRef?.current ?? 1;
       const lineWidth = LINE_WIDTH / scale;
       const dashLength = DASH_LENGTH / scale;
       const gapLength = GAP_LENGTH / scale;
       const dashCycle = dashLength + gapLength;
 
-      ctx.lineWidth = lineWidth;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'butt';
-      ctx.setLineDash([dashLength, gapLength]);
+      ctx.save();
+      try {
+        // This canvas is its own 2D context, but nothing else in this repository skips the reset
+        // before painting an overlay: `useAnts.ts` resets for the layer outline it draws on the
+        // tool overlay, and `drawSelectionAnchors` resets for the anchors that share the canvas with
+        // it. A stroke with no `globalAlpha` of its own renders at whatever the last painter left
+        // behind, and the ants are two thin strokes — the first thing that would show it.
+        resetOverlayAlpha(ctx);
+        // The divide is per frame rather than once at mount, because the ref is read inside the loop
+        // and the fit changes when the window does. The cycle is recomputed rather than read from a
+        // module constant: the undivided cycle is the WRONG modulus here, because at a scale below 1
+        // the dashes are longer in document px than that, so offsetting by it would make the modulo a
+        // no-op and let the offset grow without bound.
+        ctx.lineWidth = lineWidth;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'butt';
+        ctx.setLineDash([dashLength, gapLength]);
 
-      // A selection being dragged replaces its own committed shape rather than joining it: the
-      // committed one is the pre-drag geometry, and both together would be two borders of one
-      // selection, the stale one anchored where the pointer left.
-      const dragged = drag?.kind === 'follow' ? drag.selection : null;
-      const visibleShapes = dragged ? committed.filter(({ id }) => id !== dragged.id) : committed;
-      let pattern = rasterPatternRef.current?.canvas === canvas ? rasterPatternRef.current.pattern : null;
-      if (!pattern) {
-        const patternCanvas = createMarchingAntsPatternCanvas();
-        pattern = patternCanvas ? ctx.createPattern(patternCanvas, 'repeat') : null;
-        rasterPatternRef.current = { canvas, pattern };
-      }
+        // A selection being dragged replaces its own committed shape rather than joining it: the
+        // committed one is the pre-drag geometry, and both together would be two borders of one
+        // selection, the stale one anchored where the pointer left.
+        const visibleShapes = dragged ? committed.filter(({ id }) => id !== dragged.id) : committed;
+        let pattern = rasterPatternRef.current?.canvas === canvas ? rasterPatternRef.current.pattern : null;
+        if (!pattern) {
+          const patternCanvas = createMarchingAntsPatternCanvas();
+          pattern = patternCanvas ? ctx.createPattern(patternCanvas, 'repeat') : null;
+          rasterPatternRef.current = { canvas, pattern };
+        }
 
-      // Raster selections carry a stable edge image; the marching dash is composited over it once
-      // per frame, so no per-contour object walk or millions of Path2D segments are required.
-      for (const shape of visibleShapes) {
-        if (!shape.rasterOutline) continue;
-        drawRasterMaskOutline(
-          ctx,
-          pattern,
-          shape.rasterOutline,
-          shape.selection,
-          documentFrameRef.current,
-          offset,
-          scale
-        );
-      }
+        // Raster selections carry a stable edge image; the marching dash is composited over it once
+        // per frame, so no per-contour object walk or millions of Path2D segments are required.
+        for (const shape of visibleShapes) {
+          if (!shape.rasterOutline) continue;
+          drawRasterMaskOutline(
+            ctx,
+            pattern,
+            shape.rasterOutline,
+            shape.selection,
+            documentFrameRef.current,
+            offset,
+            scale
+          );
+        }
 
-      for (const shape of visibleShapes) {
-        if (!shape.path) continue;
-        const path = shape.path;
-        ctx.strokeStyle = ANT_STROKE_COLOR;
-        ctx.lineDashOffset = offset;
-        ctx.stroke(path);
-        ctx.strokeStyle = ANT_GAP_COLOR;
-        ctx.lineDashOffset = offset + dashLength;
-        ctx.stroke(path);
-      }
+        for (const shape of visibleShapes) {
+          if (!shape.path) continue;
+          const path = shape.path;
+          ctx.strokeStyle = ANT_STROKE_COLOR;
+          ctx.lineDashOffset = offset;
+          ctx.stroke(path);
+          ctx.strokeStyle = ANT_GAP_COLOR;
+          ctx.lineDashOffset = offset + dashLength;
+          ctx.stroke(path);
+        }
 
-      if (dragged) {
-        const original = committed.find(({ id }) => id === dragged.id);
-        if (original?.rasterOutline) {
-          drawRasterMaskOutline(ctx, pattern, original.rasterOutline, dragged, documentFrameRef.current, offset, scale);
-        } else {
-          const path = shapePath(dragged, documentFrameRef.current);
-          if (path) {
-            ctx.strokeStyle = ANT_STROKE_COLOR;
-            ctx.lineDashOffset = offset;
-            ctx.stroke(path);
-            ctx.strokeStyle = ANT_GAP_COLOR;
-            ctx.lineDashOffset = offset + dashLength;
-            ctx.stroke(path);
+        if (dragged) {
+          const original = committed.find(({ id }) => id === dragged.id);
+          if (original?.rasterOutline) {
+            drawRasterMaskOutline(
+              ctx,
+              pattern,
+              original.rasterOutline,
+              dragged,
+              documentFrameRef.current,
+              offset,
+              scale
+            );
+          } else {
+            const path = shapePath(dragged, documentFrameRef.current);
+            if (path) {
+              ctx.strokeStyle = ANT_STROKE_COLOR;
+              ctx.lineDashOffset = offset;
+              ctx.stroke(path);
+              ctx.strokeStyle = ANT_GAP_COLOR;
+              ctx.lineDashOffset = offset + dashLength;
+              ctx.stroke(path);
+            }
           }
         }
+      } finally {
+        ctx.restore();
       }
-
-      ctx.restore();
 
       // A per-frame distance, so it is divided by the same factor as the dash it walks along: at
       // scale 1 this is `SPEED`, and below it the ants keep the same apparent pace instead of
@@ -469,7 +481,7 @@ export function useSelectionMarchingAnts({
       // would need a re-render to restart, and the drag itself produces none.
       if (!dragged) dashOffsetRef.current = (offset - SPEED / scale) % dashCycle;
     },
-    [clearCanvas, overlayRef]
+    [clearCanvas, overlayRef, scaleRef]
   );
 
   // Every render, no dependency list: `shapes` is a fresh array whenever the store

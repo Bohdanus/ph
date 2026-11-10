@@ -154,14 +154,68 @@ describe('useSelectionMarchingAnts', () => {
     expect(rafMocks.frames.size).toBe(1);
   });
 
-  it('clears the full DPR-scaled backing store', () => {
+  it('clears the whole DPR-scaled backing store under identity', () => {
     const { ctx, overlayRef } = setup();
     overlayRef.current!.width = CANVAS_SIZE.width * 2;
     overlayRef.current!.height = CANVAS_SIZE.height * 2;
 
     frame();
 
+    expect(vi.mocked(ctx.setTransform)).toHaveBeenCalledWith(1, 0, 0, 1, 0, 0);
     expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, CANVAS_SIZE.width * 2, CANVAS_SIZE.height * 2);
+    expect(vi.mocked(ctx.setTransform).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ctx.clearRect).mock.invocationCallOrder[0]
+    );
+  });
+
+  it('restores the raster outline clip and drawing state when painting throws', () => {
+    const createElement = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      const context = createPixelCanvasContext(element);
+      element.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+      return element;
+    }) as typeof document.createElement);
+    const rasterMask = encodeRasterSelectionMask(Uint8Array.of(1, 1, 0, 1), 4, 1, {
+      x: 0,
+      y: 0,
+      width: 4,
+      height: 1,
+    })!;
+    const rasterSelection: Selection = {
+      ...polygon({ id: 'throwing-raster-ants', pos: { x: 10, y: 20, width: 4, height: 1 }, points: [] }),
+      rasterMask,
+    };
+    const { ctx } = setup({ selections: [rasterSelection] });
+    let saveDepth = 0;
+    let restoreUnderflow = false;
+    let clipped = false;
+    const clipStack: boolean[] = [];
+    vi.mocked(ctx.save).mockImplementation(() => {
+      saveDepth += 1;
+      clipStack.push(clipped);
+    });
+    vi.mocked(ctx.restore).mockImplementation(() => {
+      saveDepth -= 1;
+      if (saveDepth < 0) restoreUnderflow = true;
+      clipped = clipStack.pop() ?? false;
+    });
+    vi.mocked(ctx.clip).mockImplementation(() => {
+      clipped = true;
+    });
+    vi.mocked(ctx.drawImage).mockImplementation(() => {
+      throw new Error('raster outline draw failed');
+    });
+
+    const pending = [...rafMocks.frames.values()];
+    rafMocks.frames.clear();
+    expect(() => act(() => pending.forEach((callback) => callback(0)))).toThrow('raster outline draw failed');
+    expect(ctx.restore).toHaveBeenCalledTimes(vi.mocked(ctx.save).mock.calls.length);
+    expect(saveDepth).toBe(0);
+    expect(restoreUnderflow).toBe(false);
+    expect(clipped).toBe(false);
+    expect(clipStack).toEqual([]);
   });
 
   describe('a selection drag', () => {

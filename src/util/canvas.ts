@@ -49,7 +49,10 @@ export function resizeCanvas(canvas: HTMLCanvasElement, width: number, height: n
   }
 }
 
-/** Clear the full backing bitmap without applying the context's drawing transform. */
+/**
+ * Clear the backing-store rectangle under an identity transform.
+ * The active clipping region still limits the cleared area.
+ */
 export function clearCanvasBackingStore(ctx: Ctx2D) {
   ctx.save();
   try {
