@@ -1953,6 +1953,22 @@ process.stdout.write('x'.repeat(2 * 1024 * 1024));`
 describe('provider content policy handling', () => {
   it.each([
     ['content-filter error code', { error: { code: 'content_filter' } }],
+    [
+      'OpenRouter typed content-policy error',
+      { error: { code: 403, metadata: { error_type: 'content_policy_violation' } } },
+    ],
+    ['OpenRouter typed refusal', { error: { code: 403, metadata: { error_type: 'refusal' } } }],
+    [
+      'OpenRouter choice error policy metadata',
+      {
+        choices: [
+          {
+            finish_reason: 'error',
+            error: { code: 403, metadata: { error_type: 'content_policy_violation' } },
+          },
+        ],
+      },
+    ],
     ['content policy message', { error: { message: 'This prompt violates our usage policy.' } }],
     [
       'OpenRouter prompt-injection guardrail',
@@ -1973,6 +1989,11 @@ describe('provider content policy handling', () => {
       { error: { code: 'content_filter_error', message: 'Content filter unavailable.' } },
     ],
     ['ordinary rate limit', { error: { code: 429, message: 'Rate limited.' } }],
+    ['OpenRouter provider rate limit type', { error: { metadata: { error_type: 'rate_limit_exceeded' } } }],
+    [
+      'OpenRouter choice rate limit type',
+      { choices: [{ error: { metadata: { error_type: 'rate_limit_exceeded' } } }] },
+    ],
     ['generic bad request', { error: { message: 'Bad request.' } }],
     ['empty payload', null],
   ])('does not confuse a non-rejection with a content-policy block: %s', (_label, payload) => {
