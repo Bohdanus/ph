@@ -871,9 +871,15 @@ describe('provider rate-limit diagnostics', () => {
       /No free model completed/
     );
 
-    expect(chat).toHaveBeenCalledTimes(2);
+    expect(chat).toHaveBeenCalledTimes(3);
     expect(waitForRetryAfter.mock.calls).toEqual([[30_000]]);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(3);
+    const completionCalls = fetchImpl.mock.calls.filter(([url]) => String(url).includes('openrouter.ai/api/v1/chat'));
+    expect(completionCalls.map(([, options]) => JSON.parse(options.body).model)).toEqual([
+      'r1:free',
+      'r1:free',
+      'r2:free',
+    ]);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(4);
   });
 
   it('reports malformed completion JSON after rotating to another OpenRouter model', async () => {
@@ -1355,9 +1361,7 @@ describe('provider rate-limit diagnostics', () => {
 
     expect(waitForRetryAfter).toHaveBeenCalledWith(30_000);
     expect(chat).toHaveBeenCalledTimes(2);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(
-      status === 429 ? 3 : 2
-    );
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(3);
   });
 
   it('does not rotate after an OpenRouter 503 when the daily quota is exhausted', async () => {
@@ -1796,6 +1800,130 @@ describe('provider rate-limit diagnostics', () => {
       }
     }
   );
+
+  it('rotates to the next OpenRouter model when the bounded same-route retry also fails and quota remains', async () => {
+    const providerError = {
+      error: {
+        code: 503,
+        message: 'Provider overloaded',
+        metadata: { error_type: 'provider_overloaded' },
+      },
+    };
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(providerError), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(providerError), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            model: 'r2:free',
+            choices: [{ message: { content: 'second model completed' }, finish_reason: 'stop' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      );
+    const keyInfo = vi.fn(() => ({
+      ok: true,
+      json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+    }));
+    const runOpenCode = vi.fn();
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      keyInfo,
+      chat,
+    });
+
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'rk',
+      opencodeCommand: 'opencode',
+      runOpenCode,
+    });
+
+    expect(result).toMatchObject({
+      source: 'openrouter',
+      model: 'r2:free',
+      content: 'second model completed',
+    });
+    expect(chat).toHaveBeenCalledTimes(3);
+    expect(chat.mock.calls.map(([, options]) => JSON.parse(options.body).model)).toEqual([
+      'r1:free',
+      'r1:free',
+      'r2:free',
+    ]);
+    expect(result.requestCounts.openrouter).toBe(3);
+    expect(keyInfo).toHaveBeenCalledTimes(3);
+    expect(runOpenCode).not.toHaveBeenCalled();
+  });
+
+  it('stops OpenRouter rotation when quota reaches zero after its same-route retry', async () => {
+    const providerError = {
+      error: {
+        code: 503,
+        message: 'Provider overloaded',
+        metadata: { error_type: 'provider_overloaded' },
+      },
+    };
+    const chat = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(providerError), {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    const keyInfo = vi
+      .fn()
+      .mockReturnValueOnce({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 998, limit: 1000, remaining: 2 } } }),
+      })
+      .mockReturnValueOnce({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 999, limit: 1000, remaining: 1 } } }),
+      })
+      .mockReturnValueOnce({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 1000, limit: 1000, remaining: 0 } } }),
+      });
+    const runOpenCode = vi.fn().mockResolvedValue({
+      model: 'beam-free',
+      content: 'fallback completed',
+      finishReason: 'stop',
+      usage: { cost: 0 },
+    });
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      keyInfo,
+      chat,
+    });
+
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'rk',
+      opencodeCommand: 'opencode',
+      runOpenCode,
+    });
+
+    expect(result).toMatchObject({ source: 'opencode', model: 'beam-free', content: 'fallback completed' });
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(chat.mock.calls.map(([, options]) => JSON.parse(options.body).model)).toEqual(['r1:free', 'r1:free']);
+    expect(result.requestCounts.openrouter).toBe(2);
+    expect(keyInfo).toHaveBeenCalledTimes(3);
+    expect(runOpenCode).toHaveBeenCalledTimes(1);
+  });
 
   it('falls back to OpenCode after the bounded OpenRouter retry also receives a typed transient error', async () => {
     const providerError = {

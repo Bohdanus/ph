@@ -1519,19 +1519,13 @@ export async function completeWithFreeModel(prompt, options = {}) {
       return { retry: false };
     }
     const clientError = Number.isInteger(status) && status >= 300 && status < 500;
-    if (
-      status === 429 ||
-      transientTypedFailure ||
-      (transientServerFailure && !retryAttempt) ||
-      response?.ok === true ||
-      clientError
-    ) {
+    if (status === 429 || transientTypedFailure || transientServerFailure || response?.ok === true || clientError) {
       await refreshOpenRouterQuotaAfterAttempt();
     }
     if (openRouterQuotaInitiallyUnknown) exhausted.add('openrouter');
     if (!openRouterQuotaKnownPositive) exhausted.add('openrouter');
     if (retryAttempt) {
-      if (status === 429 || (Number.isInteger(status) && status >= 500 && status <= 599)) exhausted.add('openrouter');
+      // This route's retry is spent; only a fresh positive quota permits the next model below.
       return { retry: false };
     }
     if (
