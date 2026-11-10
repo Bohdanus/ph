@@ -1,6 +1,7 @@
 # Free and Low-Cost Model Compute
 
-**Routing checked: 2026-11-08.** Catalogs, pricing, terms, and quotas change; refresh before use. The dated observations below are point-in-time results, not a fresh availability check.
+**Policy and routing checked: 2026-11-08.** Catalogs, pricing, terms, and quotas change; refresh
+before use. The dated observations below are point-in-time results, not a fresh availability check.
 
 ## Model preferences
 
@@ -10,11 +11,34 @@
 
 ## Routing
 
-1. **Try every eligible Nemotron 3 Ultra candidate first** across OpenCode, Kilo, and OpenRouter. Kilo and OpenRouter candidates must have exact-zero pricing; OpenCode candidates must be provider-owned IDs ending in `-free`. Catalog eligibility does not prove authentication or capacity.
-2. If those routes fail, try remaining free candidates in this order: OpenCode, Kilo, OpenRouter, then Groq. Groq requires the explicit Free-plan opt-in and permits only `openai/gpt-oss-120b`. Stop rather than silently use a paid route.
+1. **Try the exact Nemotron 3 Ultra route first** on Kilo, then OpenRouter, then OpenCode. Kilo and OpenRouter candidates must have exact-zero pricing; OpenCode must be provider-owned and match the exact canonical Nemotron ID. Catalog eligibility does not prove authentication or capacity.
+2. If all Nemotron routes fail, fallback order is other OpenRouter models, other OpenCode models, then Groq. Lower-ranked Kilo models are not fallback routes. Groq requires the explicit Free-plan opt-in and permits only `openai/gpt-oss-120b`. Stop rather than silently use a paid route.
 3. Use free models for bounded research, extraction, code search, and simple reviews. Check response text and `finish_reason`; HTTP 200 can still mean empty output.
 
-The completion runner tries eligible Nemotron 3 Ultra candidates across sources first, then falls back through OpenCode, Kilo, OpenRouter, and Groq. Kilo and OpenRouter use live exact-zero catalogs. OpenCode's public inference catalog has no price fields, so the runner accepts provider-owned `-free` IDs and calls the headless CLI with tool use denied. Groq's catalog also omits pricing; the runner permits only GPT-OSS 120B after `GROQ_API_KEY` and an explicit Free-plan opt-in. A key alone does not establish free pricing. On 2026-10-27, all three saved Groq keys returned HTTP 200 from `/models`; with the operator confirming all three are Free-tier, one real runner completion returned `GROQ_LIVE_OK` with `finish_reason=stop` and one Groq request. OpenCode's headless CLI returned `LIVE_OK` once without the desktop UI; its V2 JSON stream omitted the final `step_finish`. A later adapter call reached OpenCode and returned `provider.free-limit` HTTP 429. The adapter now accepts a clean exit with text from a catalog-verified `-free` model and surfaces provider error codes; the OpenCode account quota was exhausted before a positive completion through the adapter could be repeated. The runner uses the CLI, not a generic HTTP API. OpenRouter 401/402 exhausts the source immediately. On model 429, the runner inspects `X-RateLimit-Remaining`; a zero value exhausts the source, while a positive value or unknown counter allows rotation to the next verified-free model within the per-run cap. Content-policy rejections — including HTTP 200 responses with `finish_reason: content_filter` — halt routing across all providers so the same request is not retried elsewhere.
+The completion runner is model-first: it tries exact Nemotron on Kilo, OpenRouter, and OpenCode before
+considering weaker models. OpenCode Nemotron requires the canonical provider-owned ID; a similar
+display name is insufficient. Groq's catalog omits pricing, so only `openai/gpt-oss-120b` is permitted
+after `GROQ_API_KEY` and an explicit Free-plan opt-in. A key alone does not establish free pricing.
+On 2026-10-27, all three saved Groq keys returned HTTP 200 from `/models`; with the operator
+confirming all three were Free-tier, one real runner completion returned `GROQ_LIVE_OK` with
+`finish_reason=stop` and one Groq request. OpenCode's headless CLI returned `LIVE_OK` once without the
+desktop UI; its V2 JSON stream omitted the final `step_finish`. The adapter accepts a clean exit with
+text from a catalog-verified `-free` model and surfaces provider error codes. Later, OpenCode returned
+`provider.free-limit` HTTP 429. The runner uses the CLI, not a generic HTTP API; that account-quota
+event skips OpenCode for the current run without a long-lived cooldown or retry, and the account
+quota was exhausted before a positive completion through the adapter could be repeated.
+
+OpenRouter uses a lazy `GET /api/v1/key` check and its live daily `used`, `limit`, and `remaining`
+values. Its local exhaustion marker is keyed by UTC date, so the runner becomes eligible after the
+server-side quota rolls over at 00:00 UTC; no scheduled reset job is needed. If the quota probe is
+unknown, the runner permits at most one inference attempt and does not use the quota-present retry
+path. OpenRouter 401/402 and platform 429s with zero remaining requests skip the source; a verified
+positive quota permits one bounded retry, with at most three inference attempts per source. Platform
+429s skip OpenRouter without blaming a model; only confirmed upstream/model failures can trigger
+bounded model quarantine. Kilo 401/402 stops Kilo for the run, and Kilo 429s use a separate one-hour
+source cooldown, not a model quarantine. Non-zero or invalid cost and content-policy rejections stop
+fallback across providers. The exact Kilo Nemotron 3 Ultra route is never automatically quarantined;
+quarantine for it is operator-managed.
 
 ## Observed results
 
@@ -27,7 +51,7 @@ Each row records a historical or dated observation; none establishes current pro
 | OpenRouter exact `:free` IDs   | On 2026-10-23, 17 catalog IDs had zero input/output prices. Nemotron 3 Ultra, Cohere North Mini Code, and Dots3-Note Preview returned short completions at $0. Short smoke tests; Nemotron 3 Ultra is now preferred when verified free. [Catalog](https://openrouter.ai/collections/free-models/)                                                                           |
 | OpenRouter `openrouter/free`   | Selected Liquid LFM2.5-2.6B; spent 420 reasoning tokens over 51s and returned no final text (`finish_reason=length`). Use exact IDs when possible.                                                                                                                                                                                                                          |
 | Other OpenRouter probes        | Earlier Kilo-family model probes, Gemma 4, and Xing returned 429; Inkling Small returned 403 (harness restricted). Outcomes may change.                                                                                                                                                                                                                                     |
-| Kilo pool failures             | `kilo-auto/free` and `recursive/flint-v1.0:free`: empty output; `nvidia/nemotron-3.5-super-vl:free`: HTTP 502. Latency was not recorded. These IDs remain quarantined in `scripts/free-model-pool.mjs`.                                                                                                                                                                     |
+| Kilo pool failures             | `kilo-auto/free` and `recursive/flint-v1.0:free`: empty output; `nvidia/nemotron-3.5-super-vl:free`: HTTP 502. Latency was not recorded. The quarantine file's one-time migration seeds these and the other identified models for seven days, not permanently.                                                                                                              |
 
 ### Codex free-route check (2026-10-24)
 
@@ -96,13 +120,13 @@ a host task is configured to use that provider.
 
 - OpenRouter credentials are read from `OPENROUTER_API_KEY` in the environment. Never put keys in files, arguments, or logs, and never rotate accounts to bypass limits.
 - Batch large text sweeps into bounded independent chunks; ask for concise results with source links or paths.
-- OpenRouter's free-model daily tier is based on lifetime credits purchased, not current balance. **This account qualifies for the 1,000/day tier**; the implementation currently grants the higher tier one credit below the table threshold to absorb rounding/top-up fees. Additional API keys do not raise the account limit. `GET /api/v1/key` exposes only a point-in-time daily counter, not the 20-RPM limit or upstream capacity.
-- OpenCode free chat models reject generic HTTP clients; the runner invokes `opencode run` as the supported harness, denies tool use, and disables default plugins for the completion. The public model catalog currently exposes no prices, so it accepts only provider-owned IDs ending in `-free`. [Models](https://dev.opencode.ai/v2/docs/console/models/) · [CLI](https://dev.opencode.ai/v2/docs/cli/commands/) · [Permissions](https://dev.opencode.ai/v2/docs/permissions/)
+- OpenRouter's free-model daily tier is based on lifetime credits purchased, not current balance. **This account qualifies for the 1,000/day tier.** The runner does not hardcode that threshold; it uses the live `used`, `limit`, and `remaining` values from `GET /api/v1/key`. Additional API keys do not raise the account limit. The endpoint exposes only a point-in-time daily counter, not the 20-RPM limit or upstream capacity.
+- OpenCode free chat models reject generic HTTP clients; the runner invokes `opencode run` as the supported harness, denies tool use, and disables default plugins for the completion. The public model catalog currently exposes no prices, so it accepts only provider-owned IDs ending in `-free`. Nemotron requires an exact canonical ID match; display-name similarity is not enough. `provider.free-limit` skips OpenCode for the run without a long-lived cooldown or retry. [Models](https://dev.opencode.ai/v2/docs/console/models/) · [CLI](https://dev.opencode.ai/v2/docs/cli/commands/) · [Permissions](https://dev.opencode.ai/v2/docs/permissions/)
 - Groq's model catalog exposes model IDs but no free-price field. The runner therefore requires an explicit Free-plan opt-in and uses only `openai/gpt-oss-120b`; published limits are organization-level and the live account dashboard remains authoritative. [Models](https://console.groq.com/docs/models) · [Limits](https://console.groq.com/docs/rate-limits)
-- OpenRouter reasoning tokens count against `max_tokens`. Reasoning-capable free models may consume the output budget and return empty/incomplete completions. The runner does not send reasoning controls: OpenRouter documents that excluding reasoning hides it from the response but does not remove the token cost, and mandatory-reasoning models may reject disabling it. The runner accepts only non-empty text with `finish_reason=stop`, records usage metadata, and rotates after empty or incomplete responses. [Reasoning docs](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
+- OpenRouter reasoning tokens count against `max_tokens`. Exact Nemotron 3 Ultra calls request `high` reasoning and at least 4,096 completion tokens; when `--max-tokens` is omitted, they request up to 65,536, the current free endpoint ceiling. Smaller explicit values are raised to the 4,096 floor; provider allocation is not guaranteed. Other routes default to 1,200, and non-Nemotron OpenRouter calls do not send a reasoning control. A Nemotron response ending with `finish_reason=length` is retried once on the same route with twice the output budget before rotating. The runner accepts only non-empty completed text, records usage metadata, and never treats truncation alone as a provider failure. [Reasoning docs](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
 - Use batch/caching only when the selected provider documents it and the request has a verified $0 route.
-- OpenRouter 401/402 exhausts the source. On model 429, a zero platform `X-RateLimit-Remaining` header exhausts it for the run; otherwise the daily counter controls model rotation. Unknown counters stay within the three-model cap. Do not rotate accounts or IPs to evade limits. [OpenRouter limit handling](https://openrouter.ai/docs/api-reference/limits)
-- **Pre-route OpenRouter quota check:** Pass `--probe-openrouter-quota` to query `GET /api/v1/key` before routing; when the returned `free_model_daily_requests.remaining` is 0, OpenRouter is skipped for that run. The result is a point-in-time daily counter only: it does not report the 20-RPM limit, may race with other requests, and can be non-enforcing for exempt accounts/endpoints. Probe failures or malformed data are treated as unknown; exact per-model pricing checks remain mandatory. This is opt-in to avoid an extra API request on every run.
+- OpenRouter 401/402 exhausts the source for the run. Before its first inference route, the runner lazily checks the live daily counter. Zero remaining requests persist the current UTC date and skip OpenRouter until the date changes. If the check is unknown, only one inference request is allowed and the positive-quota retry is disabled. A platform 429 identified by a zero `X-RateLimit-Remaining` skips OpenRouter for that run without model attribution. Confirmed model/upstream failures, not transport or truncation errors, update model counters. Do not rotate accounts or IPs to evade limits. [OpenRouter limit handling](https://openrouter.ai/docs/api-reference/limits)
+- **OpenRouter quota check:** `GET /api/v1/key` is called lazily before the first OpenRouter inference route; `--openrouter-quota` can query it separately without inference. The response's `free_model_daily_requests.used`, `limit`, and `remaining` values are point-in-time; it does not report the 20-RPM limit and may race with other requests or be non-enforcing for exempt accounts/endpoints. Probe failures or malformed data are treated as unknown; exact per-model pricing checks remain mandatory.
 - **Catalog discovery:** `node scripts/free-model-pool.mjs --list` reads public Kilo, OpenRouter, and OpenCode catalogs plus the Groq model catalog when a key is configured. It marks whether provider credentials or the Groq free-plan opt-in are configured; this does not check quota or capacity.
 - **Request counter:** `node scripts/free-model-pool.mjs --openrouter-quota` prints server-side daily `used`, `limit`, and `remaining` without inference. Query before and after fan-out to include other tools and concurrent free subagents. The inference runner also prints per-run attempted requests; those attempts do not replace the server counter.
 

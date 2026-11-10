@@ -9,6 +9,7 @@ import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { canvasBands, type CanvasBand, visibleCanvasBox, waitForBands } from './helpers/history-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { documentFrameSize as getDocumentFrameSize } from '../src/contexts/document-frame.ts';
+import type { BitmapSource } from '../src/contexts/general-types.ts';
 import type { DrawToolArgs } from '../src/tools/draw.ts';
 import type { ShapeToolArgs } from '../src/tools/shape.ts';
 import type { TransformToolArgs } from '../src/tools/transform.ts';
@@ -919,6 +920,7 @@ type CropParityFixture = Readonly<{
   layerTransforms?: readonly CropParityLayerTransform[];
   materializedLayerIds?: readonly string[];
   verifyProjectedOutputs?: boolean;
+  verifyDownstreamInvertParity?: boolean;
   layers: readonly CropParityLayerFixture[];
 }>;
 
@@ -972,6 +974,10 @@ type CropParityLayerComparison = Readonly<{
   offscreenTightBitmapRawDifferingBytes: number;
   offscreenTightBitmapRawDifferingSamples: readonly CropParityFramePixelSample[];
   tightBitmapPremultipliedDifferingBytes: number;
+  downstreamInvertReadbackDifferingBytes: number | null;
+  downstreamInvertReadbackDifferingSamples: readonly CropParityFramePixelSample[];
+  offscreenDownstreamInvertReadbackDifferingBytes: number | null;
+  offscreenDownstreamInvertReadbackDifferingSamples: readonly CropParityFramePixelSample[];
   tightBitmapDifferingPixels: number;
   tightBitmapNonEdgeDifferingPixels: number;
   offscreenTightBitmapPremultipliedDifferingBytes: number;
@@ -1772,6 +1778,42 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               }
               return { differingBytes: rawBitmapDifferingBytes, differingSamples: rawBitmapDifferingSamples };
             };
+            const downstreamInvertReadbackComparisons = fixture.verifyDownstreamInvertParity
+              ? (() => {
+                  const invertProcessor = findToolProcessor('invert');
+                  if (!invertProcessor) {
+                    throw new Error('Unable to find the Invert processor for materialization parity');
+                  }
+                  const invertRaster = (bitmap: CanvasImageSource) => {
+                    const [inverted] = invertProcessor.imageProcessor({
+                      bitmap: bitmap as BitmapSource,
+                      size: { width: expectedBounds.width, height: expectedBounds.height },
+                    })({ toolName: 'invert' });
+                    if (!inverted) throw new Error('The Invert processor returned no output raster');
+                    return inverted as CanvasImageSource;
+                  };
+                  const readRaster = (bitmap: CanvasImageSource) => {
+                    const surface = document.createElement('canvas');
+                    surface.width = expectedBounds.width;
+                    surface.height = expectedBounds.height;
+                    const context = surface.getContext('2d', { willReadFrequently: true });
+                    if (!context) throw new Error('Unable to create the Invert result readback context');
+                    context.drawImage(bitmap, 0, 0, expectedBounds.width, expectedBounds.height);
+                    return context.getImageData(0, 0, expectedBounds.width, expectedBounds.height).data;
+                  };
+                  const durableInverted = invertRaster(materializedLayer.bitmap as CanvasImageSource);
+                  return {
+                    html: compareRawPixels(
+                      readRaster(invertRaster(legacyTightSurfaces.htmlContext.canvas)),
+                      readRaster(durableInverted)
+                    ),
+                    offscreen: compareRawPixels(
+                      readRaster(invertRaster(legacyTightSurfaces.offscreenContext.canvas as CanvasImageSource)),
+                      readRaster(durableInverted)
+                    ),
+                  };
+                })()
+              : null;
             const tightBitmapRawComparison = compareRawPixels(legacyHybridTightPixels, durableTightPixels);
             const offscreenTightBitmapRawComparison = compareRawPixels(
               legacyOffscreenHybridTightPixels,
@@ -1901,6 +1943,13 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               offscreenFrameDifferingSamples,
               tightBitmapRawDifferingBytes: tightBitmapRawComparison.differingBytes,
               tightBitmapRawDifferingSamples: tightBitmapRawComparison.differingSamples,
+              downstreamInvertReadbackDifferingBytes: downstreamInvertReadbackComparisons?.html.differingBytes ?? null,
+              downstreamInvertReadbackDifferingSamples:
+                downstreamInvertReadbackComparisons?.html.differingSamples ?? [],
+              offscreenDownstreamInvertReadbackDifferingBytes:
+                downstreamInvertReadbackComparisons?.offscreen.differingBytes ?? null,
+              offscreenDownstreamInvertReadbackDifferingSamples:
+                downstreamInvertReadbackComparisons?.offscreen.differingSamples ?? [],
               offscreenTightBitmapRawDifferingBytes: offscreenTightBitmapRawComparison.differingBytes,
               offscreenTightBitmapRawDifferingSamples: offscreenTightBitmapRawComparison.differingSamples,
               tightBitmapPremultipliedDifferingBytes: tightBitmapComparison.differingBytes,
@@ -4157,6 +4206,7 @@ test.describe('Crop history', () => {
           },
         ],
         transitions: [{ angleDegrees: 31, nextFrame: { x: 7.25, y: 8.5, width: 50.75, height: 45.25 } }],
+        verifyDownstreamInvertParity: true,
         layers: [
           {
             kind: 'raster',
@@ -4180,6 +4230,59 @@ test.describe('Crop history', () => {
         ],
       };
       const result = await compareCropRenderers(page, fixture);
+      // Keep the comparison evidence before a strict parity assertion can abort this test.
+      const summarizeMaterialization = (comparisons: readonly CropParityLayerComparison[], fixtureStage: string) =>
+        comparisons.map((comparison) => ({
+          fixtureStage,
+          layerId: comparison.layerId,
+          stage: comparison.stage,
+          positions: comparison.positions,
+          compositing: comparison.compositing,
+          affineTransforms: comparison.affineTransforms,
+          expectedBounds: comparison.expectedBounds,
+          materializedBounds: comparison.materializedBounds,
+          bitmapSize: comparison.bitmapSize,
+          frameDifferingBytes: comparison.frameDifferingBytes,
+          frameDifferingPixels: comparison.frameDifferingPixels,
+          frameNonEdgeDifferingPixels: comparison.frameNonEdgeDifferingPixels,
+          frameDifferingSamples: comparison.frameDifferingSamples,
+          offscreenFrameDifferingBytes: comparison.offscreenFrameDifferingBytes,
+          offscreenFrameDifferingPixels: comparison.offscreenFrameDifferingPixels,
+          offscreenFrameNonEdgeDifferingPixels: comparison.offscreenFrameNonEdgeDifferingPixels,
+          offscreenFrameDifferingSamples: comparison.offscreenFrameDifferingSamples,
+          tightBitmapRawDifferingBytes: comparison.tightBitmapRawDifferingBytes,
+          tightBitmapRawDifferingSamples: comparison.tightBitmapRawDifferingSamples,
+          tightBitmapPremultipliedDifferingBytes: comparison.tightBitmapPremultipliedDifferingBytes,
+          downstreamInvertReadbackDifferingBytes: comparison.downstreamInvertReadbackDifferingBytes,
+          downstreamInvertReadbackDifferingSamples: comparison.downstreamInvertReadbackDifferingSamples,
+          offscreenDownstreamInvertReadbackDifferingBytes: comparison.offscreenDownstreamInvertReadbackDifferingBytes,
+          offscreenDownstreamInvertReadbackDifferingSamples:
+            comparison.offscreenDownstreamInvertReadbackDifferingSamples,
+          tightBitmapDifferingPixels: comparison.tightBitmapDifferingPixels,
+          tightBitmapNonEdgeDifferingPixels: comparison.tightBitmapNonEdgeDifferingPixels,
+          tightBitmapDifferingSamples: comparison.tightBitmapDifferingSamples,
+          offscreenTightBitmapRawDifferingBytes: comparison.offscreenTightBitmapRawDifferingBytes,
+          offscreenTightBitmapRawDifferingSamples: comparison.offscreenTightBitmapRawDifferingSamples,
+          offscreenTightBitmapPremultipliedDifferingBytes: comparison.offscreenTightBitmapPremultipliedDifferingBytes,
+          offscreenTightBitmapDifferingPixels: comparison.offscreenTightBitmapDifferingPixels,
+          offscreenTightBitmapNonEdgeDifferingPixels: comparison.offscreenTightBitmapNonEdgeDifferingPixels,
+          offscreenTightBitmapDifferingSamples: comparison.offscreenTightBitmapDifferingSamples,
+        }));
+      await testInfo.attach('affine-raster-materialization-diagnostics.json', {
+        body: JSON.stringify(
+          [
+            ...result.layerTransformResults.flatMap((transform, index) =>
+              summarizeMaterialization(transform.materializedLayerComparisons, `affine cursor ${index + 1}`)
+            ),
+            ...result.transitionResults.flatMap((transition, index) =>
+              summarizeMaterialization(transition.materializedLayerComparisons, `frame transition ${index + 1}`)
+            ),
+          ],
+          null,
+          2
+        ),
+        contentType: 'application/json',
+      });
       const adapterDiagnostics = [];
       const normalComposite = await compareCropRenderers(page, {
         ...fixture,
@@ -4208,17 +4311,31 @@ test.describe('Crop history', () => {
           legacyBlendMode: 'multiply',
           durableBlendMode: 'multiply',
         });
+        // Canvas ImageData exposes unpremultiplied color. At low alpha, different readback RGB bytes
+        // can encode the same rendered pixel. Require exact equality in premultiplied space and
+        // after the production Invert processor's returned raster is drawn into a fresh readback
+        // canvas. This pins the downstream draw/read boundary; it does not claim raw OffscreenCanvas
+        // backing-store identity.
         expect(
-          comparison.tightBitmapRawDifferingBytes,
+          comparison.downstreamInvertReadbackDifferingBytes,
           stage +
-            ' isolated tight bitmap raw bytes differ at ' +
-            JSON.stringify(comparison.tightBitmapRawDifferingSamples)
+            ' Invert readback differs between legacy and durable bitmaps; raw samples ' +
+            JSON.stringify({
+              htmlRaw: comparison.tightBitmapRawDifferingSamples,
+              premultipliedBytes: comparison.tightBitmapPremultipliedDifferingBytes,
+              premultiplied: comparison.tightBitmapDifferingSamples,
+            })
         ).toBe(0);
         expect(
-          comparison.offscreenTightBitmapRawDifferingBytes,
+          comparison.offscreenDownstreamInvertReadbackDifferingBytes,
           stage +
-            ' OffscreenCanvas tight bitmap raw bytes differ at ' +
-            JSON.stringify(comparison.offscreenTightBitmapRawDifferingSamples)
+            ' OffscreenCanvas Invert readback differs between legacy and durable bitmaps; raw samples ' +
+            JSON.stringify({
+              offscreenRawBytes: comparison.offscreenTightBitmapRawDifferingBytes,
+              offscreenRaw: comparison.offscreenTightBitmapRawDifferingSamples,
+              premultipliedBytes: comparison.offscreenTightBitmapPremultipliedDifferingBytes,
+              premultiplied: comparison.offscreenTightBitmapDifferingSamples,
+            })
         ).toBe(0);
         expect(
           comparison.tightBitmapPremultipliedDifferingBytes,

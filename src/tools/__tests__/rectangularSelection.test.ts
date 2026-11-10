@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   rectangularSelection,
@@ -17,56 +17,11 @@ import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import type { BitmapSource } from '../../contexts/general-types.ts';
 import type { MarqueeStyle } from '../ellipticalSelection.ts';
 
-const pixels = (...rgba: number[]) => new Uint8ClampedArray(rgba);
-
-class PixelOffscreenCanvas {
-  static seed = new Uint8ClampedArray();
-  static instances: PixelOffscreenCanvas[] = [];
-
-  buffer: Uint8ClampedArray;
-  readonly ctx = {
-    drawImage: vi.fn(),
-    getImageData: vi.fn(function (this: PixelOffscreenCanvas) {
-      return { data: this.buffer.slice(), width: this.width, height: this.height };
-    }),
-  };
-
-  readonly width: number;
-  readonly height: number;
-
-  constructor(width: number, height: number) {
-    this.width = width;
-    this.height = height;
-    this.buffer = PixelOffscreenCanvas.seed.slice();
-    PixelOffscreenCanvas.instances.push(this);
-  }
-
-  getContext() {
-    return PixelOffscreenCanvas.instances[0] === this ? this.ctx : null;
-  }
-}
-
 describe('rectangularSelection processor', () => {
   const size = { width: 2, height: 1 };
   const bitmap = createMockImageBitmap(size.width, size.height) as unknown as BitmapSource;
 
-  beforeEach(() => {
-    PixelOffscreenCanvas.seed = pixels(100, 100, 100, 255, 200, 50, 0, 255);
-    PixelOffscreenCanvas.instances = [];
-    vi.stubGlobal('OffscreenCanvas', PixelOffscreenCanvas as unknown as typeof OffscreenCanvas);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it('returns the bitmap unchanged (rectangular selection is handled elsewhere)', () => {
-    const [result] = rectangularSelection({ bitmap, size })();
-
-    expect(result).toBe(bitmap);
-  });
-
-  it('returns the bitmap unchanged when rect is null', () => {
     const [result] = rectangularSelection({ bitmap, size })();
 
     expect(result).toBe(bitmap);

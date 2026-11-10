@@ -3,7 +3,7 @@ import { useEffect, useRef, type PointerEvent, type RefObject } from 'react';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import { resetOverlayAlpha } from '../../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../../util/canvas.ts';
 import type { Point, Size } from '../../contexts/general-types.ts';
 import { RULER_ENDPOINT_HIT_RADIUS, constrainRulerAngle, type RulerMeasurement } from '../../tools/ruler.ts';
 import {
@@ -166,7 +166,7 @@ export const RulerToolArea = ({ className, overlayCtxRef }: RulerToolAreaProps) 
     // `resetOverlayAlpha` before the clear, not after: the overlay is ONE 2D context for the whole
     // session, so a previous tool's `globalAlpha` leaks into this one's stroke.
     resetOverlayAlpha(ctx);
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    clearCanvasBackingStore(ctx);
     if (measurement) drawRulerRule(ctx, measurement, dimensionsRef.current.scale);
   }, [measurement, dimensionsRef, overlayCtxRef]);
 
@@ -176,7 +176,7 @@ export const RulerToolArea = ({ className, overlayCtxRef }: RulerToolAreaProps) 
     () => () => {
       const ctx = overlayCtxRef?.current;
       if (!ctx) return;
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      clearCanvasBackingStore(ctx);
     },
     [overlayCtxRef]
   );

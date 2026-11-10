@@ -312,28 +312,23 @@ describe('useRect mask drawing', () => {
  * `#007bff` outline, the four handles and the `rgba(0, 0, 0, 0.7)` blend on the next tool's
  * document.
  *
- * Every case here passes an `imageSize` that is NOT the canvas's size, so an assertion that the
- * clear covers the backing store also fails a clear that read the render-scope `imageSize` — the
- * mistake a cleanup closing over it makes, freezing the first render's value and under-clearing
- * after a document resize.
+ * Every case here passes an `imageSize` that is NOT the canvas's size. The teardown must clear the
+ * full backing store, regardless of the logical frame dimensions or a later document resize.
  */
 describe('useRect overlay teardown', () => {
   beforeEach(resetPointerMock);
 
-  it('clears the logical frame bounds on unmount, so a marquee cannot outlive the tool switch', () => {
+  it('clears the full backing store on unmount, so a marquee cannot outlive the tool switch', () => {
     const { ctx, unmount } = setup({ imageSize: { width: 320, height: 240 }, initialRect: RECT });
     // The mount paint is cleared from the record so the assertion can only be about the teardown.
     vi.mocked(ctx.clearRect).mockClear();
 
     unmount();
 
-    // With DPR scaling, the overlay context is scaled, so clearRect uses logical frame bounds
-    // (imageSize) rather than the full canvas backing store. The test runs at 1x DPR, so
-    // logical == device pixels, but the semantics are frame-relative.
-    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 320, 240);
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
   });
 
-  it('clears the latest logical frame bounds after the document resizes', () => {
+  it('clears the full backing store after the document resizes', () => {
     const { ctx, rerender, initialProps, unmount } = setup({
       imageSize: { width: 320, height: 240 },
       initialRect: RECT,
@@ -343,10 +338,10 @@ describe('useRect overlay teardown', () => {
 
     unmount();
 
-    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
   });
 
-  it('clears the logical frame bounds on unmount even when nothing was ever painted', () => {
+  it('clears the full backing store on unmount even when nothing was ever painted', () => {
     // Unconditional on purpose. A teardown gated on "did this instance paint something" is a
     // landmine, and the abandoned-drag case is precisely the one where the content was painted by
     // a frame that never became `initialRect`.
@@ -355,7 +350,7 @@ describe('useRect overlay teardown', () => {
 
     unmount();
 
-    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 320, 240);
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
   });
 
   it('drops a queued repaint rather than letting it repaint the marquee over the teardown clear', () => {
@@ -376,7 +371,7 @@ describe('useRect overlay teardown', () => {
 
     // Cancel FIRST, then clear: a frame that survived would have repainted after the clear.
     expect(ctx.strokeRect).not.toHaveBeenCalled();
-    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 320, 240);
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
   });
 
   it('does not throw on unmount when the overlay canvas has no 2d context', () => {

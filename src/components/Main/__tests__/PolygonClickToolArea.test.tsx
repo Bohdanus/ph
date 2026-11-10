@@ -104,6 +104,7 @@ const createMockContext = () =>
     arc: vi.fn(),
     save: vi.fn(),
     restore: vi.fn(),
+    setTransform: vi.fn(),
     setLineDash: vi.fn(),
     strokeStyle: '',
     fillStyle: '',
@@ -217,6 +218,28 @@ describe('PolygonClickToolArea', () => {
       expect(ctx.moveTo).toHaveBeenCalledWith(10, 10);
       expect(ctx.lineTo).toHaveBeenCalledWith(100, 10);
       expect(ctx.lineTo).toHaveBeenCalledWith(100, 100);
+    });
+
+    it('does not apply Photoshop Shift or Alt gestures to polygonal lasso anchors', () => {
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 50, clientY: 20, altKey: true });
+      fireEvent.pointerMove(toolArea, { pointerId: 7, clientX: 70, clientY: 29, altKey: true });
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 7, clientX: 70, clientY: 29, altKey: true });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 40, shiftKey: true });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100, shiftKey: true, altKey: true });
+      fireEvent.contextMenu(toolArea);
+
+      expect(committedSelection().points).toEqual([
+        [
+          { x: 1, y: 1 },
+          { x: 41, y: 11 },
+          { x: 91, y: 31 },
+          { x: 91, y: 91 },
+        ],
+      ]);
     });
 
     it('ignores non-primary mouse buttons', () => {

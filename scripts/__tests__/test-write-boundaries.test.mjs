@@ -51,21 +51,26 @@ const REVIEWED = {
     patterns: `filesystem-write:mkdtemp=6 filesystem-write:writeFile=6 filesystem-write:rm=6`,
   },
   'free-model-kilo.test.mjs': {
-    scope: 'Mock CLI and configuration fixtures use temporary directories.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=9 filesystem-write:rm=9`,
+    scope: 'Each fake Kilo CLI and configuration fixture uses a unique OS temp directory with finally cleanup.',
+    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=17 filesystem-write:rm=17`,
   },
   'free-model-pool-external.test.mjs': {
-    scope: 'External-provider fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=2 filesystem-write:rm=2`,
+    scope: 'External-provider and Kilo cost-stop fixtures use unique OS temporary directories with finally cleanup.',
+    patterns: `filesystem-write:mkdtemp=3 filesystem-write:rm=3`,
   },
   'free-model-pool.test.mjs': {
     scope:
-      'Model/provider fixtures use unique OS temporary directories; PATH overrides are restored in finally blocks.',
-    patterns: `filesystem-write:mkdtemp=12 filesystem-write:rm=12 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
+      'Model/provider and cost-safety fixtures use unique OS temporary directories; PATH overrides are restored in finally blocks.',
+    patterns: `filesystem-write:mkdtemp=31 filesystem-write:rm=31 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
+  },
+  'free-model-pool-state.test.mjs': {
+    scope:
+      'Persistent pool-state regression fixtures use unique OS temporary directories and are removed after each test.',
+    patterns: `filesystem-write:mkdtemp=1 filesystem-write:rm=1`,
   },
   'free-model-quarantine.test.mjs': {
     scope: 'Quarantine fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=7 filesystem-write:rm=7`,
+    patterns: `filesystem-write:mkdtemp=8 filesystem-write:rm=8`,
   },
   'free-model-sweep.test.mjs': {
     scope: 'Sweep and quarantine fixtures use unique OS temporary directories.',
@@ -85,8 +90,8 @@ const REVIEWED = {
   },
   'main-worktree-guard.test.mjs': {
     scope:
-      'Git and hook fixtures use temporary repositories; review child cwd and any environment passed to subprocesses.',
-    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=43 filesystem-write:mkdtempSync=8 filesystem-write:writeFileSync=20 filesystem-write:rmSync=11 filesystem-write:mkdirSync=3`,
+      'Git and hook fixtures use temporary repositories, including forced duplicate-main recovery and a watcher retry after one pre-creation failure; review child cwd and any environment passed to subprocesses.',
+    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=45 filesystem-write:mkdtempSync=10 filesystem-write:writeFileSync=35 filesystem-write:rmSync=13 filesystem-write:mkdirSync=5`,
   },
   'main-landing-alert.test.mjs': {
     scope: 'Alert-claim marker fixtures use a unique temporary directory and are removed after the test.',
@@ -103,7 +108,7 @@ const REVIEWED = {
   'merge-takeover-guard.test.mjs': {
     scope:
       'Temporary repositories model the owner-tracked landing wrapper; project markers, installer stubs, hook scripts, and process environment changes remain isolated to each temporary repository.',
-    patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=50 filesystem-write:mkdirSync=20 filesystem-write:copyFileSync=2 filesystem-write:chmodSync=28 filesystem-write:rmSync=7 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
+    patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=54 filesystem-write:mkdirSync=20 filesystem-write:copyFileSync=2 filesystem-write:chmodSync=28 filesystem-write:rmSync=7 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
   },
   'mirror-e2e.test.mjs': {
     scope: 'Mirror and git fixtures use temporary repositories and directories.',
@@ -182,6 +187,10 @@ const REVIEWED = {
   'windows-command-shim.test.mjs': {
     scope: 'Windows command lookup fixtures live in unique temporary directories and are removed after each test.',
     patterns: `filesystem-write:mkdirSync=1 filesystem-write:mkdtempSync=11 filesystem-write:writeFileSync=9 filesystem-write:rmSync=11`,
+  },
+  'windows-process-tree.test.mjs': {
+    scope: 'Process commands are mocked; tests do not create files, processes, or databases.',
+    patterns: '',
   },
 };
 

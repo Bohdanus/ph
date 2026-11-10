@@ -84,10 +84,14 @@ legacy red/alpha `188/122` and durable `190/121` is not reproduced for this reco
 that observation resolved only for these inputs and this environment; the root cause, other frame
 matrices, and cross-platform parity remain unproven.
 
-The transformed-raster opacity/blend fixture uses opacity `0.58` and `multiply`. Its raw tight
-bitmap bytes, premultiplied tight pixels, bounds, dimensions, opacity, and blend metadata match in
-the HTML and OffscreenCanvas comparisons at the affine and fractional-frame cursors. The direct
-durable composite also matches the legacy composite exactly. The committed E2E diagnostic now
+The transformed-raster opacity/blend fixture uses opacity `0.58` and `multiply`. Its premultiplied
+tight pixels, bounds, dimensions, opacity, and blend metadata match in the HTML and OffscreenCanvas
+comparisons at the affine and fractional-frame cursors. On macOS, 12 straight-alpha readback bytes
+differ by one at each cursor; the exact premultiplied comparison remains zero. Drawing the production
+Invert processor's returned OffscreenCanvas into a fresh HTMLCanvas readback yields identical bytes
+for legacy and durable inputs through both source canvas paths. This pins the downstream draw/read
+boundary, not raw processor backing-store identity. The direct durable composite also matches the
+legacy composite exactly. The committed E2E diagnostic now
 measures runtime projection, the `durableExportRecords()`/`renderExportCanvas()` result, decoded PNG,
 and PSD layer plus composite pixels at both cursors. The normal admission predicate refuses the
 retained `apply-affine-transform` case at the affine cursor and the retained frame-transform case
@@ -124,11 +128,13 @@ commits or alter logical history authority.
 2. **Presentation parity.** Keep runtime and export byte-parity admission conservative. The recovered
    fractional mixed-source fixture passes exact per-layer checks and exact composites at its three
    transitions; it closes only those inputs and does not establish the cause of the older `(5, 26)`
-   mismatch or the wider frame matrix. The opacity `0.58`/`multiply` fixture has exact raw
-   materialization and direct-composite results, plus local-Chrome diagnostics for the refused
-   runtime/export adapters, PNG, and PSD. The measured 42/46 runtime/export/PNG differences and the
-   fractional-frame PSD differences are not product-path failures because admission refuses those
-   records and the app retains legacy rendering/export. The root cause remains unknown. Keep the
+   mismatch or the wider frame matrix. The opacity `0.58`/`multiply` fixture has exact premultiplied
+   materialization and direct-composite results. macOS straight-alpha readback differences remain
+   diagnostic; the production Invert processor's returned raster also matches after a fresh-canvas
+   readback. The fixture adds local-Chrome diagnostics for the refused runtime/export adapters, PNG,
+   and PSD. The measured 42/46 runtime/export/PNG differences and the fractional-frame PSD
+   differences are not product-path failures because admission refuses those records and the app
+   retains legacy rendering/export. The root cause remains unknown. Keep the
    gate closed and isolate the first differing intermediate surface before changing production code.
    The diagnostic test records pixel offsets and channel values; extend that capture with document
    coordinates, alpha, source/backdrop pixels, and exact surface bounds. Compare identical frame,
@@ -160,9 +166,12 @@ not impose a dependency between them.
    layer base while append composition is pending or accepted, then reveal the durable base only
    after the preview clears; `useLayer.render.test.tsx` pins accepted and refused append cases, and
    `e2e/undo-redo.spec.ts` pins live Brush preview pixels while durable status is current.
-3. Continue parity-only work with the transformed raster opacity/blend fixture. The exact assertions
-   for raw and premultiplied materialization and the direct composite are green locally; the adapter
-   measurements are intentionally diagnostic because the normal gate refuses retained operations.
+3. Continue parity-only work with the transformed raster opacity/blend fixture. Exact premultiplied
+   materialization, downstream Invert readback, and direct-composite assertions pass locally;
+   straight-alpha source readback differences remain diagnostic because they map to identical
+   premultiplied pixels. The Invert check pins a fresh-canvas consumer readback, not raw OffscreenCanvas
+   backing-store identity. Adapter measurements are intentionally diagnostic because the normal gate
+   refuses retained operations.
    First identify the earliest intermediate surface where legacy and durable bytes diverge. Reuse the
    same opaque backdrop, layer order, frame, transform, clipping, opacity, and blend settings, and
    capture the differing pixel coordinates, channels, alpha, source/backdrop samples, and bounds.
@@ -177,8 +186,9 @@ not impose a dependency between them.
    bytes before encoding at `savePsd()`'s equal integer bounds, inspect `left`/`top`/width/height
    against the fractional frame, then compare PSD layer and composite pixels separately using the
    same quantized opacity. Do not use PNG as the PSD pixel oracle. Keep separate exact
-   assertions for source pixels, materialized bytes/bounds/dimensions, opacity/blend metadata, runtime
-   pixels, PNG pixels, PSD layer pixels, and PSD composite pixels. Require zero differing bytes
+   assertions for source pixels, materialized premultiplied pixels/bounds/dimensions,
+   opacity/blend metadata, runtime pixels, PNG pixels, PSD layer pixels, and PSD composite pixels.
+   Require zero differing bytes
    without tolerance before proposing any admission change. Preserve bitmap lease and stale-completion
    release assertions. The current product path must continue selecting legacy records for retained
    operations, hidden PSD layers, and replay/legacy layer sets or materialized bounds that do not
