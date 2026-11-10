@@ -167,6 +167,7 @@ hierarchy.
 | `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them               |
 | `HISTORY-MIGRATION-AUDIT-20261107.md`    | Read-only history migration audit at main `659ca8e`; findings are a dated snapshot, not current contract     |
 | `../MERGE-INTEGRITY-AUDIT.md`            | What concurrent-branch work left unresolved: open merges, colliding handoff numbers, gates that miss a class |
+| `../ORCHESTRATION_GOTCHAS_RESEARCH.md`   | Dated evidence audit of agent-coordination claims; revalidate its findings before changing project policy    |
 | `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
 | `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
 | `HARDENING-HARVEST-HANDOFF-20261017.md`  | Dated handoff for the October 17 hardening sweep; its inventory and worktree dispositions are historical     |
