@@ -2055,6 +2055,8 @@ describe('free model runner CLI', () => {
         openRouterKey: '',
         kiloCommand: '/fake-kilo',
         runKilo: vi.fn().mockResolvedValue({ content: 'concise result', finishReason: 'stop' }),
+        quarantineFile: join(directory, 'quarantine.json'),
+        poolStateFile: join(directory, 'pool-state.json'),
         initializeLegacyQuarantine: false,
         stdout,
         stderr,
