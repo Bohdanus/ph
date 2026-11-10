@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,6 +13,10 @@ import {
   searchCopilotSessions,
   executeChatSearch,
   MAX_PROMPT_CHARS,
+  validatePath,
+  validateCodexRolloutPath,
+  validateOpencodeCommand,
+  searchCodexRollouts,
 } from '../lib/chat-search.mjs';
 
 /* ---------- helpers ---------- */
@@ -208,6 +212,73 @@ describe('searchTermsFromQuery', () => {
   it('handles mixed separators', () => {
     expect(searchTermsFromQuery('hello, world;test foo.bar')).toEqual(['hello', 'world', 'test', 'foo.bar']);
   });
+
+  it('preserves Unicode words in search queries', () => {
+    expect(searchTermsFromQuery('Малювання слой')).toEqual(['малювання', 'слой']);
+  });
+});
+
+describe('path validation', () => {
+  it('rejects path-prefix siblings and symlink escapes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'chat-search-path-'));
+    const allowed = join(dir, 'allowed');
+    const prefixSibling = `${allowed}-escape`;
+    const outside = join(dir, 'outside');
+    const link = join(allowed, 'linked');
+    const outsideFile = join(outside, 'secret.jsonl');
+    const siblingFile = join(prefixSibling, 'prompt.txt');
+
+    try {
+      mkdirSync(allowed);
+      mkdirSync(prefixSibling);
+      mkdirSync(outside);
+      writeFileSync(outsideFile, 'private');
+      symlinkSync(outside, link, 'dir');
+
+      expect(validatePath(siblingFile, [allowed])).toBe(false);
+      expect(validatePath(join(link, 'secret.jsonl'), [allowed])).toBe(false);
+      expect(validateCodexRolloutPath(join(`${allowed}-escape`, 'rollout.jsonl'), allowed)).toBe(false);
+      expect(validateCodexRolloutPath(join(link, 'secret.jsonl'), allowed)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects fallback rollout files reached through a sessions symlink outside Codex home', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'chat-search-rollout-boundary-'));
+    const codexHome = join(dir, 'codex');
+    const outside = join(dir, 'outside');
+    const sessions = join(codexHome, 'sessions');
+    const rollout = join(outside, 'rollout-2026-11-08-thread-1.jsonl');
+
+    try {
+      mkdirSync(codexHome);
+      mkdirSync(outside);
+      writeFileSync(
+        rollout,
+        JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: 'needle' } })
+      );
+      symlinkSync(outside, sessions, 'dir');
+
+      await expect(searchCodexRollouts(codexHome, ['needle'], 0)).resolves.toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('validateOpencodeCommand', () => {
+  it('allows bare allowlisted commands and absolute paths to them', () => {
+    expect(validateOpencodeCommand('opencode')).toBe(true);
+    expect(validateOpencodeCommand('opencode.exe')).toBe(true);
+    expect(validateOpencodeCommand(join(tmpdir(), 'bin', 'opencode'))).toBe(true);
+  });
+
+  it('rejects relative path suffixes and command arguments', () => {
+    expect(validateOpencodeCommand('../opencode')).toBe(false);
+    expect(validateOpencodeCommand('./opencode')).toBe(false);
+    expect(validateOpencodeCommand('opencode --version')).toBe(false);
+  });
 });
 
 /* ---------- truncateMiddle ---------- */
@@ -223,12 +294,13 @@ describe('truncateMiddle', () => {
   });
 
   it('truncates long text with marker in the middle', () => {
-    const text = 'A'.repeat(20);
-    const result = truncateMiddle(text, 10);
+    const text = 'A'.repeat(50);
+    const result = truncateMiddle(text, 30);
     expect(result).toContain('…[truncated]…');
+    expect(result.length).toBe(30);
     const parts = result.split('\n…[truncated]…\n');
-    expect(parts[0].length).toBe(5);
-    expect(parts[1].length).toBe(5);
+    expect(parts[0].length).toBe(8);
+    expect(parts[1].length).toBe(7);
   });
 
   it('returns empty string for empty string input', () => {
@@ -241,19 +313,24 @@ describe('truncateMiddle', () => {
     expect(truncateMiddle(42, 10)).toBe(42);
   });
 
-  it('produces head + middle + tail structure for very long text', () => {
-    const text = 'HEAD' + 'X'.repeat(100) + 'TAIL';
-    const result = truncateMiddle(text, 16);
-    expect(result).toBe('HEADXXXX\n…[truncated]…\nXXXXTAIL');
+  it('keeps the result within very small limits', () => {
+    expect(truncateMiddle('abcdef', 0)).toBe('');
+    expect(truncateMiddle('abcdef', 5)).toBe('abcd…');
   });
 
-  it('uses floor for odd maxChars', () => {
-    const text = 'A'.repeat(21);
-    const result = truncateMiddle(text, 11);
-    const half = Math.floor(11 / 2);
+  it('produces head + middle + tail structure for very long text', () => {
+    const text = 'HEAD' + 'X'.repeat(100) + 'TAIL';
+    const result = truncateMiddle(text, 24);
+    expect(result).toBe('HEADX\n…[truncated]…\nTAIL');
+  });
+
+  it('splits an odd retained body with the extra character at the head', () => {
+    const text = 'A'.repeat(50);
+    const result = truncateMiddle(text, 30);
     const parts = result.split('\n…[truncated]…\n');
-    expect(parts[0].length).toBe(half);
-    expect(parts[1].length).toBe(half);
+    expect(result.length).toBe(30);
+    expect(parts[0].length).toBe(8);
+    expect(parts[1].length).toBe(7);
   });
 });
 
@@ -486,6 +563,35 @@ describe('integerOption', () => {
 /* ---------- executeChatSearch ---------- */
 
 describe('executeChatSearch', () => {
+  it('quiet mode suppresses progress while preserving the final answer and errors', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cs-quiet-test-'));
+    const dbPath = join(dir, 'kilo.db');
+    createTestKiloDb(dbPath);
+    const stderr = makeMockStream();
+    const stdout = makeMockStream();
+
+    const code = await executeChatSearch({
+      query: 'chat search',
+      providers: 'kilo',
+      quiet: true,
+      stderr,
+      stdout,
+      resolveChatStores: makeMockResolveStores(dbPath),
+      completeImpl: makeMockComplete(),
+    });
+
+    expect(code).toBe(0);
+    expect(stderr.output).toBe('');
+    expect(stdout.output).toContain('Test synthesized answer.');
+
+    const invalidStderr = makeMockStream();
+    const invalidCode = await executeChatSearch({ query: '', quiet: true, stderr: invalidStderr, stdout });
+    expect(invalidCode).toBe(2);
+    expect(invalidStderr.output).toContain('no query provided');
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('returns 2 when no query is provided', async () => {
     const stderr = makeMockStream();
     const stdout = makeMockStream();
@@ -633,7 +739,7 @@ describe('executeChatSearch', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('returns 3 when no excerpts can be extracted from matching sessions', async () => {
+  it('returns 4 when no excerpts can be extracted from matching sessions', async () => {
     const stderr = makeMockStream();
     const stdout = makeMockStream();
     const dir = mkdtempSync(join(tmpdir(), 'cs-test-'));
@@ -653,7 +759,7 @@ describe('executeChatSearch', () => {
       completeImpl: makeMockComplete(),
     });
 
-    expect(code).toBe(3);
+    expect(code).toBe(4);
     expect(stderr.output).toMatch(/could not extract transcript excerpts/);
 
     rmSync(dir, { recursive: true, force: true });

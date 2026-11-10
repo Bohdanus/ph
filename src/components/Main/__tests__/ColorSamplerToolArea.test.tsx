@@ -76,6 +76,7 @@ const ctx = {
   clearRect: vi.fn(),
   save: vi.fn(),
   restore: vi.fn(),
+  setTransform: vi.fn(),
   beginPath: vi.fn(() => {
     currentPath.length = 0;
   }),

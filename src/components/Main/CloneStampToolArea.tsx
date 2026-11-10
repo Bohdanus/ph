@@ -11,6 +11,7 @@ import type { DocumentFrame } from '../../contexts/document-frame.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { CloneStampToolArgs } from '../../tools/cloneStamp.ts';
 import { getActiveSelection, getSelectionProcessorSnapshot } from '../../util/selection.ts';
+import { clearCanvasBackingStore } from '../../util/canvas.ts';
 
 type cloneStampToolAreaProps = {
   className?: string;
@@ -72,7 +73,7 @@ const drawCloneSourceMarker = (
   ctx: CanvasRenderingContext2D,
   { source, hover, visible, documentFrame }: SourceMarker
 ) => {
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  clearCanvasBackingStore(ctx);
   if (!visible) return;
 
   ctx.save();
@@ -290,7 +291,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
         markerFrameRef.current = null;
       }
       // Unmounting with the ring still on screen leaves it over whatever tool comes next.
-      if (ctx) ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      if (ctx) clearCanvasBackingStore(ctx);
     };
   }, [overlayCtxRef]);
 

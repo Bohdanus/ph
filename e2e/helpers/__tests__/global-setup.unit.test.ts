@@ -7,12 +7,16 @@ import globalSetup, {
   checkOwnServer,
   PER_ATTEMPT_TIMEOUT_MS,
   planWarmup,
+  readIndexHtml,
+  resolvedBaseUrls,
   resolvedBaseUrl,
   resolvedWebServerUrl,
   runWarmup,
   WARMUP_INTERVAL_MS,
   WARMUP_TIMEOUT_MS,
 } from '../../global-setup';
+import { normalizeOwnServerBaseUrl } from '../../global-setup/foreign-origin';
+import { playwrightWorkerCount } from '../../global-setup/worker-policy';
 
 /**
  * This file tests `e2e/global-setup.ts`, which is NOT a helper module, and it lives
@@ -38,6 +42,61 @@ import globalSetup, {
  */
 
 const HTML = '<html><body><script type="module" src="/src/main.tsx"></script></body></html>';
+
+describe('normalizeOwnServerBaseUrl', () => {
+  it('uses the own server URL when no base URL override is configured', () => {
+    expect(normalizeOwnServerBaseUrl(undefined, 'http://127.0.0.1:5173')).toBe('http://127.0.0.1:5173');
+  });
+
+  it.each([
+    ['default HTTP port', 'http://localhost:80/app', 'http://127.0.0.1:80', 'http://127.0.0.1/app'],
+    ['implicit default HTTP port', 'http://localhost/app', 'http://127.0.0.1:80', 'http://127.0.0.1/app'],
+    ['non-default HTTP port', 'http://localhost:5413/app', 'http://127.0.0.1:5413', 'http://127.0.0.1:5413/app'],
+  ])('rewrites localhost to the own server for the same %s', (_label, configured, server, expected) => {
+    const baseUrl = normalizeOwnServerBaseUrl(configured, server);
+
+    expect(baseUrl).toBe(expected);
+    expect(checkOwnServer({ baseUrl, webServerUrl: server, allowRemote: undefined }).permitted).toBe(true);
+  });
+
+  it('preserves localhost when the configured port belongs to a different server', () => {
+    const server = 'http://127.0.0.1:80';
+    const baseUrl = normalizeOwnServerBaseUrl('http://localhost:5413/app', server);
+
+    expect(baseUrl).toBe('http://localhost:5413/app');
+    expect(checkOwnServer({ baseUrl, webServerUrl: server, allowRemote: undefined }).permitted).toBe(false);
+  });
+
+  it('preserves malformed and remote URLs for the existing origin guard', () => {
+    const remoteUrl = 'http://staging.example.test:5173';
+    const serverUrl = 'http://127.0.0.1:5173';
+    const remoteBaseUrl = normalizeOwnServerBaseUrl(remoteUrl, serverUrl);
+
+    expect(remoteBaseUrl).toBe(remoteUrl);
+    expect(checkOwnServer({ baseUrl: remoteBaseUrl, webServerUrl: serverUrl, allowRemote: undefined }).permitted).toBe(
+      false
+    );
+    expect(normalizeOwnServerBaseUrl('not a url', 'http://127.0.0.1:5173')).toBe('not a url');
+    expect(normalizeOwnServerBaseUrl('https://example.test', 'http://127.0.0.1:5173')).toBe('https://example.test');
+  });
+});
+
+describe('playwrightWorkerCount', () => {
+  it('serializes Windows CI after runner connection exhaustion', () => {
+    expect(playwrightWorkerCount(true, 'win32')).toBe(1);
+  });
+
+  it('keeps native CI parallelism on Linux and macOS', () => {
+    expect(playwrightWorkerCount(true, 'linux')).toBeUndefined();
+    expect(playwrightWorkerCount(true, 'darwin')).toBeUndefined();
+  });
+
+  it('keeps local E2E runs serial on every platform', () => {
+    expect(playwrightWorkerCount(false, 'win32')).toBe(1);
+    expect(playwrightWorkerCount(false, 'linux')).toBe(1);
+    expect(playwrightWorkerCount(false, 'darwin')).toBe(1);
+  });
+});
 
 type WarmupDeps = Parameters<typeof runWarmup>[1];
 type FetchResponse = Awaited<ReturnType<WarmupDeps['fetch']>>;
@@ -75,6 +134,10 @@ function plan(overrides: Partial<Parameters<typeof planWarmup>[0]> = {}) {
   });
 }
 
+it('reads the repository index.html used to discover the warmup entry', () => {
+  expect(readIndexHtml()).toContain('<script type="module" src="/src/main.tsx"></script>');
+});
+
 describe('resolvedBaseUrl', () => {
   const project = (use: Record<string, unknown>) => ({ use }) as unknown as FullConfig['projects'][number];
 
@@ -104,6 +167,21 @@ describe('resolvedBaseUrl', () => {
     } finally {
       if (previous !== undefined) process.env.PLAYWRIGHT_BASE_URL = previous;
     }
+  });
+});
+
+describe('resolvedBaseUrls', () => {
+  const project = (use: Record<string, unknown>) => ({ use }) as unknown as FullConfig['projects'][number];
+
+  it('returns every distinct configured project base URL for origin checks', () => {
+    const config = {
+      projects: [
+        project({ baseURL: 'http://localhost:5173' }),
+        project({ baseURL: 'https://staging.example.com' }),
+        project({ baseURL: 'http://localhost:5173' }),
+      ],
+    };
+    expect(resolvedBaseUrls(config)).toEqual(['http://localhost:5173', 'https://staging.example.com']);
   });
 });
 
@@ -566,12 +644,37 @@ describe('checkOwnServer', () => {
     expect(check.reason).toMatch(/NOT this checkout/);
   });
 
-  it('does not claim a guarantee it could not check', () => {
-    // No `webServer` block means nothing was started, so there is no origin to
-    // compare against. Saying so beats reporting a verification that never happened.
-    expect(
-      checkOwnServer({ baseUrl: 'https://staging.example.com', webServerUrl: undefined, allowRemote: undefined })
-    ).toMatchObject({ permitted: true, reason: expect.stringMatching(/could not verify/) });
+  it('refuses an unverified base URL when no owned server is configured', () => {
+    const check = checkOwnServer({
+      baseUrl: 'https://staging.example.com',
+      webServerUrl: undefined,
+      allowRemote: undefined,
+    });
+    expect(check.permitted).toBe(false);
+    expect(check.reason).toMatch(/could not verify/);
+  });
+
+  it('refuses when no base URL is configured unless remote testing is explicit', () => {
+    const check = checkOwnServer({ baseUrl: undefined, webServerUrl: 'http://localhost:5173', allowRemote: undefined });
+    expect(check.permitted).toBe(false);
+    expect(check.reason).toMatch(/no base URL is configured/);
+  });
+
+  it('permits an unspecified target only when remote testing is explicit', () => {
+    const check = checkOwnServer({ baseUrl: undefined, webServerUrl: undefined, allowRemote: '1' });
+    expect(check.permitted).toBe(true);
+    expect(check.reason).toMatch(/E2E_ALLOW_REMOTE=1/);
+    expect(check.reason).toMatch(/unspecified URL/);
+  });
+
+  it('allows a missing webServer only when the remote build is explicit', () => {
+    const check = checkOwnServer({
+      baseUrl: 'https://staging.example.com',
+      webServerUrl: undefined,
+      allowRemote: '1',
+    });
+    expect(check.permitted).toBe(true);
+    expect(check.reason).toMatch(/E2E_ALLOW_REMOTE=1/);
   });
 });
 
@@ -815,6 +918,20 @@ describe('globalSetup', () => {
     });
 
     await expect(globalSetup(foreign)).rejects.toThrow(/Refusing to start a run against a server it did not start/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a foreign origin in any configured project before warming the server', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const matrix = config({
+      projects: [
+        { name: 'Chromium', use: { baseURL: 'http://localhost:5173', headless: true } },
+        { name: 'Firefox', use: { baseURL: 'https://staging.example.com', headless: true } },
+      ],
+    });
+
+    await expect(globalSetup(matrix)).rejects.toThrow(/staging\.example\.com/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

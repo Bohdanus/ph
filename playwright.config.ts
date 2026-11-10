@@ -1,4 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
+import { normalizeOwnServerBaseUrl } from './e2e/global-setup/foreign-origin.ts';
+import { playwrightWorkerCount } from './e2e/global-setup/worker-policy.ts';
 
 /**
  * See https://playwright.dev/docs/test-configuration.
@@ -17,7 +19,9 @@ import { defineConfig, devices } from '@playwright/test';
  * alone when the caller has already chosen one, and under `CI`.
  */
 const port = process.env.PLAYWRIGHT_PORT ?? '5173';
-const baseUrl = `http://localhost:${port}`;
+const baseUrl = `http://127.0.0.1:${port}`;
+const configuredBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
+const testBaseUrl = normalizeOwnServerBaseUrl(configuredBaseUrl, baseUrl);
 
 export default defineConfig({
   testDir: './e2e',
@@ -83,13 +87,12 @@ export default defineConfig({
   // 20 minutes because this run had no timeout there (jobs 35/40 minutes).
   // Local diagnostics retain the longer limit, and --debug disables it.
   globalTimeout: process.env.CI ? (process.platform === 'darwin' ? 30 : 20) * 60_000 : 45 * 60_000,
-  // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
-  // local runs stay sequential so a failure is readable one test at a time and the
-  // machine is not running two browsers per core. The port argument that used to sit
-  // here is gone with the old reuse default: each run owns its port, so two runs no
-  // longer fight over one app instance. The readability argument for `workers: 1` is
-  // gone with headed mode: the local report is the same `list` output either way.
-  workers: process.env.CI ? undefined : 1,
+  // Windows CI shards run one worker. Repeated Windows flakes across unrelated specs
+  // logged `ERR_NO_BUFFER_SPACE` on Vite's React Refresh/HMR requests; reducing the
+  // number of concurrent pages limits pressure on the browser/server connections while
+  // preserving the strict console and flaky-test gates. Linux and macOS keep Playwright's
+  // CPU-based parallelism. Local runs stay sequential so failures are easier to inspect.
+  workers: playwrightWorkerCount(Boolean(process.env.CI), process.platform),
   // Three refusals, and all three run for every `playwright test` invocation whatever
   // started it: a visible browser, a base URL this run's own dev server is not
   // serving, and an HTML report that would open itself and never let the run exit.
@@ -112,7 +115,7 @@ export default defineConfig({
      * for EVERY invocation, including a bare `npx playwright test`:
      *   E2E_ALLOW_REMOTE=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npx playwright test
      * The run logs which origin it loaded. See e2e/README.md. */
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? baseUrl,
+    baseURL: testBaseUrl,
     // HEADLESS IS THE DEFAULT. Do not flip this to headed-on-local.
     //
     // A headed browser puts a live, clickable window on the operator's desktop for
@@ -192,7 +195,7 @@ export default defineConfig({
     // above. `--strictPort` makes a port clash a hard failure rather than Vite's
     // default silent hop to 5174, which would leave the tests pointed at a server
     // this run never started.
-    command: `npm run dev -- --port ${port} --strictPort`,
+    command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
     url: baseUrl,
     // NEVER TRUE, AND NOT CONFIGURABLE. There is no environment variable, no
     // argument and no field to turn this on, and that is the point.

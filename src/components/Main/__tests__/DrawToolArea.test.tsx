@@ -451,9 +451,12 @@ describe('DrawToolArea', () => {
 
     const saves = vi.mocked(overlayCtx.save).mock.invocationCallOrder;
     const restores = vi.mocked(overlayCtx.restore).mock.invocationCallOrder;
-    expect(saves).toHaveLength(1);
-    expect(restores).toHaveLength(1);
+    expect(saves).toHaveLength(2);
+    expect(restores).toHaveLength(2);
     expect(saves[0]).toBeLessThan(restores[0]);
+    expect(restores[0]).toBeLessThan(saves[1]);
+    expect(saves[1]).toBeLessThan(vi.mocked(drawLine).mock.invocationCallOrder[0]);
+    expect(vi.mocked(drawLine).mock.invocationCallOrder[0]).toBeLessThan(restores[1]);
   });
 
   it('does not grow the save stack across a long stroke', () => {
@@ -473,8 +476,9 @@ describe('DrawToolArea', () => {
       });
     }
 
-    expect(vi.mocked(overlayCtx.save)).toHaveBeenCalledTimes(21);
-    expect(vi.mocked(overlayCtx.restore)).toHaveBeenCalledTimes(21);
+    // Each of 21 paints has one helper scope for its backing-store clear and one for the stroke.
+    expect(vi.mocked(overlayCtx.save)).toHaveBeenCalledTimes(42);
+    expect(vi.mocked(overlayCtx.restore)).toHaveBeenCalledTimes(42);
   });
 
   it('ignores a stroke that starts with a non-primary mouse button', () => {
@@ -532,7 +536,7 @@ describe('DrawToolArea', () => {
 
     fireEvent.pointerUp(toolArea, { button: 0, clientX: 30, clientY: 50 });
 
-    expect(vi.mocked(overlayCtx.clearRect)).toHaveBeenCalledWith(0, 0, 300, 200);
+    expect(vi.mocked(overlayCtx.clearRect)).toHaveBeenCalledWith(0, 0, 640, 480);
   });
 
   it('starts a fresh preview after a stroke was committed', () => {
@@ -647,7 +651,7 @@ describe('DrawToolArea', () => {
 
       expect(isDocumentGestureOpen()).toBe(false);
       expect(createLayerFromToolMock).not.toHaveBeenCalled();
-      expect(overlayCtx.clearRect).toHaveBeenCalledWith(0, 0, 300, 200);
+      expect(overlayCtx.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
     });
 
     it('releases the claim on unmount, so a gesture that dies mid-stroke cannot leave the keyboard dead', () => {

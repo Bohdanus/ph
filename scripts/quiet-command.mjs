@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveCommandShim } from './lib/windows-command-shim.mjs';
 
 const GIT_REPOSITORY_CONTEXT = [
   'GIT_DIR',
@@ -14,28 +13,8 @@ const GIT_REPOSITORY_CONTEXT = [
   'GIT_OBJECT_DIRECTORY',
   'GIT_ALTERNATE_OBJECT_DIRECTORIES',
 ];
-
-// On Windows, commands like `npm` are exposed as `npm.cmd` shims on PATH.
-// Node's spawn does not resolve bare names the way a shell does, so a bare
-// `npm` produces ENOENT. We detect whether the command is a .cmd/.bat shim on
-// PATH and, if so, let cmd.exe launch it. .exe/.com commands (including
-// process.execPath in tests) stay shell-less to preserve exit-code propagation.
-function needsShell(command) {
-  if (process.platform !== 'win32' || path.extname(command)) {
-    return false;
-  }
-  const dirs = (process.env.PATH || '').split(path.delimiter);
-  const extensions = ['.cmd', '.bat'];
-  for (const dir of dirs) {
-    if (!dir) continue;
-    for (const ext of extensions) {
-      if (existsSync(path.join(dir, command + ext))) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
+const MAX_CAPTURE_BYTES = 1024 * 1024;
+const CAPTURE_TRUNCATED = Buffer.from(`\n[quiet-command: output truncated after ${MAX_CAPTURE_BYTES} bytes]\n`);
 
 export function runQuiet(command, args, { cwd = process.cwd(), env = process.env } = {}) {
   return new Promise((resolve) => {
@@ -43,18 +22,32 @@ export function runQuiet(command, args, { cwd = process.cwd(), env = process.env
     for (const key of GIT_REPOSITORY_CONTEXT) delete childEnv[key];
 
     // Git exports these for hooks; nested test repositories must resolve their own git dirs and indexes.
-    const useShell = needsShell(command);
-    const child = spawn(command, args, {
+    let invocation;
+    try {
+      invocation = resolveCommandShim(command, args, { env: childEnv, cwd });
+    } catch (error) {
+      process.stderr.write(`quiet-command: ${error.message}\n`);
+      resolve(2);
+      return;
+    }
+    const child = spawn(invocation.command, invocation.args, {
       cwd,
       env: childEnv,
       stdio: ['inherit', 'pipe', 'pipe'],
-      shell: useShell,
+      shell: false,
+      ...invocation.spawnOptions,
     });
-    const chunks = [];
+    const output = Buffer.allocUnsafe(MAX_CAPTURE_BYTES);
+    let outputBytes = 0;
+    let outputTruncated = false;
     let finished = false;
 
     const capture = (chunk) => {
-      chunks.push(chunk);
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const count = Math.min(bytes.length, MAX_CAPTURE_BYTES - outputBytes);
+      if (count > 0) bytes.copy(output, outputBytes, 0, count);
+      outputBytes += count;
+      if (count < bytes.length) outputTruncated = true;
     };
     child.stdout.on('data', capture);
     child.stderr.on('data', capture);
@@ -63,8 +56,11 @@ export function runQuiet(command, args, { cwd = process.cwd(), env = process.env
       if (finished) return;
       finished = true;
       const status = code ?? (signal ? 1 : 0);
-      if (error) chunks.push(Buffer.from(`${error.message}\n`));
-      if (status !== 0) process.stderr.write(Buffer.concat(chunks));
+      if (error) capture(Buffer.from(`${error.message}\n`));
+      if (status !== 0) {
+        process.stderr.write(output.subarray(0, outputBytes));
+        if (outputTruncated) process.stderr.write(CAPTURE_TRUNCATED);
+      }
       resolve(status);
     };
 

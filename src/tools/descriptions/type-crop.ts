@@ -45,14 +45,14 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'A color swatch that opens the Color Picker and sets the type fill, also reachable by Alt+Backspace for the foreground color and Ctrl+Backspace for the background color. Selecting characters rather than the layer limits the change to those characters.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:427',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:426',
       },
       {
         control: 'Align Text Left / Center Text / Align Text Right',
         detail:
           'A row of three buttons that set paragraph alignment, defaulting to Align Text Left. Justify Last Left, Justify Last Centered, Justify Last Right and Justify All live in the Paragraph panel.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:439',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:438',
       },
       {
         control: 'Toggle the type on a path',
@@ -83,7 +83,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The check mark and the cancel cross, which appear only while a type layer is in edit mode — Adobe\'s own test for edit mode is that they are there: "look in the options bar — if you see the Commit button and the Cancel button, the type tool is in edit mode." Commit also fires on the numeric keypad\'s Enter and on Ctrl+Enter (Windows) or Command+Return (Mac OS). Esc commits by default, and the Use Esc key to commit text preference that flips it to cancel moved from Edit > Preferences > Type to Settings > Type in 23.0.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:555',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:554',
       },
     ],
     modifiers: [],
@@ -111,11 +111,11 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'src/tools/text.ts:590',
       'src/tools/text.ts:617',
       'src/tools/toolProcessors.ts:171',
-      'src/components/ToolbarsRight/Text/Text.tsx:92',
+      'src/components/ToolbarsRight/Text/Text.tsx:100',
       'src/components/ToolbarsRight/Text/Text.tsx:154',
-      'src/components/ToolbarsRight/Text/Text.tsx:199',
-      'src/components/ToolbarsRight/Text/Text.tsx:274',
-      'src/components/ToolbarsRight/Text/Text.tsx:296',
+      'src/components/ToolbarsRight/Text/Text.tsx:210',
+      'src/components/ToolbarsRight/Text/Text.tsx:325',
+      'src/components/ToolbarsRight/Text/Text.tsx:347',
       'src/components/Main/TextToolArea.tsx:24',
       'src/components/Main/TextToolArea.tsx:37',
       'src/contexts/useLayer.ts:447',

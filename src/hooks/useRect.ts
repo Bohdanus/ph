@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
 import type { Point, Pos, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
 import { clearSelectionDragPreview, publishSelectionDragPreview } from './selection-drag-preview.ts';
@@ -12,12 +12,13 @@ import {
   trimRect,
 } from '../util/rect.ts';
 import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
-import { resetOverlayAlpha } from '../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../util/canvas.ts';
 import { refitRectWidthToAspect } from '../util/rect-aspect.ts';
 import { isEqual } from 'lodash-es';
 import { isTemporaryHandActive } from './temporary-hand.ts';
 import type { Layer } from '../contexts/layer-types.ts';
 import type { CropOverlayOrientation, CropOverlayType, CropOverlayVisibility } from '../tools/crop.ts';
+import { viewStateRef } from '../contexts/view-state.ts';
 
 export type UseRectProps = {
   aspectRatio?: number | null;
@@ -138,7 +139,39 @@ const NO_MODIFIERS: FreshDragModifiers = { constrainToSquare: false, fromCentre:
 const RECT_BORDER_DASH_LENGTH = 5;
 const RECT_BORDER_DASH_SPEED = 0.4;
 const ROTATE_HOTZONE = 24;
-export const ROTATE_HANDLE_OFFSET = ROTATE_HOTZONE / 2;
+const ROTATE_RESIZE_HOTZONE = 12;
+const ROTATE_OUTER_HOTZONE = 90;
+export const ROTATE_HANDLE_OFFSET = 36;
+const ROTATION_SNAP_INCREMENT = 15;
+
+const ROTATION_CURSOR_PATHS =
+  '<path d="M24 16a8 8 0 1 1-1.7-5.9"/><path d="M8 16a8 8 0 1 0 1.7 5.9"/><path d="M24 8l4-4-4-4"/><path d="M8 24l-4 4 4 4"/>';
+const ROTATION_CURSOR_FALLBACKS = [
+  'ew-resize',
+  'nwse-resize',
+  'ns-resize',
+  'nesw-resize',
+  'ew-resize',
+  'nwse-resize',
+  'ns-resize',
+  'nesw-resize',
+] as const;
+const ROTATION_CURSORS = ROTATION_CURSOR_FALLBACKS.map((fallback, index) => {
+  const angle = index * 45;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><g transform="translate(12 12) scale(.75)"><g transform="rotate(${angle} 16 16)"><g fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">${ROTATION_CURSOR_PATHS}</g><g fill="none" stroke="#111" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${ROTATION_CURSOR_PATHS}</g></g></g></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 24 24, ${fallback}`;
+});
+
+function shortestAngleDelta(degrees: number): number {
+  return ((((degrees + 180) % 360) + 360) % 360) - 180;
+}
+
+function rotationCursorForPoint(point: Point, rect: RectXYSorted): string {
+  const viewRotation = Number.isFinite(viewStateRef.current.rotation) ? viewStateRef.current.rotation : 0;
+  const tangentAngle = angleFromCenter(rectCenter(rect), point) + viewRotation + 90;
+  const direction = ((Math.round(tangentAngle / 45) % 8) + 8) % 8;
+  return ROTATION_CURSORS[direction] ?? 'ew-resize';
+}
 
 /**
  * Samples the document canvas at strategic points within the crop rect and returns
@@ -350,10 +383,6 @@ export function useRect({
   onChangeEnd,
 }: UseRectProps) {
   const startRectRef = useRef<RectXYSorted | null>(null);
-  const latestImageSizeRef = useRef(imageSize);
-  useLayoutEffect(() => {
-    latestImageSizeRef.current = imageSize;
-  }, [imageSize]);
   const rectUnsortedRef = useRef<RectXY | null>(null); // might become unsorted while dragging
 
   const startPointRef = useRef<Point | null>(null);
@@ -364,7 +393,9 @@ export function useRect({
   const rotationRef = useRef(rotation);
   const lastRotationRef = useRef(rotation);
   const startRotationRef = useRef(rotation);
-  const rotationStartAngleRef = useRef(0);
+  const rotationPreviousPointerAngleRef = useRef(0);
+  const rotationAccumulatedDeltaRef = useRef(0);
+  const rotationSnapRef = useRef(false);
 
   const pendingClientXRef = useRef(0);
   const pendingClientYRef = useRef(0);
@@ -538,11 +569,7 @@ export function useRect({
       endGesture();
 
       if (ctx) {
-        // The overlay context is scaled by DPR (via resizeCanvas in Main.tsx), so clearRect
-        // coordinates are in logical/frame pixels. Use imageSize (logical frame bounds) rather
-        // than ctx.canvas.width/height (backing-store device pixels) to avoid over-clearing.
-        const latestImageSize = latestImageSizeRef.current;
-        ctx.clearRect(0, 0, latestImageSize.width, latestImageSize.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [endGesture, overlayRef]);
@@ -608,36 +635,10 @@ export function useRect({
       const { scale } = dimensionsRef.current;
       const h1 = HANDLE_SIZE / scale;
       const h2 = HANDLE_SIZE / scale / 2;
+      const resizeHotzone = (rotationEnabled ? ROTATE_RESIZE_HOTZONE : HANDLE_SIZE / 2) / scale;
       const hitPoint = rotationEnabled
         ? rotatePointAround(point, rectCenter(_initialRect), -rotationRef.current)
         : point;
-
-      if (rotationEnabled) {
-        const localPoint = hitPoint;
-        const rotationGrip = { x: (x1 + x2) / 2, y: y1 - ROTATE_HANDLE_OFFSET / scale };
-        if (
-          localPoint.y < y1 - h2 &&
-          Math.hypot(localPoint.x - rotationGrip.x, localPoint.y - rotationGrip.y) <= ROTATE_HOTZONE / scale
-        ) {
-          return 'rotate';
-        }
-        const outside = localPoint.x < x1 || localPoint.x > x2 || localPoint.y < y1 || localPoint.y > y2;
-        if (outside) {
-          const corners = [
-            { x: x1, y: y1 },
-            { x: x2, y: y1 },
-            { x: x2, y: y2 },
-            { x: x1, y: y2 },
-          ];
-          if (
-            corners.some(
-              (corner) => Math.hypot(localPoint.x - corner.x, localPoint.y - corner.y) <= ROTATE_HOTZONE / scale
-            )
-          ) {
-            return 'rotate';
-          }
-        }
-      }
 
       if (handlesOutside) {
         if (hitPoint.x >= x1 - h1 && hitPoint.x <= x1 && hitPoint.y >= y1 - h1 && hitPoint.y <= y1) return 'top-left';
@@ -662,18 +663,41 @@ export function useRect({
         }
       }
 
-      // check for line
-      if (hitPoint.x >= x1 && hitPoint.x <= x2 && hitPoint.y >= y1 - h2 && hitPoint.y <= y1 + h2) {
+      // Resize bands win over rotation so the full visible edge remains a resize target.
+      if (
+        hitPoint.x >= x1 - resizeHotzone &&
+        hitPoint.x <= x2 + resizeHotzone &&
+        Math.abs(hitPoint.y - y1) <= resizeHotzone
+      ) {
         return 'top';
       }
-      if (hitPoint.x >= x2 - h2 && hitPoint.x <= x2 + h2 && hitPoint.y >= y1 && hitPoint.y <= y2) {
-        return 'right';
+      if (
+        hitPoint.x >= x1 - resizeHotzone &&
+        hitPoint.x <= x2 + resizeHotzone &&
+        Math.abs(hitPoint.y - y2) <= resizeHotzone
+      ) {
+        return 'bottom';
       }
-      if (hitPoint.x >= x1 - h2 && hitPoint.x <= x1 + h2 && hitPoint.y >= y1 && hitPoint.y <= y2) {
+      if (
+        hitPoint.y >= y1 - resizeHotzone &&
+        hitPoint.y <= y2 + resizeHotzone &&
+        Math.abs(hitPoint.x - x1) <= resizeHotzone
+      ) {
         return 'left';
       }
-      if (hitPoint.x >= x1 && hitPoint.x <= x2 && hitPoint.y >= y2 - h2 && hitPoint.y <= y2 + h2) {
-        return 'bottom';
+      if (
+        hitPoint.y >= y1 - resizeHotzone &&
+        hitPoint.y <= y2 + resizeHotzone &&
+        Math.abs(hitPoint.x - x2) <= resizeHotzone
+      ) {
+        return 'right';
+      }
+
+      if (rotationEnabled) {
+        const outsideX = Math.max(x1 - hitPoint.x, 0, hitPoint.x - x2);
+        const outsideY = Math.max(y1 - hitPoint.y, 0, hitPoint.y - y2);
+        const distanceOutside = Math.hypot(outsideX, outsideY);
+        if (distanceOutside > resizeHotzone && distanceOutside <= ROTATE_OUTER_HOTZONE / scale) return 'rotate';
       }
 
       // inside the resize square
@@ -718,12 +742,15 @@ export function useRect({
     const eventTarget = event.target as HTMLDivElement;
     let cursor = CURSOR_MAP[edge as keyof typeof CURSOR_MAP];
 
-    if (edge === 'rotate' && rotationEnabled) {
-      const angle = rotationRef.current;
-      const baseSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M24 16a8 8 0 1 1-1.7-5.9"/><path d="M8 16a8 8 0 1 0 1.7 5.9"/><path d="M24 8l4-4-4-4"/><path d="M8 24l-4 4 4 4"/></svg>`;
-      const rotatedSvg = baseSvg.replace('<svg ', `<svg transform="rotate(${angle} 16 16)" `);
-      const encodedSvg = encodeURIComponent(rotatedSvg);
-      cursor = `url("data:image/svg+xml,${encodedSvg}") 16 16, ew-resize`;
+    if (edge === 'rotate' && rotationEnabled && startRectRef.current) {
+      cursor = rotationCursorForPoint(getLocalCoords(event), startRectRef.current);
+    } else if (rotationEnabled && ['top', 'bottom', 'left', 'right'].includes(edge ?? '')) {
+      const edgeAxis = edge === 'top' || edge === 'bottom' ? 90 : 0;
+      const axisAngle = viewStateRef.current.rotation + rotationRef.current + edgeAxis;
+      // Canvas coordinates have positive y downward, so 45 degrees is the NW-SE diagonal.
+      const cursorDirections = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'] as const;
+      const directionIndex = Math.round((((axisAngle % 180) + 180) % 180) / 45) % cursorDirections.length;
+      cursor = cursorDirections[directionIndex];
     }
 
     eventTarget.style.cursor = cursor ?? '';
@@ -734,7 +761,7 @@ export function useRect({
     const radians = (angle * Math.PI) / 180;
     const halfWidth = (Math.abs(Math.cos(radians)) * rect.width + Math.abs(Math.sin(radians)) * rect.height) / 2;
     const halfHeight = (Math.abs(Math.sin(radians)) * rect.width + Math.abs(Math.cos(radians)) * rect.height) / 2;
-    const padding = (ROTATE_HOTZONE + HANDLE_SIZE + 2) / Math.max(scale, Number.EPSILON);
+    const padding = (ROTATE_HANDLE_OFFSET + ROTATE_HOTZONE + HANDLE_SIZE + 2) / Math.max(scale, Number.EPSILON);
     const centerX = rect.x + rect.width / 2;
     const centerY = rect.y + rect.height / 2;
     return {
@@ -758,7 +785,7 @@ export function useRect({
     // rotated canvas overlay left by the previous mode.
     if (externalOverlay) {
       if (overlayPaintModeRef.current !== 'external') {
-        if (overlayPaintModeRef.current !== null) ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+        if (overlayPaintModeRef.current !== null) clearCanvasBackingStore(ctx);
         overlayPaintModeRef.current = 'external';
       }
       lastIncrementalRectRef.current = null;
@@ -777,7 +804,7 @@ export function useRect({
     // both covered. The dash this function owns is written after, deliberately.
     resetOverlayAlpha(ctx);
     if (!rect) {
-      ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+      clearCanvasBackingStore(ctx);
       overlayPaintModeRef.current = null;
       lastIncrementalRectRef.current = null;
       return;
@@ -805,7 +832,7 @@ export function useRect({
         canvasSize.width !== ctx.canvas.width ||
         canvasSize.height !== ctx.canvas.height;
       if (needsBasePaint) {
-        ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+        clearCanvasBackingStore(ctx);
         if (!hideBlend) {
           ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
           ctx.fillRect(0, 0, imageSize.width, imageSize.height);
@@ -825,7 +852,7 @@ export function useRect({
         }
       }
     } else {
-      ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+      clearCanvasBackingStore(ctx);
       overlayPaintModeRef.current = 'full';
       lastIncrementalRectRef.current = null;
     }
@@ -1101,8 +1128,16 @@ export function useRect({
           break;
         case 'rotate': {
           const center = rectCenter(_initialRect);
-          rotationRef.current =
-            startRotationRef.current + angleFromCenter(center, point) - rotationStartAngleRef.current;
+          const pointerAngle = angleFromCenter(center, point);
+          rotationAccumulatedDeltaRef.current += shortestAngleDelta(
+            pointerAngle - rotationPreviousPointerAngleRef.current
+          );
+          rotationPreviousPointerAngleRef.current = pointerAngle;
+          const angleDelta = rotationAccumulatedDeltaRef.current;
+          const appliedDelta = rotationSnapRef.current
+            ? Math.round(angleDelta / ROTATION_SNAP_INCREMENT) * ROTATION_SNAP_INCREMENT
+            : angleDelta;
+          rotationRef.current = startRotationRef.current + appliedDelta;
           onRotationChange?.(rotationRef.current);
           ({ x1, y1, x2, y2 } = _initialRect);
           break;
@@ -1210,7 +1245,9 @@ export function useRect({
           break;
         case 'rotate':
           startRotationRef.current = rotationRef.current;
-          rotationStartAngleRef.current = angleFromCenter(rectCenter(selectionRect), point);
+          rotationPreviousPointerAngleRef.current = angleFromCenter(rectCenter(selectionRect), point);
+          rotationAccumulatedDeltaRef.current = 0;
+          rotationSnapRef.current = event.shiftKey;
           break;
       }
     }
@@ -1256,6 +1293,10 @@ export function useRect({
     lastPointerPointRef.current = point;
 
     sampleFreshDragModifiers(event);
+    if (currentEdgeRef.current === 'rotate') {
+      rotationSnapRef.current = event.shiftKey;
+      setMouseCursor('rotate', event);
+    }
     pendingClientXRef.current = event.clientX;
     pendingClientYRef.current = event.clientY;
     hasPendingClientPointRef.current = true;
@@ -1296,6 +1337,7 @@ export function useRect({
     // Sampled before the geometry is computed, so a modifier released between the last move and
     // the release governs the rect that is actually committed.
     sampleFreshDragModifiers(event);
+    if (currentEdgeRef.current === 'rotate') rotationSnapRef.current = event.shiftKey;
 
     const point = getLocalCoords(event);
     const previousPoint = lastPointerPointRef.current;
@@ -1313,6 +1355,8 @@ export function useRect({
     startPointRef.current = null;
     lastPointerPointRef.current = null;
     currentEdgeRef.current = null;
+    rotationAccumulatedDeltaRef.current = 0;
+    rotationSnapRef.current = false;
     customAspectRatioRef.current = null;
     gesturePointerIdRef.current = null;
     Object.assign(freshDragModifiersRef.current, NO_MODIFIERS);
@@ -1343,9 +1387,11 @@ export function useRect({
       rotationRef.current = startRotationRef.current;
       onRotationChange?.(startRotationRef.current);
     }
+    rotationAccumulatedDeltaRef.current = 0;
     startPointRef.current = null;
     lastPointerPointRef.current = null;
     currentEdgeRef.current = null;
+    rotationSnapRef.current = false;
     gesturePointerIdRef.current = null;
     customAspectRatioRef.current = null;
     Object.assign(freshDragModifiersRef.current, NO_MODIFIERS);
@@ -1395,6 +1441,8 @@ export function useRect({
         startRectRef.current = null;
         rectUnsortedRef.current = null;
         currentEdgeRef.current = null;
+        rotationAccumulatedDeltaRef.current = 0;
+        rotationSnapRef.current = false;
         customAspectRatioRef.current = null;
         Object.assign(freshDragModifiersRef.current, NO_MODIFIERS);
         drawMask();

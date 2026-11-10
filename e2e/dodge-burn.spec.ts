@@ -4,6 +4,7 @@ import { setForegroundColor } from './helpers/color-helpers';
 import {
   clickToolButton,
   FLYOUT_VISIBLE_TIMEOUT_MS,
+  hasOwnToolTile,
   type FlyoutItem,
   selectFromFlyout,
   waitForFlyout,
@@ -49,10 +50,11 @@ const STROKE_MID_X = (STROKE_START_X + STROKE_END_X) / 2;
 
 const INSIDE = { x: STROKE_MID_X, y: BAND_Y };
 /**
- * A probe 80 document pixels past the end of a 30px tip — five tip radii clear — still inside
- * the drawn band and inside the layer's raster. This is the "brush, not a filter" probe.
+ * The probe is 90px from the stroke endpoint's center. Subtracting the 15px tip radius leaves 75px
+ * of clearance (five 15px radii) from the footprint edge, while the sample stays inside the layer raster.
+ * This is the "brush, not a filter" probe.
  */
-const OUTSIDE = { x: STROKE_END_X + 80, y: BAND_Y };
+const OUTSIDE = { x: STROKE_END_X + 90, y: BAND_Y };
 const OUTSIDE_IS_INSIDE_THE_RASTER = OUTSIDE.x < LAYER_RIGHT;
 
 const DODGE_ITEM: FlyoutItem = { toolName: 'dodge', label: 'Dodge Tool' };
@@ -130,7 +132,7 @@ async function strokeDocument(page: Page, geometry: Geometry, from: DocPoint, to
 async function openTonalFlyout(page: Page): Promise<void> {
   for (const name of TONAL_GROUP) {
     const tile = page.getByTestId(`tool-button-${name}`);
-    if ((await tile.count()) === 0) continue;
+    if (!(await hasOwnToolTile(page, name))) continue;
     await tile.dispatchEvent('pointerdown', { button: 0 });
     await expect(tile).toHaveAttribute('aria-expanded', 'true', { timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
     await tile.dispatchEvent('pointerup', { button: 0 });
@@ -193,9 +195,10 @@ test.describe('Dodge/Burn Tonal tools - gap coverage', () => {
    * GAP 1: Brush, not a filter.
    *
    * A dodge/burn stroke is a brush over a soft disc, not a per-pixel filter over a buffer. The
-   * probe at OUTSIDE sits 80 document pixels past a 30px tip — five tip radii clear — on the SAME
-   * layer and inside the SAME raster the processor was handed. A tool that iterated that buffer
-   * would have moved it; a brush walk cannot. The comparison is byte equality on the decoded capture.
+   * probe at OUTSIDE sits 90 document pixels past the stroke endpoint, 75 pixels beyond the nominal
+   * 30px tip footprint, on the SAME layer and inside the SAME raster the processor was handed. A
+   * tool that iterated that buffer would have moved it; a brush walk cannot. The comparison is byte
+   * equality on the decoded capture.
    */
   test('Dodge leaves pixels outside the brush footprint byte-identical', async ({ page }) => {
     expect.soft(OUTSIDE_IS_INSIDE_THE_RASTER, 'the brush-not-filter probe must be inside the layer raster').toBe(true);

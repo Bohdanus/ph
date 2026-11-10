@@ -7,16 +7,17 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 
 ## Read this first
 
-|                                                          |                                                                                            |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [`DOCUMENTATION.md`](DOCUMENTATION.md)                   | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
-| [`OVERRIDES.md`](OVERRIDES.md)                           | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
-| [`FEATURES.md`](FEATURES.md)                             | What the app can and cannot do, system-wide, against Photoshop                             |
-| [`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)                 | Supported desktop/tablet/Retina boundary; handheld phones are out of scope                 |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)                     | What the code is and how it fits together                                                  |
-| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)           | Durable-history requirements, sequencing, and operator gates                               |
-| [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md) | Restart guide: current status contract, loose ends, and next migration sequence            |
-| [`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md)     | Fetched Adobe evidence and processed Layers/History panel summary                          |
+|                                                                              |                                                                                            |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`DOCUMENTATION.md`](DOCUMENTATION.md)                                       | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
+| [`OVERRIDES.md`](OVERRIDES.md)                                               | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
+| [`FEATURES.md`](FEATURES.md)                                                 | What the app can and cannot do, system-wide, against Photoshop                             |
+| [`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)                                     | Supported desktop/tablet/Retina boundary; handheld phones are out of scope                 |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                                         | What the code is and how it fits together                                                  |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)                               | Durable-history requirements, sequencing, and operator gates                               |
+| [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md)                     | Restart guide: current status contract, loose ends, and next migration sequence            |
+| [`HISTORY-MIGRATION-AUDIT-20261107.md`](HISTORY-MIGRATION-AUDIT-20261107.md) | Point-in-time audit of durable-history migration gates and open parity evidence            |
+| [`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md)                         | Fetched Adobe evidence and processed Layers/History panel summary                          |
 
 The ladder is **operator → Adobe → this repository → judgement**, and the rule belongs to
 [`DOCUMENTATION.md`](DOCUMENTATION.md). `AGENTS.md` carries the short form for agents; this page
@@ -58,11 +59,11 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 | Document                                                                                               | Its one job                                                                                          |
 | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| [WINDOWS-GOTCHAS.md](WINDOWS-GOTCHAS.md)                                                               | Windows command shims, process cleanup, and Git/WSL path mismatches                                  |
 | [`../AGENTS.md`](../AGENTS.md)                                                                         | Rules every agent reads first                                                                        |
 | [`../MODELS.md`](../MODELS.md)                                                                         | Everyday model/provider policy, safe routing, budget checks, and token-saving research               |
 | [`ORCHESTRATION.md`](ORCHESTRATION.md)                                                                 | Worktrees, delegation, the swarm board, dead-agent recovery                                          |
 | [`CODEX-ORCHESTRATION.md`](CODEX-ORCHESTRATION.md)                                                     | Codex subagent tools, context, model routing, cost, and shared-worktree rules                        |
-| [`INCOMING_COMMITS.md`](INCOMING_COMMITS.md)                                                           | Records incoming commits from `git pull`/`git fetch` on the main worktree                            |
 | [`CHAT-ID.md`](CHAT-ID.md)                                                                             | Resolving the host-native chat ID used in commit trailers                                            |
 | [`KILO.md`](KILO.md)                                                                                   | The agent-facing Kilo config, including the parts no tracked file holds                              |
 | [`CODE-REVIEW.md`](CODE-REVIEW.md)                                                                     | The verbatim prompt and rules for the code review subagent                                           |
@@ -83,12 +84,22 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 ### Skills
 
 This is the entrypoint for repository procedures. Codex must open the selected `.skills/*.md`
-playbook explicitly; Kilo runtime copies live under `.kilo/skills/*/SKILL.md`. Tool permission
-profiles live under `.kilo/agent/`.
+playbook explicitly; applicable Codex runtime skills live at
+`$CODEX_HOME/skills/<skill-name>/SKILL.md` (default `~/.codex/skills/`). Kilo runtime copies live
+under `.kilo/skills/*/SKILL.md`. Tool permission profiles live under `.kilo/agent/`.
 
-The agent procedures live outside this directory, under `.skills/`, one file per
-procedure. `AGENTS.md` states the rules, a skill states a procedure, and an agent profile defines
-its tool permissions.
+The tracked `.skills/` files are canonical for every procedure and its supporting files. General
+skills must be complete, byte-identical copies across `.skills/`, `.kilo/skills/`, and the Codex
+skill directory. Keep Kilo-only skills out of Codex, Codex-only skills out of Kilo, and track every
+host-specific skill in `.skills/` so it survives independently of ignored runtime copies. Kilo
+runtime skills are full copies, not abbreviated loaders. `AGENTS.md` states repository rules, a
+skill states a procedure, and an agent profile defines its tool permissions.
+
+Kilo-only skills, excluded from Codex, are `chat-loose-end-scan`, `e2e-hardening-cron`,
+`free-model-agent-rotation`, `free-model-chat-sweep`, `kilo-chat-history`, `overnight-sweep`, and
+`parallel-test-hardening`. `codex-chat-history` is Codex-only and must not be installed in Kilo.
+The Copilot-specific `copilot-chat-history` and `copilot-subagent-launch` remain tracked and
+available in Kilo for Copilot workflows, but are not Codex skills.
 
 | Skill                                                                                  | Its one job                                                                                                                                                                                                                                                               |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -100,6 +111,7 @@ its tool permissions.
 | [`../.skills/chat-loose-end-scan.md`](../.skills/chat-loose-end-scan.md)               | Find loose ends in recent top-level Kilo chats — chats that died on a network loss, a token wall or a tool error, and reviews whose findings nobody answered                                                                                                              |
 | [`../.skills/codex-chat-history.md`](../.skills/codex-chat-history.md)                 | Locate and query OpenAI Codex CLI session history from local SQLite state database and JSONL rollout files. Read-only, local-first                                                                                                                                        |
 | [`../.skills/copilot-chat-history.md`](../.skills/copilot-chat-history.md)             | Locate and query GitHub Copilot Chat panel and Agent sessions from Chronicle, agent-host, and JSONL stores. Read-only, local-first                                                                                                                                        |
+| [`../.skills/copilot-subagent-launch.md`](../.skills/copilot-subagent-launch.md)       | Launch and troubleshoot task-scoped subagents in GitHub Copilot Chat for VS Code                                                                                                                                                                                          |
 | [`../.skills/free-model-agent-rotation.md`](../.skills/free-model-agent-rotation.md)   | Route bounded research, text-sweep, and simple review subtasks through currently free model providers without paid fallback                                                                                                                                               |
 | [`../.skills/free-model-chat-sweep.md`](../.skills/free-model-chat-sweep.md)           | Review Kilo and Codex history for free-model failure patterns, then apply evidence-backed expiring quarantine actions                                                                                                                                                     |
 | [`../.skills/hard-merge.md`](../.skills/hard-merge.md)                                 | Merge two branches with overlapping features, recovering requirements from chat history and arbitrating conflicts against Photoshop                                                                                                                                       |

@@ -8,26 +8,35 @@ import { stripHtml } from '../free-research.mjs';
 
 describe('parseArgs', () => {
   it('parses URL only', () => {
-    const result = parseArgs(['https://example.com']);
+    const result = parseArgs(['https://example.com', '--json']);
     expect(result.url).toBe('https://example.com');
     expect(result.prompt).toBeNull();
     expect(result.help).toBe(false);
+    expect(result.jsonOutput).toBe(true);
+  });
+
+  it('allows human-readable stdout without an output file', () => {
+    expect(parseArgs(['https://example.com'])).toMatchObject({
+      url: 'https://example.com',
+      outputFile: null,
+      jsonOutput: false,
+    });
   });
 
   it('parses URL and positional prompt', () => {
-    const result = parseArgs(['https://example.com', 'What is this?']);
+    const result = parseArgs(['https://example.com', 'What is this?', '--json']);
     expect(result.url).toBe('https://example.com');
     expect(result.prompt).toBe('What is this?');
   });
 
   it('parses --prompt flag', () => {
-    const result = parseArgs(['https://example.com', '--prompt', 'Summarize']);
+    const result = parseArgs(['https://example.com', '--prompt', 'Summarize', '--json']);
     expect(result.url).toBe('https://example.com');
     expect(result.prompt).toBe('Summarize');
   });
 
   it('parses -p flag', () => {
-    const result = parseArgs(['https://example.com', '-p', 'Research']);
+    const result = parseArgs(['https://example.com', '-p', 'Research', '--json']);
     expect(result.url).toBe('https://example.com');
     expect(result.prompt).toBe('Research');
   });
@@ -43,27 +52,27 @@ describe('parseArgs', () => {
   });
 
   it('parses --max-summary-tokens', () => {
-    const result = parseArgs(['https://example.com', '--max-summary-tokens', '200']);
+    const result = parseArgs(['https://example.com', '--max-summary-tokens', '200', '--json']);
     expect(result.maxSummaryTokens).toBe(200);
   });
 
   it('parses --max-tokens alias', () => {
-    const result = parseArgs(['https://example.com', '--max-tokens', '300']);
+    const result = parseArgs(['https://example.com', '--max-tokens', '300', '--json']);
     expect(result.maxSummaryTokens).toBe(300);
   });
 
   it('parses --fetch-timeout', () => {
-    const result = parseArgs(['https://example.com', '--fetch-timeout', '30000']);
+    const result = parseArgs(['https://example.com', '--fetch-timeout', '30000', '--json']);
     expect(result.fetchTimeout).toBe(30000);
   });
 
   it('parses --max-content', () => {
-    const result = parseArgs(['https://example.com', '--max-content', '5000']);
+    const result = parseArgs(['https://example.com', '--max-content', '5000', '--json']);
     expect(result.maxContent).toBe(5000);
   });
 
   it('parses --probe-openrouter-quota', () => {
-    const result = parseArgs(['https://example.com', '--probe-openrouter-quota']);
+    const result = parseArgs(['https://example.com', '--probe-openrouter-quota', '--json']);
     expect(result.probeOpenRouterQuota).toBe(true);
   });
 
@@ -73,11 +82,11 @@ describe('parseArgs', () => {
   });
 
   it('errors when URL is missing', () => {
-    expect(parseArgs([]).error).toContain('URL is required');
+    expect(parseArgs(['--json']).error).toContain('URL is required');
   });
 
   it('errors on unknown options', () => {
-    expect(parseArgs(['https://example.com', '--bogus']).error).toContain('Unknown option');
+    expect(parseArgs(['https://example.com', '--bogus', '--json']).error).toContain('Unknown option');
   });
 
   it('errors on out-of-range --max-summary-tokens', () => {
@@ -180,6 +189,27 @@ describe('stripHtml entity decoding', () => {
 });
 
 describe('CLI: integration with mocked deps', () => {
+  it('preserves human-readable stdout when no output mode is specified', async () => {
+    const stdout = { write: vi.fn() };
+    const stderr = { write: vi.fn() };
+    const fetchUrlImpl = vi.fn().mockResolvedValue('Example domain content for testing');
+    const completeImpl = vi.fn().mockResolvedValue({
+      source: 'kilo',
+      model: 'test-free-model',
+      content: 'This is a test summary.',
+      finishReason: 'stop',
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+
+    const code = await main(['https://example.com'], { fetchUrlImpl, completeImpl, stdout, stderr });
+
+    expect(code).toBe(0);
+    const output = stdout.write.mock.calls.map((call) => call[0]).join('');
+    expect(output).toContain('URL: https://example.com');
+    expect(output).toContain('This is a test summary.');
+    expect(() => JSON.parse(output)).toThrow();
+  });
+
   it('fetches URL and produces general summary', async () => {
     const stdout = { write: vi.fn() };
     const stderr = { write: vi.fn() };
@@ -191,7 +221,7 @@ describe('CLI: integration with mocked deps', () => {
       finishReason: 'stop',
       usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0 },
     });
-    const code = await main(['https://example.com'], {
+    const code = await main(['https://example.com', '--json'], {
       fetchUrlImpl,
       completeImpl,
       stdout,
@@ -201,7 +231,8 @@ describe('CLI: integration with mocked deps', () => {
     expect(fetchUrlImpl).toHaveBeenCalled();
     expect(completeImpl).toHaveBeenCalled();
     const output = stdout.write.mock.calls.map((c) => c[0]).join('');
-    expect(output).toContain('This is a test summary.');
+    const result = JSON.parse(output);
+    expect(result.content).toContain('This is a test summary.');
   });
 
   it('fetches URL and produces research answer when prompt given', async () => {
@@ -215,7 +246,7 @@ describe('CLI: integration with mocked deps', () => {
       finishReason: 'stop',
       usage: { prompt_tokens: 20, completion_tokens: 10, cost: 0 },
     });
-    const code = await main(['https://example.com', 'What is the answer?'], {
+    const code = await main(['https://example.com', 'What is the answer?', '--json'], {
       fetchUrlImpl,
       completeImpl,
       stdout,
@@ -223,13 +254,14 @@ describe('CLI: integration with mocked deps', () => {
     });
     expect(code).toBe(0);
     const output = stdout.write.mock.calls.map((c) => c[0]).join('');
-    expect(output).toContain('The answer is 42.');
-    expect(output).toContain('Question: What is the answer?');
+    const result = JSON.parse(output);
+    expect(result.content).toContain('The answer is 42.');
+    expect(result.prompt).toBe('What is the answer?');
   });
 
   it('returns exit code 2 for invalid URL', async () => {
     const stderr = { write: vi.fn() };
-    const code = await main(['not-a-url'], { stderr });
+    const code = await main(['not-a-url', '--json'], { stderr });
     expect(code).toBe(2);
     expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Invalid URL'));
   });
@@ -238,7 +270,7 @@ describe('CLI: integration with mocked deps', () => {
     const stderr = { write: vi.fn() };
     const fetchUrlImpl = vi.fn().mockRejectedValue(new Error('network error'));
     const completeImpl = vi.fn();
-    const code = await main(['https://example.com'], {
+    const code = await main(['https://example.com', '--json'], {
       fetchUrlImpl,
       completeImpl,
       stderr,
@@ -247,11 +279,46 @@ describe('CLI: integration with mocked deps', () => {
     expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Fetch failed'));
   });
 
+  it('does not retry permanent HTTP errors', async () => {
+    const stderr = { write: vi.fn() };
+    const fetchUrlImpl = vi.fn().mockRejectedValue(new Error('HTTP 404'));
+    const code = await main(['https://example.com/missing', '--json'], { fetchUrlImpl, stderr });
+
+    expect(code).toBe(3);
+    expect(fetchUrlImpl).toHaveBeenCalledTimes(1);
+    expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Fetch failed after 1 attempt'));
+  });
+
+  it('retries transient HTTP server errors', async () => {
+    const stdout = { write: vi.fn() };
+    const stderr = { write: vi.fn() };
+    const fetchUrlImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('HTTP 503'))
+      .mockResolvedValueOnce('Example domain content for testing');
+    const completeImpl = vi.fn().mockResolvedValue({
+      source: 'kilo',
+      model: 'test-free-model',
+      content: 'This is a test summary.',
+      finishReason: 'stop',
+      usage: null,
+    });
+    const code = await main(['https://example.com', '--json'], {
+      fetchUrlImpl,
+      completeImpl,
+      stdout,
+      stderr,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchUrlImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('returns exit code 3 when page has no content', async () => {
     const stderr = { write: vi.fn() };
     const fetchUrlImpl = vi.fn().mockResolvedValue('');
     const completeImpl = vi.fn();
-    const code = await main(['https://example.com'], {
+    const code = await main(['https://example.com', '--json'], {
       fetchUrlImpl,
       completeImpl,
       stderr,
@@ -302,7 +369,7 @@ describe('CLI: integration with mocked deps', () => {
     const stderr = { write: vi.fn() };
     const fetchUrlImpl = vi.fn().mockResolvedValue('A'.repeat(3000));
     const completeImpl = vi.fn().mockRejectedValue(new Error('no free models'));
-    const code = await main(['https://example.com'], {
+    const code = await main(['https://example.com', '--json'], {
       fetchUrlImpl,
       completeImpl,
       stdout,
@@ -338,7 +405,7 @@ describe('CLI: integration with mocked deps', () => {
       finishReason: 'stop',
       usage: null,
     });
-    const code = await main(['https://example.com', 'positional prompt', '--prompt', 'flag prompt'], {
+    const code = await main(['https://example.com', 'positional prompt', '--prompt', 'flag prompt', '--json'], {
       fetchUrlImpl,
       completeImpl,
       stdout,
@@ -346,6 +413,7 @@ describe('CLI: integration with mocked deps', () => {
     });
     expect(code).toBe(0);
     const output = stdout.write.mock.calls.map((c) => c[0]).join('');
-    expect(output).toContain('Question: flag prompt');
+    const result = JSON.parse(output);
+    expect(result.prompt).toBe('flag prompt');
   });
 });

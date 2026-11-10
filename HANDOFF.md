@@ -1072,7 +1072,7 @@ duplicate entry, are stale.
 **Current implementation evidence.** `Reposition.tsx` renders no Tool Preset Picker, Auto-Select,
 Group/Layer, Align/Distribute, Align-to, or numeric transform controls. `MoveToolArea.tsx` always
 hit-tests the topmost layer and draws a resize rectangle without a toggle. The code has no Move-tool
-Alt-drag duplicate, Shift axis-lock, or Shift-click multi-select path. Arrow-key nudges commit through
+Alt-drag duplicate, Shift axis-lock, or Shift-click multi-select path. Arrow-key nudges in `AppKeyboardShortcuts.tsx` commit through
 `updateLayerByTool` and are limited to one active unlocked non-bedrock layer when no selection is
 active. The `isLayerLocked()` checks in `useLayer.ts` now refuse edits/moves of locked layers; do not
 repeat older claims that locked layers remain draggable. Multi-layer selection remains blocked by the
@@ -1088,7 +1088,8 @@ divergences/product questions.
 
 **Files.** `src/tools/descriptions/transform.ts`; generated `docs/TOOLS.md` — "Move Tool";
 `src/components/ToolbarsRight/Move/Reposition.tsx`; `src/components/Main/MoveToolArea.tsx`;
-`src/hooks/useRect.ts`; `src/contexts/useLayer.ts`; `docs/LAYERS-PANEL.md`.
+`src/hooks/useRect.ts`; `src/contexts/useLayer.ts`;
+`src/components/Common/AppKeyboardShortcuts.tsx`; `docs/LAYERS-PANEL.md`.
 
 ## 123. Most pointer moves of a stroke still re-rasterize the stroke's whole bounding box
 
@@ -1428,17 +1429,18 @@ presumed Photoshop fix. The thickness slider reaches half-integers
 axis-aligned strokes would change document pixels without defining behavior for fractional widths
 or diagonals.
 
-**Safe next step: characterize before deciding.** Add raster-level tests for the real Canvas path at
-integer and half-integer positions, including a diagonal control, and assert coverage/alpha. A
-Photoshop-parity claim requires a reproducible comparison against Photoshop's default behavior; any
-pixel-changing alignment policy also requires review of the export visual-regression gate and its
-baseline prohibition.
+**Raster characterization:** `e2e/stroke-pixel-coverage.spec.ts` samples the workspace backing
+pixels for 1px Draw Pen and Shape Line strokes at integer and half-integer positions, with a
+diagonal control. It pins partial coverage and neighboring rows in the current browser; it is not a
+Photoshop comparison. Any Photoshop-parity claim still requires a reproducible comparison against
+Photoshop's default behavior, and any pixel-changing alignment policy requires review of the export
+visual-regression gate and its baseline prohibition.
 
-**Coverage.** `draw.test.ts` checks path calls rather than exact pixel coverage; shape tests do not
-provide an integer/half-integer 1px raster oracle; `e2e/pen-types.spec.ts` tests stroke categories,
-not pixel rows. The export visual-regression fixture uses a 10px Draw stroke and is not an oracle for
-1px coverage. Any alignment change alters committed pixels and must not be hidden by re-recording
-that baseline.
+**Coverage.** `draw.test.ts` checks path calls rather than exact pixel coverage; the new E2E test is
+the 1px raster oracle for Draw Pen and Shape Line. `e2e/pen-types.spec.ts` still covers stroke
+categories, not pixel rows. The export visual-regression fixture uses a 10px Draw stroke and is not
+an oracle for 1px coverage. Any alignment change alters committed pixels and must not be hidden by
+re-recording that baseline.
 
 **Files.** `src/tools/shape.ts` (`setShapeCtx()`), `src/tools/draw.ts` (`setupDrawCtx()`),
 `src/util/draw.ts` (`drawPen()`), `src/components/ToolbarsRight/Figures/Shape.tsx` (the thickness
@@ -1905,45 +1907,31 @@ silently destroy the stack.
 `src/contexts/useLayer.ts` — `mergeAllLayers()`; `src/contexts/history-model.ts` —
 `DurableOperation`; `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`.
 
-## 201. Brightness/Contrast is proportionate but LINEAR, where Adobe's normal mode is nonlinear
+## 201. Brightness/Contrast pixel parity with Photoshop is unverified
 
-**Problem.** `buildLevelsFilter()` (`src/tools/functions.ts`) now drives Adobe's Brightness and Contrast
-proportionately over Adobe's own travels — Brightness ‑150..+150, Contrast ‑50..+100 — and that fixed the
-clipping the old exponential curve caused. It is still not Adobe's curve. Adobe pairs the two words
-itself: "In normal mode, Brightness/Contrast applies proportionate (nonlinear) adjustments to the image
-layer, as with Levels and Curves adjustments." The **nonlinear** half is absent, and no formula for it is
-published by Adobe or by any reverse-engineering source found. What is measurable is that it is not any
-affine map: a `+20` brightness reads `10→11`, `128→145`, `250→253`, and those three deltas are
-mutually inconsistent with any constant scale and with any constant offset.
+**Problem.** `buildLevelsFilter()` (`src/tools/functions.ts`) maps the app's Brightness and Contrast
+sliders to CSS `brightness()` and `contrast()` factors. [Adobe's current desktop Help page](https://helpx.adobe.com/photoshop/desktop/adjust-color/color-corrections/apply-brightness-and-contrast-adjustment.html)
+documents slider ranges and qualitative effects but no default-mode transfer formula. [An older
+Adobe Help page](https://helpx.adobe.com/photoshop/using/apply-brightness-contrast-adjustment.html)
+describes normal mode as a proportionate nonlinear adjustment, without publishing the curve. The app's
+CSS factors therefore do not establish Photoshop pixel parity.
 
-Two consequences, both in the positive half of both controls, because the negative half is exact. A CSS
-`brightness(f)` is a clamped pure multiply, so it can never CREATE a white that was not already white, and
-`contrast(f)` clamps, so every `f > 1` clips every input past `0.5 + 0.5/f`. At `Contrast +50` the knee
-is 212.5 and a channel above it loses its tonal separation for good. The app's `e2e/levels.spec.ts` pins
-`244` there specifically because it is a NON-clipped reading; raising the contrast factor turns that pin
-into a saturated `255` that proves only that the channel saturated.
+The CSS behavior is defined separately by the [W3C Filter Effects Level 1 Working Draft](https://www.w3.org/TR/filter-effects-1/):
+for normalized input `x`, `brightness(f)` multiplies by `f`, while `contrast(f)` maps `x` to
+`(x - 0.5) * f + 0.5`; filter outputs clamp to the allowed color range. At the app's maximum
+factor of 2, with the other control neutral, brightness reaches white for inputs at or above
+0.5; contrast clamps to black at or below 0.25 and white at or above 0.75. The existing
+`e2e/levels.spec.ts` verifies deterministic app output but has no Photoshop reference pixels.
+The source-backed description must keep the CSS mapping separate from Photoshop behavior until
+that comparison exists.
 
-The W3C Filter Effects Level 1 definition confirms CSS `brightness()` is a linear multiplier and
-defines `contrast()` as a constrained transfer function; neither expresses an arbitrary channel LUT
-(<https://www.w3.org/TR/filter-effects-1/#brightnessEquivalent>,
-<https://www.w3.org/TR/filter-effects-1/#contrastEquivalent>). This is a CSS capability boundary,
-not evidence for Adobe's exact curve.
+**Affected.** `buildLevelsFilter()` and `proportionateFactor()` in `src/tools/functions.ts`, the Levels
+description in `src/tools/descriptions/transform.ts`, and the Brightness/Contrast research notes in
+`src/tools/descriptions/transform.notes.md`.
 
-**Affected.** `src/tools/functions.ts` — `buildLevelsFilter()` and `proportionateFactor()`; the boundary
-is stated on `buildLevelsFilter()`'s doc comment and in `src/tools/descriptions/transform.notes.md`, which
-`npm run docs:tools` carries into `docs/TOOLS.md`.
-
-**What would close it.** A per-channel lookup table applied per pixel, which is the same mechanism
-`docs/TOOLS-TOO-HARD.md` records as absent for Adobe's real Levels — a CSS filter string cannot express an
-arbitrary LUT. This is a new durable operation, not an edit to `ctx.filter`: preview rendering,
-materialization, replay, and the `apply-filter`/`apply-raster-processor` history distinction must all
-agree on the LUT representation. `pixels.ts` helpers used by raster processors do not supply that
-operation contract. Whoever takes it should re-derive the curve from Photoshop measurements rather than
-from this entry, because the entry's contribution is the boundary and not the shape.
-
-**Provenance.** Fixed 2026-10-04 on `fix/levels-proportionate-curve`: the proportionate curve, Adobe's
-travels, the non-clipping negative half and the exact-black `brightness(0%)` endpoint all landed there.
-This entry is only the part that did not.
+**What would close it.** Establish a measured Photoshop transfer curve for a defined color mode and
+bit depth, then implement and test the corresponding per-channel pixel operation across preview,
+commit, replay, and export. A CSS filter string cannot express an arbitrary lookup table.
 
 ## 216. Board claims have owner release, but active liveness still blocks full disposal
 

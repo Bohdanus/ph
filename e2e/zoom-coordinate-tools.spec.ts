@@ -69,14 +69,18 @@ async function readViewGeometry(page: Page): Promise<ViewGeometry> {
   });
 }
 
-async function readViewGeometryAtClientBox(
-  page: Page,
-  clientBox: { x: number; y: number; width: number; height: number }
-): Promise<ViewGeometry> {
+async function readViewGeometryAtZoomArea(
+  page: Page
+): Promise<{ box: { x: number; y: number; width: number; height: number }; view: ViewGeometry }> {
   const workspace = page.getByTestId('workspace-container');
-  return workspace.evaluate((node, clientArea: { x: number; y: number; width: number; height: number }) => {
+  return workspace.evaluate((node) => {
+    const element = node as HTMLElement;
+    const zoomArea = element.querySelector<HTMLElement>('[data-testid="zoom-tool-area"]');
+    if (!zoomArea) throw new Error('the Zoom Tool surface is missing from the workspace');
+    const zoomRect = zoomArea.getBoundingClientRect();
+    const box = { x: zoomRect.left, y: zoomRect.top, width: zoomRect.width, height: zoomRect.height };
     const read = (name: string): number => {
-      const raw = node.getAttribute(name);
+      const raw = element.getAttribute(name);
       if (raw === null) throw new Error(`the app published no ${name}`);
       const value = Number(raw);
       if (!Number.isFinite(value)) throw new Error(`${name} is not a number: ${raw}`);
@@ -84,28 +88,31 @@ async function readViewGeometryAtClientBox(
     };
     const documentWidth = read('data-fit-document-width');
     const documentHeight = read('data-fit-document-height');
-    const scale = Math.min(clientArea.width / documentWidth, clientArea.height / documentHeight);
+    const scale = Math.min(box.width / documentWidth, box.height / documentHeight);
     const innerWidth = documentWidth * scale;
     const innerHeight = documentHeight * scale;
 
     return {
-      scale,
-      offsetX: (clientArea.width - innerWidth) / 2,
-      offsetY: (clientArea.height - innerHeight) / 2,
-      rectX: clientArea.x,
-      rectY: clientArea.y,
-      rectWidth: clientArea.width,
-      rectHeight: clientArea.height,
-      scrollLeft: node.scrollLeft,
-      scrollTop: node.scrollTop,
-      viewZoom: read('data-view-effective-zoom'),
-      viewPanX: read('data-view-pan-x'),
-      viewPanY: read('data-view-pan-y'),
-      viewRotation: read('data-view-rotation'),
-      documentWidth,
-      documentHeight,
+      box,
+      view: {
+        scale,
+        offsetX: (box.width - innerWidth) / 2,
+        offsetY: (box.height - innerHeight) / 2,
+        rectX: box.x,
+        rectY: box.y,
+        rectWidth: box.width,
+        rectHeight: box.height,
+        scrollLeft: element.scrollLeft,
+        scrollTop: element.scrollTop,
+        viewZoom: read('data-view-effective-zoom'),
+        viewPanX: read('data-view-pan-x'),
+        viewPanY: read('data-view-pan-y'),
+        viewRotation: read('data-view-rotation'),
+        documentWidth,
+        documentHeight,
+      },
     };
-  }, clientBox);
+  });
 }
 
 async function readViewAttributes(page: Page): Promise<ViewAttributes> {
@@ -554,10 +561,8 @@ test.describe('Zoomed pointer tools', () => {
     expect(metrics.clientWidth).toBeLessThan(metrics.rectWidth);
     expect(metrics.overflowY).toBe('scroll');
 
-    const zoomAreaBox = await zoomArea.boundingBox();
-    expect(zoomAreaBox, 'the Zoom Tool should cover the client viewport').not.toBeNull();
-    if (!zoomAreaBox) return;
-    const before = await readViewGeometryAtClientBox(page, zoomAreaBox);
+    await expect(zoomArea, 'the Zoom Tool should cover the client viewport').toBeVisible();
+    const { box: zoomAreaBox, view: before } = await readViewGeometryAtZoomArea(page);
     const expectedFitScale = Math.min(
       zoomAreaBox.width / before.documentWidth,
       zoomAreaBox.height / before.documentHeight
@@ -573,11 +578,10 @@ test.describe('Zoomed pointer tools', () => {
     await page.mouse.click(anchor.x, anchor.y);
     await expect.poll(async () => (await readViewGeometry(page)).viewZoom).toBeGreaterThan(before.viewZoom);
 
-    const afterZoomAreaBox = await zoomArea.boundingBox();
-    expect(afterZoomAreaBox, 'the Zoom Tool should remain measurable after zoom').not.toBeNull();
-    if (!afterZoomAreaBox) return;
-    const after = await readViewGeometryAtClientBox(page, afterZoomAreaBox);
+    const { box: afterZoomAreaBox, view: after } = await readViewGeometryAtZoomArea(page);
     const anchoredPoint = documentToPagePoint(after, point);
+    expect(afterZoomAreaBox.width).toBeGreaterThan(0);
+    expect(afterZoomAreaBox.height).toBeGreaterThan(0);
     expect(anchoredPoint.x, 'zoom preserves the clicked document point horizontally').toBeCloseTo(anchor.x, 1);
     expect(anchoredPoint.y, 'zoom preserves the clicked document point vertically').toBeCloseTo(anchor.y, 1);
   });

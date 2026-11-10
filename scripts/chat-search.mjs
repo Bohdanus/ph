@@ -12,7 +12,7 @@
  *   --days           Time window in days (default: 30)
  *   --max-results    Max sessions to retrieve per provider (default: 20)
  *   --max-sessions   Max evidence excerpts to synthesize (default: 10)
- *   --max-tokens     Completion token budget (default: 800, max: 4000)
+ *   --max-tokens     Completion token budget (default: 800, max: 65536)
  *   --output-file    Write result to this file instead of stdout
  *   --probe-openrouter-quota  Check OpenRouter free quota before routing
  *   --groq-free-plan          Enable Groq free plan routing
@@ -29,7 +29,7 @@ import { executeChatSearch } from './lib/chat-search.mjs';
 import { sanitizeErrorMessage } from './lib/secrets.mjs';
 
 const USAGE = `Usage: node scripts/chat-search.mjs --query "question" [options]
-       node scripts/chat-search.mjs --prompt-file PATH [options]
+        node scripts/chat-search.mjs --prompt-file PATH [options]
 
   --query TEXT              Natural-language question (mutually exclusive with --prompt-file)
   --prompt-file PATH        File containing the question (mutually exclusive with --query)
@@ -37,11 +37,13 @@ const USAGE = `Usage: node scripts/chat-search.mjs --query "question" [options]
   --days N                  Search window in days (default: 30)
   --max-results N           Max sessions per provider (default: 20)
   --max-sessions N          Max evidence excerpts to synthesize (default: 10)
-  --max-tokens N            Completion tokens (default: 800, max: 4000)
+  --max-tokens N            Completion tokens (default: 800, max: 65536)
   --output-file PATH        Write result to file
   --probe-openrouter-quota  Check OpenRouter free quota before routing
   --groq-free-plan          Enable Groq free plan routing
   --opencode-command CMD    Override OpenCode CLI command
+  --quiet, -q               Suppress progress output (errors still shown)
+  --verbose, -v             Enable verbose debug output
   --help, -h                Show this help
 
 Matching transcript excerpts are sent to the selected free-model provider.
@@ -68,6 +70,8 @@ function parseArgs(args) {
   const values = new Map();
   let probeQuota = false;
   let groqFreePlan = false;
+  let quiet = false;
+  let verbose = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--help' || arg === '-h') {
@@ -81,6 +85,14 @@ function parseArgs(args) {
       groqFreePlan = true;
       continue;
     }
+    if (arg === '--quiet' || arg === '-q') {
+      quiet = true;
+      continue;
+    }
+    if (arg === '--verbose' || arg === '-v') {
+      verbose = true;
+      continue;
+    }
     if (!VALUE_FLAGS.has(arg)) {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -92,7 +104,7 @@ function parseArgs(args) {
     values.set(arg, value);
     index += 1;
   }
-  return { values, probeQuota, groqFreePlan };
+  return { values, probeQuota, groqFreePlan, quiet, verbose };
 }
 
 function integerOption(values, flag, fallback, min, max) {
@@ -130,7 +142,7 @@ export async function main(
     return 0;
   }
 
-  const { values, probeQuota, groqFreePlan: cliGroqFreePlan } = parsed;
+  const { values, probeQuota, groqFreePlan: cliGroqFreePlan, quiet, verbose } = parsed;
   const query = values.get('--query') || '';
   const promptFile = values.get('--prompt-file');
   const providers = values.get('--providers') || 'all';
@@ -141,6 +153,10 @@ export async function main(
   }
   if (query && promptFile) {
     stderr.write('--query and --prompt-file are mutually exclusive.\n');
+    return 2;
+  }
+  if (quiet && verbose) {
+    stderr.write('--quiet and --verbose are mutually exclusive.\n');
     return 2;
   }
 
@@ -174,6 +190,8 @@ export async function main(
     groqFreePlan: effectiveGroqFreePlan,
     opencodeCommand: cliOpencodeCommand,
     probeOpenRouterQuota: probeQuota,
+    quiet,
+    verbose,
     stderr,
     stdout,
   });

@@ -96,6 +96,13 @@ describe('selectHistoryPanelProjection', () => {
     expect(project(history, documentFor(history.map(entry), 0)).source).toBe('legacy');
   });
 
+  it('falls back when an aligned durable entry has a different history id', () => {
+    const entries = history.map(entry);
+    const staleEntry = { ...entries[0]!, id: 'stale-id' };
+
+    expect(project(history, documentFor([staleEntry, entries[1]!])).source).toBe('legacy');
+  });
+
   it('falls back when the opening baseline row has no durable counterpart', () => {
     const openingRow: HistoryItem = { id: 'opening', actionName: OPEN_DOCUMENT_ACTION, layerId: 'layer-1' };
     const legacyHistory = [openingRow, ...history];

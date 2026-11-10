@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
 import type { BitmapSource, Ctx2D, RectXY } from './general-types.ts';
@@ -32,6 +32,7 @@ import {
   type ToolResult,
 } from '../tools/toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
+import { clearCanvasBackingStore } from '../util/canvas.ts';
 import { calculateNewRect, reduceRect, sortRect, sortRoundRect, sortedRectToPos } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
 import { isTextToolArgs } from '../util/typeGuards.ts';
@@ -90,6 +91,14 @@ import {
   transformToolArgsToAffine,
   validateAffineTransform,
 } from './affine-transform.ts';
+
+type LayerDrawResult = 'rendered' | 'deferred' | 'failed';
+type SmallCapsDraftPreviewResult = LayerDrawResult | 'unavailable' | 'overlay-deferred';
+type SmallCapsEditLayerMode = 'preserve' | 'show-committed' | 'hide-committed';
+
+const SMALL_CAPS_PRESENTATION_RETRY_BASE_DELAY_MS = 250;
+const SMALL_CAPS_PRESENTATION_RETRY_MAX_DELAY_MS = 2_000;
+const smallCapsDraftOnLastPaintByCanvas = new WeakMap<HTMLCanvasElement, boolean>();
 
 export type LayerEditParams = {
   id?: LayerId | null;
@@ -420,6 +429,21 @@ export const useLayers = () => {
   const dpr = useDevicePixelRatio();
   const smallCapsDraftCanvasRef = useRef<OffscreenCanvas | HTMLCanvasElement | null>(null);
   const smallCapsDraftLayerIdRef = useRef<LayerId | null>(null);
+  const smallCapsPresentationRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const smallCapsPresentationRetryAttemptRef = useRef(0);
+  const drawAllLayersRef = useRef<((reportFailure?: boolean) => LayerDrawResult) | null>(null);
+
+  useEffect(
+    () => () => {
+      if (smallCapsPresentationRetryTimerRef.current !== null) {
+        clearTimeout(smallCapsPresentationRetryTimerRef.current);
+      }
+      smallCapsPresentationRetryTimerRef.current = null;
+      smallCapsPresentationRetryAttemptRef.current = 0;
+      drawAllLayersRef.current = null;
+    },
+    []
+  );
 
   /**
    * Hands adopted rasters to the presentation scope. It has to run *after* the
@@ -470,7 +494,7 @@ export const useLayers = () => {
     }
     const overlayCtx = toolOverlayRef.current?.getContext('2d');
     if (!overlayCtx) return;
-    overlayCtx.clearRect(0, 0, totalSize.width, totalSize.height);
+    clearCanvasBackingStore(overlayCtx);
   }
 
   const _addLayer = (
@@ -1498,83 +1522,116 @@ export const useLayers = () => {
     drawAllLayers();
   };
 
-  const drawAllLayers = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+  const drawAllLayers = useCallback(
+    (reportFailure = true): LayerDrawResult => {
+      const canvas = canvasRef.current;
+      if (!canvas) return 'deferred';
 
-    const setDevPaintState = (source: 'pending' | 'rendering' | 'durable' | 'legacy' | 'failed', cursor: number) => {
-      if (!import.meta.env.DEV) return;
-      if (canvas.dataset.presentationPaintSource !== source) canvas.dataset.presentationPaintSource = source;
-      const cursorValue = String(cursor);
-      if (canvas.dataset.presentationPaintCursor !== cursorValue) canvas.dataset.presentationPaintCursor = cursorValue;
-    };
+      const setDevPaintState = (source: 'pending' | 'rendering' | 'durable' | 'legacy' | 'failed', cursor: number) => {
+        if (!import.meta.env.DEV) return;
+        if (canvas.dataset.presentationPaintSource !== source) canvas.dataset.presentationPaintSource = source;
+        const cursorValue = String(cursor);
+        if (canvas.dataset.presentationPaintCursor !== cursorValue)
+          canvas.dataset.presentationPaintCursor = cursorValue;
+      };
 
-    // Navigation has moved logical state but no complete presentation authority
-    // has been accepted yet. Keep the prior canvas intact until then.
-    if (renderSelector.source === 'pending') {
-      setDevPaintState('pending', historyIndex);
-      return;
-    }
-    setDevPaintState('rendering', historyIndex);
-
-    const previewLayerIds = Object.keys(previewLayersRef.current);
-    const hasPreview = previewLayerIds.length > 0;
-    // Live gestures stay on the legacy base: incremental tools depend on the
-    // preview layer's temporary canvas and are published only after commit.
-    const durableProjection =
-      !hasPreview &&
-      renderSelector.source === 'durable' &&
-      renderSelector.historyCursor === historyIndex &&
-      durablePresentation.status === 'durable' &&
-      durablePresentation.cursor !== null &&
-      durableRenderProjection &&
-      durableRenderProjection.documentId === documentId &&
-      durableRenderProjection.documentRevision === documentRevision &&
-      durableRenderProjection.branchRevision === branchRevision &&
-      durableRenderProjection.historyCursor === durablePresentation.cursor &&
-      documentFrameEquals(durableRenderProjection.frame, documentFrame) &&
-      documentFrameEquals(renderSelector.frame, documentFrame)
-        ? durableRenderProjection
-        : null;
-    const durableLayers = durableProjection?.layers ?? null;
-    const renderLayers = hasPreview
-      ? ({
-          ...layers,
-          ...Object.fromEntries(Object.entries(previewLayersRef.current).map(([id, preview]) => [id, preview.layer])),
-        } as LayersRecord)
-      : (durableLayers ?? layers);
-    const sorted = getSortedLayersArray(renderLayers);
-    const renderFrame = durableProjection ? durableProjection.frame : documentFrame;
-    try {
-      if (drawLayersToCanvas(canvas, sorted, renderFrame, new Set(previewLayerIds), dpr)) {
-        setDevPaintState(durableProjection ? 'durable' : 'legacy', durableProjection?.historyCursor ?? historyIndex);
-      } else {
-        setDevPaintState('failed', durableProjection?.historyCursor ?? historyIndex);
-        console.error('Unable to publish runtime layer presentation');
+      // Navigation has moved logical state but no complete presentation authority
+      // has been accepted yet. Keep the prior canvas intact until then.
+      if (renderSelector.source === 'pending') {
+        setDevPaintState('pending', historyIndex);
+        return 'deferred';
       }
-    } catch (error) {
-      setDevPaintState('failed', durableProjection?.historyCursor ?? historyIndex);
-      // Pointer-move callers must not receive renderer failures through React's
-      // event boundary. The renderer already preserves the last good canvas.
-      console.error('Unable to publish runtime layer presentation', error);
-    }
-  }, [
-    branchRevision,
-    canvasRef,
-    documentFrame,
-    documentId,
-    documentRevision,
-    dpr,
-    durablePresentation,
-    durableRenderProjection,
-    historyIndex,
-    layers,
-    previewLayersRef,
-    renderSelector,
-  ]);
+      setDevPaintState('rendering', historyIndex);
+
+      const previewLayerIds = Object.keys(previewLayersRef.current);
+      const hasPreview = previewLayerIds.length > 0;
+      // Live gestures stay on the legacy base: incremental tools depend on the
+      // preview layer's temporary canvas and are published only after commit.
+      const durableProjection =
+        !hasPreview &&
+        renderSelector.source === 'durable' &&
+        renderSelector.historyCursor === historyIndex &&
+        durablePresentation.status === 'durable' &&
+        durablePresentation.cursor !== null &&
+        durableRenderProjection &&
+        durableRenderProjection.documentId === documentId &&
+        durableRenderProjection.documentRevision === documentRevision &&
+        durableRenderProjection.branchRevision === branchRevision &&
+        durableRenderProjection.historyCursor === durablePresentation.cursor &&
+        documentFrameEquals(durableRenderProjection.frame, documentFrame) &&
+        documentFrameEquals(renderSelector.frame, documentFrame)
+          ? durableRenderProjection
+          : null;
+      const durableLayers = durableProjection?.layers ?? null;
+      const renderLayers = hasPreview
+        ? ({
+            ...layers,
+            ...Object.fromEntries(Object.entries(previewLayersRef.current).map(([id, preview]) => [id, preview.layer])),
+          } as LayersRecord)
+        : (durableLayers ?? layers);
+      const sorted = getSortedLayersArray(renderLayers);
+      const renderFrame = durableProjection ? durableProjection.frame : documentFrame;
+      try {
+        if (drawLayersToCanvas(canvas, sorted, renderFrame, new Set(previewLayerIds), dpr)) {
+          if (smallCapsPresentationRetryTimerRef.current !== null) {
+            clearTimeout(smallCapsPresentationRetryTimerRef.current);
+          }
+          smallCapsPresentationRetryTimerRef.current = null;
+          smallCapsPresentationRetryAttemptRef.current = 0;
+          smallCapsDraftOnLastPaintByCanvas.set(
+            canvas,
+            previewLayerIds.some((id) => previewLayersRef.current[id]?.previewType === 'small-caps-text-draft')
+          );
+          setDevPaintState(durableProjection ? 'durable' : 'legacy', durableProjection?.historyCursor ?? historyIndex);
+          return 'rendered';
+        } else {
+          setDevPaintState('failed', durableProjection?.historyCursor ?? historyIndex);
+          if (reportFailure) console.error('Unable to publish runtime layer presentation');
+          return 'failed';
+        }
+      } catch (error) {
+        setDevPaintState('failed', durableProjection?.historyCursor ?? historyIndex);
+        // Pointer-move callers must not receive renderer failures through React's
+        // event boundary. The renderer already preserves the last good canvas.
+        if (reportFailure) console.error('Unable to publish runtime layer presentation', error);
+        return 'failed';
+      }
+    },
+    [
+      branchRevision,
+      canvasRef,
+      documentFrame,
+      documentId,
+      documentRevision,
+      dpr,
+      durablePresentation,
+      durableRenderProjection,
+      historyIndex,
+      layers,
+      previewLayersRef,
+      renderSelector,
+    ]
+  );
+
+  useEffect(() => {
+    drawAllLayersRef.current = drawAllLayers;
+  }, [drawAllLayers]);
+
+  const scheduleSmallCapsPresentationRetry = useCallback(function retrySmallCapsPresentation() {
+    if (smallCapsPresentationRetryTimerRef.current !== null) return;
+    const delay = Math.min(
+      SMALL_CAPS_PRESENTATION_RETRY_BASE_DELAY_MS * 2 ** smallCapsPresentationRetryAttemptRef.current,
+      SMALL_CAPS_PRESENTATION_RETRY_MAX_DELAY_MS
+    );
+    smallCapsPresentationRetryAttemptRef.current += 1;
+    smallCapsPresentationRetryTimerRef.current = setTimeout(() => {
+      smallCapsPresentationRetryTimerRef.current = null;
+      if ((drawAllLayersRef.current?.(false) ?? 'deferred') !== 'rendered') retrySmallCapsPresentation();
+    }, delay);
+  }, []);
 
   const clearSmallCapsTextDraftPreview = useCallback(
-    (editingLayerId?: LayerId): boolean => {
+    (editingLayerId?: LayerId, editLayerMode: SmallCapsEditLayerMode = 'preserve'): boolean => {
       let changed = false;
       const draftLayerId = smallCapsDraftLayerIdRef.current;
       if (draftLayerId) {
@@ -1586,7 +1643,31 @@ export const useLayers = () => {
       if (editingLayerId) {
         const preview = previewLayersRef.current[editingLayerId];
         const layer = layers[editingLayerId];
-        if (preview && layer && preview.layer.tmpCanvas === smallCapsDraftCanvasRef.current) {
+        if (layer && editLayerMode === 'hide-committed') {
+          const alreadyHidden =
+            preview?.layer.visible === false &&
+            preview.layer.bitmap === null &&
+            preview.layer.tmpCanvas === null &&
+            preview.layer.presentationBounds === null &&
+            preview.toolArgs === undefined &&
+            preview.previewType === undefined;
+          if (!alreadyHidden) {
+            previewLayersRef.current[editingLayerId] = {
+              layer: {
+                ...layer,
+                visible: false,
+                bitmap: null,
+                tmpCanvas: null,
+                presentationBounds: null,
+              },
+              toolArgs: undefined,
+            };
+            changed = true;
+          }
+        } else if (layer && editLayerMode === 'show-committed' && preview) {
+          delete previewLayersRef.current[editingLayerId];
+          changed = true;
+        } else if (preview && layer && preview.layer.tmpCanvas === smallCapsDraftCanvasRef.current) {
           previewLayersRef.current[editingLayerId] = {
             layer: {
               ...layer,
@@ -1606,14 +1687,26 @@ export const useLayers = () => {
         draftCanvas.width = 0;
         draftCanvas.height = 0;
       }
-      if (changed) drawAllLayers();
+      if (changed) {
+        const drawResult = drawAllLayers();
+        if (drawResult !== 'rendered') {
+          scheduleSmallCapsPresentationRetry();
+        }
+      }
       return changed;
     },
-    [drawAllLayers, layers, previewLayersRef]
+    [drawAllLayers, layers, previewLayersRef, scheduleSmallCapsPresentationRetry]
   );
 
-  function publishSmallCapsTextDraftPreview(args: TextToolArgs, repaintRect: RectXY): boolean {
+  function publishSmallCapsTextDraftPreview(args: TextToolArgs, repaintRect: RectXY): SmallCapsDraftPreviewResult {
     const editingLayer = args.editingLayerId ? layers[args.editingLayerId] : undefined;
+    const clearAndReportUnavailable = (): SmallCapsDraftPreviewResult => {
+      clearSmallCapsTextDraftPreview(args.editingLayerId, 'show-committed');
+      const canvas = canvasRef.current;
+      return !args.editingLayerId && canvas && smallCapsDraftOnLastPaintByCanvas.get(canvas)
+        ? 'overlay-deferred'
+        : 'unavailable';
+    };
     if (
       !args.smallCaps ||
       args.allCaps ||
@@ -1629,8 +1722,7 @@ export const useLayers = () => {
           editingLayer.source.args.toolName !== 'text' ||
           isLayerLocked(editingLayer)))
     ) {
-      clearSmallCapsTextDraftPreview(args.editingLayerId);
-      return false;
+      return clearAndReportUnavailable();
     }
 
     let draftCanvas: OffscreenCanvas | HTMLCanvasElement;
@@ -1645,11 +1737,10 @@ export const useLayers = () => {
       position = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
       localRect = sortRect(canvasRectToLocal(measuredRect, position, documentFrame));
 
-      const width = Math.trunc(position.width);
-      const height = Math.trunc(position.height);
+      const width = Math.ceil(position.width);
+      const height = Math.ceil(position.height);
       if (width <= 0 || height <= 0) {
-        clearSmallCapsTextDraftPreview(args.editingLayerId);
-        return false;
+        return clearAndReportUnavailable();
       }
 
       draftCanvas = smallCapsDraftCanvasRef.current ?? createPresentationCanvas(width, height);
@@ -1658,14 +1749,16 @@ export const useLayers = () => {
       smallCapsDraftCanvasRef.current = draftCanvas;
       const draftContext = draftCanvas.getContext('2d');
       if (!draftContext) {
-        clearSmallCapsTextDraftPreview(args.editingLayerId);
-        return false;
+        const result = clearAndReportUnavailable();
+        // A canvas that failed to create its 2D context remains unusable. Drop it only
+        // after clearing previews so that cleanup can still match layers to this canvas.
+        if (smallCapsDraftCanvasRef.current === draftCanvas) smallCapsDraftCanvasRef.current = null;
+        return result;
       }
       draftContext.clearRect(0, 0, draftCanvas.width, draftCanvas.height);
       renderText(draftContext as Ctx2D, { ...sourceArgs, rect: localRect }, { overflowIndicator: false });
     } catch {
-      clearSmallCapsTextDraftPreview(args.editingLayerId);
-      return false;
+      return clearAndReportUnavailable();
     }
 
     const source: ToolLayerSource = {
@@ -1703,8 +1796,7 @@ export const useLayers = () => {
     }
 
     if (!layerId || !layer) {
-      clearSmallCapsTextDraftPreview(args.editingLayerId);
-      return false;
+      return clearAndReportUnavailable();
     }
     previewLayersRef.current[layerId] = {
       layer: {
@@ -1718,8 +1810,18 @@ export const useLayers = () => {
       toolArgs: undefined,
       previewType: 'small-caps-text-draft',
     };
-    drawAllLayers();
-    return true;
+    const drawResult = drawAllLayers();
+    if (drawResult === 'failed') {
+      const canvas = canvasRef.current;
+      if (!args.editingLayerId && canvas && smallCapsDraftOnLastPaintByCanvas.get(canvas)) {
+        scheduleSmallCapsPresentationRetry();
+        return 'deferred';
+      }
+      clearSmallCapsTextDraftPreview(args.editingLayerId, 'show-committed');
+      return 'failed';
+    }
+    if (drawResult === 'deferred') scheduleSmallCapsPresentationRetry();
+    return drawResult;
   }
 
   const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }, angle = 0): boolean => {

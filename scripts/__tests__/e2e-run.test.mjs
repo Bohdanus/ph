@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -16,6 +16,7 @@ import {
   runOutputPaths,
   runPlaywright,
 } from '../e2e-run.mjs';
+import { signalProcessTree } from '../e2e-run/process-tree.mjs';
 
 /**
  * This file's budget, and the reason it is not Vitest's default 5s.
@@ -446,6 +447,19 @@ describe('e2e-run: the own-server guarantee', () => {
     expect(observeHeld(boardDir.env).status, 'and no queue taken').toBe(0);
   });
 
+  it('keeps help available when test-only environment guards would reject a run', async () => {
+    const suite = fakeSuite();
+    await run(['--help'], {
+      env: { ...boardDir.env, PLAYWRIGHT_BASE_URL: 'https://staging.example.com' },
+      log: recorder().log,
+      runPlaywright: suite,
+    });
+
+    expect(suite.calls[0].args).toEqual(['test', '--help']);
+    expect(suite.calls[0].quiet).toBe(false);
+    expect(suite.calls[0].env.PLAYWRIGHT_BASE_URL).toBe('https://staging.example.com');
+  });
+
   it('does not read a grep pattern after -- as a help request', async () => {
     // Playwright reads everything after a bare `--` as a filter, so
     // `e2e/x.spec.ts -- --help` is a filtered RUN whose pattern is the string
@@ -471,7 +485,7 @@ describe('e2e-run: the own-server guarantee', () => {
     // a concurrent run into a false red as well as destroying its record.
     const record = JSON.parse(readFileSync(runRecordPath(), 'utf8'));
     expect(record.port, 'the port that served this run').toBe(suite.calls[0].env.PLAYWRIGHT_PORT);
-    expect(record.baseUrl).toBe(`http://localhost:${suite.calls[0].env.PLAYWRIGHT_PORT}`);
+    expect(record.baseUrl).toBe(`http://127.0.0.1:${suite.calls[0].env.PLAYWRIGHT_PORT}`);
     expect(record.outputDir).toContain('test-results');
     expect(record.queued, 'and whether it had the queue, which is diagnostic not load-bearing').toBe(true);
     // The record is closed when the run finishes, so "died at startup" is
@@ -1230,6 +1244,71 @@ describe('e2e-run: runPlaywright quiet capture', () => {
       expect(stderrWrites.join(''), 'captured diagnostics are replayed on signal exit').toContain('SIGNALED OUTPUT');
     } finally {
       stderrSpy.mockRestore();
+      script.cleanup();
+    }
+  });
+
+  it('signals the whole process tree so a dev server cannot outlive the runner', async () => {
+    const script = makeScript(
+      [
+        "import { spawn } from 'node:child_process';",
+        "import { writeFileSync } from 'node:fs';",
+        "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+        'writeFileSync(process.argv[2], String(child.pid));',
+        'setInterval(() => {}, 1000);',
+      ].join('\n')
+    );
+    const descendantPidFile = join(script.file, '..', 'descendant-pid');
+    const root = spawn(process.execPath, [script.file, descendantPidFile], {
+      detached: process.platform !== 'win32',
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    let descendantPid;
+
+    const isAlive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        return error?.code === 'EPERM';
+      }
+    };
+
+    try {
+      const readyDeadline = Date.now() + 5_000;
+      while (!existsSync(descendantPidFile) && Date.now() < readyDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(existsSync(descendantPidFile), 'the child process started').toBe(true);
+      descendantPid = Number(readFileSync(descendantPidFile, 'utf8'));
+
+      const closed = new Promise((resolve) => root.once('close', resolve));
+      expect(signalProcessTree(root, 'SIGTERM')).toBe(true);
+      await closed;
+
+      const exitDeadline = Date.now() + 5_000;
+      while (isAlive(descendantPid) && Date.now() < exitDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(isAlive(descendantPid), 'the descendant did not survive the runner').toBe(false);
+    } finally {
+      if (root.exitCode == null && root.signalCode == null) {
+        const closed = new Promise((resolve) => root.once('close', resolve));
+        signalProcessTree(root, 'SIGKILL');
+        await closed;
+      }
+      if (descendantPid && isAlive(descendantPid)) {
+        if (process.platform === 'win32') {
+          spawnSync('taskkill', ['/PID', String(descendantPid), '/T', '/F'], {
+            stdio: 'ignore',
+            timeout: 10_000,
+            windowsHide: true,
+          });
+        } else {
+          process.kill(descendantPid, 'SIGKILL');
+        }
+      }
       script.cleanup();
     }
   });

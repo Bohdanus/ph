@@ -131,6 +131,15 @@ drop.
   `['**/__tests__/**', '**/*.unit.spec.ts', '**/*.unit.test.ts']` — three
   patterns, not two. A Playwright spec in jsdom, or an e2e helper test in a
   browser, fails in a way that looks like a product bug.
+- **Playwright disabled-state matchers target the labelled select, not an
+  `<option>`.** The pinned 1.64.1 implementation routes enabled/disabled checks
+  through `retarget(..., 'follow-label')`. Because `<option>` is not treated as a
+  form control, a label-wrapped option resolves to the label's associated
+  `<select>`. If that select is enabled, `toBeEnabled()` or
+  `not.toBeDisabled()` can pass for a disabled option; `toBeDisabled()` can fail
+  for one. Assert the option's own `disabled` property or attribute instead.
+  `e2e/erase-fill-eyedropper.spec.ts` demonstrates this. See the [pinned
+  implementation](https://github.com/microsoft/playwright/blob/v1.64.1/packages/injected/src/injectedScript.ts).
 - **`toBeVisible()` does not test clipping, and jsdom cannot test layout at all.**
   The left rail is `overflow-y-auto`, which makes CSS compute `overflow-x: auto`
   too, so the rail clips on BOTH axes and paints nothing of what a child positions

@@ -19,6 +19,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import type { Point } from '../../contexts/general-types.ts';
 import type { FullArgs } from '../../contexts/tool-types.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { clearCanvasBackingStore } from '../../util/canvas.ts';
 
 type ShapeHandlerProps = {
   className?: string;
@@ -97,7 +98,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     } else {
       // The overlay is shared. Clear it once when a gesture first paints, then clear only the
       // padded bounds occupied by the last preview on later frames.
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      clearCanvasBackingStore(ctx);
     }
 
     // A canvas draw can throw after painting part of the shape. Record the attempted bounds first
@@ -119,7 +120,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
 
   const clearPreview = () => {
     const ctx = overlayCtxRef.current;
-    if (ctx) ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    if (ctx) clearCanvasBackingStore(ctx);
     previewBoundsRef.current = null;
   };
 
@@ -332,7 +333,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       // The overlay is shared, so unmount cleanup still clears any in-flight preview. The size is
       // read from the canvas at call time to cover a document resize between renders.
       if (ctx) {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        clearCanvasBackingStore(ctx);
       }
       previewBoundsRef.current = null;
     };

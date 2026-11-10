@@ -232,6 +232,7 @@ export function classify(
     shellHistory = null,
     readHistory = null,
     liveWritersSuppressed = null,
+    ownershipAvailable = true,
     base = 'main',
   }
 ) {
@@ -465,6 +466,14 @@ export function classify(
     recommendation = RECOMMENDATION.PRUNE;
   } else {
     recommendation = RECOMMENDATION.UNKNOWN;
+  }
+
+  if (
+    ownershipAvailable === false &&
+    [RECOMMENDATION.PRUNE, RECOMMENDATION.READY_TO_LAND, RECOMMENDATION.LEGACY].includes(recommendation)
+  ) {
+    recommendation = RECOMMENDATION.UNKNOWN;
+    reasons.push('live ownership sources are unavailable, so landing or removing this worktree cannot be verified');
   }
 
   const prunable =

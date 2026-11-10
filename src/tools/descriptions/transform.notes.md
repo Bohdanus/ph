@@ -205,9 +205,9 @@ string into an `OffscreenCanvas` 2D context, and both are unreached processors f
 commit kinds; they are cited in the data file because
 they are the registered processors, not because editing runs them.
 
-**The Brightness mapping, stated exactly, because the old note had it inverted.** The
-proportionate curve in `proportionateFactor()` (`src/tools/functions.ts`) is a table over
-Adobe's own travels for this adjustment, and the table is:
+**The app's Brightness/Contrast factor mapping.** The linear mapping in `proportionateFactor()`
+(`src/tools/functions.ts`) uses the slider ranges documented by Adobe, but its factors are
+implementation choices in this app, not Photoshop transfer values:
 
 | control    | slider | factor | emitted |
 | ---------- | ------ | ------ | ------- |
@@ -223,34 +223,28 @@ So **0 is the neutral** on both controls, emitting exactly `brightness(100%) con
 `defaultSettings` in `src/tools/settings.ts` is `{ brightness: 0, contrast: 0 }`, so the panel at
 rest applies nothing.
 
-The two spans are not the same number, and the difference is the whole point of the table.
-Brightness divides by its own negative travel, so −150 lands on a factor of exactly `0` — a
-multiply to zero is the one thing `brightness()` does exactly right. Contrast divides by `100`,
-**not** by its own `−50` travel, because its two ends are not the same kind of endpoint:
-Photoshop's own Legacy contrast at `+100` is a measured gain of exactly `2`, and `1 + c/100`
-puts `+100` on that same `2` while leaving `−50` on `0.5`. Dividing by `50` instead would put
-`−50` on a factor of `0`, which is `contrast(0%)` — every pixel becomes the same mid-grey and
-the image carries no information at all. That is precisely the failure Adobe names when it
-warns against Legacy: "this can cause clipping or loss of image detail in highlight or shadow
-areas."
+The app divides Brightness by the absolute value of its negative minimum and Contrast by its
+positive maximum. That maps Brightness `−150` to factor `0`, and maps Contrast `−50` to factor
+`0.5`. These choices describe the CSS factors emitted by this implementation; they do not
+establish Photoshop's pixel output.
 
-**What "proportionate" is, and where the curve stops.** Adobe's sentence for this adjustment's
-default mode is "In normal mode, Brightness/Contrast applies proportionate (nonlinear)
-adjustments to the image layer, as with Levels and Curves adjustments."
-(<https://helpx.adobe.com/photoshop/using/apply-brightness-contrast-adjustment.html>) Two halves of
-that are claimed here and one is not. **Claimed:** the linear response — a constant factor step
-per slider step, so the same drag feels the same everywhere on the travel rather than gentle at
-one end and abrupt at the other — and the **non-clipping negative half**, which the CSS pipeline
-reproduces exactly on both controls. `brightness(0%..100%)` is a monotone contraction toward
-black and `contrast(0%..100%)` is a monotone contraction about the mid-grey pivot, and neither
-can move a value outside `[0, 1]`. **Not claimed: the nonlinearity.** Adobe pairs "proportionate"
-with "(nonlinear)" and compares the adjustment to Levels and Curves, and its measured response is
-an S — a `+20` brightness reads `10→11`, `128→145`, `250→253`, a set no constant scale and no
-constant offset can produce. CSS `brightness()` is a clamped pure multiply and `contrast()` a
-clamped affine pivot, so every factor above `1` clips: `contrast(f)` clips every input past
-`0.5 + 0.5/f`, and `brightness(f)` cannot create a white that was not already white. Reproducing
-the real curve needs a per-channel lookup table applied per pixel, which is the same absent
-mechanism this file's Levels entry rests on. **That gap is a follow-up, not a claim of parity.**
+**The app's CSS mapping is not Photoshop pixel parity.** [Adobe's current desktop Help page](https://helpx.adobe.com/photoshop/desktop/adjust-color/color-corrections/apply-brightness-and-contrast-adjustment.html)
+gives the Brightness and Contrast ranges and describes their qualitative effects, but it publishes
+no default-mode transfer formula. [An older Adobe Help page](https://helpx.adobe.com/photoshop/using/apply-brightness-contrast-adjustment.html)
+describes normal mode as a proportionate nonlinear adjustment, but also gives no formula for
+reproducing its curve. Keep the app's mapped CSS factors separate from those Photoshop statements.
+
+The [W3C Filter Effects Level 1 Working Draft](https://www.w3.org/TR/filter-effects-1/) describes
+`brightness(f)` as a linear multiplier, allows factors above 1, defines the CSS filter functions
+in sRGB, and clamps filter output to allowed color ranges. For normalized input `x` and `f > 1`,
+brightness reaches white at `x >= 1/f`; contrast maps `x` to `(x - 0.5) * f + 0.5`, so values at
+or below `0.5 - 0.5/f` clamp to black and values at or above `0.5 + 0.5/f` clamp to white. At the
+app's maximum factor of 2, with the other control neutral, those thresholds are 0.5 for
+brightness and 0.25/0.75 for contrast.
+These formulas describe the app's CSS filters, not Photoshop's curve. The current
+`e2e/levels.spec.ts` checks deterministic app output and does not compare against Photoshop
+reference pixels. A parity implementation would need a measured Photoshop curve and a per-channel
+pixel operation; a CSS filter string cannot express an arbitrary lookup table.
 
 The test harness defect the corpus also flagged **is** fixed. The `filter` data property in
 `createMockCanvasContext()` (`src/test/setup.ts`) replaces
@@ -369,13 +363,15 @@ overlay and its handles do render (`MoveToolArea.tsx` — the `useRect({ isMoveT
 and then a later pass swung it to `missing`, which is the opposite error: `types.ts` names
 "a control welded to one of its states" as a `partial` marker, and a row whose behaviour is
 permanently on is not a capability the app lacks. What renders in that same place
-(`MoveToolArea.tsx` — the `useRect({ isMoveTool: true })` call) is a **plain resize rectangle** on
-whichever layer is active, unconditionally: no checkbox gates it, so the citation is the behaviour
-and not a control, and that is what the row's `appRef` names. It is a resize rect — no rotation outside the box, no
-numeric W/H, no reference point. The geometric half of the tool is gone, and with it the two
-things `Cmd+T` and Move are supposed to share. **Auto-Select** is the same shape and is argued at
-length further down: the `layerUnderPointerId` hit test in `handlePointerDown()` always runs, and
-its `appRef` is that call for the same reason.
+(`MoveToolArea.tsx` — the `useRect({ isMoveTool: true })` call) is a **transform rectangle** on the
+active layer, unconditionally: no checkbox gates it, so the citation is the behaviour and not a
+control, and that is what the row's `appRef` names. Selected vector-shape layers with orthogonal
+retained affine frames have a rotation grip and an outside rotation band; their cursor follows the
+pointer tangent in eight 45-degree steps and uses a white under-stroke for contrast. Skewed shapes,
+raster and text layers retain their existing Move behavior; text continues to rotate in the Text tool.
+There is no numeric W/H or reference point. **Auto-Select** is the same shape and is argued at length
+further down: the `layerUnderPointerId` hit test in `handlePointerDown()` always runs, and its `appRef`
+is that call for the same reason.
 
 **The align buttons** are where the pre-existing corpus had a single row of widget names and no
 behaviour, and the behaviour is the interesting part:

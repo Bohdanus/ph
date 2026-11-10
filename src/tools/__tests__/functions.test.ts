@@ -125,7 +125,7 @@ describe('buildLevelsFilter', () => {
     ['-1', '99.33', '99.33'],
     ['+50', '133.33', '133.33'],
     ['+150', '200', '200'],
-  ])('maps brightness %s to brightness(%s%), the full Adobe -150..150 travel', (brightness, emitted) => {
+  ])('maps Brightness slider value %s to brightness(%s%)', (brightness, emitted) => {
     const [factor] = parseLevelsFilter(buildLevelsFilter({ brightness: Number(brightness), contrast: 0 }));
     expect(factor).toBe(Number(emitted) / 100);
   });
@@ -136,7 +136,7 @@ describe('buildLevelsFilter', () => {
     ['-1', '99'],
     ['+1', '101'],
     ['+100', '200'],
-  ])('maps contrast %s to contrast(%s%), the full Adobe -50..100 travel', (contrast, emitted) => {
+  ])('maps Contrast slider value %s to contrast(%s%)', (contrast, emitted) => {
     const [, factor] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast: Number(contrast) }));
     expect(factor).toBe(Number(emitted) / 100);
   });
@@ -174,10 +174,10 @@ describe('buildLevelsFilter', () => {
     expect(contrastSteps[0]).toBeGreaterThan(0);
   });
 
-  it('keeps the whole negative half of the Brightness travel non-clipping', () => {
-    // Adobe's normal mode is non-clipping in both directions. Over this half the CSS
-    // multiply is exactly that: `brightness(0%..100%)` maps `[0, 1]` into `[0, factor]` with
-    // the clamp never firing, so no shadow detail is lost to it.
+  it('keeps the whole negative half of the app Brightness travel within the CSS input range', () => {
+    // For these app factors, the ideal CSS multiply maps normalized inputs from `[0, 1]` into
+    // `[0, factor]` without reaching the upper clamp. This formula check does not rasterize the
+    // filter or establish how much detail survives browser quantization.
     for (const brightness of sliderTravel(BRIGHTNESS_SLIDER_RANGE).filter((value) => value <= 0)) {
       const [factor] = parseLevelsFilter(buildLevelsFilter({ brightness, contrast: 0 }));
       const range = cssBrightnessRange(factor);
@@ -187,9 +187,9 @@ describe('buildLevelsFilter', () => {
     }
   });
 
-  it('keeps the whole negative half of the Contrast travel non-clipping', () => {
-    // `contrast(f)` for `f <= 1` contracts the tonal range about the mid-grey pivot without
-    // ever leaving `[0, 1]`, which is precisely what Adobe's contrast minimum does.
+  it('keeps the whole negative half of the app Contrast travel within the CSS output range', () => {
+    // For `contrast(f)` with `0 <= f <= 1`, the ideal affine transform contracts normalized
+    // inputs about mid-grey and stays within `[0, 1]`. This checks the CSS formula, not Photoshop.
     for (const contrast of sliderTravel(CONTRAST_SLIDER_RANGE).filter((value) => value <= 0)) {
       const [, factor] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast }));
       const range = cssContrastRange(factor);
@@ -200,10 +200,9 @@ describe('buildLevelsFilter', () => {
   });
 
   it('flattens Contrast -50 to a half-range rather than collapsing the image to one mid-grey', () => {
-    // The defect this replaced. `expAdjustment(contrast, 2.2)` bottoms out at exactly `0`,
-    // so the old `-100` floor emitted `contrast(0%)` — every pixel became the same grey and
-    // the image carried no information at all. Adobe names that as the Legacy failure:
-    // "this can cause clipping or loss of image detail in highlight or shadow areas".
+    // The previous exponential mapping bottomed out at factor `0`, so this app's minimum
+    // slider value emitted `contrast(0%)`, mapping every ideal input to the same mid-grey.
+    // The current app mapping emits factor `0.5`; this does not claim Photoshop pixel parity.
     const [, factor] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast: CONTRAST_SLIDER_RANGE.min }));
     const range = cssContrastRange(factor);
 
@@ -215,7 +214,7 @@ describe('buildLevelsFilter', () => {
     expect(range.max - range.min).toBeLessThan(1);
   });
 
-  it('keeps the mid-grey pivot fixed at every Contrast value, the pivot Photoshop expands about', () => {
+  it('keeps the CSS Contrast pivot fixed at mid-grey across app slider values', () => {
     for (const contrast of sliderTravel(CONTRAST_SLIDER_RANGE)) {
       const [, factor] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast }));
 
@@ -223,7 +222,7 @@ describe('buildLevelsFilter', () => {
     }
   });
 
-  it('is strictly monotone over both Adobe travels, so no slider step is a no-op', () => {
+  it('strictly increases both CSS factors at each integer app slider step', () => {
     for (const brightness of sliderTravel(BRIGHTNESS_SLIDER_RANGE)) {
       const [lower] = parseLevelsFilter(buildLevelsFilter({ brightness, contrast: 0 }));
       const [higher] = parseLevelsFilter(buildLevelsFilter({ brightness: brightness + 1, contrast: 0 }));
@@ -239,22 +238,22 @@ describe('buildLevelsFilter', () => {
     }
   });
 
-  it('clips on the positive half of both controls, which is the boundary this pipeline cannot cross', () => {
-    // Recorded rather than papered over: Adobe's normal mode does NOT clip in either
-    // direction, and its response is nonlinear (`+20` brightness reads `10→11`, `128→145`,
-    // `250→253` — no constant scale and no constant offset produces that). A CSS
-    // `brightness(f)` is a clamped pure multiply and `contrast(f)` a clamped affine pivot,
-    // so every `f > 1` clips some input. Closing this needs a per-channel lookup table
-    // applied per pixel, the mechanism `docs/TOOLS-TOO-HARD.md` records as absent.
-    const [bright] = parseLevelsFilter(buildLevelsFilter({ brightness: BRIGHTNESS_SLIDER_RANGE.max, contrast: 0 }));
-    const [, punch] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast: CONTRAST_SLIDER_RANGE.max }));
+  it('derives CSS clipping thresholds for the maximum positive factors', () => {
+    // The app maps both maximum slider values to factor 2. These thresholds follow from the
+    // CSS filter functions and their output clamp; this test does not claim Photoshop parity
+    // or rasterize the filter.
+    const [brightnessFactor] = parseLevelsFilter(
+      buildLevelsFilter({ brightness: BRIGHTNESS_SLIDER_RANGE.max, contrast: 0 })
+    );
+    const [, contrastFactor] = parseLevelsFilter(
+      buildLevelsFilter({ brightness: 0, contrast: CONTRAST_SLIDER_RANGE.max })
+    );
 
-    expect(cssBrightnessRange(bright).max).toBeGreaterThan(1);
-    expect(cssContrastRange(punch).max).toBeGreaterThan(1);
-    // The first positive step is the first clip: the neutral is the largest non-clipping
-    // value on each control.
-    expect(bright).toBeGreaterThan(1);
-    expect(punch).toBeGreaterThan(1);
+    expect(brightnessFactor).toBe(2);
+    expect(contrastFactor).toBe(2);
+    expect(1 / brightnessFactor).toBe(0.5);
+    expect(0.5 - 0.5 / contrastFactor).toBe(0.25);
+    expect(0.5 + 0.5 / contrastFactor).toBe(0.75);
   });
 
   it('propagates a non-finite adjustment into the emitted string rather than sanitising it', () => {

@@ -3,7 +3,7 @@ import { useEffect, useRef, type PointerEvent, type RefObject } from 'react';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import { resetOverlayAlpha } from '../../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../../util/canvas.ts';
 import type { Point, Size } from '../../contexts/general-types.ts';
 import { COLOR_SAMPLER_HIT_RADIUS, type ColorSampler, type ColorSamplerToolArgs } from '../../tools/colorSampler.ts';
 import { readColorSampler } from '../../tools/color-sampler-readback.ts';
@@ -144,7 +144,7 @@ export const ColorSamplerToolArea = ({ className, overlayCtxRef }: ColorSamplerT
     // `resetOverlayAlpha` before the clear, not after: the overlay is ONE 2D context for the whole
     // session, so a previous tool's `globalAlpha` leaks into this one's stroke.
     resetOverlayAlpha(ctx);
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    clearCanvasBackingStore(ctx);
     for (const sampler of samplers) drawColorSamplerMarker(ctx, sampler, dimensionsRef.current.scale);
   }, [samplers, dimensionsRef, overlayCtxRef]);
 
@@ -154,7 +154,7 @@ export const ColorSamplerToolArea = ({ className, overlayCtxRef }: ColorSamplerT
     () => () => {
       const ctx = overlayCtxRef?.current;
       if (!ctx) return;
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      clearCanvasBackingStore(ctx);
     },
     [overlayCtxRef]
   );
