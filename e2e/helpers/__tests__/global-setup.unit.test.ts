@@ -16,6 +16,7 @@ import globalSetup, {
   WARMUP_TIMEOUT_MS,
 } from '../../global-setup';
 import { normalizeOwnServerBaseUrl } from '../../global-setup/foreign-origin';
+import { playwrightWorkerCount } from '../../global-setup/worker-policy';
 
 /**
  * This file tests `e2e/global-setup.ts`, which is NOT a helper module, and it lives
@@ -77,6 +78,23 @@ describe('normalizeOwnServerBaseUrl', () => {
     );
     expect(normalizeOwnServerBaseUrl('not a url', 'http://127.0.0.1:5173')).toBe('not a url');
     expect(normalizeOwnServerBaseUrl('https://example.test', 'http://127.0.0.1:5173')).toBe('https://example.test');
+  });
+});
+
+describe('playwrightWorkerCount', () => {
+  it('serializes Windows CI after runner connection exhaustion', () => {
+    expect(playwrightWorkerCount(true, 'win32')).toBe(1);
+  });
+
+  it('keeps native CI parallelism on Linux and macOS', () => {
+    expect(playwrightWorkerCount(true, 'linux')).toBeUndefined();
+    expect(playwrightWorkerCount(true, 'darwin')).toBeUndefined();
+  });
+
+  it('keeps local E2E runs serial on every platform', () => {
+    expect(playwrightWorkerCount(false, 'win32')).toBe(1);
+    expect(playwrightWorkerCount(false, 'linux')).toBe(1);
+    expect(playwrightWorkerCount(false, 'darwin')).toBe(1);
   });
 });
 
