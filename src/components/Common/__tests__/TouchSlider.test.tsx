@@ -1,4 +1,4 @@
-import { createRef } from 'react';
+import { createRef, type ChangeEvent } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { TouchSlider } from '../TouchSlider.tsx';
@@ -6,7 +6,7 @@ import { TouchSlider } from '../TouchSlider.tsx';
 describe('TouchSlider', () => {
   it('forwards native range props, the requested track size, and its input ref', () => {
     const ref = createRef<HTMLInputElement>();
-    const onChange = vi.fn();
+    const onChange = vi.fn((event: ChangeEvent<HTMLInputElement>) => event.target.value);
 
     render(
       <TouchSlider
@@ -35,6 +35,7 @@ describe('TouchSlider', () => {
 
     fireEvent.change(slider, { target: { value: '12' } });
     expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveReturnedWith('12');
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ target: slider, type: 'change' }));
   });
 
