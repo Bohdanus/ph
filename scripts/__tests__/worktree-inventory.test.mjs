@@ -2851,7 +2851,10 @@ describe('the curated table', () => {
       .map(([name]) => name)
       .filter((name) => {
         const w = live.find((x) => x.name === name);
-        return w ? w.workingTree.modified + w.workingTree.untracked > 0 : false;
+        if (!w) return false;
+        const workingTree = __testables.workingTreeState(w.path);
+        expect(workingTree.statusError, `${name}: git status must be readable`).toBeNull();
+        return workingTree.modified + workingTree.untracked > 0;
       });
     expect(dirty, `these entries are legacy but their worktree holds uncommitted work: ${dirty.join(', ')}`).toEqual(
       []
