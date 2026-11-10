@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { normalizeOwnServerBaseUrl } from './e2e/global-setup/foreign-origin.ts';
+import { playwrightWorkerCount } from './e2e/global-setup/worker-policy.ts';
 
 /**
  * See https://playwright.dev/docs/test-configuration.
@@ -91,7 +92,7 @@ export default defineConfig({
   // number of concurrent pages limits pressure on the browser/server connections while
   // preserving the strict console and flaky-test gates. Linux and macOS keep Playwright's
   // CPU-based parallelism. Local runs stay sequential so failures are easier to inspect.
-  workers: process.env.CI && process.platform !== 'win32' ? undefined : 1,
+  workers: playwrightWorkerCount(Boolean(process.env.CI), process.platform),
   // Three refusals, and all three run for every `playwright test` invocation whatever
   // started it: a visible browser, a base URL this run's own dev server is not
   // serving, and an HTML report that would open itself and never let the run exit.
