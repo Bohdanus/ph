@@ -979,7 +979,7 @@ describe('provider rate-limit diagnostics', () => {
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
-  it('does not retry OpenRouter when platform rate-limit headers report zero remaining', async () => {
+  it('stops after one inference when OpenRouter platform rate-limit headers report zero remaining', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: { message: 'platform rate limited' } }), {
@@ -999,7 +999,7 @@ describe('provider rate-limit diagnostics', () => {
 
     expect(chat).toHaveBeenCalledTimes(1);
     expect(waitForRetryAfter).not.toHaveBeenCalled();
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
   });
 
   it('honors a 60-second Retry-After on OpenRouter 503 after the lazy quota probe', async () => {

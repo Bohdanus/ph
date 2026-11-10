@@ -118,6 +118,12 @@ distinct Free-plan organizations because Groq limits apply at the organization l
 machine's saved-key convention is `~/.config/groq/api_key` and `~/.config/groq/api_key_*`.
 A successful `/models` request proves the key is accepted, not that the organization is on Groq's Free plan.
 
+To check saved-key authentication without sending an inference request, run
+`node scripts/free-model-pool.mjs --probe-groq`. It discovers `api_key` and `api_key_*` in
+`~/.config/groq/`; use `--groq-key-dir DIR` to select another directory or
+`--groq-key-files PATH1,PATH2` to check explicit files. The report identifies each checked path and
+whether its key authenticated; it does not establish that the account has Free-plan access.
+
 For a confirmed Free-plan organization, load the selected key only into the runner process:
 
 ```sh
