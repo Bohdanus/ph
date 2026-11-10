@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveKiloCli, runKiloCompletion } from '../lib/free-model-kilo.mjs';
+import { MAX_KILO_OUTPUT_BYTES, resolveKiloCli, runKiloCompletion } from '../lib/free-model-kilo.mjs';
 
 async function writeExecutable(filePath, source, { windowsShim = process.platform === 'win32' } = {}) {
   await mkdir(join(filePath, '..'), { recursive: true });
@@ -62,7 +63,7 @@ if (valueAfter('--model') !== 'kilo/nvidia/nemotron-3-ultra-550b-a55b:free') pro
 if (valueAfter('--agent') !== 'free-completion') process.exit(6);
 if (!args.includes('--variant') || valueAfter('--variant') !== 'high') process.exit(7);
 if (args.includes('--file')) process.exit(8);
-if (!message.startsWith('Answer the provided request directly, in plain text, using at most 40 output tokens.')) process.exit(9);
+if (!message.startsWith('Answer the provided request directly, in plain text, using at most 65536 output tokens.')) process.exit(9);
 if (!message.includes('private prompt')) process.exit(10);
 if (args.join(' ').includes('private prompt')) process.exit(11);
 if (process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS || process.env.KILO_CONFIG_CONTENT || process.env.NODE_OPTIONS || process.env.NODE_PATH || process.env.PWD || process.env.UNRELATED_SECRET) process.exit(12);
@@ -78,7 +79,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           command,
           model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
           prompt: 'private prompt',
-          maxTokens: 40,
+          maxTokens: 65536,
           env: {
             PATH: process.env.PATH,
             HOME: '/fixture/home',
@@ -153,6 +154,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'length', cost
     try {
       await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
         error: 'Kilo did not return a complete non-empty response',
+        finishReason: 'length',
       });
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -170,7 +172,11 @@ process.exit(1);`
 
     try {
       const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });
-      expect(result).toEqual({ error: 'Kilo provider quota or rate limit returned HTTP 429', exhaustSource: true });
+      expect(result).toEqual({
+        error: 'Kilo provider quota or rate limit returned HTTP 429',
+        exhaustSource: true,
+        status: 429,
+      });
       expect(JSON.stringify(result)).not.toContain('private provider details');
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -186,29 +192,349 @@ process.exit(1);`
 
     try {
       const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });
-      expect(result).toEqual({ error: 'Kilo provider quota or rate limit returned HTTP 429', exhaustSource: true });
+      expect(result).toEqual({
+        error: 'Kilo provider quota or rate limit returned HTTP 429',
+        exhaustSource: true,
+        status: 429,
+      });
       expect(JSON.stringify(result)).not.toContain('private provider body');
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });
 
-  it('rejects a reported non-zero cost and stops that provider for the run', async () => {
+  it.each([
+    ['error.code underscore', { type: 'error', error: { code: 'content_filter_blocked' } }],
+    ['error.code hyphen', { type: 'error', error: { code: 'content-filter-blocked' } }],
+    ['error.code dotted', { type: 'error', error: { code: 'content.filter.blocked' } }],
+    ['error.code uppercase', { type: 'error', error: { code: 'CONTENT_FILTER_BLOCKED' } }],
+    ['error.code padded', { type: 'error', error: { code: '  content_filter_blocked  ' } }],
+    ['error.code versioned', { type: 'error', error: { code: 'content_filter_blocked_v2' } }],
+    ['error.code versioned base', { type: 'error', error: { code: 'content_filter_v1' } }],
+    ['error.code content policy', { type: 'error', error: { code: 'content_policy' } }],
+    ['error.type', { type: 'error', error: { code: 'request_failed', type: 'content_filter_blocked' } }],
+    [
+      'error.type uppercase and hyphenated',
+      { type: 'error', error: { code: 'request_failed', type: ' CONTENT-FILTER-BLOCKED ' } },
+    ],
+    [
+      'error.type dotted and versioned',
+      { type: 'error', error: { code: 'request_failed', type: 'content.policy.violation.v3' } },
+    ],
+    ['event.code', { type: 'error', code: 'content_filter_blocked', error: { code: 'request_failed' } }],
+    [
+      'event.code uppercase and hyphenated',
+      { type: 'error', code: ' CONTENT-FILTER-BLOCKED ', error: { code: 'request_failed' } },
+    ],
+    [
+      'event.code dotted and versioned',
+      { type: 'error', code: 'content.filter.violation.v2', error: { code: 'request_failed' } },
+    ],
+  ])('stops fallback when Kilo reports an explicit policy code in %s', async (_source, sourceEvent) => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const event = {
+      ...sourceEvent,
+      error: { ...sourceEvent.error, message: 'private provider body' },
+    };
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `console.log(JSON.stringify(${JSON.stringify(event)}));
+process.exitCode = 1;`
+    );
+
+    try {
+      const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });
+      expect(result).toEqual({
+        error: 'Kilo provider content policy rejected or filtered this request',
+        contentPolicyRejected: true,
+      });
+      expect(JSON.stringify(result)).not.toContain('private provider body');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('stops fallback for a policy message in a Kilo stdout error event', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
     const command = await writeExecutable(
       join(directory, 'fake-kilo'),
-      `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));
-console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`
+      `console.log(JSON.stringify({ type: 'error', error: { code: 'request_failed', message: 'Prompt was rejected by the content filter: private provider body' } }));
+process.exitCode = 1;`
+    );
+
+    try {
+      const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });
+      expect(result).toEqual({
+        error: 'Kilo provider content policy rejected or filtered this request',
+        contentPolicyRejected: true,
+      });
+      expect(JSON.stringify(result)).not.toContain('private provider body');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['message', "console.error('Prompt was rejected by the content filter: private provider body');"],
+    [
+      'structured JSONL error',
+      "console.error(JSON.stringify({ type: 'error', error: { code: 'content_filter_blocked', message: 'private provider body' } }));",
+    ],
+    [
+      'structured JSONL terminal',
+      "console.error(JSON.stringify({ type: 'step_finish', part: { reason: 'content-filter' } }));",
+    ],
+  ])('stops fallback for an explicit content-policy rejection written only to stderr (%s)', async (_kind, output) => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const command = await writeExecutable(join(directory, 'fake-kilo'), `${output}\nprocess.exitCode = 1;`);
+
+    try {
+      const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });
+      expect(result).toEqual({
+        error: 'Kilo provider content policy rejected or filtered this request',
+        contentPolicyRejected: true,
+      });
+      expect(JSON.stringify(result)).not.toContain('private provider body');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('honors a stderr policy rejection alongside valid stdout JSONL', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `console.log(JSON.stringify({ type: 'error', error: { code: 'request_failed', message: 'provider request failed' } }));
+console.error('Prompt was rejected by the content filter: private provider body');
+process.exitCode = 1;`
+    );
+
+    try {
+      const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });
+      expect(result).toEqual({
+        error: 'Kilo provider content policy rejected or filtered this request',
+        contentPolicyRejected: true,
+      });
+      expect(JSON.stringify(result)).not.toContain('private provider body');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves an explicit stdout policy rejection before a malformed JSONL line', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `console.log(JSON.stringify({ type: 'error', error: { code: 'content_filter_blocked' } }));
+console.log('{malformed json');
+process.exitCode = 1;`
     );
 
     try {
       await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
-        error: 'Kilo reported non-zero or invalid completion cost',
-        exhaustSource: true,
+        error: 'Kilo provider content policy rejected or filtered this request',
+        contentPolicyRejected: true,
       });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it('recognizes an explicit content-policy code delivered as an error string', async () => {
+    const spawnImpl = () => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => {
+        child.stdout.emit(
+          'data',
+          Buffer.from(`${JSON.stringify({ type: 'error', error: 'content_filter_blocked' })}\n`)
+        );
+        setImmediate(() => child.emit('close', 1, null));
+      };
+      child.kill = (signal) => setImmediate(() => child.emit('close', null, signal));
+      return child;
+    };
+
+    await expect(
+      runKiloCompletion({ command: '/unused/kilo', model: 'model:free', prompt: 'prompt', spawnImpl })
+    ).resolves.toEqual({
+      error: 'Kilo provider content policy rejected or filtered this request',
+      contentPolicyRejected: true,
+    });
+  });
+
+  it.each([
+    ['a clean CLI exit', { inputError: false, hang: false }],
+    ['a stdin error and timeout after the terminal event', { inputError: true, hang: true }],
+    ['output overflow after the terminal event', { inputError: false, hang: false, overflow: true }],
+    ['an underscore content-filter terminal', { inputError: false, hang: false, reason: 'content_filter' }],
+  ])('fails closed for a Kilo content-filter terminal after %s', async (_scenario, options) => {
+    const spawnImpl = () => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => {
+        const terminal = Buffer.from(
+          `${JSON.stringify({ type: 'step_finish', part: { reason: options.reason ?? 'content-filter' } })}\n`
+        );
+        const overflow = options.overflow ? Buffer.alloc(MAX_KILO_OUTPUT_BYTES, 'x') : Buffer.alloc(0);
+        child.stdout.emit('data', Buffer.concat([terminal, overflow]));
+        if (options.inputError) child.stdin.emit('error', new Error('prompt pipe closed'));
+        if (!options.hang && !options.overflow) setImmediate(() => child.emit('close', 0, null));
+      };
+      child.kill = (signal) => setImmediate(() => child.emit('close', null, signal));
+      return child;
+    };
+
+    await expect(
+      runKiloCompletion({
+        command: '/unused/kilo',
+        model: 'model:free',
+        prompt: 'prompt',
+        timeoutMs: options.hang ? 20 : 1000,
+        spawnImpl,
+      })
+    ).resolves.toEqual({
+      error: 'Kilo provider content policy rejected or filtered this request',
+      contentPolicyRejected: true,
+    });
+  });
+
+  it('prioritizes a policy rejection over a tool-activity error', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `console.log(JSON.stringify({ type: 'tool_use', part: { type: 'tool' } }));
+console.log(JSON.stringify({ type: 'error', error: { code: 'content_filter_blocked', message: 'private provider body' } }));
+process.exitCode = 1;`
+    );
+
+    try {
+      const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });
+      expect(result).toEqual({
+        error: 'Kilo provider content policy rejected or filtered this request',
+        contentPolicyRejected: true,
+      });
+      expect(JSON.stringify(result)).not.toContain('private provider body');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not mistake generic content wording for a Kilo content-policy rejection', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const messages = [
+      'Could not serialize content field for provider request',
+      'Prompt was rejected due to rate limit exceeded',
+      'Flagged as potentially violating quota limits',
+      'Free model usage limit reached (usage policy)',
+      'Content filtering is enabled',
+      'Safety filter configuration is unavailable',
+    ];
+    const events = [
+      ...messages.map((message) => ({ type: 'error', error: { code: 'request_failed', message } })),
+      { type: 'error', error: { code: 'safety_warning', message: 'Provider emitted an advisory warning' } },
+      { type: 'error', error: { code: 'content_filtering', message: 'Filter configuration is unavailable' } },
+    ];
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      [
+        ...events.map((event) => `console.log(JSON.stringify(${JSON.stringify(event)}));`),
+        "console.error('Could not read content metadata from the provider response');",
+        'process.exitCode = 1;',
+      ].join('\n')
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+        error: 'Kilo CLI reported a provider or completion error',
+        exhaustSource: false,
+        status: null,
+        modelAttributable: false,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // These cases use real Node child processes; leave startup headroom for a contended Vitest worker.
+  it.each([
+    [
+      'provider error event',
+      `console.log(JSON.stringify({ type: 'error', error: { code: 'request_failed' }, cost: 0.001 }));\nprocess.exitCode = 1;`,
+    ],
+    [
+      'malformed JSONL after a cost event',
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));\nconsole.log('{malformed json');`,
+    ],
+    [
+      'output overflow after a cost event',
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));\nprocess.stdout.write('x'.repeat(2 * 1024 * 1024));`,
+    ],
+    [
+      'conflicting top-level and part costs',
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0 }, cost: 0.001 }));`,
+    ],
+    [
+      'cost nested in a provider error object',
+      `console.log(JSON.stringify({ type: 'error', error: { code: 'request_failed', cost: 0.001 } }));`,
+    ],
+    [
+      'cost reported on stderr',
+      `console.error(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`,
+    ],
+  ])(
+    'rejects every reported invalid Kilo cost before process failure handling: %s',
+    async (_scenario, source, timeoutMs = 5000) => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+      const command = await writeExecutable(join(directory, 'fake-kilo'), source);
+
+      try {
+        await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt', timeoutMs })).resolves.toEqual(
+          {
+            error: 'Kilo reported non-zero or invalid completion cost',
+            exhaustSource: true,
+            safetyStop: true,
+          }
+        );
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it('rejects a buffered invalid cost before returning a timeout error', async () => {
+    const killSignals = [];
+    const spawnImpl = () => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => {
+        child.stdout.emit(
+          'data',
+          Buffer.from(`${JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: false } })}\n`)
+        );
+      };
+      child.kill = (signal) => {
+        killSignals.push(signal);
+        queueMicrotask(() => child.emit('close', null, signal));
+        return true;
+      };
+      return child;
+    };
+
+    await expect(
+      runKiloCompletion({ command: process.execPath, model: 'model:free', prompt: 'prompt', timeoutMs: 25, spawnImpl })
+    ).resolves.toEqual({
+      error: 'Kilo reported non-zero or invalid completion cost',
+      exhaustSource: true,
+      safetyStop: true,
+    });
+    expect(killSignals).toEqual(['SIGTERM']);
   });
 
   it('aborts a stalled request at its configured inference timeout', async () => {

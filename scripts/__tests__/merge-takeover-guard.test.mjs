@@ -2487,6 +2487,97 @@ describe('pinned main landing', () => {
     expect(gitAt(featureWorktree, ['show', 'HEAD:ordinary-change.txt'])).toBe('ordinary');
   });
 
+  it('clears stale prepared-merge state after the exact merge commit is already HEAD', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    installPinnedPreCommitGuards();
+
+    writeFileSync(join(featureWorktree, 'feature-note.txt'), 'feature note\n');
+    gitAt(featureWorktree, ['add', 'feature-note.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Feature change', '-m', 'Chat: test-session']);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+
+    const mergeStatePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(existsSync(mergeStatePath)).toBe(true);
+    const preparedMerge = JSON.parse(readFileSync(mergeStatePath, 'utf8'));
+    gitAt(featureWorktree, ['commit', '--no-verify', '-m', 'Prepared merge', '-m', 'Chat: test-session']);
+    const firstMergeCommit = gitAt(featureWorktree, ['rev-parse', 'HEAD']);
+    gitAt(featureWorktree, [
+      'commit',
+      '--amend',
+      '--no-verify',
+      '-m',
+      'Amended prepared merge',
+      '-m',
+      'Chat: test-session',
+    ]);
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).not.toBe(firstMergeCommit);
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD^1'])).toBe(preparedMerge.head);
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD^2'])).toBe(preparedMerge.incoming);
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD^{tree}'])).toBe(preparedMerge.resultTree);
+    expect(existsSync(mergeStatePath)).toBe(true);
+
+    writeFileSync(join(featureWorktree, 'ordinary-after-merge.txt'), 'ordinary change\n');
+    gitAt(featureWorktree, ['add', 'ordinary-after-merge.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Ordinary after completed merge', '-m', 'Chat: test-session']);
+
+    expect(existsSync(mergeStatePath)).toBe(false);
+    expect(gitAt(featureWorktree, ['show', 'HEAD:ordinary-after-merge.txt'])).toBe('ordinary change');
+  });
+
+  it('does not clear prepared-merge state for the same tree with reversed parents', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    installPinnedPreCommitGuards();
+
+    writeFileSync(join(featureWorktree, 'feature-note.txt'), 'feature note\n');
+    gitAt(featureWorktree, ['add', 'feature-note.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Feature change', '-m', 'Chat: test-session']);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+
+    const mergeStatePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    const preparedMerge = JSON.parse(readFileSync(mergeStatePath, 'utf8'));
+    gitAt(featureWorktree, ['commit', '--no-verify', '-m', 'Prepared merge', '-m', 'Chat: test-session']);
+    const mergedTree = gitAt(featureWorktree, ['rev-parse', 'HEAD^{tree}']);
+    const differentMerge = gitAt(featureWorktree, [
+      'commit-tree',
+      mergedTree,
+      '-p',
+      preparedMerge.incoming,
+      '-p',
+      preparedMerge.head,
+    ]);
+    gitAt(featureWorktree, ['reset', '--hard', differentMerge]);
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD^{tree}'])).toBe(mergedTree);
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD^1'])).toBe(preparedMerge.incoming);
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD^2'])).toBe(preparedMerge.head);
+
+    writeFileSync(join(featureWorktree, 'ordinary-after-merge.txt'), 'ordinary change\n');
+    gitAt(featureWorktree, ['add', 'ordinary-after-merge.txt']);
+    let failure;
+    try {
+      gitAt(featureWorktree, ['commit', '-m', 'Must remain blocked', '-m', 'Chat: test-session']);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain(
+      'commit-reviewed-landing-message-guard: a previous prepared merge left unresolved state'
+    );
+    expect(existsSync(mergeStatePath)).toBe(true);
+  });
+
   it('discards an aborted prepared merge before recording a different merge', () => {
     const refs = prepareDisjointMerge();
     git(['checkout', '-qb', 'other', refs.base]);

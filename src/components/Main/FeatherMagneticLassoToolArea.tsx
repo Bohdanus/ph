@@ -20,7 +20,7 @@ import {
   type MagneticSegmentResult,
 } from '../../util/magneticLasso.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, type DocumentFrame } from '../../contexts/document-frame.ts';
-import { resetOverlayAlpha } from '../../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../../util/canvas.ts';
 
 const MIN_POINTS_FOR_SELECTION = 3;
 const CLOSE_START_THRESHOLD = 10;
@@ -79,7 +79,7 @@ function drawFeatherMagneticOverlay({
     draftPoints.push(...previewPath.slice(1));
   }
 
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  clearCanvasBackingStore(ctx);
   // `drawSelectionAnchors` resets the alpha itself, but the draft path below is stroked by this
   // function on the same shared context and writes `strokeStyle`/`lineWidth` with no alpha of its
   // own, so the reset has to happen before both rather than only inside the anchors.
@@ -203,7 +203,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    clearCanvasBackingStore(ctx);
   }
 
   const redrawOverlay = useCallback(() => {
@@ -624,7 +624,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
       lastAutoAnchorTimeRef.current = 0;
 
       if (ctx) {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [overlayCtxRef]);

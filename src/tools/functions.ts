@@ -50,63 +50,45 @@ function adjustmentPercent(factor: number): string {
 }
 
 /**
- * Adobe's two slider travels for Brightness/Contrast, in the adjustment's default — Adobe
- * calls it "normal mode" — rather than its Legacy form. Adobe states the numbers without
- * naming a mode: "Values can range from ‑150 to +150 for Brightness, ‑50 to +100 for
- * Contrast." (<https://helpx.adobe.com/photoshop/using/apply-brightness-contrast-adjustment.html>)
+ * Adobe's current desktop Help page lists Brightness `-150..+150` and Contrast `-50..+100`:
+ * <https://helpx.adobe.com/photoshop/desktop/adjust-color/color-corrections/apply-brightness-and-contrast-adjustment.html>
  *
- * These are the one home for both halves of the contract: the panel's `min`/`max` and the
- * spans `buildLevelsFilter` divides by are derived from them, so a slider cannot reach a
- * value the curve was not written for.
+ * These constants define the app's slider bounds and its CSS-factor mapping. Adobe does not
+ * publish the default-mode transfer formula on that page, so the app's mapping is not evidence
+ * of Photoshop pixel parity.
  */
 export const BRIGHTNESS_SLIDER_RANGE = { min: -150, max: 150 } as const;
 export const CONTRAST_SLIDER_RANGE = { min: -50, max: 100 } as const;
 
 /**
- * The factor each control's travel is divided by, and why the two differ.
- *
- * **Brightness** divides by its own negative travel, so `BRIGHTNESS_SLIDER_RANGE.min`
- * lands on a factor of exactly `0`: Adobe's dark endpoint is black, and a multiply that
- * reaches zero is the one thing `brightness()` does exactly right.
- *
- * **Contrast** divides by `100`, NOT by its own `-50` travel, because the two ends are not
- * the same kind of endpoint. Adobe's own Legacy contrast at `+100` is a measured gain of
- * exactly `2` — it collapses every channel to `0` or `255` — so `2` is the gain this very
- * slider reaches at its own maximum, and the proportionate law through it puts `-50` at
- * `0.5`. Dividing by `50` instead would put `-50` on a factor of `0`, which is
- * `contrast(0%)`: every pixel becomes the same mid-grey. That is the Legacy clipping
- * defect Adobe names ("this can cause clipping or loss of image detail in highlight or
- * shadow areas"), and it is what `expAdjustment`'s re-anchored zero reached.
+ * The app's chosen scale for mapping each slider value to a CSS factor. Brightness divides
+ * by the absolute value of its minimum; Contrast divides by its maximum. Thus the app maps
+ * Brightness `-150/0/+150` to factors `0/1/2` and Contrast `-50/0/+100` to `0.5/1/2`.
+ * These are implementation choices for the app's CSS filters, not Photoshop transfer values.
  */
 const BRIGHTNESS_FACTOR_SPAN = -BRIGHTNESS_SLIDER_RANGE.min;
 const CONTRAST_FACTOR_SPAN = CONTRAST_SLIDER_RANGE.max;
 
 /**
- * Adobe's normal-mode curve, in the part of it a CSS filter can carry.
+ * The app's linear mapping from a slider value to a CSS filter factor. An older Adobe Help
+ * page describes Photoshop's normal mode as proportionate and nonlinear, but publishes no
+ * equation for that curve; this function is not a reconstruction of it. See the boundary note
+ * on `buildLevelsFilter`.
  *
- * Adobe: "In normal mode, Brightness/Contrast applies proportionate (nonlinear) adjustments
- * to the image layer, as with Levels and Curves adjustments." This is the LINEAR member of
- * that family and the whole of what `brightness()`/`contrast()` can express — Adobe also
- * calls the curve nonlinear, and that half needs a per-pixel LUT this pipeline has no path
- * for. See the boundary note on `buildLevelsFilter`.
+ * | control    | slider | app factor |
+ * | ---------- | ------ | ---------- |
+ * | Brightness | `-150` | `0`        |
+ * | Brightness | `0`    | `1`        |
+ * | Brightness | `+150` | `2`        |
+ * | Contrast   | `-50`  | `0.5`      |
+ * | Contrast   | `0`    | `1`        |
+ * | Contrast   | `+100` | `2`        |
  *
- * Each slider unit is a constant fraction of the neutral factor, which is what "proportionate"
- * buys over the exponential this replaced: the response is linear, so the same slider step is
- * the same visual step everywhere on the travel, instead of a curve that is gentle at one end
- * and abrupt at the other.
- *
- * | control    | slider | factor |
- * | ---------- | ------ | ------ |
- * | Brightness | `-150` | `0`    |
- * | Brightness | `0`    | `1`    |
- * | Brightness | `+150` | `2`    |
- * | Contrast   | `-50`  | `0.5`  |
- * | Contrast   | `0`    | `1`    |
- * | Contrast   | `+100` | `2`    |
- *
- * Non-finite input propagates at this low-level formatter. `normalizeLevelsToolArgs()` handles
- * malformed values at the Levels tool boundary, while `presentation-evaluator.ts`'s
- * `numericFilterArg` continues to refuse corrupt retained operations.
+ * Each integer step changes the emitted factor by a constant amount. This describes the app's
+ * scalar mapping; it does not imply an equal perceptual or rasterized pixel change. Non-finite
+ * input propagates at this low-level formatter. `normalizeLevelsToolArgs()` handles malformed
+ * values at the Levels tool boundary, while `presentation-evaluator.ts`'s `numericFilterArg`
+ * continues to refuse corrupt retained operations.
  */
 export function proportionateFactor(value: number, span: number): number {
   return 1 + value / span;
@@ -132,30 +114,21 @@ export function buildColorsFilter({ grayscale, sepia, saturation }: ColorsFilter
  * durable materializer (`materialization.ts`) and the committing processor (`levels.ts`) all
  * build through here, so a layer and its own preview cannot disagree.
  *
- * **What this reproduces of Adobe, and what it cannot.** The two terms keep Adobe's own
- * order — brightness first, contrast second — and the pivot `contrast()` provides about
- * mid-grey is the same fixed pivot Photoshop's contrast expands about. Two properties of
- * normal mode come out exact, and they are the two the exponential curve broke:
+ * This is the app's CSS factor mapping, not a reconstruction of Photoshop's transfer curve.
+ * The W3C Filter Effects Level 1 Working Draft describes `brightness(f)` as a linear
+ * multiplier and permits factors above 1. For a normalized channel value `x` and `f > 1`,
+ * brightness reaches white when `x >= 1/f`. `contrast(f)` maps `x` to
+ * `(x - 0.5) * f + 0.5`; for `f > 1`, values at or below `0.5 - 0.5/f` clamp to black and
+ * values at or above `0.5 + 0.5/f` clamp to white.
+ * These are CSS filter results after color-range clamping, not Photoshop behavior.
+ * <https://www.w3.org/TR/filter-effects-1/>
  *
- * - **The neutral.** `0` is a factor of exactly `1` on both controls, so the default
- *   settings apply nothing. Four suites pin that; a proportionate curve that did not land on
- *   `1` would open every freshly opened document colour-shifted.
- * - **A non-clipping negative half on both controls.** `brightness(0%..100%)` is a monotone
- *   contraction to black and `contrast(0%..100%)` is a monotone contraction about the pivot,
- *   so neither can move a value outside `[0, 1]`. Adobe's contrast minimum reduces the
- *   tonal range and keeps every value where it was; the removed `expAdjustment` reached a
- *   factor of `0` there and flattened the whole image to one grey.
- *
- * **The remaining boundary is the positive half of both controls.** Adobe's normal mode is
- * non-clipping in BOTH directions — "anything that was not white or not black before the move
- * will remain so" — and its measured response is nonlinear (a `+20` brightness reads
- * `10→11`, `128→145`, `250→253`, which no constant scale and no constant offset can produce).
- * A CSS `brightness(f)` is a clamped pure multiply and a CSS `contrast(f)` is a clamped
- * affine pivot, so for any `f > 1` both clip: `contrast(f)` clips every input past
- * `0.5 + 0.5/f`, and `brightness(f)` cannot create a white that was not already white.
- * Reproducing Adobe exactly needs a per-channel lookup table applied per pixel, which is the
- * same absent mechanism `docs/TOOLS-TOO-HARD.md` names for Adobe's real Levels — a filter
- * string cannot express an arbitrary LUT.
+ * Adobe's current desktop Help page documents the slider ranges and qualitative adjustment
+ * behavior but does not publish the default-mode transfer formula:
+ * <https://helpx.adobe.com/photoshop/desktop/adjust-color/color-corrections/apply-brightness-and-contrast-adjustment.html>
+ * The CSS mapping therefore does not establish pixel parity with Photoshop. Matching a
+ * measured Photoshop curve would require a per-channel pixel operation; a filter string cannot
+ * express an arbitrary lookup table.
  */
 export function buildLevelsFilter({ brightness, contrast }: LevelsFilterArgs): string {
   const light = adjustmentPercent(proportionateFactor(brightness, BRIGHTNESS_FACTOR_SPAN));

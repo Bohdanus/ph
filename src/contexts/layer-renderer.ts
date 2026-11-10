@@ -8,7 +8,7 @@ import {
   FilterArgumentUnrenderableError,
   requireCanvasFilter,
 } from '../util/canvas-filter.ts';
-import { resizeCanvas } from '../util/canvas.ts';
+import { clearCanvasBackingStore, resizeCanvas } from '../util/canvas.ts';
 import {
   drawEvaluatedPresentation,
   evaluatePresentationForDraw,
@@ -555,7 +555,7 @@ export function drawLayersToCanvas(
     resizeCanvas(canvas, size.width, size.height, backingScale);
     const context = canvas.getContext('2d');
     if (!context) return false;
-    context.clearRect(0, 0, size.width, size.height);
+    clearCanvasBackingStore(context);
     // The staging canvas was rendered with a context scaled by backingScale, so its backing store
     // already holds device pixels. The target context is also scaled by backingScale, so a direct
     // drawImage would double-scale. Reset to identity for the blit, then the staging pixels copy 1:1.

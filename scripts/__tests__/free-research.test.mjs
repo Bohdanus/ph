@@ -527,7 +527,7 @@ describe('free research CLI', () => {
           '--output-file',
           outputPath,
           '--max-tokens',
-          '80',
+          '65536',
           '--probe-openrouter-quota',
         ],
         { fetchImpl, completeImpl, stderr }
@@ -537,7 +537,7 @@ describe('free research CLI', () => {
       expect(completeImpl).toHaveBeenCalledWith(
         expect.stringContaining('Public source evidence'),
         expect.objectContaining({
-          maxTokens: 80,
+          maxTokens: 65536,
           checkOpenRouterQuota: true,
           onOpenRouterQuota: expect.any(Function),
         })

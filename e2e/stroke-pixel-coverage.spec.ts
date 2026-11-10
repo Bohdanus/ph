@@ -106,6 +106,8 @@ function rowsAt(pixels: Pixel[], ...rows: number[]): Pixel[] {
 function expectIntegerCoverage(pixels: Pixel[], y: number, label: string): void {
   const pathRows = rowsAt(pixels, y - 1, y);
   const outsideRows = pixels.filter((pixel) => pixel.y !== y - 1 && pixel.y !== y);
+  expect(pathRows.some(hasInk), `${label} covers a path row`).toBe(true);
+  expect(pathRows.some(hasPartialCoverage), `${label} records partial coverage at an integer coordinate`).toBe(true);
   expect(pathRows.every(hasPartialCoverage), `${label} partially covers both rows at an integer coordinate`).toBe(true);
   expect(outsideRows.every(isWhite), `${label} leaves rows outside the centered 1px stroke white`).toBe(true);
 }
@@ -117,10 +119,15 @@ function expectHalfIntegerCoverage(pixels: Pixel[], y: number, label: string): v
   expect(compositedLuma(corePixel!), `${label} has a covered core pixel`).toBeLessThan(80);
 
   const outsidePixels = pixels.filter((pixel) => pixel.y !== coreRow);
+  expect(
+    outsidePixels.every((pixel) => compositedLuma(pixel) > 200),
+    `${label} leaves neighboring rows near-white outside its covered core`
+  ).toBe(true);
   expect(outsidePixels.every(isWhite), `${label} leaves pixels outside its fully covered core row white`).toBe(true);
 }
 
 function expectDiagonalCoverage(pixels: Pixel[], center: Point, label: string): void {
+  // The outer ring is sampling margin; assert ink only near the known path center.
   // The opposite corners should follow the diagonal while the mirrored corners stay clear.
   const atPathCenter = pixels.filter((pixel) => Math.abs(pixel.x - center.x) <= 1 && Math.abs(pixel.y - center.y) <= 1);
   expect(atPathCenter.some(hasInk), `${label} leaves ink near the diagonal's center point`).toBe(true);

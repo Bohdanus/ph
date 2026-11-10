@@ -229,10 +229,16 @@ variant or an equivalent atomic history action.
    established. The
    retained-affine fixtures below separately pin exact per-layer bounds for their listed raster and
    styled-text combinations.
-   A separate transformed-raster fixture uses opacity `0.58` and `multiply`. Its raw tight bitmap
-   bytes, premultiplied tight pixels, bounds, dimensions, opacity and blend metadata match in HTML
-   and OffscreenCanvas materialization at the affine and fractional-frame cursors, and the direct
-   durable composite matches legacy exactly. The diagnostic fixture also inspects runtime projection,
+   A separate transformed-raster fixture uses opacity `0.58` and `multiply`. Its premultiplied tight
+   pixels, bounds, dimensions, opacity and blend metadata match in HTML and OffscreenCanvas
+   materialization at the affine and fractional-frame cursors, and the direct durable composite
+   matches legacy exactly. macOS returns 12 one-channel differences in straight-alpha readback at
+   both cursors, while premultiplied pixels remain byte-identical. Drawing the production Invert
+   processor's returned OffscreenCanvas into a fresh HTMLCanvas readback yields identical bytes for
+   legacy and durable inputs through both source canvas paths. This pins the downstream draw/read
+   boundary, not raw processor backing-store identity. The test keeps raw source samples as
+   diagnostics and gates exact premultiplied pixels and readback output.
+   The diagnostic fixture also inspects runtime projection,
    `durableExportRecords()`/`renderExportCanvas()`, decoded PNG, and PSD layer plus composite pixels.
    The normal admission predicate refuses the retained affine and fractional-frame cases, so these
    adapter outputs are recorded only as diagnostics and do not represent the product's selected

@@ -15,6 +15,8 @@ import globalSetup, {
   WARMUP_INTERVAL_MS,
   WARMUP_TIMEOUT_MS,
 } from '../../global-setup';
+import { normalizeOwnServerBaseUrl } from '../../global-setup/foreign-origin';
+import { playwrightWorkerCount } from '../../global-setup/worker-policy';
 
 /**
  * This file tests `e2e/global-setup.ts`, which is NOT a helper module, and it lives
@@ -40,6 +42,61 @@ import globalSetup, {
  */
 
 const HTML = '<html><body><script type="module" src="/src/main.tsx"></script></body></html>';
+
+describe('normalizeOwnServerBaseUrl', () => {
+  it('uses the own server URL when no base URL override is configured', () => {
+    expect(normalizeOwnServerBaseUrl(undefined, 'http://127.0.0.1:5173')).toBe('http://127.0.0.1:5173');
+  });
+
+  it.each([
+    ['default HTTP port', 'http://localhost:80/app', 'http://127.0.0.1:80', 'http://127.0.0.1/app'],
+    ['implicit default HTTP port', 'http://localhost/app', 'http://127.0.0.1:80', 'http://127.0.0.1/app'],
+    ['non-default HTTP port', 'http://localhost:5413/app', 'http://127.0.0.1:5413', 'http://127.0.0.1:5413/app'],
+  ])('rewrites localhost to the own server for the same %s', (_label, configured, server, expected) => {
+    const baseUrl = normalizeOwnServerBaseUrl(configured, server);
+
+    expect(baseUrl).toBe(expected);
+    expect(checkOwnServer({ baseUrl, webServerUrl: server, allowRemote: undefined }).permitted).toBe(true);
+  });
+
+  it('preserves localhost when the configured port belongs to a different server', () => {
+    const server = 'http://127.0.0.1:80';
+    const baseUrl = normalizeOwnServerBaseUrl('http://localhost:5413/app', server);
+
+    expect(baseUrl).toBe('http://localhost:5413/app');
+    expect(checkOwnServer({ baseUrl, webServerUrl: server, allowRemote: undefined }).permitted).toBe(false);
+  });
+
+  it('preserves malformed and remote URLs for the existing origin guard', () => {
+    const remoteUrl = 'http://staging.example.test:5173';
+    const serverUrl = 'http://127.0.0.1:5173';
+    const remoteBaseUrl = normalizeOwnServerBaseUrl(remoteUrl, serverUrl);
+
+    expect(remoteBaseUrl).toBe(remoteUrl);
+    expect(checkOwnServer({ baseUrl: remoteBaseUrl, webServerUrl: serverUrl, allowRemote: undefined }).permitted).toBe(
+      false
+    );
+    expect(normalizeOwnServerBaseUrl('not a url', 'http://127.0.0.1:5173')).toBe('not a url');
+    expect(normalizeOwnServerBaseUrl('https://example.test', 'http://127.0.0.1:5173')).toBe('https://example.test');
+  });
+});
+
+describe('playwrightWorkerCount', () => {
+  it('serializes Windows CI after runner connection exhaustion', () => {
+    expect(playwrightWorkerCount(true, 'win32')).toBe(1);
+  });
+
+  it('keeps native CI parallelism on Linux and macOS', () => {
+    expect(playwrightWorkerCount(true, 'linux')).toBeUndefined();
+    expect(playwrightWorkerCount(true, 'darwin')).toBeUndefined();
+  });
+
+  it('keeps local E2E runs serial on every platform', () => {
+    expect(playwrightWorkerCount(false, 'win32')).toBe(1);
+    expect(playwrightWorkerCount(false, 'linux')).toBe(1);
+    expect(playwrightWorkerCount(false, 'darwin')).toBe(1);
+  });
+});
 
 type WarmupDeps = Parameters<typeof runWarmup>[1];
 type FetchResponse = Awaited<ReturnType<WarmupDeps['fetch']>>;

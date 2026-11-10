@@ -79,6 +79,18 @@ function clearPendingMergeState(cwd) {
   if (existsSync(path)) unlinkSync(path);
 }
 
+// The pre-commit snapshot cannot predict the resulting commit ID. Its ordered parents and
+// approved tree identify the prepared content; this runs only after MERGE_HEAD is absent.
+function isCompletedPreparedMerge(cwd, state) {
+  if (hasAutoMergeMarker(cwd)) return false;
+  const head = git(['rev-parse', 'HEAD^{commit}'], cwd);
+  const parents = git(['rev-list', '--parents', '-n', '1', head], cwd).split(/\s+/).slice(1);
+  const tree = git(['rev-parse', `${head}^{tree}`], cwd);
+  return (
+    parents.length === 2 && parents[0] === state.head && parents[1] === state.incoming && tree === state.resultTree
+  );
+}
+
 function discardAbandonedPreparedMerge(cwd) {
   const state = readPendingMergeState(cwd);
   if (!state) return;
@@ -112,6 +124,10 @@ function recordPreparedMerge(cwd, phase = 'before') {
     if (phase === 'after') {
       writePendingMergeState(cwd, { ...previousState, phase: 'markers-lost' });
       throw new Error('prepared merge markers disappeared during pre-commit; refusing to commit');
+    }
+    if (isCompletedPreparedMerge(cwd, previousState)) {
+      clearPendingMergeState(cwd);
+      return;
     }
     if (previousState.phase === 'markers-lost') {
       throw new Error(
