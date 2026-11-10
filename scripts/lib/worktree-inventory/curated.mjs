@@ -1089,6 +1089,13 @@ export const CURATED = {
       'Untracking `WORKTREES.json` — the generated inventory is a machine-local snapshot of session ids, chat ids, absolute worktree paths and a timestamp, so it leaves the index along with the anchored ignore rule, the docs that told agents to commit a regeneration, and the tripwire that fails if it is re-added. The generator and this table stay tracked; only the output does not.',
     note: 'Two sessions curated this key independently and the merge kept both, where the second silently discarded the first — the `panel-docks` shape again, and the reason this key is one entry rather than two. An earlier version of this note claimed the work was held on no ref, which was true only while the change was uncommitted; it is committed on a branch ahead of main, so the branch is what protects it and no flag is owed.',
   },
+  'opencode-free-limit-source-exhaustion-20261108': {
+    summary:
+      'The OpenCode free-limit quota fix from board issue ph-48. Current main recognizes typed and alias quota errors regardless of HTTP status, aggregates error events with content-policy precedence, and has regression tests for mixed errors, clean and nonzero exits, malformed JSONL, and provider fallback.',
+    note: 'Keep this branch only as audit evidence for ph-48; current main handles typed free-limit source exhaustion and the FreeUsageLimitError alias through error-event aggregation with content-policy precedence. The candidate exits before that aggregation, so a mixed policy/quota stream can fall through to another provider, and it misses the alias. Do not re-land it. Revisit only if upstream documents a distinct transient 429 using provider.free-limit, or if main changes this account-quota contract.',
+    legacy: true,
+    issues: [{ ref: 'ph-48', title: 'Exhaust OpenCode source on typed free-limit 429' }],
+  },
 };
 
 /** Curated entry for a worktree name, or `undefined` when none is written. */
