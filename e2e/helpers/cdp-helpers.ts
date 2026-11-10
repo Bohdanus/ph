@@ -52,7 +52,9 @@ export async function captureCanvasScreenshot(
       scrollY: window.scrollY,
     }));
   // `box` was measured by the caller. Snapshot before async setup so a geometry change
-  // while opening the session is rejected too, rather than converting that stale box.
+  // while opening the session is rejected too, rather than converting that stale box. This
+  // cannot validate a change that happened before helper entry; callers needing that guarantee
+  // must bracket their own box measurement around this call.
   const pageStateBefore = await readPageState();
   await fs.mkdir(outputDir, { recursive: true });
   // CDP clip coordinates are CSS pixels. The decoded image, however, is NOT at the clip
