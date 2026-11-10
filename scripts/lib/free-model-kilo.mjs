@@ -234,6 +234,8 @@ function contentPolicyRejected(events, stderrText = '') {
   const errorEvents = allEvents.filter((event) => event?.type === 'error');
   for (const event of errorEvents) {
     const error = event.error && typeof event.error === 'object' ? event.error : event;
+    // event.type is the JSONL discriminator; policy codes can be in error.code,
+    // error.type, event.code, or string-valued event.error.
     const codes = [error.code, error.type, event.code, typeof event.error === 'string' ? event.error : null]
       .filter((value) => typeof value === 'string')
       .map((value) =>
