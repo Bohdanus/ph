@@ -148,6 +148,7 @@ Three homes for an open defect, split by what broke. A defect goes in one of the
 | [`../e2e/OPEN_PROBLEMS.md`](../e2e/OPEN_PROBLEMS.md)                                                                                               | Latent defects in the e2e suite's own code — none fails a current run                 |
 | [`handoffs/`](handoffs/)                                                                                                                           | One per branch review-and-merge, named `docs/handoffs/<branch>-<topic>.md`            |
 | [`handoffs/docs-orchestration-review-gotchas-20261102.md`](handoffs/docs-orchestration-review-gotchas-20261102.md)                                 | Review record for orchestration and code-review guidance                              |
+| [`handoffs/nemotron-disablement-unproven-20261111.md`](handoffs/nemotron-disablement-unproven-20261111.md)                                         | Prepared landing handoff for the Nemotron quarantine hardening branch                 |
 | [`handoffs/task-test-unit-hardening-salvage-20261107-review-and-merge.md`](handoffs/task-test-unit-hardening-salvage-20261107-review-and-merge.md) | Review record and verified landing result for the salvaged unit-test hardening branch |
 
 ## Not maintained here
