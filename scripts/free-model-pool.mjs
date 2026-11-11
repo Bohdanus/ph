@@ -651,7 +651,8 @@ export function retryAfterDelayMs(response, now = Date.now()) {
 }
 
 function failureReason(response, payload) {
-  const message = payload?.error?.message ?? payload?.message ?? '';
+  const choiceError = Array.isArray(payload?.choices) ? payload.choices.find((choice) => choice?.error)?.error : null;
+  const message = payload?.error?.message ?? choiceError?.message ?? payload?.message ?? '';
   const retryAfter = retryAfterHint(response);
   return `${response.status}${message ? `: ${message}` : ''}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`;
 }
@@ -663,16 +664,59 @@ function openRouterPlatformRemaining(response) {
   return Number.isFinite(remaining) && remaining >= 0 ? remaining : null;
 }
 
+function responseErrorObjects(payload) {
+  const choiceErrors = Array.isArray(payload?.choices) ? payload.choices.map((choice) => choice?.error) : [];
+  return [payload?.error, ...choiceErrors].filter(
+    (error) => error && typeof error === 'object' && !Array.isArray(error)
+  );
+}
+
+function normalizedOpenRouterErrorTypes(payload) {
+  return responseErrorObjects(payload)
+    .map((error) => error?.metadata?.error_type)
+    .filter((errorType) => typeof errorType === 'string')
+    .map((errorType) => errorType.trim().toLowerCase().replaceAll('-', '_'));
+}
+
+const OPENROUTER_TRANSIENT_ERROR_TYPES = new Set([
+  'rate_limit_exceeded',
+  'provider_overloaded',
+  'provider_unavailable',
+  'timeout',
+]);
+const OPENROUTER_TYPED_UPSTREAM_ERROR_TYPES = new Set(['provider_overloaded', 'provider_unavailable', 'timeout']);
+
+function hasTransientOpenRouterProviderError(payload) {
+  return normalizedOpenRouterErrorTypes(payload).some((errorType) => OPENROUTER_TRANSIENT_ERROR_TYPES.has(errorType));
+}
+
+function hasOpenRouterRateLimitError(payload) {
+  return normalizedOpenRouterErrorTypes(payload).includes('rate_limit_exceeded');
+}
+
+function hasTypedOpenRouterUpstreamError(payload) {
+  return normalizedOpenRouterErrorTypes(payload).some((errorType) =>
+    OPENROUTER_TYPED_UPSTREAM_ERROR_TYPES.has(errorType)
+  );
+}
+
 function hasUpstreamProviderMetadata(payload) {
-  const metadata = payload?.error?.metadata ?? payload?.metadata;
-  if (!metadata || typeof metadata !== 'object') return false;
-  return Boolean(metadata.provider_name || metadata.provider || metadata.upstream_provider);
+  const metadata = [...responseErrorObjects(payload).map((error) => error.metadata), payload?.metadata];
+  return metadata.some(
+    (entry) =>
+      entry &&
+      typeof entry === 'object' &&
+      (entry.provider_name || entry.provider || entry.upstream_provider || entry.provider_code)
+  );
 }
 
 function isOpenRouterDailyQuotaError(payload) {
-  const error = payload?.error;
-  const code = String(error?.code ?? error?.type ?? '').toLowerCase();
-  const message = String(error?.message ?? payload?.message ?? '').toLowerCase();
+  const errors = responseErrorObjects(payload);
+  const code = errors
+    .map((error) => error.code ?? error.type ?? '')
+    .join(' ')
+    .toLowerCase();
+  const message = [...errors.map((error) => error.message), payload?.message].join(' ').toLowerCase();
   return (
     /free[-_ ]models[-_ ]per[-_ ]day|daily[-_ ]quota|daily.*limit/.test(code) ||
     /free model.*daily|daily.*free model|quota.*exhaust|daily.*limit/.test(message)
@@ -681,14 +725,15 @@ function isOpenRouterDailyQuotaError(payload) {
 
 function isModelAttributableOpenRouterFailure(response, payload) {
   const status = response?.status;
-  if (!Number.isInteger(status) || status < 400 || status > 599 || status === 401 || status === 402) return false;
   if (isOpenRouterDailyQuotaError(payload)) return false;
+  if (status === 200 && hasTransientOpenRouterProviderError(payload)) return true;
+  if (!Number.isInteger(status) || status < 400 || status > 599 || status === 401 || status === 402) return false;
   if (status === 429) {
     const remaining = openRouterPlatformRemaining(response);
     if (remaining !== null) return remaining > 0;
-    return hasUpstreamProviderMetadata(payload);
+    return hasUpstreamProviderMetadata(payload) || hasTransientOpenRouterProviderError(payload);
   }
-  return status >= 500 && hasUpstreamProviderMetadata(payload);
+  return status >= 500 && (hasUpstreamProviderMetadata(payload) || hasTypedOpenRouterUpstreamError(payload));
 }
 
 function retryAfterValueDelayMs(value, now = Date.now()) {
@@ -849,6 +894,7 @@ const CONTENT_POLICY_ERROR_CODES = new Set([
   'moderation_blocked',
   'moderation_rejected',
   'prompt_injection_detected',
+  'refusal',
   'safety_filter',
   'safety_violation',
 ]);
@@ -888,8 +934,13 @@ export function isContentPolicyError(payload) {
     if (payload.prompt_filter_results.some((result) => hasFilteredContent(result?.content_filter_results))) return true;
   }
 
-  const error = payload.error;
-  const codes = [error?.code, error?.type, payload.code, payload.type, payload.errorType];
+  const errors = responseErrorObjects(payload);
+  const codes = [
+    ...errors.flatMap((error) => [error.code, error.type, error.metadata?.error_type]),
+    payload.code,
+    payload.type,
+    payload.errorType,
+  ];
   if (
     codes.some(
       (code) =>
@@ -899,8 +950,10 @@ export function isContentPolicyError(payload) {
     return true;
   }
 
-  const message = String(error?.message ?? payload.message ?? '');
-  return CONTENT_POLICY_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+  const messages = [...errors.map((error) => error.message), payload.message].filter(
+    (message) => typeof message === 'string'
+  );
+  return CONTENT_POLICY_ERROR_PATTERNS.some((pattern) => messages.some((message) => pattern.test(message)));
 }
 
 function hasReportedNonZeroCost(usage) {
@@ -1398,8 +1451,38 @@ export async function completeWithFreeModel(prompt, options = {}) {
     }
     return !exhausted.has('openrouter');
   };
+  let openRouterQuotaCheckedAfterAttempt = 0;
+  const refreshOpenRouterQuotaAfterAttempt = async () => {
+    const openRouterAttempts = attempts.get('openrouter') ?? 0;
+    if (openRouterAttempts <= openRouterQuotaCheckedAfterAttempt) {
+      return openRouterQuotaKnownPositive && !exhausted.has('openrouter');
+    }
+    openRouterQuotaCheckedAfterAttempt = openRouterAttempts;
+    openRouterQuotaKnownPositive = false;
+    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+    if (quota.reason === 'ok') {
+      onOpenRouterQuota(quota);
+      if (quota.remaining <= 0 || quota.used >= quota.limit) {
+        await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile });
+        exhausted.add('openrouter');
+        stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter routes.\n');
+      } else {
+        openRouterQuotaKnownPositive = true;
+      }
+    } else if (quota.reason === 'http_401' || quota.reason === 'http_402') {
+      exhausted.add('openrouter');
+      stderr.write(`OpenRouter quota endpoint returned ${quota.reason} after an attempt; skipping remaining routes.\n`);
+    } else {
+      const detail = quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : '';
+      stderr.write(`OpenRouter quota refresh unknown (${quota.reason}${detail}); skipping remaining routes.\n`);
+    }
+    if (openRouterQuotaInitiallyUnknown || !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+    return openRouterQuotaKnownPositive && !exhausted.has('openrouter');
+  };
   const handleOpenRouterFailure = async ({ candidate, response, payload, quotaWasPositive, retryAttempt }) => {
     const status = response?.status;
+    const transientServerFailure = Number.isInteger(status) && status >= 500 && status <= 599;
+    const transientTypedFailure = status === 200 && hasTransientOpenRouterProviderError(payload);
     if (status === 401 || status === 402) {
       exhausted.add('openrouter');
       return { retry: false };
@@ -1411,7 +1494,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
         failureResult = await recordModelFailureSafely({
           source: 'openrouter',
           model: candidate.model,
-          rateLimit: status === 429,
+          rateLimit: status === 429 || hasOpenRouterRateLimitError(payload),
         });
       } catch (error) {
         throw error;
@@ -1422,43 +1505,9 @@ export async function completeWithFreeModel(prompt, options = {}) {
         );
       }
     }
-    if (status === 429) {
-      if (openRouterPlatformRemaining(response) === 0) {
-        exhausted.add('openrouter');
-        stderr.write('OpenRouter platform rate limit is exhausted for this run; skipping its remaining routes.\n');
-        return { retry: false };
-      }
-      const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
-      if (quota.reason === 'ok') {
-        onOpenRouterQuota(quota);
-        if (quota.remaining <= 0 || quota.used >= quota.limit) {
-          await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile });
-          exhausted.add('openrouter');
-          stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter routes.\n');
-          return { retry: false };
-        }
-        openRouterQuotaKnownPositive = true;
-      } else {
-        openRouterQuotaKnownPositive = false;
-        if (quota.reason === 'http_401' || quota.reason === 'http_402') exhausted.add('openrouter');
-      }
-    }
-    if (openRouterQuotaInitiallyUnknown) exhausted.add('openrouter');
-    if (!openRouterQuotaKnownPositive) exhausted.add('openrouter');
-    if (retryAttempt) {
-      if (status === 429 || (Number.isInteger(status) && status >= 500 && status <= 599)) exhausted.add('openrouter');
-      return { retry: false };
-    }
-    const transientServerFailure = Number.isInteger(status) && status >= 500 && status <= 599;
-    if (
-      !quotaWasPositive ||
-      !openRouterQuotaKnownPositive ||
-      openRouterRetryUsed ||
-      (!attributed && !transientServerFailure)
-    ) {
-      return { retry: false };
-    }
-    if (failureResult?.quarantineHours !== null && failureResult?.quarantineHours !== undefined) {
+    if (status === 429 && openRouterPlatformRemaining(response) === 0) {
+      exhausted.add('openrouter');
+      stderr.write('OpenRouter platform rate limit is exhausted for this run; skipping its remaining routes.\n');
       return { retry: false };
     }
     const retryAfterMs = retryAfterDelayMs(response);
@@ -1469,7 +1518,31 @@ export async function completeWithFreeModel(prompt, options = {}) {
       );
       return { retry: false };
     }
-    return { retry: true, delayMs: retryAfterMs ?? (status === 429 ? 1000 : 0) };
+    const clientError = Number.isInteger(status) && status >= 300 && status < 500;
+    if (status === 429 || transientTypedFailure || transientServerFailure || response?.ok === true || clientError) {
+      await refreshOpenRouterQuotaAfterAttempt();
+    }
+    if (openRouterQuotaInitiallyUnknown) exhausted.add('openrouter');
+    if (!openRouterQuotaKnownPositive) exhausted.add('openrouter');
+    if (retryAttempt) {
+      // This route's retry is spent; only a fresh positive quota permits the next model below.
+      return { retry: false };
+    }
+    if (
+      !quotaWasPositive ||
+      !openRouterQuotaKnownPositive ||
+      openRouterRetryUsed ||
+      (!attributed && !transientServerFailure && !transientTypedFailure)
+    ) {
+      return { retry: false };
+    }
+    if (failureResult?.quarantineHours !== null && failureResult?.quarantineHours !== undefined) {
+      return { retry: false };
+    }
+    return {
+      retry: true,
+      delayMs: retryAfterMs ?? (status === 429 || hasOpenRouterRateLimitError(payload) ? 1000 : 0),
+    };
   };
   const queueNemotronLengthRetry = (candidate, candidateIndex, maxTokens) => {
     if (
@@ -1788,7 +1861,8 @@ export async function completeWithFreeModel(prompt, options = {}) {
       errors.push(
         `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
-      if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+      if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
+      if (exhausted.has(candidate.source)) continue;
       const attemptNumber = attempts.get(candidate.source) ?? 0;
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
       await delay(backoffMs);
@@ -1834,12 +1908,32 @@ export async function completeWithFreeModel(prompt, options = {}) {
         `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
       );
     }
+    if (candidate.source === 'openrouter' && response.ok && hasTransientOpenRouterProviderError(payload)) {
+      errors.push(`${candidate.source}/${candidate.model}: ${failureReason(response, payload)}`);
+      const retryDecision = await handleOpenRouterFailure({
+        candidate,
+        response,
+        payload,
+        quotaWasPositive,
+        retryAttempt: candidate.retryAttempt === true,
+      });
+      if (retryDecision.retry) {
+        openRouterRetryUsed = true;
+        if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
+        available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+      }
+      continue;
+    }
     const choice = payload?.choices?.[0];
     const content = choice?.message?.content;
     const finishReason = choice?.finish_reason;
+    if (response.ok && finishReason === 'length' && candidate.source === 'openrouter') {
+      await refreshOpenRouterQuotaAfterAttempt();
+    }
     if (
       response.ok &&
       finishReason === 'length' &&
+      !exhausted.has(candidate.source) &&
       queueNemotronLengthRetry(candidate, candidateIndex, routeMaxTokens)
     ) {
       continue;
@@ -1851,7 +1945,9 @@ export async function completeWithFreeModel(prompt, options = {}) {
         errors.push(
           `${candidate.source}/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
         );
+        if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
         if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+        if (exhausted.has(candidate.source)) continue;
         const attemptNumber = attempts.get(candidate.source) ?? 0;
         const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
         await delay(backoffMs);
@@ -1867,10 +1963,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
       };
     }
     if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
+      if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
       errors.push(
         `${candidate.source}/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`
       );
       if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+      if (exhausted.has(candidate.source)) continue;
       const attemptNumber = attempts.get(candidate.source) ?? 0;
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
       await delay(backoffMs);
