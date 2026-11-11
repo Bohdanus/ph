@@ -65,9 +65,9 @@ function readCiE2EMatrix() {
     });
 }
 
-function readPlaywrightCiTimeouts() {
-  const timeoutMatch = playwrightConfig.match(
-    /^[ \t]*globalTimeout:[ \t]*process\.env\.CI[ \t]*\?[ \t]*\(process\.platform[ \t]*===[ \t]*['"]darwin['"][ \t]*\?[ \t]*(\d+)[ \t]*:[ \t]*(\d+)\)[ \t]*\*[ \t]*60_000/m
+function readPlaywrightCiTimeouts(config = playwrightConfig) {
+  const timeoutMatch = config.match(
+    /^[ \t]*globalTimeout:\s*process\.env\.CI\s*\?\s*\(process\.platform\s*===\s*['"]darwin['"]\s*\?\s*(\d+)\s*:\s*(\d+)\)\s*\*\s*60_000/m
   );
   if (!timeoutMatch) {
     throw new Error('Could not find the explicit CI globalTimeout expression in playwright.config.ts');
@@ -107,6 +107,16 @@ function readPlaywrightRunCommands(jobBlock) {
 }
 
 describe('E2E timeout contract', () => {
+  it('reads the CI timeout values when the expression is formatted across lines', () => {
+    const multilineConfig = playwrightConfig.replace(
+      "globalTimeout: process.env.CI ? (process.platform === 'darwin' ? 30 : 20) * 60_000 : 45 * 60_000,",
+      "globalTimeout:\n    process.env.CI\n      ? (process.platform === 'darwin'\n          ? 30\n          : 20) * 60_000\n      : 45 * 60_000,"
+    );
+
+    expect(multilineConfig).not.toBe(playwrightConfig);
+    expect(readPlaywrightCiTimeouts(multilineConfig)).toEqual({ macos: 30, other: 20 });
+  });
+
   it('keeps the Windows Chromium socket exhaustion fix in the locked Playwright version', () => {
     const declaredRange = String(packageManifest.devDependencies['@playwright/test'] ?? '');
     const declaredMinimum = declaredRange.match(/^[~^]?([0-9]+\.[0-9]+\.[0-9]+)$/)?.[1] ?? '0.0.0';
