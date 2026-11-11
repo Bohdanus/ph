@@ -2,11 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { isSecretKey, sanitizeErrorMessage, sanitizeForOutput } from '../lib/secrets.mjs';
-
-/** One bounded Node child exercises the regex timeout without blocking Vitest's worker. */
-vi.setConfig({ testTimeout: 15_000 });
 
 describe('secret key redaction', () => {
   it('preserves ordinary design and author fields', () => {
@@ -67,9 +64,13 @@ describe('secret key redaction', () => {
   it('does not catastrophically backtrack on a long near-match object key', () => {
     const sanitizerUrl = pathToFileURL(resolve('scripts/lib/secrets.mjs')).href;
     const source = `
-      import { sanitizeForOutput } from ${JSON.stringify(sanitizerUrl)};
+      import { sanitizeErrorMessage, sanitizeForOutput } from ${JSON.stringify(sanitizerUrl)};
       const key = 'key' + '1'.repeat(64) + 'x';
-      console.log(JSON.stringify(sanitizeForOutput({ [key]: 'ordinary value' })));
+      const message = 'request failed: ' + key + '=ordinary value';
+      console.log(JSON.stringify({
+        object: sanitizeForOutput({ [key]: 'ordinary value' }),
+        message: sanitizeErrorMessage(message),
+      }));
     `;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
       encoding: 'utf8',
@@ -78,24 +79,37 @@ describe('secret key redaction', () => {
 
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe(JSON.stringify({ [`key${'1'.repeat(64)}x`]: 'ordinary value' }));
+    const key = `key${'1'.repeat(64)}x`;
+    const message = `request failed: ${key}=ordinary value`;
+    expect(result.stdout.trim()).toBe(JSON.stringify({ object: { [key]: 'ordinary value' }, message }));
   });
 
-  it('redacts standalone tokens handled by the shared text sanitizer', () => {
-    const tokens = [
-      `sk-proj-${'a'.repeat(40)}`,
-      `sk-ant-api03-${'b'.repeat(40)}`,
-      `ghs_${'c'.repeat(36)}`,
-      `github_pat_${'d'.repeat(50)}`,
-      `xoxb-${'e'.repeat(24)}`,
-      'AKIAIOSFODNN7EXAMPLE',
-    ];
+  const tokenCases = [
+    ['OpenAI', `sk-proj-${'a'.repeat(40)}`],
+    ['Anthropic', `sk-ant-api03-${'b'.repeat(40)}`],
+    ['GitHub app', `ghs_${'c'.repeat(36)}`],
+    ['GitHub fine-grained', `github_pat_${'d'.repeat(50)}`],
+    ['Slack', `xoxb-${'e'.repeat(24)}`],
+    ['AWS', 'AKIAIOSFODNN7EXAMPLE'],
+  ];
 
-    for (const token of tokens) {
-      const message = `request failed: ${token}`;
-      expect(sanitizeErrorMessage(message)).not.toContain(token);
-      expect(sanitizeForOutput({ message }).message).not.toContain(token);
-    }
+  it.each(tokenCases)('redacts a standalone %s token in free text', (_kind, token) => {
+    const message = `request failed: ${token}`;
+    expect(sanitizeErrorMessage(message)).not.toContain(token);
+    expect(sanitizeForOutput({ message }).message).not.toContain(token);
+  });
+
+  it.each(tokenCases)('redacts an embedded %s token in free text', (_kind, token) => {
+    const message = `prefix${token}. suffix`;
+    const sanitizedMessage = sanitizeErrorMessage(message);
+    const sanitizedObjectMessage = sanitizeForOutput({ message }).message;
+
+    expect(sanitizedMessage).not.toContain(token);
+    expect(sanitizedMessage).toContain('prefix');
+    expect(sanitizedMessage).toContain('suffix');
+    expect(sanitizedObjectMessage).not.toContain(token);
+    expect(sanitizedObjectMessage).toContain('prefix');
+    expect(sanitizedObjectMessage).toContain('suffix');
   });
 
   it('redacts quoted credential assignments from error messages', () => {

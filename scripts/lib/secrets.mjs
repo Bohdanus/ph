@@ -16,12 +16,12 @@ const SECRET_PATTERNS = [
   { pattern: /(?:kilo[_-]?cli|KILO_CLI)\s*[=:]\s*([^\s]{10,})/gi, replacement: 'KILO_CLI=***REDACTED***' },
   { pattern: /Bearer\s+([a-zA-Z0-9_-]{20,})/gi, replacement: 'Bearer ***REDACTED***' },
   { pattern: /Authorization:\s*Bearer\s+([a-zA-Z0-9_-]{20,})/gi, replacement: 'Authorization: Bearer ***REDACTED***' },
-  { pattern: /\bsk-[a-zA-Z0-9_-]{12,}\b/gi, replacement: 'sk-***REDACTED***' },
+  { pattern: /sk-[a-zA-Z0-9_-]{12,}/gi, replacement: 'sk-***REDACTED***' },
   {
-    pattern: /\b(?:gh[pousr]_[a-zA-Z0-9_]{12,}|github_pat_[a-zA-Z0-9_]{12,}|xox[baprs]-[a-zA-Z0-9-]{8,})\b/gi,
+    pattern: /(?:gh[pousr]_[a-zA-Z0-9_]{12,}|github_pat_[a-zA-Z0-9_]{12,}|xox[baprs]-[a-zA-Z0-9-]{8,})/gi,
     replacement: '***REDACTED***',
   },
-  { pattern: /\bAKIA[0-9A-Z]{16}\b/g, replacement: '***REDACTED***' },
+  { pattern: /AKIA[0-9A-Z]{16}/g, replacement: '***REDACTED***' },
   { pattern: /xn--[a-zA-Z0-9-]{10,}/gi, replacement: 'xn--***REDACTED***' },
 ];
 
