@@ -66,7 +66,8 @@ dossier file** — **NEVER** code edits, **NEVER** git mutations, **NEVER** merg
 4. **Test & Gate Impact**: Will this pass current gates? Which tests are affected? Any test erosion?
 5. **Architectural Fit**: Does this align with current project architecture (replay, durable, store, tools)? Any contract violations?
 
-**Each subagent returns**: Structured findings appended to the Wave 1 dossier file.
+**Each subagent returns**: Structured findings in its task response. The coordinator verifies
+and appends accepted findings to the Wave 1 dossier; free/read-only subagents never write it.
 
 **Coordinator updates**: Plan file with findings, conflict assessment, expectations about possible conflicts.
 
