@@ -1,6 +1,6 @@
 # Nemotron disablement — unproven for landing
 
-**Status:** Unproven; do not merge until two independent read-only reviews cover the synchronized candidate and landing preflight is clear.
+**Status:** Two independent reviews passed on the synchronized candidate; landing is blocked until repository preflight is clear.
 
 **Branch:** `task/nemotron-quarantine-hardening-20261111`
 
@@ -36,20 +36,19 @@ The shared ignored quarantine file was migrated on 2026-11-11. Those three entri
 ## Remaining blockers
 
 `docs/CODE-REVIEW.md` requires two independent read-only reviews for this cross-module quarantine
-migration. Two paid reviewers returned no actionable findings on the pre-sync candidate
-`80c3573399d5d4f286497ebc8e0063ae45dea6ab` (tree
-`931971900b52fff4c3ff2092a5fd48d924f118a8`). Their reviews do not cover the synchronized candidate;
-review the final diff before landing.
+migration. Two paid reviewers reviewed the synchronized candidate `d3fc78c7f289bf3000fa8c92b2f11be1be08618c`
+(tree `6b7cf23306594785d1449200c373354f95c824cb`) against current `main` and returned no actionable
+findings in their assigned scopes. The focused suite and project gates were rerun on this candidate.
 
 At the last preflight, `npm run repo:state` reported five other worktrees in `AUTO_MERGE`; the live
-swarm check reported their claims as active. Do not inspect, repair, or clean those operations. The
-designated main landing checkout itself reported no owner record or Git operation, but the full
-repository preflight must be clear before landing.
+swarm check reported their claims as active. They are `e2e-hardening-20261110`,
+`free-model-pool-final-landing-20261110`, and the three `stateless-ghs-redaction` worktrees. Do not
+inspect, repair, or clean those operations. The designated main landing checkout itself reported no
+owner record or Git operation, but the full repository preflight must be clear before landing.
 
 ## Resume
 
-Obtain two independent read-only reviews of the exact synchronized candidate. After any review
-fixes, rerun the focused suite and project gates and review the final candidate again. Recheck
-`repo:state`, branch ownership, and `npm run main:landing -- status`; land only through the pinned
-workflow in `docs/ORCHESTRATION.md` when all active worktree operations are resolved by their
-owners. Then resume documented project hardening from the current handoff and problem list.
+Recheck `repo:state`, branch ownership, and `npm run main:landing -- status` after the live worktree
+owners resolve their operations. If `main` advances, sync and review the new candidate before using
+the pinned landing workflow in `docs/ORCHESTRATION.md`. After this change lands, resume documented
+project hardening from the current handoff and problem list.
