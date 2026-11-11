@@ -96,7 +96,7 @@ const REVIEWED = {
   },
   'main-landing-alert.test.mjs': {
     scope: 'Alert-claim marker fixtures use a unique temporary directory and are removed after the test.',
-    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:writeFileSync=2 filesystem-write:rmSync=2`,
+    patterns: `filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=3 filesystem-write:rmSync=2`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
