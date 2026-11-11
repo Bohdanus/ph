@@ -166,6 +166,13 @@ describe('secret key redaction', () => {
     expect(redactSensitiveText(message)).toContain('after-token text');
   });
 
+  it('redacts the one-character Bearer credential allowed by RFC 6750', () => {
+    const message = 'upstream error: Bearer x== after-token text';
+
+    expect(sanitizeErrorMessage(message)).toBe('upstream error: Bearer ***REDACTED*** after-token text');
+    expect(sanitizeForOutput({ message }).message).toBe('upstream error: Bearer ***REDACTED*** after-token text');
+  });
+
   it('preserves short sk-like identifiers in error output while prompt redaction stays conservative', () => {
     const message = 'missing identifier: sk-abcdefghijkl';
     expect(sanitizeErrorMessage(message)).toBe(message);
