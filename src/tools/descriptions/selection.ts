@@ -34,13 +34,15 @@ export const selectionDescriptions: Record<
         control: 'Style',
         detail:
           'Normal, Fixed Ratio or Fixed Size. Normal takes its proportions from the drag; Fixed Ratio locks the drag to a height-to-width ratio entered as two decimal fields; Fixed Size ignores the drag and takes its height and width from two pixel fields. In Normal the numeric fields are greyed out.',
-        status: 'missing',
+        status: 'partial',
+        appRef: 'src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:68',
       },
       {
         control: 'Width and Height',
         detail:
           'The two fields behind Fixed Ratio and Fixed Size. Fixed Ratio accepts decimals and is a pair, not a single ratio number, so a 2:1 box is entered as 2 in one field and 1 in the other. Fixed Size takes whole pixels, and both styles accept document units such as inches or centimetres alongside pixels.',
-        status: 'missing',
+        status: 'partial',
+        appRef: 'src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:97',
       },
       {
         control: 'Select and Mask',
@@ -62,11 +64,12 @@ export const selectionDescriptions: Record<
       {
         keys: 'M',
         action:
-          'Selects the Rectangular Marquee. All four marquee tools share M, so pressing it again re-selects this one rather than cycling; Shift+M is the cycling key.',
+          'Selects the Marquee tool. Adobe’s current desktop guide says M cycles through the Marquee tools, while its shortcut PDF lists the Rectangular and Elliptical Marquees under M but does not list the 1-pixel tools.',
       },
       {
         keys: 'Shift+M',
-        action: 'Switches between the marquee tools, which Adobe lists as "Switch between marquee tools".',
+        action:
+          'With Use Shift Key for Tool Switch selected, Shift+M cycles tools that share a shortcut. Adobe’s desktop shortcut PDF states this preference rule, but it does not establish whether the Single Row and Single Column tools share M.',
       },
     ],
     implementation: 'partial',
@@ -80,14 +83,16 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:41',
     ],
     appNotes:
-      'The tool draws, commits, and copies a rectangle; its options bar renders only static text plus Copy, Paste, and Deselect. It has no tool-specific settings, so the five Photoshop controls listed above are absent. All three fresh-drag modifiers are implemented: `RectangularSelectionToolArea` enables `constrainToSquare` and `fromCentre`, while `sampleFreshDragModifiers` reads Shift and Alt per pointer event and `adjustFreshPoint` applies them. The pointer-up event is sampled too, so its modifier state governs the committed rectangle. Handle resizing is separate and continues to use the aspect-ratio behavior in `getEdgeAtPoint`. M and Shift+M select and cycle the four marquee tools. There is no Select-menu surface for feathering, inverting, or growing an existing selection.',
+      'The bar renders the Style dropdown. Fixed Ratio shows one numeric Ratio field with min 0.05, max 20 and step 0.05, while Fixed Size shows numeric Width and Height fields with min 1, max 2000 and step 1; these fields take pixel numbers and do not parse Photoshop units such as inches or centimetres. The ratio is width-to-height, matching Adobe’s 2:1 example, but Photoshop exposes separate Width and Height fields for Fixed Ratio. New/Add/Subtract/Intersect, Feather and Select and Mask are absent. All three fresh-drag modifiers are implemented: `RectangularSelectionToolArea` enables `constrainToSquare` and `fromCentre`, while `sampleFreshDragModifiers` reads Shift and Alt per pointer event and `adjustFreshPoint` applies them. The pointer-up event is sampled too, so its modifier state governs the committed rectangle. Handle resizing is separate and continues to use the aspect-ratio behavior in `getEdgeAtPoint`. The app’s M key reselects the current marquee tool when one is already active and otherwise selects Rectangular Marquee; Shift+M cycles the app’s four-tool marquee group. Adobe’s current desktop marquee guide and shortcut PDF do not agree on whether the single-row and single-column tools are included in Photoshop’s M cycle, so the app’s group is not evidence of Photoshop group membership. There is no Select-menu surface for feathering, inverting, or growing an existing selection.',
     sources: [
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/make-selections-with-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/rectangular-marquee-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/define-feathered-edges.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
+      'https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/',
     ],
@@ -147,11 +152,12 @@ export const selectionDescriptions: Record<
       {
         keys: 'M',
         action:
-          'Selects the Elliptical Marquee. All four marquee tools share M, so pressing it again re-selects this one rather than cycling; Shift+M is the cycling key.',
+          'Adobe assigns M to the Rectangular and Elliptical Marquees in its shortcut table. Its current desktop guide says M cycles through the Marquee tools, but the two sources do not resolve whether the 1-pixel tools join that cycle; see selection.notes.md.',
       },
       {
         keys: 'Shift+M',
-        action: 'Switches between the marquee tools, which Adobe lists as "Switch between marquee tools".',
+        action:
+          'With Use Shift Key for Tool Switch selected, Adobe says Shift-press cycles tools that share a shortcut. Its table groups Rectangular and Elliptical under M, while the desktop guide describes a wider Marquee cycle; see selection.notes.md.',
       },
     ],
     implementation: 'implemented',
@@ -167,12 +173,14 @@ export const selectionDescriptions: Record<
     appNotes:
       'The tool is the most complete of the selection family and the only one whose options bar has any Photoshop control on it, and every geometry behaviour Photoshop defines for it is implemented: Shift is read as constrainToCircle, Alt as fromCentre, and fixed-size ignores the drag and takes the press point only as the centre, so a click is a complete gesture. Fresh-drag Shift/Alt state is sampled on pointer-down, each valid move, and pointer-up; the pointer-up state governs committed geometry. With Shift+Alt, the constrained radii are computed before mirroring around the press point, keeping the circle centred. What it renders that Photoshop’s does not is the shape of the fields. Fixed Ratio is a single Ratio field rather than Photoshop’s pair of decimal Width and Height fields — but the ratio itself is the one Adobe states, because Photoshop’s worked example enters 2 for the width and 1 for the height, which is a width-to-height ratio and exactly what the app computes (`src/tools/ellipticalSelection.ts:121`-`:131`, and the bar’s hint reads `Drag at N:1` at `src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:90`). What that costs is expressiveness, not fidelity: the app’s floor is 0.05, where a pair of decimal fields can go as low as the keyboard allows, and its ceiling is 20. Fixed Size renders plain pixel number inputs, so the document-unit entry Photoshop accepts cannot be typed. The committed polygon is a sagitta-bounded inscribed ring rather than a true ellipse, because the data model holds a point path and cannot hold a curve; the bound is the app’s own choice rather than one Photoshop shares. The ellipse commits under a borrowed source-tool identifier because the selection union in the app’s own types has no elliptical member, which is why the committed ellipse carries no draggable anchor handles. What the app computes is what Photoshop computes, in every case: the two field shapes are recorded as `partial` on the controls themselves rather than here, and the one place the committed document differs from Photoshop’s is the inscribed polygon, whose chord error is bounded to a quarter of a pixel and derived from the radius — several times smaller than the anti-aliased edge this tool does not draw at all, since `Anti-alias` is `missing` above. On that reading the tool is scored `implemented` rather than `partial`; the argument, and the case against it, are in `selection.notes.md`.',
     sources: [
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/make-selections-with-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/elliptical-marquee-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
       'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/define-feathered-edges.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
+      'https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/',
     ],
@@ -224,12 +232,12 @@ export const selectionDescriptions: Record<
       {
         keys: 'M',
         action:
-          'Does not reach this tool directly. Adobe’s default-shortcut table assigns M to the Rectangular and Elliptical Marquees only, and no published source gives either 1-pixel tool a key of its own.',
+          'Adobe’s current desktop Marquee guide says M cycles through the Marquee tools, including this one. Its default-shortcut PDF lists only Rectangular and Elliptical under M, so the desktop sources conflict about whether this tool joins the M cycle; see selection.notes.md.',
       },
       {
         keys: 'Shift+M',
         action:
-          'Reaches this tool in this application, because the cycle is over the whole marquee group. Adobe publishes "Switch between marquee tools — SHIFT+M" without enumerating which tools the cycle covers, and third-party sources disagree on whether the 1-pixel pair is inside it. See selection.notes.md.',
+          'With Use Shift Key for Tool Switch selected, Adobe says Shift-press cycles tools that share a shortcut. Its shortcut PDF does not list this tool under M, and its desktop Marquee guide does not specify whether Shift changes the described cycle; membership is unresolved. See selection.notes.md.',
       },
     ],
     implementation: 'implemented',
@@ -241,11 +249,13 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:48',
     ],
     appNotes:
-      'The gesture is implemented in full: a click commits the row under the press, a drag positions it, the row is exactly one document pixel tall and spans the full document width, and a press inside the committed row moves it — the press-inside-moves behaviour every other selection tool here has, narrowed to a 1-pixel hit target. The row is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document height and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing where a marquee flyout neighbour accepts the same press. No option above is rendered, and that is a statement about Photoshop rather than a shortcut: Adobe scopes Anti-alias to the Elliptical Marquee and Style, Fixed Ratio and Fixed Size to the Rectangular and Elliptical Marquees by name, so this bar has no control of its own to render. The four selection modes and Feather are `missing` from this bar; Quick Selection separately offers Add and Subtract, so their absence is specific to this tool. The three modifiers above are not implemented for this tool: it reads no `shiftKey` or `altKey`, so holding one changes nothing rather than selecting Add, Subtract or Intersect. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle, and widening that union is a separate change with its own blast radius.',
+      'The app reselects the active marquee with M and Shift+M cycles its four-tool marquee group. The gesture is implemented in full: a click commits the row under the press, a drag positions it, the row is exactly one document pixel tall and spans the full document width, and a press inside the committed row moves it — the press-inside-moves behaviour every other selection tool here has, narrowed to a 1-pixel hit target. The row is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document height and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing where a marquee flyout neighbour accepts the same press. No option above is rendered, and that is a statement about Photoshop rather than a shortcut: Adobe scopes Anti-alias to the Elliptical Marquee and Style, Fixed Ratio and Fixed Size to the Rectangular and Elliptical Marquees by name, so this bar has no control of its own to render. The four selection modes and Feather are `missing` from this bar; Quick Selection separately offers Add and Subtract, so their absence is specific to this tool. The three modifiers above are not implemented for this tool: it reads no `shiftKey` or `altKey`, so holding one changes nothing rather than selecting Add, Subtract or Intersect. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle, and widening that union is a separate change with its own blast radius.',
     sources: [
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/make-selections-with-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html',
+      'https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/selection/',
     ],
@@ -297,12 +307,12 @@ export const selectionDescriptions: Record<
       {
         keys: 'M',
         action:
-          'Does not reach this tool directly. Adobe’s default-shortcut table assigns M to the Rectangular and Elliptical Marquees only, and no published source gives either 1-pixel tool a key of its own.',
+          'Adobe’s current desktop Marquee guide says M cycles through the Marquee tools, including this one. Its default-shortcut PDF lists only Rectangular and Elliptical under M, so the desktop sources conflict about whether this tool joins the M cycle; see selection.notes.md.',
       },
       {
         keys: 'Shift+M',
         action:
-          'Reaches this tool in this application, because the cycle is over the whole marquee group. Adobe publishes "Switch between marquee tools — SHIFT+M" without enumerating which tools the cycle covers, and third-party sources disagree on whether the 1-pixel pair is inside it. See selection.notes.md.',
+          'With Use Shift Key for Tool Switch selected, Adobe says Shift-press cycles tools that share a shortcut. Its shortcut PDF does not list this tool under M, and its desktop Marquee guide does not specify whether Shift changes the described cycle; membership is unresolved. See selection.notes.md.',
       },
     ],
     implementation: 'implemented',
@@ -314,11 +324,13 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:49',
     ],
     appNotes:
-      'The gesture is implemented in full: a click commits the column under the press, a drag positions it, the column is exactly one document pixel wide and spans the full document height, and a press inside the committed column moves it. This tool and its counterpart share one processor, one tool area and one options bar, because their Photoshop option sets are identical to each other and differ from the other marquees only in controls neither of them has; the one visible difference is a word in the bar’s sentence. The column is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document width and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing. No option above is rendered, and the four selection modes and Feather are `missing` from this bar; Quick Selection separately offers Add and Subtract, so the omission is specific to these marquee tools. The three modifiers above are not implemented here, and holding one changes nothing. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle.',
+      'The app reselects the active marquee with M and Shift+M cycles its four-tool marquee group. The gesture is implemented in full: a click commits the column under the press, a drag positions it, the column is exactly one document pixel wide and spans the full document height, and a press inside the committed column moves it. This tool and its counterpart share one processor, one tool area and one options bar, because their Photoshop option sets are identical to each other and differ from the other marquees only in controls neither of them has; the one visible difference is a word in the bar’s sentence. The column is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document width and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing. No option above is rendered, and the four selection modes and Feather are `missing` from this bar; Quick Selection separately offers Add and Subtract, so the omission is specific to these marquee tools. The three modifiers above are not implemented here, and holding one changes nothing. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle.',
     sources: [
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/make-selections-with-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html',
+      'https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/selection/',
     ],
@@ -378,7 +390,7 @@ export const selectionDescriptions: Record<
       {
         keys: 'Return',
         action:
-          'Selects the tool and moves focus to the Feather field in the options bar, so a feather can be typed before the next trace.',
+          'With the Lasso tool selected, Return (macOS) or Enter (Windows) highlights the Feather field in the options bar so a feather can be set before the next trace.',
       },
       { keys: 'Delete', action: 'Erases recently drawn straight segments during a trace.' },
     ],
@@ -400,6 +412,7 @@ export const selectionDescriptions: Record<
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
       'https://www.adobe.com/products/photoshop/lasso-tool.html',
+      'https://jkost.com/blog/2021/07/25-shortcuts-and-tips-for-creating-better-selections-in-photoshop.html',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
       'https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html',
     ],
