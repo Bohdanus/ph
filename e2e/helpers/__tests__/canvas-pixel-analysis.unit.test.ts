@@ -96,8 +96,7 @@ describe('dominantRed', () => {
     expect(await dominantRed(image)).toEqual({ red: 255, green: 0, blue: 0, count: 3 });
   });
 
-  // PIN: current behavior counts alpha 128 at full weight (source only skips alpha === 0).
-  it('counts partially transparent red pixels', async () => {
+  it('counts each nonzero-alpha stored red sample once', async () => {
     const image = createImageData(3, 1);
     setPixel(image, 0, 0, RED, 128);
     setPixel(image, 1, 0, RED);
