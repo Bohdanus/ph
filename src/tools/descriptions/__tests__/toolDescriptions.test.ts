@@ -355,6 +355,54 @@ describe('toolDescriptions', () => {
     }
   });
 
+  it('documents current Brush/Pencil digit bindings and their app limits', () => {
+    const currentGuide =
+      'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/brushes-presets/paint-with-brush-or-pencil-tool.html';
+    const reference = 'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf';
+
+    for (const name of ['brush', 'pencil'] as const) {
+      const description = toolDescriptions[name];
+      const opacity = description.shortcuts.find((item) => item.keys === '0–9');
+      const flow = description.shortcuts.find((item) => item.keys === 'Shift+0–9');
+
+      expect(opacity?.action).toMatch(
+        /current Photoshop.*bare number keys 0–9 set (Brush|Pencil) Opacity.*two quick digits set an exact percentage.*only 0 and 1/i
+      );
+      expect(flow?.action).toMatch(
+        /Shift\+number sets Flow.*two quick digits set an exact percentage.*does not implement numeric Flow shortcuts/i
+      );
+      expect(description.sources).toEqual(expect.arrayContaining([currentGuide, reference]));
+      expect(description.appNotes).toMatch(/does not implement digits `2`–`9`, two-digit exact Opacity/i);
+
+      if (name === 'brush') {
+        expect(flow?.action).toMatch(/2019 generic reference.*Airbrush enabled/i);
+        expect(flow?.action).toMatch(/bare numbers set Flow and Shift\+number sets Opacity/i);
+      } else {
+        expect(flow?.action).toMatch(/limits Airbrush mode to the Brush.*does not apply to Pencil/i);
+      }
+    }
+  });
+
+  it("limits Sponge digit documentation to Adobe's generic Flow reference", () => {
+    const sponge = toolDescriptions.sponge;
+    const flow = sponge.shortcuts.find((item) => item.keys === 'Shift+0–9');
+
+    expect(flow?.action).toMatch(
+      /2019 generic painting\/editing shortcut reference says Shift\+number sets Flow.*historical generic evidence rather than a current Sponge-specific confirmation.*Airbrush.*does not establish whether that exception applies to the Sponge/i
+    );
+    expect(sponge.shortcuts.filter((item) => /[0-9]/.test(item.keys))).toEqual([flow]);
+    expect(sponge.purpose).not.toMatch(/bare digit keys step Flow/i);
+    expect(sponge.appNotes).toMatch(
+      /2026 Sponge guide documents Flow but no numeric binding.*2019 generic painting\/editing reference assigns Flow to Shift\+number.*no Shift\+number handler sets Flow/i
+    );
+    expect(sponge.sources).toEqual(
+      expect.arrayContaining([
+        'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/adjust-color-saturation-in-selected-image-areas.html',
+        'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
+      ])
+    );
+  });
+
   describe('modifiers and shortcuts consistency', () => {
     it('ensures modifier keys use standard notation', () => {
       const knownModifierWords = [
