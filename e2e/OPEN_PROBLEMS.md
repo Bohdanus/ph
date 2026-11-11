@@ -332,9 +332,26 @@ The failed `erase-fill-eyedropper.spec.ts` case was caused by its click landing 
 the first qualifying screenshot pixel, which can map to an antialiased logical pixel at 2x. The
 test now moves half a document pixel inside that observed edge while keeping the 3x3 average across
 it. The focused case passes at 1x in run `2026-11-11T22-01-18-781Z-29579` and at 2x in run
-`2026-11-11T22-01-31-849Z-56101`. The full suite has not been rerun after that test-only correction;
-the measured 612/76/1 total is from the preceding tree, and the other 75 failures remain
-unverified.
+`2026-11-11T22-01-31-849Z-56101`. The full suite has not been rerun after the two localized oracle
+corrections; the measured 612/76/1 total is from the preceding tree, and 65 of those original
+failures remain unverified. Two of the original failures described below were reproduced in a
+focused 2x cross-callsite run.
+
+The eight `single-row-column-marquee.spec.ts` failures were another coordinate-space mismatch:
+`Main` scales the ants canvas backing store by the device-pixel ratio, while `readAntRuns` treated
+backing pixels as document pixels. The helper now uses the workspace's published document extent
+and maps backing pixels into document-pixel runs with exact ratio boundaries. The full marquee spec
+passed at 1x in run `2026-11-11T22-51-48-648Z-25018` and at 2x in run
+`2026-11-11T22-57-39-446Z-32045`; both run records report `passed` with no failed tests. Unit cases
+also cover 1.25x overlap, the 1.4x exact-boundary case, and a 0.5x canvas whose rounded backing
+extent cannot recover its logical size.
+
+A focused 2x cross-callsite run `2026-11-11T22-52-59-360Z-43702` ran 14 tests: 11 passed and 3
+failed. The raster-backed Quick Selection and non-contiguous Magic Wand failures also appear in the
+original full diagnostic; the third failure was `selection-marching-ants.spec.ts`'s rectangular
+marquee case. It reports a top painted row at document row 124 spanning only x=125..225, below the
+120-pixel assertion band after its 20-pixel inset. The 1x version passed in the cross-callsite run,
+and the 2x failure repeated alone in run `2026-11-11T22-57-17-663Z-96293`. Its cause is unconfirmed.
 
 Some test-scoped touch/mobile cases exist, but there is no dedicated project and coverage remains
 sparse across controls and gestures. Adding a project multiplies every run's cost and is a coverage

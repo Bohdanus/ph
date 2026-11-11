@@ -61,11 +61,13 @@ class FakeAntsCanvas {
   readonly height: number;
   private readonly pixels: Uint8ClampedArray;
   private readonly box: Box;
+  private readonly scale: number;
 
-  constructor(width: number, height: number, paints: readonly Paint[], box?: Box) {
+  constructor(width: number, height: number, paints: readonly Paint[], box?: Box, scale = 1) {
     this.width = width;
     this.height = height;
     this.box = box ?? { left: 0, top: 0, width, height };
+    this.scale = scale;
     this.pixels = new Uint8ClampedArray(width * height * 4);
     for (const { x, y, rgba } of paints) {
       const at = (y * width + x) * 4;
@@ -97,6 +99,10 @@ class FakeAntsCanvas {
 
   getBoundingClientRect(): Box {
     return this.box;
+  }
+
+  getAttribute(name: string): string | null {
+    return name === 'data-hidpi-ratio' && this.scale !== 1 ? String(this.scale) : null;
   }
 }
 
@@ -145,13 +151,21 @@ function antsReading(canvas: FakeAntsCanvas | null): Page {
  * for the page's global so the callback's `document.querySelector` resolves it.
  * Set only for the duration of the call; cleaned up so a later test does not see it.
  */
-function evaluatePage(canvas: FakeAntsCanvas | null): Page {
+function evaluatePage(canvas: FakeAntsCanvas | null, documentSize?: Pick<Box, 'width' | 'height'>): Page {
+  const size = documentSize ?? { width: canvas?.width ?? 0, height: canvas?.height ?? 0 };
   const document = {
-    querySelector: (selector: string): FakeAntsCanvas | null => {
-      if (selector !== '[data-testid="selection-ants-canvas"]') {
-        throw new Error(`unexpected selector: ${selector}`);
+    querySelector: (selector: string): unknown => {
+      if (selector === '[data-testid="selection-ants-canvas"]') return canvas;
+      if (selector === '[data-testid="workspace-container"]') {
+        return {
+          getAttribute: (name: string) => {
+            if (name === 'data-fit-document-width') return String(size.width);
+            if (name === 'data-fit-document-height') return String(size.height);
+            return null;
+          },
+        };
       }
-      return canvas;
+      throw new Error(`unexpected selector: ${selector}`);
     },
   };
   const page = {
@@ -649,6 +663,82 @@ describe('readAntRuns', () => {
     for (let y = 0; y < 8; y++) {
       if (y !== 5) expect(runs[y]).toEqual([]);
     }
+  });
+
+  it('folds a 2x backing store into document-pixel rows and columns', async () => {
+    const canvas = new FakeAntsCanvas(
+      16,
+      12,
+      [
+        ...Array.from({ length: 8 }, (_, index) => ({ x: index + 4, y: 5, rgba: BLACK })),
+        ...Array.from({ length: 6 }, (_, index) => ({ x: 7, y: index + 4, rgba: WHITE })),
+      ],
+      undefined,
+      2
+    );
+
+    const rowRuns = await readAntRuns(
+      evaluatePage(canvas, { width: 8, height: 6 }),
+      { x: 0, y: 0, width: 8, height: 6 },
+      'row'
+    );
+    const columnRuns = await readAntRuns(
+      evaluatePage(canvas, { width: 8, height: 6 }),
+      { x: 0, y: 0, width: 8, height: 6 },
+      'column'
+    );
+
+    expect(rowRuns).toHaveLength(6);
+    expect(rowRuns[2]).toEqual([[2, 5]]);
+    expect(columnRuns).toHaveLength(8);
+    expect(columnRuns[3]).toEqual([[2, 4]]);
+  });
+
+  it('folds a backing pixel that straddles document pixels at a fractional ratio', async () => {
+    const canvas = new FakeAntsCanvas(10, 5, [{ x: 2, y: 2, rgba: BLACK }], undefined, 1.25);
+
+    const runs = await readAntRuns(
+      evaluatePage(canvas, { width: 8, height: 4 }),
+      { x: 0, y: 0, width: 8, height: 4 },
+      'row'
+    );
+
+    expect(runs).toHaveLength(4);
+    expect(runs[1]).toEqual([[1, 2]]);
+    expect(runs[2]).toEqual([[1, 2]]);
+  });
+
+  it('does not expand a backing pixel that ends exactly on a document boundary', async () => {
+    const canvas = new FakeAntsCanvas(14, 28, [{ x: 1, y: 20, rgba: BLACK }], undefined, 1.4);
+
+    const runs = await readAntRuns(
+      evaluatePage(canvas, { width: 10, height: 20 }),
+      { x: 0, y: 0, width: 10, height: 20 },
+      'row'
+    );
+
+    expect(runs[14]).toEqual([[0, 1]]);
+    expect(runs[15]).toEqual([]);
+  });
+
+  it('clamps sub-1x backing pixels to the published document extent', async () => {
+    const canvas = new FakeAntsCanvas(2, 2, [{ x: 1, y: 1, rgba: BLACK }], undefined, 0.5);
+
+    const rowRuns = await readAntRuns(
+      evaluatePage(canvas, { width: 3, height: 3 }),
+      { x: 0, y: 0, width: 10, height: 10 },
+      'row'
+    );
+    const columnRuns = await readAntRuns(
+      evaluatePage(canvas, { width: 3, height: 3 }),
+      { x: 0, y: 0, width: 10, height: 10 },
+      'column'
+    );
+
+    expect(rowRuns).toHaveLength(3);
+    expect(rowRuns[2]).toEqual([[2, 2]]);
+    expect(columnRuns).toHaveLength(3);
+    expect(columnRuns[2]).toEqual([[2, 2]]);
   });
 
   it('rejects a mid-grey pixel, because alpha alone would accept it', async () => {
