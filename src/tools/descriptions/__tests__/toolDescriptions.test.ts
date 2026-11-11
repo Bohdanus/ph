@@ -338,6 +338,23 @@ describe('toolDescriptions', () => {
     );
   });
 
+  it('separates Adobe Dodge/Burn Exposure digits from app shortcut support', () => {
+    const reference = 'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf';
+
+    for (const name of ['dodge', 'burn'] as const) {
+      const description = toolDescriptions[name];
+      const exposureShortcut = description.shortcuts.find((item) => item.keys === '0–9');
+      const tool = name === 'dodge' ? 'Dodge' : 'Burn';
+
+      expect(exposureShortcut?.action).toMatch(
+        /In Photoshop, number keys 0–9 set Exposure.*0 = 100%, 1 = 10%, and two quick digits set an exact percentage.*with Airbrush enabled, use Shift\+number/i
+      );
+      expect(exposureShortcut?.action).toContain(`This app does not implement ${tool} Exposure digit shortcuts`);
+      expect(description.sources).toContain(reference);
+      expect(description.appNotes).toMatch(/does not implement Exposure digit shortcuts for Dodge or Burn/i);
+    }
+  });
+
   describe('modifiers and shortcuts consistency', () => {
     it('ensures modifier keys use standard notation', () => {
       const knownModifierWords = [
