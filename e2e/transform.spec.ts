@@ -7,6 +7,7 @@ import {
   getDarkPixelBounds,
   takeLineScreenshot,
   viewportClip,
+  workspaceDocumentPixelMask,
   waitForCanvasRedraw,
   type BoundingBox,
   type ViewportClip,
@@ -141,7 +142,8 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const before = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'resize-x-before', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'resize-x-before', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(before).not.toBeNull();
 
@@ -150,7 +152,8 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const after = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'resize-x-after', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'resize-x-after', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(after).not.toBeNull();
     expect(after!.width / before!.width).toBeGreaterThan(1.3);
@@ -177,7 +180,8 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const before = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'resize-y-before', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'resize-y-before', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(before).not.toBeNull();
 
@@ -186,7 +190,8 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const after = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'resize-y-after', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'resize-y-after', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(after).not.toBeNull();
     expect(after!.height / before!.height).toBeGreaterThan(1.3);
@@ -213,7 +218,8 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const before = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'skew-x-before', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'skew-x-before', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(before).not.toBeNull();
 
@@ -221,7 +227,10 @@ test.describe('Transform tool', () => {
     await page.locator('#skew-x-slider').fill('30');
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
-    const after = await getDarkPixelBounds(await takeLineScreenshot(page, box, 'skew-x-after', testInfo, wholeCanvas));
+    const after = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'skew-x-after', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
+    );
     expect(after).not.toBeNull();
     expect(after!.width / before!.width).toBeGreaterThan(1.3);
     const heightRatio = after!.height / before!.height;
@@ -247,7 +256,8 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const before = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'skew-y-before', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'skew-y-before', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(before).not.toBeNull();
 
@@ -255,7 +265,10 @@ test.describe('Transform tool', () => {
     await page.locator('#skew-y-slider').fill('30');
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
-    const after = await getDarkPixelBounds(await takeLineScreenshot(page, box, 'skew-y-after', testInfo, wholeCanvas));
+    const after = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'skew-y-after', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
+    );
     expect(after).not.toBeNull();
     expect(after!.height / before!.height).toBeGreaterThan(1.3);
     const widthRatio = after!.width / before!.width;
@@ -283,7 +296,8 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const before = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'rotate-before', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'rotate-before', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(before, 'the drawn bar should be dark enough for the dark-pixel bounds').not.toBeNull();
     expect(before!.width / before!.height, 'a horizontal bar is wider than it is tall').toBeGreaterThan(3);
@@ -296,7 +310,8 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const rotated = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'rotate-preview', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'rotate-preview', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(rotated, 'the rotated bar should still be dark').not.toBeNull();
     expect(
@@ -324,7 +339,8 @@ test.describe('Transform tool', () => {
 
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
     const committed = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'rotate-committed', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'rotate-committed', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(committed, 'the committed layer should still be dark').not.toBeNull();
     expect(committed!.height / committed!.width, 'the commit must not drop the rotation').toBeGreaterThan(3);
@@ -367,7 +383,8 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const before = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'undo-rotate-before', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'undo-rotate-before', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(before, 'the drawn bar should be dark enough for the dark-pixel bounds').not.toBeNull();
     expect(before!.width / before!.height, 'a horizontal bar is wider than it is tall').toBeGreaterThan(3);
@@ -378,7 +395,8 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const committed = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'undo-rotate-applied', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'undo-rotate-applied', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(committed, 'the committed layer should still be dark').not.toBeNull();
     expect(
@@ -395,7 +413,8 @@ test.describe('Transform tool', () => {
     await page.getByTestId('undo-button').click();
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
     const afterUndo = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'undo-rotate-undone', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'undo-rotate-undone', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(afterUndo, 'the undone layer should still be dark').not.toBeNull();
     expect(
@@ -436,10 +455,12 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: clip.bottom });
 
     const topBefore = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'taper-top-before', testInfo, clip.top)
+      await takeLineScreenshot(page, box, 'taper-top-before', testInfo, clip.top),
+      await workspaceDocumentPixelMask(page, box, clip.top)
     );
     const bottomBefore = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'taper-bottom-before', testInfo, clip.bottom)
+      await takeLineScreenshot(page, box, 'taper-bottom-before', testInfo, clip.bottom),
+      await workspaceDocumentPixelMask(page, box, clip.bottom)
     );
     expect(topBefore, 'the top bar should be dark').not.toBeNull();
     expect(bottomBefore, 'the bottom bar should be dark').not.toBeNull();
@@ -456,10 +477,12 @@ test.describe('Transform tool', () => {
     await waitForCanvasRedraw(page, box, { clip: clip.bottom });
 
     const topAfter = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'taper-top-after', testInfo, clip.top)
+      await takeLineScreenshot(page, box, 'taper-top-after', testInfo, clip.top),
+      await workspaceDocumentPixelMask(page, box, clip.top)
     );
     const bottomAfter = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'taper-bottom-after', testInfo, clip.bottom)
+      await takeLineScreenshot(page, box, 'taper-bottom-after', testInfo, clip.bottom),
+      await workspaceDocumentPixelMask(page, box, clip.bottom)
     );
     expect(topAfter, 'the top bar should still be dark').not.toBeNull();
     expect(bottomAfter, 'the bottom bar should still be dark').not.toBeNull();
@@ -483,7 +506,8 @@ test.describe('Transform tool', () => {
 
     await waitForCanvasRedraw(page, box, { clip: clip.bottom });
     const committedBottom = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'taper-bottom-committed', testInfo, clip.bottom)
+      await takeLineScreenshot(page, box, 'taper-bottom-committed', testInfo, clip.bottom),
+      await workspaceDocumentPixelMask(page, box, clip.bottom)
     );
     expect(committedBottom, 'the committed layer should still be dark').not.toBeNull();
     expect(committedBottom!.width / bottomBefore!.width, 'the commit must not drop the taper').toBeLessThan(0.5);
@@ -510,7 +534,10 @@ test.describe('Transform tool', () => {
     await drawDocumentBar(page, box, Math.round(DEFAULT_DOCUMENT_SIZE.height * 0.5));
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
-    const before = await getDarkPixelBounds(await takeLineScreenshot(page, box, 'drag-before', testInfo, wholeCanvas));
+    const before = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'drag-before', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
+    );
     expect(before, 'the bar was drawn and visible').not.toBeNull();
     const originalRatio = before!.width / before!.height;
     expect(originalRatio, 'the bar starts out wider than it is tall').toBeGreaterThan(3);
@@ -529,7 +556,8 @@ test.describe('Transform tool', () => {
 
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
     const midDrag = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'drag-in-motion', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'drag-in-motion', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
     );
     expect(midDrag, 'the drag is previewed while the pointer is down').not.toBeNull();
     expect(
@@ -542,7 +570,10 @@ test.describe('Transform tool', () => {
     await page.mouse.up();
 
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
-    const after = await getDarkPixelBounds(await takeLineScreenshot(page, box, 'drag-released', testInfo, wholeCanvas));
+    const after = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'drag-released', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
+    );
     expect(after, 'the released drag changed the layer').not.toBeNull();
     expect(
       after!.width / after!.height,
@@ -554,7 +585,10 @@ test.describe('Transform tool', () => {
     // drag is a single entry, not one per frame the pointer crossed.
     await page.getByTestId('undo-button').click();
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
-    const undone = await getDarkPixelBounds(await takeLineScreenshot(page, box, 'drag-undone', testInfo, wholeCanvas));
+    const undone = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'drag-undone', testInfo, wholeCanvas),
+      await workspaceDocumentPixelMask(page, box, wholeCanvas)
+    );
     expect(undone, 'one undo restored something').not.toBeNull();
     expect(
       Math.abs(undone!.width / undone!.height - originalRatio) / originalRatio,

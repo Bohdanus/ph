@@ -17,6 +17,7 @@ import {
   screenshotBoundsToCss,
   type BoundingBox,
   type ImageDataResult,
+  WHOLE_CAPTURE,
 } from '../canvas-helpers';
 import { cssPointToImage } from '../screenshot-scale';
 import {
@@ -116,11 +117,13 @@ describe('hasDarkPixels', () => {
   ];
 
   it.each(DARK_CASES)('is $expected for $name', async ({ color, expected }) => {
-    expect(await hasDarkPixels(await createTestImageData(color))).toBe(expected);
+    expect(await hasDarkPixels(await createTestImageData(color), WHOLE_CAPTURE)).toBe(expected);
   });
 
   it('ignores dark pixels that are fully transparent', async () => {
-    expect(await hasDarkPixels(await createTestImageData({ red: 0, green: 0, blue: 0 }, 10, 10, 0))).toBe(false);
+    expect(
+      await hasDarkPixels(await createTestImageData({ red: 0, green: 0, blue: 0 }, 10, 10, 0), WHOLE_CAPTURE)
+    ).toBe(false);
   });
 
   it('finds a single dark pixel among light ones', async () => {
@@ -128,7 +131,7 @@ describe('hasDarkPixels', () => {
     fillAll(image, WHITE);
     setPixel(image, 7, 3, { red: 0, green: 0, blue: 0 });
 
-    expect(await hasDarkPixels(image)).toBe(true);
+    expect(await hasDarkPixels(image, WHOLE_CAPTURE)).toBe(true);
   });
 
   // A TRIPWIRE, not a pin. Every case above says the predicate CAN answer true; this one
@@ -170,7 +173,7 @@ describe('hasDarkPixels', () => {
     }
 
     expect(
-      await hasDarkPixels(image),
+      await hasDarkPixels(image, WHOLE_CAPTURE),
       `hasDarkPixels must answer false on the empty light workspace backdrop, and it answered true. The darkest ` +
         `pixel of that backdrop is #f3f3f3 (243) against a DARK_PIXEL_THRESHOLD of ${DARK_PIXEL_THRESHOLD}. ` +
         `Two things make it true, and only two: the app is painting its DARK checkerboard (#000 / #121212 in ` +
@@ -216,7 +219,7 @@ describe('getDarkPixelBounds', () => {
     const image = createImageData(100, 100);
     fillRect(image, { left: 20, top: 20, right: 79, bottom: 79 }, DARK_GRAY);
 
-    expect(await getDarkPixelBounds(image)).toEqual({
+    expect(await getDarkPixelBounds(image, WHOLE_CAPTURE)).toEqual({
       left: 20,
       top: 20,
       right: 79,
@@ -229,11 +232,11 @@ describe('getDarkPixelBounds', () => {
   });
 
   it('returns null for a white image', async () => {
-    expect(await getDarkPixelBounds(await createTestImageData(WHITE, 50, 50))).toBeNull();
+    expect(await getDarkPixelBounds(await createTestImageData(WHITE, 50, 50), WHOLE_CAPTURE)).toBeNull();
   });
 
   it('returns null for a fully transparent image', async () => {
-    expect(await getDarkPixelBounds(createImageData(50, 50))).toBeNull();
+    expect(await getDarkPixelBounds(createImageData(50, 50), WHOLE_CAPTURE)).toBeNull();
   });
 
   const DARK_BOUNDARY_CASES: { name: string; level: number; expected: boolean }[] = [
@@ -245,7 +248,7 @@ describe('getDarkPixelBounds', () => {
   it.each(DARK_BOUNDARY_CASES)('treats a pixel $name as dark=$expected', async ({ level, expected }) => {
     const image = createImageData(50, 50);
     setPixel(image, 25, 25, gray(level));
-    const result = await getDarkPixelBounds(image);
+    const result = await getDarkPixelBounds(image, WHOLE_CAPTURE);
 
     if (!expected) {
       expect(result).toBeNull();
@@ -267,7 +270,7 @@ describe('getDarkPixelBounds', () => {
     const image = createImageData(5, 5);
     setPixel(image, 0, 0, { red: 0, green: 0, blue: 0 });
 
-    expect(await getDarkPixelBounds(image)).toEqual({
+    expect(await getDarkPixelBounds(image, WHOLE_CAPTURE)).toEqual({
       left: 0,
       top: 0,
       right: 0,
@@ -283,7 +286,7 @@ describe('getDarkPixelBounds', () => {
     const image = createImageData(5, 5);
     setPixel(image, 4, 4, { red: 0, green: 0, blue: 0 });
 
-    expect(await getDarkPixelBounds(image)).toEqual({
+    expect(await getDarkPixelBounds(image, WHOLE_CAPTURE)).toEqual({
       left: 4,
       top: 4,
       right: 4,
@@ -300,7 +303,7 @@ describe('getDarkPixelBounds', () => {
     setPixel(image, 1, 1, { red: 0, green: 0, blue: 0 });
     setPixel(image, 8, 7, { red: 0, green: 0, blue: 0 });
 
-    expect(await getDarkPixelBounds(image)).toEqual({
+    expect(await getDarkPixelBounds(image, WHOLE_CAPTURE)).toEqual({
       left: 1,
       top: 1,
       right: 8,
@@ -315,7 +318,7 @@ describe('getDarkPixelBounds', () => {
   it('ignores dark pixels that are fully transparent', async () => {
     const image = createImageData(8, 8);
     setPixel(image, 2, 2, { red: 0, green: 0, blue: 0 }, TRANSPARENT);
-    expect(await getDarkPixelBounds(image)).toBeNull();
+    expect(await getDarkPixelBounds(image, WHOLE_CAPTURE)).toBeNull();
   });
 
   it('bounds two disconnected dark rectangles as a single span', async () => {
@@ -324,7 +327,7 @@ describe('getDarkPixelBounds', () => {
     fillRect(image, { left: 10, top: 10, right: 19, bottom: 19 }, DARK_GRAY);
     fillRect(image, { left: 60, top: 60, right: 69, bottom: 69 }, DARK_GRAY);
 
-    expect(await getDarkPixelBounds(image)).toEqual({
+    expect(await getDarkPixelBounds(image, WHOLE_CAPTURE)).toEqual({
       left: 10,
       top: 10,
       right: 69,
@@ -337,11 +340,11 @@ describe('getDarkPixelBounds', () => {
   });
 
   it('returns null for a zero-by-zero image', async () => {
-    expect(await getDarkPixelBounds(createImageData(0, 0))).toBeNull();
+    expect(await getDarkPixelBounds(createImageData(0, 0), WHOLE_CAPTURE)).toBeNull();
   });
 
   it('returns null for a zero-width image', async () => {
-    expect(await getDarkPixelBounds(createImageData(0, 10))).toBeNull();
+    expect(await getDarkPixelBounds(createImageData(0, 10), WHOLE_CAPTURE)).toBeNull();
   });
 
   it('returns a one-pixel box for a single dark pixel at the center', async () => {
@@ -349,7 +352,7 @@ describe('getDarkPixelBounds', () => {
     fillAll(image, WHITE);
     setPixel(image, 5, 5, { red: 0, green: 0, blue: 0 });
 
-    expect(await getDarkPixelBounds(image)).toEqual({
+    expect(await getDarkPixelBounds(image, WHOLE_CAPTURE)).toEqual({
       left: 5,
       top: 5,
       right: 5,
@@ -365,7 +368,7 @@ describe('getDarkPixelBounds', () => {
     const image = createImageData(50, 50);
     fillAll(image, DARK_GRAY);
 
-    expect(await getDarkPixelBounds(image)).toEqual({
+    expect(await getDarkPixelBounds(image, WHOLE_CAPTURE)).toEqual({
       left: 0,
       top: 0,
       right: 49,
@@ -435,7 +438,7 @@ describe('screenshotBoundsToCss round-trip', () => {
     fillAll(image, WHITE);
     fillRect(image, darkBlock, DARK_GRAY);
 
-    const bounds = (await getDarkPixelBounds(image))!;
+    const bounds = (await getDarkPixelBounds(image, WHOLE_CAPTURE))!;
     const box: BoundingBox = { x: 0, y: 0, width: 100, height: 100 };
     const cssBounds = screenshotBoundsToCss(bounds, box);
 
@@ -459,7 +462,7 @@ describe('screenshotBoundsToCss round-trip', () => {
     fillRect(image, darkBlock, DARK_GRAY);
     const scaled = captureAtScale(image, 2);
 
-    const bounds = (await getDarkPixelBounds(scaled))!;
+    const bounds = (await getDarkPixelBounds(scaled, WHOLE_CAPTURE))!;
     const box: BoundingBox = { x: 0, y: 0, width: 100, height: 100 };
     const cssBounds = screenshotBoundsToCss(bounds, box);
 

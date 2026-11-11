@@ -3,6 +3,7 @@ import {
   CANVAS_REDRAW_TIMEOUT_MS,
   type BoundingBox,
   drawLine,
+  documentOnlyPixelMask,
   getWorkspaceCanvas,
   hasDarkPixels,
   hasRedPixels,
@@ -17,7 +18,7 @@ import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { committedAntsOutline, waitForCommittedAnts, waitForNoCommittedAnts } from './helpers/selection-ants';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
-const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot) => !(await hasDarkPixels(screenshot));
+const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask));
 
 /** The standard test line, black, on the row offset from the box origin. */
 const ROW_OFFSET = 200;
@@ -87,9 +88,13 @@ test.describe('History panel', () => {
     await drawRows(page).last().click();
     await waitForCanvasPixels(page, secondClip, hasNoDarkPixels, { description: 'the rewound second stroke' });
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: firstClip })), {
-        message: 'the first stroke is the state being rewound to, so it must survive',
-      })
+      .poll(
+        async () =>
+          hasDarkPixels(await page.screenshot({ clip: firstClip }), await documentOnlyPixelMask(page, firstClip)),
+        {
+          message: 'the first stroke is the state being rewound to, so it must survive',
+        }
+      )
       .toBe(true);
 
     // The panel is a second front end onto the same timeline, so the toolbar buttons have
@@ -124,9 +129,13 @@ test.describe('History panel', () => {
     await expect(enableButton(oldest), 'the eye now offers to put it back').toBeVisible();
     await waitForCanvasPixels(page, firstClip, hasNoDarkPixels, { description: 'the disabled entry' });
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: secondClip })), {
-        message: 'only the disabled entry is recomputed away, never its neighbours',
-      })
+      .poll(
+        async () =>
+          hasDarkPixels(await page.screenshot({ clip: secondClip }), await documentOnlyPixelMask(page, secondClip)),
+        {
+          message: 'only the disabled entry is recomputed away, never its neighbours',
+        }
+      )
       .toBe(true);
     await expect(drawRows(page).first().getByTitle('Current state'), 'the cursor has not moved').toBeVisible();
 

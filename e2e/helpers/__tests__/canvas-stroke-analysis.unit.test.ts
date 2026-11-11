@@ -13,6 +13,8 @@ import {
   hasManualSnapPixels,
   type CaptureRegion,
   type ImageDataResult,
+  WHOLE_CAPTURE,
+  viewportClip,
 } from '../canvas-helpers';
 import {
   CYAN,
@@ -77,7 +79,14 @@ describe('getStrokeAnalysis', () => {
 
   it('returns null for a zero-sized image', async () => {
     expect(
-      await getStrokeAnalysis({ width: 0, height: 0, data: new Uint8ClampedArray(0) }, { width: 10, height: 10 })
+      await getStrokeAnalysis(
+        { width: 0, height: 0, data: new Uint8ClampedArray(0) },
+        {
+          width: 10,
+          height: 10,
+          mask: WHOLE_CAPTURE,
+        }
+      )
     ).toBeNull();
   });
 
@@ -260,12 +269,18 @@ describe('getStrokeAnalysis', () => {
     const image = createImageData(10, 1);
     fillAll(image, black);
 
-    await expect(getStrokeAnalysis(image, { width: 0, height: 10 })).rejects.toThrow(/positive CSS size/);
-    await expect(getStrokeAnalysis(image, { width: 10, height: 0 })).rejects.toThrow(/positive CSS size/);
-    await expect(getStrokeAnalysis(image, { width: Number.NaN, height: 10 })).rejects.toThrow(/positive CSS size/);
-    await expect(getStrokeAnalysis(image, { width: Number.POSITIVE_INFINITY, height: 10 })).rejects.toThrow(
+    await expect(getStrokeAnalysis(image, { width: 0, height: 10, mask: WHOLE_CAPTURE })).rejects.toThrow(
       /positive CSS size/
     );
+    await expect(getStrokeAnalysis(image, { width: 10, height: 0, mask: WHOLE_CAPTURE })).rejects.toThrow(
+      /positive CSS size/
+    );
+    await expect(getStrokeAnalysis(image, { width: Number.NaN, height: 10, mask: WHOLE_CAPTURE })).rejects.toThrow(
+      /positive CSS size/
+    );
+    await expect(
+      getStrokeAnalysis(image, { width: Number.POSITIVE_INFINITY, height: 10, mask: WHOLE_CAPTURE })
+    ).rejects.toThrow(/positive CSS size/);
   });
 
   it('returns null for a zero-width image carrying ink, rather than measuring it', async () => {
@@ -278,188 +293,77 @@ describe('getStrokeAnalysis', () => {
     // change that removed the `bottom < 0` arm would fail here rather than pass.
     const image: ImageDataResult = { width: 0, height: 0, data: new Uint8ClampedArray([0, 0, 0, 255]) };
 
-    expect(await getStrokeAnalysis(image, { width: 10, height: 10 })).toBeNull();
+    expect(await getStrokeAnalysis(image, { width: 10, height: 10, mask: WHOLE_CAPTURE })).toBeNull();
   });
 });
 
 /**
- * THE APP'S OWN WORKSPACE BACKDROP IS NOT INK.
- *
- * The classifier was asked to find a stroke and answer "is there one", with no notion of the
- * page it was photographing. The workspace is a checkerboard (`Main.tsx:279` picks
- * `.chessboard-light` or `.chessboard-dark`), the document is letterboxed inside it, and a clip
- * that straddles the letterbox photographs the page's own background. `#f3f3f3` then reads as
- * `spray`: it is not near-white (`> 250` is false at 243), it is above `SPRAY_LUMINANCE_THRESHOLD`
- * at zero saturation, and it fills the clip from edge to edge, so a single column of backdrop
- * produced `{ type: 'spray', segments: 1, verticalSpread: <the whole clip> }` with nothing
- * drawn. `e2e/pen-types.spec.ts:37-40` polls for exactly that non-null shape, so its wait could
- * be satisfied by the background and the spray assertions after it would be reading the
- * checkerboard rather than the pen.
- *
- * THE FIX IS EXACT, and that is a decision rather than a shortcut. `LETTERBOX_LIGHT_CELL` and
- * `LETTERBOX_DARK_CELL` match the two cell colours as RGB TRIPLES rather than as luminance
- * bands, because every band wide enough to be worth having runs into a grey this suite already
- * calls ink: `>= 243` swallows `grey(250)`, which the near-white table above pins as a stroke
- * one level below the threshold, and admitting 18 downward swallows `DARK_GRAY` at 10, which is
- * the ink of the dispatch table below and of two gap-threshold fixtures. So these cases pin the
- * cell colours, and the JSDoc on the constants records the residual: the anti-aliased blend at a
- * cell's diagonal edge, and the dark theme's `#000` gaps, are still read as ink.
+ * Spatial masks remove both themes' workspace backdrops without confusing document ink with
+ * checkerboard gaps or antialiased cell edges.
  */
-describe('getStrokeAnalysis on the workspace backdrop', () => {
-  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
-  /** The clip `pen-types.spec.ts` takes: 320x120 CSS px, captured at CSS scale so scale is 1. */
-  const REGION: CaptureRegion = { width: 320, height: 120 };
-  const CLIP: { width: number; height: number } = { width: 320, height: 120 };
+describe('getStrokeAnalysis uses document geometry for workspace backdrops', () => {
+  const capture = viewportClip({ x: 0, y: 0, width: 100, height: 80 });
+  const document = viewportClip({ x: 20, y: 20, width: 60, height: 40 });
+  const mask = { capture, document };
+  const region: CaptureRegion = { width: capture.width, height: capture.height, mask };
+  const { LETTERBOX_DARK_CELL, LETTERBOX_LIGHT_CELL } = STROKE_ANALYSIS;
 
-  /** The measured peak of one spray dab at the app's default spray preset. */
-  const APP_SPRAY_PEAK: Color = { red: 204, green: 204, blue: 204 };
-
-  /** A full-clip wash of `cell`, i.e. a capture with nothing drawn on it. */
-  function backdropOnly(cell: Color): ImageDataResult {
-    const image = createImageData(CLIP.width, CLIP.height);
-    fillAll(image, cell);
+  function backdrop(theme: 'dark' | 'light'): ImageDataResult {
+    const image = createImageData(100, 80);
+    for (let y = 0; y < image.height; y++) {
+      for (let x = 0; x < image.width; x++) {
+        const checker = Math.floor(x / 10) % 2 === Math.floor(y / 10) % 2;
+        const edgeBlend = x % 10 === 0 || y % 10 === 0;
+        const edge = theme === 'dark' ? { red: 1, green: 1, blue: 1 } : { red: 249, green: 249, blue: 249 };
+        const cell = theme === 'dark' ? LETTERBOX_DARK_CELL : LETTERBOX_LIGHT_CELL;
+        const gap = theme === 'dark' ? black : WHITE;
+        setPixel(image, x, y, edgeBlend ? edge : checker ? cell : gap);
+      }
+    }
+    fillRect(image, { left: 20, top: 20, right: 79, bottom: 59 }, WHITE);
     return image;
   }
 
-  it('derives its palette from the app stylesheet rather than from a fixture', () => {
-    // `.chessboard-light` and `.chessboard-dark`, `src/index.scss:140-164`. If either cell
-    // colour moves, the exclusion stops matching and the cases below fail — which is the
-    // point of naming the source rather than the number.
-    expect(LETTERBOX_LIGHT_CELL).toEqual({ red: 0xf3, green: 0xf3, blue: 0xf3 });
-    expect(LETTERBOX_DARK_CELL).toEqual({ red: 0x12, green: 0x12, blue: 0x12 });
+  it('ignores dark cells, black gaps and antialiased edges outside the document', async () => {
+    const image = backdrop('dark');
+    expect(await getStrokeAnalysis(image, region)).toBeNull();
   });
 
-  it('places the light cell inside the band that made it a false positive', () => {
-    // The arithmetic of the defect, restated so a reader does not have to re-derive it: 243 is
-    // below the near-white cut, above the spray luminance cut, and perfectly unsaturated.
-    expect(LETTERBOX_LIGHT_CELL.red).toBeLessThan(STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD);
-    expect(LETTERBOX_LIGHT_CELL.red).toBeGreaterThan(STROKE_ANALYSIS.SPRAY_LUMINANCE_THRESHOLD);
-    const level = LETTERBOX_LIGHT_CELL.red;
-    expect(
-      Math.max(LETTERBOX_LIGHT_CELL.red, LETTERBOX_LIGHT_CELL.green, LETTERBOX_LIGHT_CELL.blue) -
-        Math.min(LETTERBOX_LIGHT_CELL.red, LETTERBOX_LIGHT_CELL.green, LETTERBOX_LIGHT_CELL.blue)
-    ).toBeLessThan(STROKE_ANALYSIS.SPRAY_SATURATION_THRESHOLD);
-
-    // And the reason a "no stroke" answer was the wrong one before: a full-clip wash has the
-    // largest vertical spread the classifier can see, so it was a spray on every axis it looks
-    // at, not merely on the colour.
-    expect(CLIP.height).toBeGreaterThan(STROKE_ANALYSIS.SPRAY_VERTICAL_SPREAD_THRESHOLD);
-    expect(level).not.toBe(STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD);
+  it('ignores light cells, white gaps and antialiased edges outside the document', async () => {
+    const image = backdrop('light');
+    expect(await getStrokeAnalysis(image, region)).toBeNull();
+    expect(await getStrokeAnalysis(image, region, { tool: 'spray' })).toBeNull();
   });
 
-  it('returns null for a capture that is nothing but the light letterbox cell', async () => {
-    expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_LIGHT_CELL), REGION)).toBeNull();
-    expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_LIGHT_CELL), REGION, { tool: 'spray' })).toBeNull();
-  });
-
-  it('returns null for a capture that is nothing but the dark letterbox cell', async () => {
-    // The other arm: 18 is below `DARK_THRESHOLD`, so before the exclusion this was reported
-    // as dark ink rather than as spray — two different wrong answers from one background.
-    expect(LETTERBOX_DARK_CELL.red).toBeLessThan(STROKE_ANALYSIS.DARK_THRESHOLD);
-    expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_DARK_CELL), REGION)).toBeNull();
-    expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_DARK_CELL), REGION, { tool: 'spray' })).toBeNull();
-  });
-
-  it('returns null for the light checkerboard itself, cells and #fff gaps alike', async () => {
-    // The 20px cells of `background-size: 20px 20px`, which is what a real capture of the
-    // letterbox is: half cell, half `#fff`. Both are excluded — the gap by `NEAR_WHITE_THRESHOLD`
-    // and the cell by the new exclusion — so the pair is what a straddling clip really holds.
-    const image = createImageData(CLIP.width, CLIP.height);
-    for (let y = 0; y < CLIP.height; y++) {
-      for (let x = 0; x < CLIP.width; x++) {
-        setPixel(image, x, y, (x + y) % 20 < 10 ? LETTERBOX_LIGHT_CELL : WHITE);
-      }
-    }
-
-    expect(await getStrokeAnalysis(image, REGION)).toBeNull();
-    expect(await getStrokeAnalysis(image, REGION, { tool: 'spray' })).toBeNull();
-  });
-
-  it('still reads the app spray peak as spray, which is the margin the exclusion must leave', async () => {
-    // The load-bearing non-regression. `drawSpray` puts the tool's Opacity in its gradient's
-    // colour stop, and the default preset is Opacity 0.5 at `SPRAY_PEAK_ALPHA` 0.4 — so the
-    // measured core of one dab is rgb(204,204,204) (`src/util/draw.ts:156-171`). The exclusion
-    // is 243, so the brightest part of a real spray sits 39 levels BELOW it and clears
-    // `SPRAY_LUMINANCE_THRESHOLD` by 4. Both numbers are pinned so that widening the exclusion
-    // into a band, or moving the luminance cut, cannot pass unnoticed.
-    expect(APP_SPRAY_PEAK.red).toBe(204);
-    expect(LETTERBOX_LIGHT_CELL.red - APP_SPRAY_PEAK.red).toBe(39);
-    expect(APP_SPRAY_PEAK.red - STROKE_ANALYSIS.SPRAY_LUMINANCE_THRESHOLD).toBeGreaterThan(0);
-
-    const image = createImageData(CLIP.width, CLIP.height);
-    fillAll(image, WHITE);
-    fillRect(image, { left: 0, top: 50, right: CLIP.width - 1, bottom: 90 }, APP_SPRAY_PEAK);
-
-    const analysis = await getStrokeAnalysis(image, REGION);
-
-    expect(analysis).toEqual({
-      type: 'spray',
-      segments: 1,
-      verticalSpread: 41,
-      pixelCount: 41 * CLIP.width,
-    });
-  });
-
-  it('classifies a spray stroke drawn across the light checkerboard, not over the paper', async () => {
-    // The case the defect would have produced a WRONG answer for: real ink over real backdrop.
-    // The stroke has to survive the exclusion, because the clip's own background is the cell
-    // colour and the ink is only 39 levels below it.
-    const image = createImageData(CLIP.width, CLIP.height);
-    for (let y = 0; y < CLIP.height; y++) {
-      for (let x = 0; x < CLIP.width; x++) {
-        setPixel(image, x, y, (x + y) % 20 < 10 ? LETTERBOX_LIGHT_CELL : WHITE);
-      }
-    }
-    fillRect(image, { left: 40, top: 50, right: 279, bottom: 90 }, SPRAY_GRAY);
-
-    const analysis = await getStrokeAnalysis(image, REGION);
-
-    expect(analysis).toEqual({
-      type: 'spray',
-      segments: 1,
-      verticalSpread: 41,
-      pixelCount: 41 * 240,
-    });
-  });
-
-  it('classifies a black pen stroke as solid over the dark cell, which is why that cell is a match and not a band', async () => {
-    // `#000000` at the pen preset's Opacity 0.9 over paper is rgb(26,26,26), and black is the
-    // app's default pen colour (`src/contexts/StoreContext.tsx:324`). A band admitting the dark
-    // cell downwards would swallow this stroke, and swallowing the `#000` gaps between the
-    // cells is what would swallow it; so the exclusion is a MATCH on 18, and the stroke's own
-    // bounds are what the classifier reports.
-    const image = createImageData(CLIP.width, CLIP.height);
-    fillAll(image, LETTERBOX_DARK_CELL);
-    fillRect(image, { left: 0, top: 50, right: CLIP.width - 1, bottom: 59 }, { red: 0, green: 0, blue: 0 });
-
-    const analysis = await getStrokeAnalysis(image, REGION);
-
-    expect(analysis).toEqual({
+  it('keeps a true #000 document stroke while excluding the surrounding dark checkerboard', async () => {
+    const image = backdrop('dark');
+    fillRect(image, { left: 40, top: 38, right: 59, bottom: 41 }, black);
+    expect(await getStrokeAnalysis(image, region)).toEqual({
       type: 'solid',
       segments: 1,
-      verticalSpread: 10,
-      pixelCount: 10 * CLIP.width,
+      verticalSpread: 4,
+      pixelCount: 80,
     });
   });
 
-  it("reads a pure #000 capture as ink, so the dark theme's gaps are the residual it leaves", async () => {
-    // The residual is not pinned here and there is deliberately no case that says a dark-theme
-    // checkerboard IS a stroke: that is not a fact anyone wants kept, and asserting it would
-    // forbid a later fix. What is pinned is the reason the residual exists — the `#000` gaps
-    // between dark cells are indistinguishable from the app's own black pen, so they cannot be
-    // excluded without excluding ink, and `#000000` is the default pen colour
-    // (`src/contexts/StoreContext.tsx:324`). Closing that gap is a decision about the app's
-    // palette, not a threshold; `e2e/OPEN_PROBLEMS.md` is where it belongs.
-    //
-    // `type: 'spray'` and not 'solid' is a second, independent rule and is pinned here too:
-    // admission and naming are decided separately, and a full-height wash is named by its SPREAD
-    // whatever its colour. Read as a colour test this looks wrong; read as the two rules it
-    // actually is, it is the shape `getDarkPixelBounds`/`hasDarkPixels` never needed to see.
-    expect(await getStrokeAnalysis(backdropOnly({ red: 0, green: 0, blue: 0 }), REGION)).toEqual({
-      type: 'spray',
+  it('keeps bright spray pixels in the document while excluding the light checkerboard', async () => {
+    const image = backdrop('light');
+    fillRect(image, { left: 35, top: 25, right: 64, bottom: 55 }, { red: 204, green: 204, blue: 204 });
+    expect((await getStrokeAnalysis(image, region))?.type).toBe('spray');
+  });
+
+  it('maps the same spatial mask at 2x device scale without moving captured bounds', async () => {
+    const image = backdrop('dark');
+    fillRect(image, { left: 40, top: 38, right: 59, bottom: 41 }, black);
+    const doubled = captureAtScale(image, 2);
+
+    expect(await hasDarkPixels(doubled, mask)).toBe(true);
+    expect(await getDarkPixelBounds(doubled, mask)).toMatchObject({ left: 80, right: 119, top: 76, bottom: 83 });
+    expect(await getStrokeAnalysis(doubled, region)).toEqual({
+      type: 'solid',
       segments: 1,
-      verticalSpread: CLIP.height,
-      pixelCount: CLIP.width * CLIP.height,
+      verticalSpread: 8,
+      pixelCount: 320,
     });
   });
 });
@@ -570,7 +474,7 @@ describe('getStrokeAnalysis across capture scales', () => {
  * a single scalar spends both the same way and gets exactly one of them wrong.
  */
 describe('getStrokeAnalysis per-axis capture scale', () => {
-  const REGION: CaptureRegion = { width: 100, height: 50 };
+  const REGION: CaptureRegion = { width: 100, height: 50, mask: WHOLE_CAPTURE };
 
   it('scales the row measurement by the row scale, not the column scale', async () => {
     // 50 occupied rows against a 30-CSS-px threshold: 30 * 1.5 = 45, so spray under the row
@@ -700,11 +604,18 @@ const DISPATCH_CASES: DispatchCase[] = [
     height: 50,
     expected: { red: 255, green: 0, blue: 0, count: 2500 },
   },
-  { name: 'hasDarkPixels', run: hasDarkPixels, color: DARK_GRAY, width: 50, height: 50, expected: true },
+  {
+    name: 'hasDarkPixels',
+    run: (input) => hasDarkPixels(input, WHOLE_CAPTURE),
+    color: DARK_GRAY,
+    width: 50,
+    height: 50,
+    expected: true,
+  },
   { name: 'hasRedPixels', run: hasRedPixels, color: RED, width: 50, height: 50, expected: true },
   {
     name: 'getDarkPixelBounds',
-    run: getDarkPixelBounds,
+    run: (input) => getDarkPixelBounds(input, WHOLE_CAPTURE),
     color: DARK_GRAY,
     width: 101,
     height: 101,
@@ -731,7 +642,7 @@ const DISPATCH_CASES: DispatchCase[] = [
     // The region is the CSS size of the clip the image was taken over, which here is the
     // image's own size: the fixture is captured at CSS scale, so the scale is 1 and both
     // sides of the dispatch comparison decode the same 50x5 capture.
-    run: (input) => getStrokeAnalysis(input, { width: 50, height: 5 }),
+    run: (input) => getStrokeAnalysis(input, { width: 50, height: 5, mask: WHOLE_CAPTURE }),
     color: DARK_GRAY,
     width: 50,
     height: 5,
@@ -840,68 +751,39 @@ describe('magnetic lasso preview path discrimination', () => {
 });
 
 /**
- * P2 — dark workspace backdrop pixels are indistinguishable from ink to these color-only
- * helpers. `getStrokeAnalysis` excludes two exact cell colours, but `hasDarkPixels` and
- * `getDarkPixelBounds` do not. Under the dark theme, both `#121212` cells and `#000` gaps
- * satisfy their dark-pixel thresholds. Normal fresh app contexts are seeded light by the
- * shared `extended-test` fixture; that is an app-theme pin, unlike Playwright's
- * `colorScheme` media preference. These raw-image cases document the helper limitation if
- * a dark-theme capture reaches a color-only assertion.
+ * Dark-pixel helpers use the fitted-document mask, retaining black ink while excluding
+ * checkerboard cells, gaps and edge blends that can have identical RGB values.
  */
-describe('hasDarkPixels on the workspace backdrop (theme-dependent)', () => {
-  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
+describe('dark pixel helpers apply spatial document masks', () => {
+  const capture = viewportClip({ x: 0, y: 0, width: 100, height: 80 });
+  const document = viewportClip({ x: 20, y: 20, width: 60, height: 40 });
+  const mask = { capture, document };
+  const { LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
 
-  it('returns true for the DARK cell, which is below DARK_PIXEL_THRESHOLD', async () => {
-    // `18 < 60`, so the dark theme's checkerboard cell satisfies `hasDarkPixels` exactly
-    // as a `#000` gap does. The light cell (`243`) does not. This is the asymmetry that
-    // explains why a dark-theme backdrop must not be passed to this color-only predicate.
-    expect(LETTERBOX_DARK_CELL.red).toBeLessThan(STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD);
+  function darkBackdrop(): ImageDataResult {
+    const image = createImageData(100, 80);
+    for (let y = 0; y < image.height; y++) {
+      for (let x = 0; x < image.width; x++) {
+        const checker = Math.floor(x / 10) % 2 === Math.floor(y / 10) % 2;
+        const edgeBlend = x % 10 === 0 || y % 10 === 0;
+        setPixel(image, x, y, edgeBlend ? { red: 1, green: 1, blue: 1 } : checker ? LETTERBOX_DARK_CELL : black);
+      }
+    }
+    fillRect(image, { left: 20, top: 20, right: 79, bottom: 59 }, WHITE);
+    return image;
+  }
 
-    const darkBackdrop = await createTestImageData(LETTERBOX_DARK_CELL, 50, 50);
-    expect(await hasDarkPixels(darkBackdrop)).toBe(true);
+  it('reports no ink when only the dark checkerboard surrounds a clean document', async () => {
+    const image = darkBackdrop();
+    expect(await hasDarkPixels(image, mask)).toBe(false);
+    expect(await getDarkPixelBounds(image, mask)).toBeNull();
   });
 
-  it('returns false for the LIGHT cell, which is above DARK_PIXEL_THRESHOLD', async () => {
-    expect(LETTERBOX_LIGHT_CELL.red).toBeGreaterThanOrEqual(STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD);
-
-    const lightBackdrop = await createTestImageData(LETTERBOX_LIGHT_CELL, 50, 50);
-    expect(await hasDarkPixels(lightBackdrop)).toBe(false);
-  });
-
-  it('would return true for a dark-theme #000 gap, so a dark-theme spec must not use hasDarkPixels without exclusion', async () => {
-    // The `#000` gaps between dark theme cells are not the cell colour itself, they are
-    // the canvas behind it — indistinguishable from a black stroke at the pixel level.
-    // `hasDarkPixels` cannot tell them apart, which is why `getStrokeAnalysis` checks
-    // `isLetterboxCell` before its dark arm and `hasDarkPixels` checks nothing.
-    const blackGaps = await createTestImageData({ red: 0, green: 0, blue: 0 }, 30, 30);
-    expect(await hasDarkPixels(blackGaps)).toBe(true);
-  });
-
-  it('getDarkPixelBounds reports the entire capture for a dark letterbox fill, not "no stroke"', async () => {
-    // Under light theme this would return `null` — the light cell is above the dark
-    // threshold. Under dark it returns the full clip bounds, which is why a dark-theme
-    // wait `forDarkPixels` would be satisfied by backdrop alone.
-    const darkBackdrop = await createTestImageData(LETTERBOX_DARK_CELL, 100, 100);
-    const bounds = await getDarkPixelBounds(darkBackdrop);
-    expect(bounds).not.toBeNull();
-    expect(bounds!.left).toBe(0);
-    expect(bounds!.right).toBe(99);
-    expect(bounds!.top).toBe(0);
-    expect(bounds!.bottom).toBe(99);
-  });
-
-  it('detects black ink while the light checkerboard cell remains above the dark threshold', async () => {
-    // This is the inverse of the `#000` pin in `reads a pure #000 capture as ink`. Under
-    // light theme the cell colour is `0xf3f3f3` — above `NEAR_WHITE_THRESHOLD` for the
-    // stroke classifier's backdrop check, but `hasDarkPixels` does not exclude it either.
-    // So a `hasDarkPixels` wait under light is satisfied by any dark ink, period — the
-    // backdrop does not interfere because it is not dark. This test pins that fact:
-    // the predicate does not mistake the light workspace cell for dark ink.
-    const lightBackdrop = await createTestImageData(LETTERBOX_LIGHT_CELL, 50, 50);
-    expect(await hasDarkPixels(lightBackdrop)).toBe(false);
-
-    const blackStroke = await createTestImageData({ red: 0, green: 0, blue: 0 }, 50, 5);
-    expect(await hasDarkPixels(blackStroke)).toBe(true);
+  it('detects #000 document ink and reports bounds relative to the original capture', async () => {
+    const image = darkBackdrop();
+    fillRect(image, { left: 40, top: 38, right: 59, bottom: 41 }, black);
+    expect(await hasDarkPixels(image, mask)).toBe(true);
+    expect(await getDarkPixelBounds(image, mask)).toMatchObject({ left: 40, right: 59, top: 38, bottom: 41 });
   });
 });
 
@@ -923,7 +805,7 @@ describe('transparent pixel weighting divergence', () => {
     const image = createImageData(10, 10);
     fillAll(image, WHITE);
     setPixel(image, 5, 5, black, 1);
-    expect(await hasDarkPixels(image)).toBe(true);
+    expect(await hasDarkPixels(image, WHOLE_CAPTURE)).toBe(true);
   });
 
   it('getColorAtPoint averages an alpha-1 pixel at full weight, not composited', async () => {
@@ -953,13 +835,13 @@ describe('transparent pixel weighting divergence', () => {
     fillAll(zeroAlpha, WHITE, TRANSPARENT);
 
     // Both skip alpha-0 pixels: a fully-transparent dark pixel is invisible to neither.
-    expect(await hasDarkPixels(zeroAlpha)).toBe(false);
-    expect(await getDarkPixelBounds(zeroAlpha)).toBeNull();
+    expect(await hasDarkPixels(zeroAlpha, WHOLE_CAPTURE)).toBe(false);
+    expect(await getDarkPixelBounds(zeroAlpha, WHOLE_CAPTURE)).toBeNull();
 
     // Both see alpha-1 dark pixels: a (0,0,0,1) pixel is dark to both.
     setPixel(zeroAlpha, 2, 2, black, 1);
-    expect(await hasDarkPixels(zeroAlpha)).toBe(true);
-    const bounds = await getDarkPixelBounds(zeroAlpha);
+    expect(await hasDarkPixels(zeroAlpha, WHOLE_CAPTURE)).toBe(true);
+    const bounds = await getDarkPixelBounds(zeroAlpha, WHOLE_CAPTURE);
     expect(bounds).not.toBeNull();
     expect(bounds!.left).toBe(2);
     expect(bounds!.right).toBe(2);
@@ -982,62 +864,7 @@ describe('transparent pixel weighting divergence', () => {
   });
 });
 
-describe('screenshotBoundsToCss letterbox edge cases', () => {
-  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
-
-  /**
-   * OPEN_PROBLEMS.md P2 — the letterbox is still read as ink by predicates.
-   * `hasDarkPixels` skips only `alpha === 0`; `#121212` (18,18,18) is below
-   * `DARK_PIXEL_THRESHOLD` (60), so it is admitted as "dark" and a canvas
-   * that is nothing but the dark-theme checkerboard cell reports ink where
-   * there is none. This is a characterization test of the known gap, not a fix.
-   */
-  it('hasDarkPixels reads the dark-theme letterbox cell as ink (P2 known gap)', async () => {
-    const image = await createTestImageData({ red: 255, green: 255, blue: 255 }, 10, 10);
-    fillAll(image, LETTERBOX_DARK_CELL as Color, 255);
-    expect(await hasDarkPixels(image)).toBe(true);
-  });
-
-  it('getDarkPixelBounds returns false bounds for the dark-theme letterbox cell (P2 known gap)', async () => {
-    const image = await createTestImageData({ red: 255, green: 255, blue: 255 }, 10, 10);
-    fillAll(image, LETTERBOX_DARK_CELL as Color, 255);
-    const bounds = await getDarkPixelBounds(image);
-    expect(bounds).not.toBeNull();
-    expect(bounds!.left).toBe(0);
-    expect(bounds!.top).toBe(0);
-    expect(bounds!.right).toBe(9);
-    expect(bounds!.bottom).toBe(9);
-  });
-
-  it('hasDarkPixels correctly ignores the light-theme letterbox cell', async () => {
-    const image = await createTestImageData({ red: 0, green: 0, blue: 0 }, 10, 10);
-    fillAll(image, LETTERBOX_LIGHT_CELL as Color, 255);
-    // `#f3f3f3` (243) is above DARK_PIXEL_THRESHOLD (60), so it is not dark.
-    expect(await hasDarkPixels(image)).toBe(false);
-  });
-
-  it('getDarkPixelBounds returns null for the light-theme letterbox cell', async () => {
-    const image = await createTestImageData({ red: 0, green: 0, blue: 0 }, 10, 10);
-    fillAll(image, LETTERBOX_LIGHT_CELL as Color, 255);
-    expect(await getDarkPixelBounds(image)).toBeNull();
-  });
-
-  it('getDarkPixelBounds isolates ink from a surrounding letterbox cell border', async () => {
-    // A 10x10 image with a `#121212` border and a single `DARK_GRAY` (10,10,10) pixel at
-    // centre. Both are below DARK_PIXEL_THRESHOLD, but the bounds should still report the
-    // full extent — this pins that the letterbox exclusion (or lack thereof) does not
-    // shrink the ink bounds, only whether ink is detected at all.
-    const image = await createTestImageData(WHITE, 10, 10);
-    fillAll(image, LETTERBOX_DARK_CELL as Color, 255);
-    setPixel(image, 5, 5, DARK_GRAY, 255);
-    const bounds = await getDarkPixelBounds(image);
-    expect(bounds).not.toBeNull();
-    expect(bounds!.left).toBe(0);
-    expect(bounds!.top).toBe(0);
-    expect(bounds!.right).toBe(9);
-    expect(bounds!.bottom).toBe(9);
-  });
-
+describe('pixel-analysis edge cases', () => {
   /**
    * OPEN_PROBLEMS.md P3 — transparent pixels weighted as fully opaque.
    * `dominantRed` skips only `alpha === 0`; an alpha-1 pixel with RGB (0,0,0)

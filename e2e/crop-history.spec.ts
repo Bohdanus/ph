@@ -2,8 +2,9 @@ import { expect, type Page, type TestInfo, test } from './fixtures/extended-test
 import { initializeCanvas, readPsd } from 'ag-psd';
 import path from 'node:path';
 import sharp from 'sharp';
-import { getWorkspaceCanvas, loadImageData } from './helpers/canvas-helpers';
+import { getWorkspaceCanvas, loadImageData, viewportClip } from './helpers/canvas-helpers';
 import type { BoundingBox } from './helpers/canvas-helpers';
+import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { canvasBands, type CanvasBand, visibleCanvasBox, waitForBands } from './helpers/history-helpers';
@@ -2655,6 +2656,19 @@ test.describe('Crop history', () => {
       { width: croppedFit.documentWidth, height: croppedFit.documentHeight },
       'contain fit follows the new frame dimensions while fit-scale compensation preserves screen-space pixel scale'
     ).toEqual(cropped);
+
+    const croppedCanvasBox = await getWorkspaceCanvas(page).boundingBox();
+    if (!croppedCanvasBox) throw new Error('the cropped canvas has no measurable bounds');
+    const croppedCapture = viewportClip(croppedCanvasBox);
+    const observedMasks: Array<{ capture: typeof croppedCapture; document: typeof croppedCapture }> = [];
+    await waitForCanvasPixels(page, croppedCapture, async (_screenshot, mask) => {
+      observedMasks.push(mask);
+      return true;
+    });
+    const croppedDocumentRect = observedMasks[0]?.document;
+    expect(croppedDocumentRect).toBeDefined();
+    expect(croppedDocumentRect!.width / croppedDocumentRect!.height).toBeCloseTo(cropped.width / cropped.height, 10);
+
     const keptOnCropped = bandOfDocumentY(croppedFit, BAR_KEPT_Y - CROP_TOP_Y);
     await waitForInk(page, croppedFit, inkIn(keptOnCropped));
 

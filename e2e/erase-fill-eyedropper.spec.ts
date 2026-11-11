@@ -16,7 +16,7 @@ import {
   viewportClip,
   type ViewportClip,
 } from './helpers/canvas-helpers';
-import { waitForCanvasPixels } from './helpers/canvas-redraw';
+import { waitForCanvasPixels, type CanvasPixelPredicate } from './helpers/canvas-redraw';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { cssPointToImage, imagePointToCss } from './helpers/screenshot-scale';
 import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
@@ -337,12 +337,7 @@ async function selectBrushFamilyTool(page: Page, _from: string, toolName: string
  * the stroke against the white base layer and every colour assertion below would then be
  * reading a blend rather than the colour that was asked for.
  */
-async function drawSlab(
-  page: Page,
-  color: string,
-  size: number,
-  wait: (screenshot: Buffer) => Promise<boolean>
-): Promise<void> {
+async function drawSlab(page: Page, color: string, size: number, wait: CanvasPixelPredicate): Promise<void> {
   await clickToolButton(page, 'draw');
   await setForegroundColor(page, color, true);
   const sizeSlider = page.getByRole('slider', { name: /^Size/ });
@@ -422,9 +417,14 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await page.getByRole('slider', { name: /^Size/ }).fill('60');
     // A 60px tip straddling a 20px line erases every dark pixel the line owns.
     await stroke(page, { x: LINE_START_X, y: LINE_Y }, { x: ERASE_LINE_END_X, y: LINE_Y }, 12);
-    await waitForCanvasPixels(page, await slabClip(page), async (screenshot) => !(await hasDarkPixels(screenshot)), {
-      description: 'no dark pixels left under the eraser stroke',
-    });
+    await waitForCanvasPixels(
+      page,
+      await slabClip(page),
+      async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask)),
+      {
+        description: 'no dark pixels left under the eraser stroke',
+      }
+    );
 
     const erased = await readPixel(page, { x: LINE_CENTRE_X, y: LINE_Y });
     expect(erased, 'nothing readable at the centre of the erased band').not.toBeNull();
@@ -443,9 +443,14 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
     // 20 interpolated moves, so a commit per pointer event would be 20 entries.
     await stroke(page, { x: LINE_START_X, y: LINE_Y }, { x: ERASE_LINE_END_X, y: LINE_Y }, 20);
-    await waitForCanvasPixels(page, await slabClip(page), async (screenshot) => !(await hasDarkPixels(screenshot)), {
-      description: 'the eraser stroke to land',
-    });
+    await waitForCanvasPixels(
+      page,
+      await slabClip(page),
+      async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask)),
+      {
+        description: 'the eraser stroke to land',
+      }
+    );
 
     const undo = page.getByTestId('undo-button');
     await expect(undo).toBeEnabled();
@@ -461,9 +466,14 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     // And nothing is left to undo, so the stroke wrote exactly one entry on top of the draw's.
     await undo.click();
     await expect(undo).toBeDisabled();
-    await waitForCanvasPixels(page, await slabClip(page), async (screenshot) => !(await hasDarkPixels(screenshot)), {
-      description: 'the drawn line removed by the second undo',
-    });
+    await waitForCanvasPixels(
+      page,
+      await slabClip(page),
+      async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask)),
+      {
+        description: 'the drawn line removed by the second undo',
+      }
+    );
   });
 
   // eraser: the Brush mode is a stamped soft tip now, so all three are offered and all three work
