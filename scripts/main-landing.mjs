@@ -346,10 +346,16 @@ function alertMarker(paths, minutes) {
 function readAlert(paths, minutes) {
   const file = alertMarker(paths, minutes);
   if (!existsSync(file)) return null;
+  let contents;
   try {
-    return JSON.parse(readFileSync(file, 'utf8'));
+    contents = readFileSync(file, 'utf8');
   } catch {
     return { status: 'unreadable' };
+  }
+  try {
+    return JSON.parse(contents);
+  } catch {
+    return { status: 'corrupt' };
   }
 }
 
@@ -377,6 +383,12 @@ export function claimAlert(paths, owner, minutes) {
         const pendingSince = Date.parse(existing.startedAt ?? '');
         if (!Number.isFinite(pendingSince) || Date.now() - pendingSince < 60_000) return false;
       }
+      try {
+        rmSync(file, { force: true });
+      } catch {
+        return false;
+      }
+    } else if (existing?.status === 'corrupt') {
       try {
         rmSync(file, { force: true });
       } catch {

@@ -20,6 +20,26 @@ afterEach(() => {
 });
 
 describe('main landing alert claims', () => {
+  it('recovers a malformed alert marker while holding the recovery control lock', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-alert-'));
+    tempDirectories.push(lockDir);
+    const alertFile = join(lockDir, 'alert-15m.json');
+    const controlFile = join(lockDir, 'owner-control.lock');
+    writeFileSync(alertFile, '{ malformed json');
+
+    const owner = { leaseId: 'recovered-lease' };
+    expect(claimAlert({ lockDir }, owner, 15)).toBe(true);
+    const pending = JSON.parse(readFileSync(alertFile, 'utf8'));
+    expect(pending).toMatchObject({
+      status: 'pending',
+      leaseId: owner.leaseId,
+    });
+    expect(existsSync(controlFile)).toBe(false);
+
+    expect(claimAlert({ lockDir }, { leaseId: 'second-lease' }, 15)).toBe(false);
+    expect(JSON.parse(readFileSync(alertFile, 'utf8'))).toEqual(pending);
+  });
+
   it('preserves a stale pending marker while another process owns the recovery control lock', () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-alert-'));
     tempDirectories.push(lockDir);
