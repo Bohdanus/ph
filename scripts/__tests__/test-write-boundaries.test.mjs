@@ -99,8 +99,9 @@ const REVIEWED = {
     patterns: `subprocess:execFileSync=1 subprocess:spawnSync=45 filesystem-write:mkdtempSync=10 filesystem-write:writeFileSync=35 filesystem-write:rmSync=13 filesystem-write:mkdirSync=5`,
   },
   'main-landing-alert.test.mjs': {
-    scope: 'Alert-claim marker fixtures use a unique temporary directory and are removed after the test.',
-    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:writeFileSync=2 filesystem-write:rmSync=2`,
+    scope:
+      'Alert-claim marker fixtures cover malformed recovery and lock contention; each uses a unique temporary directory and is removed after the test.',
+    patterns: `filesystem-write:mkdtempSync=3 filesystem-write:writeFileSync=5 filesystem-write:rmSync=2`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',

@@ -71,7 +71,6 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`TESTING.md`](TESTING.md)                                                                             | Every gate, what it proves, and what to read when it fails                                           |
 | [`E2E-MIRROR.md`](E2E-MIRROR.md)                                                                       | The `mirror` workflow: broad headless E2E runs and Linux baseline capture                            |
 | [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md)                                                     | Targeted Linux/ARM64 checks on the project's remote EC2 host                                         |
-| [`FREE-COMPUTE.md`](FREE-COMPUTE.md)                                                                   | Free-inference policy, observed provider results, free test compute, and token-saving patterns       |
 | [`FREE-COMPUTE-OPERATIONS.md`](FREE-COMPUTE-OPERATIONS.md)                                             | Current free-runner setup, safe credential discovery, and provider-specific checks                   |
 | [`../.kilo/plans/durable-replay-authority.md`](../.kilo/plans/durable-replay-authority.md)             | The problem-focused implementation plan for the durable replay authority cutover                     |
 | [`../.kilo/skills/parallel-test-hardening/SKILL.md`](../.kilo/skills/parallel-test-hardening/SKILL.md) | The wave-based workflow for hardening tests with small parallel agents                               |
