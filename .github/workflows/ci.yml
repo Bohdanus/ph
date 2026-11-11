@@ -253,9 +253,9 @@ jobs:
   # fail": 2 CDP capture-size specs, 2 `levels.spec.ts` canvas-lookup specs, and a
   # sidebar keyboard flyout race. All three of those groups are fixed in this
   # repository, and are recorded as fixed in `e2e/OPEN_PROBLEMS.md` ("Observed
-  # failures") and in `e2e/README.md`. The specs declare no `test.fail`, no
-  # `test.fixme` and no `describe.skip`; the only declared skip is the external
-  # Photopea round-trip in `e2e/export/photopea.spec.ts`. Nothing in
+  # failures") and in `e2e/README.md`. The specs use no `test.fail`, `test.fixme`,
+  # or `describe.skip`; `e2e/skip-baseline.json` checks declared skips against
+  # all six reports after the full run. Nothing in
   # the tree marks a test as failing, so the stated justification had stopped
   # describing the suite, and the job went on reporting a state the suite no
   # longer had. The comment kept its number alive long after the failures behind
