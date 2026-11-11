@@ -2,8 +2,10 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
-import { isSecretKey, sanitizeErrorMessage, sanitizeForOutput } from '../lib/secrets.mjs';
+import { describe, expect, it, vi } from 'vitest';
+import { isSecretKey, redactSensitiveText, sanitizeErrorMessage, sanitizeForOutput } from '../lib/secrets.mjs';
+
+vi.setConfig({ testTimeout: 30_000 });
 
 describe('secret key redaction', () => {
   it('preserves ordinary design and author fields', () => {
@@ -68,31 +70,42 @@ describe('secret key redaction', () => {
 
   it('does not catastrophically backtrack on long near-match keys in object and text sanitization', () => {
     const sanitizerUrl = pathToFileURL(resolve('scripts/lib/secrets.mjs')).href;
+    const keys = [`key${'1'.repeat(64)}x`, `key${'-11'.repeat(32)}-`];
     const source = `
       import { sanitizeErrorMessage, sanitizeForOutput } from ${JSON.stringify(sanitizerUrl)};
-      const key = 'key' + '1'.repeat(64) + 'x';
-      const message = 'request failed: ' + key + '=ordinary value';
-      console.log(JSON.stringify({
+      const keys = ${JSON.stringify(keys)};
+      console.log(JSON.stringify(keys.map((key) => ({
         object: sanitizeForOutput({ [key]: 'ordinary value' }),
-        message: sanitizeErrorMessage(message),
-      }));
+        message: sanitizeErrorMessage('request failed: ' + key + '=ordinary value'),
+      }))));
     `;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
       encoding: 'utf8',
-      timeout: 3000,
+      timeout: 1500,
     });
 
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
-    const key = `key${'1'.repeat(64)}x`;
-    const message = `request failed: ${key}=ordinary value`;
-    expect(JSON.parse(result.stdout.trim())).toEqual({ object: { [key]: 'ordinary value' }, message });
+    const [nearMatchKey, delimitedKey] = keys;
+    expect(JSON.parse(result.stdout.trim())).toEqual([
+      {
+        object: { [nearMatchKey]: 'ordinary value' },
+        message: `request failed: ${nearMatchKey}=ordinary value`,
+      },
+      {
+        object: { [delimitedKey]: '***REDACTED***' },
+        message: `request failed: ${delimitedKey}=ordinary value`,
+      },
+    ]);
   });
+
+  const statelessGitHubToken = `ghs_123456_${'a'.repeat(40)}.${'b'.repeat(220)}.${'c'.repeat(240)}`;
 
   const tokenCases = [
     ['OpenAI', `sk-proj-${'a'.repeat(40)}`],
     ['Anthropic', `sk-ant-api03-${'b'.repeat(40)}`],
     ['GitHub app', `ghs_${'c'.repeat(36)}`],
+    ['GitHub stateless app', statelessGitHubToken],
     ['GitHub fine-grained', `github_pat_${'d'.repeat(50)}`],
     ['Slack', `xoxb-${'e'.repeat(24)}`],
     ['AWS long-term', 'AKIAIOSFODNN7EXAMPLE'],
@@ -103,6 +116,7 @@ describe('secret key redaction', () => {
     const message = `request failed: ${token}`;
     expect(sanitizeErrorMessage(message)).not.toContain(token);
     expect(sanitizeForOutput({ message }).message).not.toContain(token);
+    expect(redactSensitiveText(message)).not.toContain(token);
   });
 
   it.each(tokenCases)('redacts an embedded %s token in free text', (_kind, token) => {
@@ -116,12 +130,47 @@ describe('secret key redaction', () => {
     expect(sanitizedObjectMessage).not.toContain(token);
     expect(sanitizedObjectMessage).toContain('prefix');
     expect(sanitizedObjectMessage).toContain('suffix');
+    const redactedText = redactSensitiveText(message);
+    expect(redactedText).not.toContain(token);
+    expect(redactedText).toContain('prefix');
+    expect(redactedText).toContain('suffix');
   });
 
-  it('preserves short sk-like identifiers in free text', () => {
+  it.each(['Bearer ', 'Authorization: Bearer '])('redacts stateless GitHub JWT after %s', (prefix) => {
+    const message = `${prefix}${statelessGitHubToken} after-token text`;
+
+    expect(sanitizeErrorMessage(message)).not.toContain(statelessGitHubToken);
+    expect(sanitizeForOutput({ message }).message).not.toContain(statelessGitHubToken);
+    expect(redactSensitiveText(message)).not.toContain(statelessGitHubToken);
+    expect(sanitizeErrorMessage(message)).toContain('after-token text');
+    expect(sanitizeForOutput({ message }).message).toContain('after-token text');
+    expect(redactSensitiveText(message)).toContain('after-token text');
+  });
+
+  it.each([
+    ['AWS long-term', 'AKIAIOSFODNN7EXAMPLE'],
+    ['AWS temporary', 'ASIAIOSFODNN7EXAMPLE'],
+  ])('uses the prompt-redaction marker for %s keys', (_kind, token) => {
+    expect(redactSensitiveText(`prefix ${token} suffix`)).toBe('prefix [REDACTED] suffix');
+  });
+
+  it('redacts a Bearer token with repeated period characters and padding', () => {
+    const token = `${'a'.repeat(20)}..${'b'.repeat(20)}==`;
+    const message = `Bearer ${token} after-token text`;
+
+    expect(sanitizeErrorMessage(message)).not.toContain(token);
+    expect(sanitizeForOutput({ message }).message).not.toContain(token);
+    expect(redactSensitiveText(message)).not.toContain(token);
+    expect(sanitizeErrorMessage(message)).toContain('after-token text');
+    expect(sanitizeForOutput({ message }).message).toContain('after-token text');
+    expect(redactSensitiveText(message)).toContain('after-token text');
+  });
+
+  it('preserves short sk-like identifiers in error output while prompt redaction stays conservative', () => {
     const message = 'missing identifier: sk-abcdefghijkl';
     expect(sanitizeErrorMessage(message)).toBe(message);
     expect(sanitizeForOutput({ message }).message).toBe(message);
+    expect(redactSensitiveText(message)).toBe('missing identifier: [REDACTED]');
   });
 
   it('redacts quoted credential assignments from error messages', () => {

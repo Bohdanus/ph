@@ -14,11 +14,15 @@ const SECRET_PATTERNS = [
     replacement: 'GROQ_API_KEYS=***REDACTED***',
   },
   { pattern: /(?:kilo[_-]?cli|KILO_CLI)\s*[=:]\s*([^\s]{10,})/gi, replacement: 'KILO_CLI=***REDACTED***' },
-  { pattern: /Bearer\s+([a-zA-Z0-9_-]{20,})/gi, replacement: 'Bearer ***REDACTED***' },
-  { pattern: /Authorization:\s*Bearer\s+([a-zA-Z0-9_-]{20,})/gi, replacement: 'Authorization: Bearer ***REDACTED***' },
+  { pattern: /Bearer\s+([a-zA-Z0-9._~+/-]{20,}=*)/gi, replacement: 'Bearer ***REDACTED***' },
+  {
+    pattern: /Authorization:\s*Bearer\s+([a-zA-Z0-9._~+/-]{20,}=*)/gi,
+    replacement: 'Authorization: Bearer ***REDACTED***',
+  },
   { pattern: /sk-[a-zA-Z0-9_-]{20,}/gi, replacement: 'sk-***REDACTED***' },
   {
-    pattern: /(?:gh[pousr]_[a-zA-Z0-9_]{12,}|github_pat_[a-zA-Z0-9_]{12,}|xox[baprs]-[a-zA-Z0-9-]{8,})/gi,
+    pattern:
+      /(?:ghs_[a-zA-Z0-9_-]{12,}(?:\.[a-zA-Z0-9_-]+){2}|gh[pousr]_[a-zA-Z0-9_]{12,}|github_pat_[a-zA-Z0-9_]{12,}|xox[baprs]-[a-zA-Z0-9-]{8,})/gi,
     replacement: '***REDACTED***',
   },
   { pattern: /(?:AKIA|ASIA)[0-9A-Z]{16}/g, replacement: '***REDACTED***' },
@@ -27,7 +31,7 @@ const SECRET_PATTERNS = [
 
 const REDACTED_MARKER = '***REDACTED***';
 const SECRET_ASSIGNMENT_KEY_SOURCE =
-  '(?:(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|passphrase|password|passwd|secret|signature|sigv4|token)(?:[_-][A-Za-z0-9]+)*|(?:[A-Za-z0-9]+[_-])*(?:sig|hmac|key|key[_-]?id|access[_-]?key(?:[_-]?id)?|private[_-]?key)(?:(?:[_-][A-Za-z0-9]+)|[0-9])*)';
+  '(?:(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|passphrase|password|passwd|secret|signature|sigv4|token)(?:[_-][A-Za-z0-9]+)*|(?:[A-Za-z0-9]+[_-])*(?:sig|hmac|key|key[_-]?id|access[_-]?key(?:[_-]?id)?|private[_-]?key)(?:[0-9]+)?(?:[_-][A-Za-z0-9]+)*)';
 const SECRET_ASSIGNMENT_KEY_PATTERN = new RegExp(`^(?:${SECRET_ASSIGNMENT_KEY_SOURCE})$`, 'i');
 const SECRET_ASSIGNMENT_PATTERN = new RegExp(
   `(?<![\\w])(["']?(?:${SECRET_ASSIGNMENT_KEY_SOURCE})["']?\\s*[:=]\\s*)("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|[^\\s,;{}]+)`,
@@ -490,10 +494,10 @@ export function redactSensitiveText(value) {
     value
       .replace(/\b(bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1[REDACTED]')
       .replace(
-        /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{8,})\b/g,
+        /(?:\bsk-[A-Za-z0-9_-]{12,}|ghs_[A-Za-z0-9_-]{12,}(?:\.[A-Za-z0-9_-]+){2}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{8,})/g,
         '[REDACTED]'
       )
-      .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]')
+      .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, '[REDACTED]')
   );
 }
 
