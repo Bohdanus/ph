@@ -177,17 +177,20 @@ from the center.
 
 ### Options table
 
-| Control                                       | Photoshop                                                                 | App status | App ref |
-| --------------------------------------------- | ------------------------------------------------------------------------- | ---------- | ------- |
-| New / Add To / Subtract From / Intersect With | four modes, also Shift/Alt/Shift+Alt                                      | `missing`  | —       |
-| Feather                                       | pixel radius, default 0, set before the selection                         | `missing`  | —       |
-| Style                                         | Normal / Fixed Ratio / Fixed Size                                         | `missing`  | —       |
-| Width and Height                              | decimal pair for Fixed Ratio, whole pixels for Fixed Size, units accepted | `missing`  | —       |
-| Select and Mask                               | on every selection tool's bar                                             | `missing`  | —       |
+| Control                                       | Photoshop                                                                 | App status | App ref                                                           |
+| --------------------------------------------- | ------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------- |
+| New / Add To / Subtract From / Intersect With | four modes, also Shift/Alt/Shift+Alt                                      | `missing`  | —                                                                 |
+| Feather                                       | pixel radius, default 0, set before the selection                         | `missing`  | —                                                                 |
+| Style                                         | Normal / Fixed Ratio / Fixed Size                                         | `partial`  | `RectangularSelection.tsx` — the `Style` select                   |
+| Width and Height                              | decimal pair for Fixed Ratio, whole pixels for Fixed Size, units accepted | `partial`  | `RectangularSelection.tsx` — `Ratio`, `Width` and `Height` inputs |
+| Select and Mask                               | on every selection tool's bar                                             | `missing`  | —                                                                 |
 
-**App fidelity: partial.** `RectangularSelectionToolArgs` now carries the marquee `Style`, ratio,
-and fixed pixel dimensions, and its bar renders those controls alongside Copy / Paste / Deselect.
-Combination modes, Feather, Select and Mask, and document-unit input remain absent.
+**App fidelity: partial.** `RectangularSelectionToolArgs` carries the marquee `Style`, ratio,
+and fixed pixel dimensions, and the bar renders those controls alongside Copy / Paste / Deselect.
+Fixed Ratio uses one numeric `Ratio` field with the app's 0.05–20 range and 0.05 step, where
+Photoshop exposes separate decimal `Width` and `Height` fields. Fixed Size uses numeric pixel
+fields with min 1, max 2000 and step 1; the app does not parse Photoshop's `in` or `cm` units.
+Combination modes, Feather and Select and Mask remain absent.
 
 **The modifier finding, and its correction.** This section previously read that the marquee's
 Shift/Alt were not implemented, on the strength of a whole-file grep for
@@ -210,26 +213,22 @@ commit so that a modifier released between the last move and the pointer-up gove
 actually committed. The handle RESIZE is deliberately untouched, which is what keeps the resize's
 aspect-ratio lock a separate feature from the marquee's Shift.
 
-**The `M` group has four members, and which four was a real question.** `marqueeGroup` in
+**The app's marquee shortcut group has four members, and Photoshop's exact `M` group remains unresolved.** `marqueeGroup` in
 `src/components/Common/AppKeyboardShortcuts.tsx` is `['rectangular-selection',
-'elliptical-selection', 'single-row-marquee', 'single-column-marquee']` and the same four names
-are what `toolbar-mapping.ts` lists under the marquee tile. That was NOT always so: until
-2026-10-01 the group held only the first two, and this section recorded the pair as the honest
-state — Adobe documents four marquee tools, so two were real tools the app did not have. The two
-1-pixel marquees are now implemented (`src/tools/singleRowColumnMarquee.ts`) and the group carries
+'elliptical-selection', 'single-row-marquee', 'single-column-marquee']`; the same four names
+appear under the marquee tile in `toolbar-mapping.ts`. In the app, `M` reselects the current
+member when a marquee tool is active and selects Rectangular Marquee otherwise; `Shift+M` cycles
 all four.
 
-Which is itself unsettled, and the app had to pick. Adobe publishes "Switch between marquee tools
-— SHIFT+M" (`helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`)
-without enumerating the tools the cycle covers, and its default-shortcut table names only the
-Rectangular and Elliptical Marquees against `M`. Third-party sources disagree outright:
-`guides.wmlcloud.com`, reproducing Adobe's own CS5 _Basic Selection Tools_ text, says Adobe never
-assigned `M` to the 1-pixel pair; `flylib.com`'s _Real World Adobe Photoshop CS2_ says the cycle
-covers all four. The app follows the group, on the reasoning that a tool the rail shows behind the
-very key a user has just pressed is a tool they will expect the key to reach. Neither 1-pixel tool
-gets a `shortcut` of its own in `toolbar-mapping.ts`, so nothing here claims Adobe assigns them
-one — `M` alone does not select them. This remains **unverified** against an Adobe page that
-enumerates the cycle's membership.
+Adobe's current desktop guide, last updated Sep 28, 2026, says to press `M` to cycle through the
+Marquee tools, after defining the toolset as Rectangular, Elliptical, Single Row and Single Column.
+Its current default-shortcut PDF lists only Rectangular and Elliptical under `M`, explains that
+repeated presses toggle rows with multiple tools, and says Shift-press cycles same-shortcut tools
+when `Use Shift Key for Tool Switch` is selected. These current desktop sources conflict about
+whether the 1-pixel pair join Photoshop's `M` group. The page that explicitly lists `Shift+M` as
+"Switch between marquee tools" is for Photoshop on the web, so it is not evidence for desktop
+behavior. Keep the app's four-tool group documented as an app behavior and do not present it as
+verified Photoshop behavior.
 
 ## Elliptical Marquee Tool — `elliptical-selection`
 

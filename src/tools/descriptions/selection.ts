@@ -34,13 +34,15 @@ export const selectionDescriptions: Record<
         control: 'Style',
         detail:
           'Normal, Fixed Ratio or Fixed Size. Normal takes its proportions from the drag; Fixed Ratio locks the drag to a height-to-width ratio entered as two decimal fields; Fixed Size ignores the drag and takes its height and width from two pixel fields. In Normal the numeric fields are greyed out.',
-        status: 'missing',
+        status: 'partial',
+        appRef: 'src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:68',
       },
       {
         control: 'Width and Height',
         detail:
           'The two fields behind Fixed Ratio and Fixed Size. Fixed Ratio accepts decimals and is a pair, not a single ratio number, so a 2:1 box is entered as 2 in one field and 1 in the other. Fixed Size takes whole pixels, and both styles accept document units such as inches or centimetres alongside pixels.',
-        status: 'missing',
+        status: 'partial',
+        appRef: 'src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:97',
       },
       {
         control: 'Select and Mask',
@@ -62,11 +64,12 @@ export const selectionDescriptions: Record<
       {
         keys: 'M',
         action:
-          'Selects the Rectangular Marquee. All four marquee tools share M, so pressing it again re-selects this one rather than cycling; Shift+M is the cycling key.',
+          'Selects the Marquee tool. Adobe’s current desktop guide says M cycles through the Marquee tools, while its shortcut PDF lists the Rectangular and Elliptical Marquees under M but does not list the 1-pixel tools.',
       },
       {
         keys: 'Shift+M',
-        action: 'Switches between the marquee tools, which Adobe lists as "Switch between marquee tools".',
+        action:
+          'With Use Shift Key for Tool Switch selected, Shift+M cycles tools that share a shortcut. Adobe’s desktop shortcut PDF states this preference rule, but it does not establish whether the Single Row and Single Column tools share M.',
       },
     ],
     implementation: 'partial',
@@ -80,14 +83,16 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:41',
     ],
     appNotes:
-      'The tool draws, commits, and copies a rectangle; its options bar renders only static text plus Copy, Paste, and Deselect. It has no tool-specific settings, so the five Photoshop controls listed above are absent. All three fresh-drag modifiers are implemented: `RectangularSelectionToolArea` enables `constrainToSquare` and `fromCentre`, while `sampleFreshDragModifiers` reads Shift and Alt per pointer event and `adjustFreshPoint` applies them. The pointer-up event is sampled too, so its modifier state governs the committed rectangle. Handle resizing is separate and continues to use the aspect-ratio behavior in `getEdgeAtPoint`. M and Shift+M select and cycle the four marquee tools. There is no Select-menu surface for feathering, inverting, or growing an existing selection.',
+      'The bar renders the Style dropdown. Fixed Ratio shows one numeric Ratio field with min 0.05, max 20 and step 0.05, while Fixed Size shows numeric Width and Height fields with min 1, max 2000 and step 1; these fields take pixel numbers and do not parse Photoshop units such as inches or centimetres. The ratio is width-to-height, matching Adobe’s 2:1 example, but Photoshop exposes separate Width and Height fields for Fixed Ratio. New/Add/Subtract/Intersect, Feather and Select and Mask are absent. All three fresh-drag modifiers are implemented: `RectangularSelectionToolArea` enables `constrainToSquare` and `fromCentre`, while `sampleFreshDragModifiers` reads Shift and Alt per pointer event and `adjustFreshPoint` applies them. The pointer-up event is sampled too, so its modifier state governs the committed rectangle. Handle resizing is separate and continues to use the aspect-ratio behavior in `getEdgeAtPoint`. The app’s M key reselects the current marquee tool when one is already active and otherwise selects Rectangular Marquee; Shift+M cycles the app’s four-tool marquee group. Adobe’s current desktop marquee guide and shortcut PDF do not agree on whether the single-row and single-column tools are included in Photoshop’s M cycle, so the app’s group is not evidence of Photoshop group membership. There is no Select-menu surface for feathering, inverting, or growing an existing selection.',
     sources: [
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/make-selections-with-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/rectangular-marquee-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/define-feathered-edges.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
+      'https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/',
     ],
