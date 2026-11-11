@@ -108,6 +108,12 @@ describe('secret key redaction', () => {
     ['GitHub stateless app', statelessGitHubToken],
     ['GitHub fine-grained', `github_pat_${'d'.repeat(50)}`],
     ['Slack', `xoxb-${'e'.repeat(24)}`],
+    ['Slack app-level', `xapp-${'f'.repeat(40)}`],
+    ['Slack app-level mixed case', `XAPP-${'k'.repeat(40)}`],
+    ['Slack workflow', `xwfp-${'g'.repeat(32)}`],
+    ['Slack rotated bot', `xoxe.xoxb-1-${'h'.repeat(40)}`],
+    ['Slack rotated user', `xoxe.xoxp-1-${'i'.repeat(40)}`],
+    ['Slack refresh', `xoxe-1-${'j'.repeat(40)}`],
     ['AWS long-term', 'AKIAIOSFODNN7EXAMPLE'],
     ['AWS temporary', 'ASIAIOSFODNN7EXAMPLE'],
   ];
