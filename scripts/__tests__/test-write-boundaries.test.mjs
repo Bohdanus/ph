@@ -55,8 +55,9 @@ const REVIEWED = {
     patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=17 filesystem-write:rm=17`,
   },
   'free-model-pool-external.test.mjs': {
-    scope: 'External-provider and Kilo cost-stop fixtures use unique OS temporary directories with finally cleanup.',
-    patterns: `filesystem-write:mkdtemp=3 filesystem-write:rm=3`,
+    scope:
+      'External-provider, typed transient 5xx, and Kilo cost-stop fixtures use unique OS temporary directories with finally cleanup.',
+    patterns: `filesystem-write:mkdtemp=4 filesystem-write:rm=4`,
   },
   'free-model-pool.test.mjs': {
     scope:
