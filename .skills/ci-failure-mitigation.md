@@ -200,6 +200,7 @@ or logic defects, returns:
 ### Step 2.1: Create fix worktree
 
 ```bash
+# Run from an existing verified task worktree under `.kilo/worktrees`.
 git worktree list --porcelain
 # Set this to the absolute path from the stanza with: branch refs/heads/main
 MAIN_WORKTREE="<absolute-main-worktree-path>"
@@ -214,8 +215,8 @@ GIT_COMMON_DIR="$(git -C "$MAIN_WORKTREE" rev-parse --path-format=absolute --git
 PROJECT_ROOT="$(dirname "$GIT_COMMON_DIR")"
 # Keep task worktrees in the repository-managed directory, not nested inside MAIN_WORKTREE.
 case "$MAIN_WORKTREE" in
-  "$PROJECT_ROOT"|"$PROJECT_ROOT"/.kilo/worktrees/*) ;;
-  *) printf 'Selected main worktree is outside the expected repository: %s\n' "$MAIN_WORKTREE" >&2; exit 1 ;;
+  "$PROJECT_ROOT"/.kilo/worktrees/*) ;;
+  *) printf 'Selected main worktree is outside the repository-managed .kilo/worktrees directory: %s\n' "$MAIN_WORKTREE" >&2; exit 1 ;;
 esac
 TASK_WORKTREE="$PROJECT_ROOT/.kilo/worktrees/$TASK_NAME"
 # Before creating the worktree, verify the exact designated main checkout mapping.
@@ -312,7 +313,7 @@ The skill handles:
 
 1. Re-reading status and diff before staging
 2. Running independent code review
-3. Passing tsc/build/test/test:e2e
+3. Passing applicable lint, typecheck, build, and unit-test gates; broad E2E validation uses the mirror workflow
 4. Merging with `Branch:` trailer
 
 ## E2E Failure Documentation Protocol
@@ -364,6 +365,6 @@ npm run lint:check && npm run tsc && npm run test
 - Attempt to fix visual regression or canvas rendering e2e failures
 - Weaken assertions, add skips, or suppress failures to make CI green
 - Use `git add -A` — stage specific files only
-- Merge without passing lint + typecheck + tests locally first
+- Merge without passing lint, typecheck, and unit-test gates locally, plus required E2E mirror validation
 - Fix e2e environment-bound failures by changing code — document them instead
 - Forget the Chat trailer on commits

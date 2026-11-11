@@ -102,6 +102,7 @@ repository root's `.kilo/worktrees/`, even when the selected main worktree is it
 directory.
 
 ```bash
+# Run from an existing verified task worktree under `.kilo/worktrees`.
 git worktree list --porcelain
 # Select the absolute path from the stanza with: branch refs/heads/main
 MAIN_WORKTREE="<absolute-main-worktree-path>"
@@ -114,8 +115,8 @@ fi
 GIT_COMMON_DIR="$(git -C "$MAIN_WORKTREE" rev-parse --path-format=absolute --git-common-dir)"
 PROJECT_ROOT="$(dirname "$GIT_COMMON_DIR")"
 case "$MAIN_WORKTREE" in
-  "$PROJECT_ROOT"|"$PROJECT_ROOT"/.kilo/worktrees/*) ;;
-  *) printf 'Selected main worktree is outside the expected repository: %s\n' "$MAIN_WORKTREE" >&2; exit 1 ;;
+  "$PROJECT_ROOT"/.kilo/worktrees/*) ;;
+  *) printf 'Selected main worktree is outside the repository-managed .kilo/worktrees directory: %s\n' "$MAIN_WORKTREE" >&2; exit 1 ;;
 esac
 TASK_WORKTREE="$PROJECT_ROOT/.kilo/worktrees/$TASK_NAME"
 cd "$MAIN_WORKTREE" || exit 1

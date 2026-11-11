@@ -21,8 +21,10 @@ only when the evidence identifies a specific route. The chat stores are always r
   accepts up to 168 hours, but that is a safety ceiling rather than a routine duration.
   Project policy limits manually added quarantines to 72 hours for a specifically justified
   model/source-route outage, model unavailability, or confirmed historical poor-performance
-  entry. Do not quarantine a model for a global daily quota, context overflow, a bad prompt,
-  an external search/API failure, or an orchestration/tool invocation error.
+  entry. A longer quarantine requires explicit operator direction naming the source/model route
+  and duration; the CLI ceiling alone does not authorize it. Do not quarantine a model for a global
+  daily quota, context overflow, a bad prompt, an external search/API failure, or an orchestration/
+  tool invocation error.
 - **Use eligible free models, but do not assume quota headroom.** OpenRouter's published
   daily limit depends on account tier and may change. Check the live per-account daily
   counter with `node scripts/free-model-pool.mjs --openrouter-quota`; its returned `limit`
@@ -196,9 +198,9 @@ the command runs from a managed worktree; `FREE_MODEL_QUARANTINE_FILE` overrides
 Mutating commands take an adjacent exclusive lock and fail fast if another writer owns it.
 The lock error includes the stored PID and its liveness check. After a crash, verify no
 quarantine command is still running before manually removing a stale `.lock` file; never
-auto-break another process's lock. The default duration is six hours; the maximum allowed is 168
-hours. Do not store transcripts or raw error payloads in quarantine metadata; the reason and expiry
-are enough.
+auto-break another process's lock. The default duration is six hours; the hard CLI ceiling is 168
+hours. Apply the 72-hour manual limit and explicit-operator exception described above. Do not store
+transcripts or raw error payloads in quarantine metadata; the reason and expiry are enough.
 The pool ignores expired entries even if they have not yet been pruned. A malformed state file
 fails closed before any catalog or completion request; retain a backup and correct/delete the
 bad file rather than silently bypassing an active quarantine:

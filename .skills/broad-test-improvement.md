@@ -51,9 +51,10 @@ These files are **never** modified by this skill, under any circumstances:
 
 The default scope is unit tests in `src`: `src/**/*.test.{ts,tsx}`, including `src/App.test.tsx`,
 which sits in neither an `__tests__` directory nor a family folder. E2E specs and E2E-helper unit
-tests are in scope only when the request names them; they use different runners and must be
-baselined separately (`npm run test:e2e` and `npm run test:e2e:unit`). Do not treat their absence
-from the default Vitest report as a passing result. **Counts are re-derived, never trusted** — an
+tests are in scope only when the request names them. Run helper unit tests with
+`npm run test:e2e:unit`; use a focused local browser run only to reproduce a specific spec, and use
+the mirror workflow for broad E2E validation (`npm run test:e2e:mirror -- --full`). Do not treat
+their absence from the default Vitest report as a passing result. **Counts are re-derived, never trusted** — an
 earlier revision said "currently 55 files, ~400 tests" against a tree that held 259 test files:
 
 ```bash
@@ -70,6 +71,7 @@ the task worktree under `.kilo/worktrees`. Verify the new checkout before dispat
 launched from main would share files with other sessions, and `task` does not create a worktree.
 
 ```bash
+# Run from an existing verified task worktree under `.kilo/worktrees`.
 git worktree list --porcelain
 # Set this to the absolute path from the stanza with: branch refs/heads/main
 MAIN_WORKTREE="<absolute-main-worktree-path>"
@@ -86,8 +88,8 @@ fi
 GIT_COMMON_DIR="$(git -C "$MAIN_WORKTREE" rev-parse --path-format=absolute --git-common-dir)"
 PROJECT_ROOT="$(dirname "$GIT_COMMON_DIR")"
 case "$MAIN_WORKTREE" in
-  "$PROJECT_ROOT"|"$PROJECT_ROOT"/.kilo/worktrees/*) ;;
-  *) printf 'Selected main worktree is outside the expected repository: %s\n' "$MAIN_WORKTREE" >&2; exit 1 ;;
+  "$PROJECT_ROOT"/.kilo/worktrees/*) ;;
+  *) printf 'Selected main worktree is outside the repository-managed .kilo/worktrees directory: %s\n' "$MAIN_WORKTREE" >&2; exit 1 ;;
 esac
 TASK_WORKTREE="$PROJECT_ROOT/.kilo/worktrees/$TASK_NAME"
 cd "$MAIN_WORKTREE" || exit 1
@@ -132,9 +134,12 @@ npm test -- --reporter=json > /tmp/test-baseline.json 2>&1
 npm run lint:check > /tmp/lint-baseline.txt 2>&1
 npm run tsc > /tmp/tsc-baseline.txt 2>&1
 npm run build > /tmp/build-baseline.txt 2>&1
-# If E2E suites are in scope, capture their baselines separately.
+# If E2E-helper unit tests are in scope:
 # npm run test:e2e:unit
-# npm run test:e2e
+# For a focused local browser reproduction:
+# npm run test:e2e -- e2e/<spec>.spec.ts
+# For broad E2E validation, use the mirror workflow:
+# npm run test:e2e:mirror -- --full
 git status --porcelain > /tmp/git-baseline.txt
 ```
 
@@ -815,9 +820,12 @@ rg -n --glob '*.test.ts' --glob '*.test.tsx' "pattern" src
 
 # Baseline capture
 npm test -- --reporter=json > /tmp/test-baseline.json
-# Run separately when these suites are in scope; they are not in the default Vitest baseline.
+# Run helper unit tests separately when they are in scope; they are not in the default Vitest baseline.
 npm run test:e2e:unit
-npm run test:e2e
+# Broad browser E2E validation uses the mirror workflow, not a local full-suite run.
+npm run test:e2e:mirror -- --full
+# Use a focused local run only for reproducing a specific browser spec.
+npm run test:e2e -- e2e/<spec>.spec.ts
 npm run lint:check > /tmp/lint-baseline.txt 2>&1
 npm run tsc > /tmp/tsc-baseline.txt 2>&1
 ```
