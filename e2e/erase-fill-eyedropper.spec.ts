@@ -815,6 +815,20 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     expect(edgeRow, 'the slab should have a red top edge inside the clip').toBeGreaterThanOrEqual(0);
     const target = imagePointToCss(image, clip, { x: column, y: edgeRow });
 
+    // The first red screenshot pixel can straddle a logical pixel boundary at high DPI. The
+    // screenshot is in device pixels, but the eyedropper samples the logical document pixel at
+    // that point; clicking the pixel's outer edge can therefore read its antialiased neighbour.
+    // Move half a logical image pixel into the slab so the click is inside the observed edge pixel
+    // instead of on its outer boundary. The 3x3 sample still reaches across the edge.
+    const workspace = page.getByTestId('workspace-container');
+    await expect(workspace, 'the app publishes the document-to-CSS fit').toHaveAttribute(
+      'data-fit-scale',
+      /^\d+(?:\.\d+)?$/
+    );
+    const fitScale = Number(await workspace.getAttribute('data-fit-scale'));
+    if (!Number.isFinite(fitScale) || fitScale <= 0) throw new Error(`invalid document fit scale: ${fitScale}`);
+    target.y += fitScale / 2;
+
     await setForegroundColor(page, '#010101', true);
     await page.mouse.click(target.x, target.y);
     await expect
