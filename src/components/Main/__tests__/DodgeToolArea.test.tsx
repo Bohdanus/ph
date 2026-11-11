@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { DodgeToolArea } from '../DodgeToolArea.tsx';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
@@ -19,10 +19,12 @@ const createLayerFromToolMock = vi.hoisted(() => vi.fn());
 const pointerState = vi.hoisted(() => ({ isMouseDown: { current: false }, activePointer: null as number | null }));
 const storeState = vi.hoisted(
   (): {
+    containerRef: { current: HTMLDivElement | null };
     documentFrame: { x: number; y: number; width: number; height: number } | null;
     layers: LayersRecord;
     activeLayerId: string | null;
   } => ({
+    containerRef: { current: null },
     documentFrame: null,
     layers: {},
     activeLayerId: null,
@@ -33,7 +35,7 @@ const toolState = vi.hoisted((): { toolArgs: DodgeBurnToolArgs | null } => ({ to
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
-      containerRef: { current: document.createElement('div') },
+      containerRef: storeState.containerRef,
       totalSize: { width: 200, height: 120 },
       get layers() {
         return storeState.layers;
@@ -124,8 +126,25 @@ const dodgeArgs = (): DodgeBurnToolArgs => ({
   points: [],
 });
 
+const attachedHosts: HTMLDivElement[] = [];
+afterEach(() => {
+  while (attachedHosts.length) attachedHosts.pop()?.remove();
+});
+
 const renderArea = () => {
-  const { container } = render(<DodgeToolArea className="test-dodge-area" overlayCtxRef={{ current: null }} />);
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  attachedHosts.push(host);
+  storeState.containerRef = { current: host };
+  // The real usePointerPosition listener clears its pointer claim on the same native event.
+  host.addEventListener('pointercancel', (event) => {
+    if (pointerState.activePointer !== (event as PointerEvent).pointerId) return;
+    pointerState.activePointer = null;
+    pointerState.isMouseDown.current = false;
+  });
+  const { container } = render(<DodgeToolArea className="test-dodge-area" overlayCtxRef={{ current: null }} />, {
+    container: host,
+  });
 
   return container.firstElementChild as HTMLDivElement;
 };
@@ -154,10 +173,6 @@ const stroke = (toolArea: HTMLDivElement, from: [number, number], to: [number, n
 
 type ToolLayerCall = { id?: string; toolArgs: { points: { x: number; y: number }[] } };
 
-const leave = (toolArea: HTMLDivElement, pointerId = 1) => {
-  fireEvent.pointerLeave(toolArea, { pointerId, button: 0, clientX: 0, clientY: 0 });
-};
-
 describe('DodgeToolArea', () => {
   beforeEach(() => {
     resetDocumentGestures();
@@ -167,6 +182,7 @@ describe('DodgeToolArea', () => {
     createLayerFromToolMock.mockClear();
     pointerState.isMouseDown.current = false;
     pointerState.activePointer = null;
+    storeState.containerRef = { current: null };
     storeState.documentFrame = null;
     storeState.layers = { base: makeLayer('base') };
     storeState.activeLayerId = 'base';
@@ -227,40 +243,38 @@ describe('DodgeToolArea', () => {
     ]);
   });
 
-  it('cancels preview on pointerLeave during an active stroke', () => {
+  it('cancels preview on native pointerCancel during an active stroke', () => {
     const toolArea = renderArea();
 
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 20, clientY: 20 });
     fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
-    leave(toolArea, 1);
+    fireEvent.pointerCancel(toolArea, { pointerId: 1, button: -1, buttons: 0 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
 
-    // Preview ran for the move
+    // Preview ran for the move, then native cancellation rolled it back.
     expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
-    // Commit did NOT run — gesture was aborted
+    // Commit did NOT run — a later release cannot resurrect the aborted gesture.
     expect(updateLayerByToolMock).not.toHaveBeenCalled();
-    // Cancel was called with the layer ID
-    expect(cancelLayerPreviewMock).toHaveBeenCalledWith('base');
-  });
+    expect(cancelLayerPreviewMock).toHaveBeenCalledExactlyOnceWith('base');
 
-  it('does nothing on cancel when there was no active stroke', () => {
-    const toolArea = renderArea();
+    // The abort must release the hook's document gesture claim so a new stroke can start.
+    stroke(toolArea, [30, 30], [80, 70]);
 
-    leave(toolArea, 1);
-
-    expect(cancelLayerPreviewMock).not.toHaveBeenCalled();
-    expect(tempUpdateLayerMock).not.toHaveBeenCalled();
-    expect(updateLayerByToolMock).not.toHaveBeenCalled();
-  });
-
-  it('does nothing on cancel after a completed stroke', () => {
-    const toolArea = renderArea();
-
-    stroke(toolArea, [20, 20], [100, 60]);
-    // Ref was cleared by onCommit
-    leave(toolArea, 1);
-
-    expect(cancelLayerPreviewMock).not.toHaveBeenCalled();
-    // Commit already ran exactly once
+    expect(tempUpdateLayerMock).toHaveBeenCalledTimes(2);
     expect(updateLayerByToolMock).toHaveBeenCalledTimes(1);
+    expect(cancelLayerPreviewMock).toHaveBeenCalledExactlyOnceWith('base');
+  });
+
+  it('ignores pointerCancel from a different pointer during a stroke', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 20, clientY: 20 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerCancel(toolArea, { pointerId: 2, button: -1, buttons: 0 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+
+    expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
+    expect(updateLayerByToolMock).toHaveBeenCalledTimes(1);
+    expect(cancelLayerPreviewMock).not.toHaveBeenCalled();
   });
 });
