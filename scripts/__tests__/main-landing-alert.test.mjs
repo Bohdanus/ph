@@ -20,6 +20,63 @@ afterEach(() => {
 });
 
 describe('main landing alert claims', () => {
+  it.each([
+    ['unknown status', { status: 'queued' }],
+    [
+      'pending marker without an owner pid',
+      {
+        status: 'pending',
+        leaseId: 'incomplete-lease',
+        host: hostname(),
+        platform: process.platform,
+        startedAt: new Date().toISOString(),
+      },
+    ],
+    [
+      'sent marker without delivery details',
+      {
+        status: 'sent',
+        leaseId: 'incomplete-sent-lease',
+        sentAt: new Date().toISOString(),
+      },
+    ],
+  ])('recovers an invalid %s alert marker', (_case, invalid) => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-alert-'));
+    tempDirectories.push(lockDir);
+    const alertFile = join(lockDir, 'alert-15m.json');
+    writeFileSync(alertFile, JSON.stringify(invalid));
+
+    const owner = { leaseId: 'recovered-lease' };
+    expect(claimAlert({ lockDir }, owner, 15)).toBe(true);
+    const pending = JSON.parse(readFileSync(alertFile, 'utf8'));
+    expect(pending).toMatchObject({
+      status: 'pending',
+      leaseId: owner.leaseId,
+      host: hostname(),
+      platform: process.platform,
+      pid: process.pid,
+    });
+    expect(Number.isFinite(Date.parse(pending.startedAt))).toBe(true);
+    expect(claimAlert({ lockDir }, { leaseId: 'second-lease' }, 15)).toBe(false);
+    expect(JSON.parse(readFileSync(alertFile, 'utf8'))).toEqual(pending);
+  });
+
+  it('preserves a structurally valid sent alert marker', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-alert-'));
+    tempDirectories.push(lockDir);
+    const alertFile = join(lockDir, 'alert-15m.json');
+    const sent = {
+      status: 'sent',
+      leaseId: 'sent-lease',
+      sentAt: new Date().toISOString(),
+      message: 'The landing is still occupied.',
+    };
+    writeFileSync(alertFile, JSON.stringify(sent));
+
+    expect(claimAlert({ lockDir }, { leaseId: 'new-lease' }, 15)).toBe(false);
+    expect(readFileSync(alertFile, 'utf8')).toBe(JSON.stringify(sent));
+  });
+
   it('recovers a malformed alert marker while holding the recovery control lock', () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-alert-'));
     tempDirectories.push(lockDir);

@@ -100,8 +100,8 @@ const REVIEWED = {
   },
   'main-landing-alert.test.mjs': {
     scope:
-      'Alert-claim marker fixtures cover malformed recovery and lock contention; each uses a unique temporary directory and is removed after the test.',
-    patterns: `filesystem-write:mkdtempSync=3 filesystem-write:writeFileSync=5 filesystem-write:rmSync=2`,
+      'Alert-claim marker fixtures cover malformed recovery, invalid JSON shapes, sent markers, and lock contention; each uses a unique temporary directory and is removed after the test.',
+    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=7 filesystem-write:rmSync=2`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
