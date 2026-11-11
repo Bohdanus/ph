@@ -82,8 +82,8 @@ host's permission boundary.
   back to the zero-token gateway. Before and after a large OpenRouter-backed fan-out, run
   `node scripts/free-model-pool.mjs --openrouter-quota`; its server-side daily counter is
   authoritative for this account and is separate from the Kilo per-IP hourly ceiling.
-- **Quota-aware subagent protocol** (MODELS.md "Free Model Rotation" and "Token-Saving Research
-  Protocol"): the current `swarm` CLI does not expose `tokens --json`, so do not treat that
+- **Quota-aware subagent protocol** (`MODELS.md` §Routing and §Free-agent boundaries): the current
+  `swarm` CLI does not expose `tokens --json`, so do not treat that
   command or `swarm status` as budget telemetry. Refresh eligibility with
   `node scripts/free-model-pool.mjs --list`, use only exact zero-priced model/provider pairs,
   and never fall back silently to paid inference. If the host exposes separate budget data,
@@ -99,8 +99,8 @@ host's permission boundary.
 - Photoshop behavior, UX and non-trivial algorithms require Adobe or other primary-source
   research. Record source URLs, versions and unresolved claims in a research note or handoff.
 - Every non-trivial implementation requires a fresh read-only code review per
-  `docs/CODE-REVIEW.md` (verbatim brief, `file:line` finding
-  format); cross-module, persistence/migration, architecture-boundary and broad-regression
+  `docs/CODE-REVIEW.md` for the review brief; format findings with file paths and identifiers
+  per `AGENTS.md`, without line numbers; cross-module, persistence/migration, architecture-boundary and broad-regression
   changes require two reviewers split by concern. Fix and re-review blocking findings. See
   also `docs/ORCHESTRATION.md#the-task-lifecycle`.
 - Security vulnerability -> invoke the security-review process.
@@ -332,7 +332,8 @@ Handoff, not to Solve.
      branch per `docs/E2E-MIRROR.md`.
 5. **Review.** `git diff main...HEAD` for unintended behavior, stale references, missing
    surfaces, out-of-scope changes. Complex task -> a fresh read-only review subagent per
-   `docs/CODE-REVIEW.md` (verbatim brief, `file:line` findings);
+   `docs/CODE-REVIEW.md` for the review brief; format findings with file paths and identifiers
+   per `AGENTS.md`, without line numbers;
    cross-module/architecture-boundary changes -> two reviewers split by concern. Fix and
    re-review blocking findings.
 

@@ -1003,7 +1003,7 @@ export const paintDescriptions: Record<
       {
         control: 'Diffusion',
         detail:
-          'Adobe’s 2022 Healing examples identify a Diffusion slider for Spot Healing and give general low/high guidance; the current 2026 desktop Spot Healing page omits Diffusion, and neither source publishes numeric bounds. The app does not expose the control; tip hardness supplies the available edge falloff.',
+          'Adobe’s Healing examples page identifies a Diffusion slider for Spot Healing and gives general low/high guidance; the current 2026 desktop Spot Healing page omits Diffusion, and neither source publishes numeric bounds. The app does not expose the control; tip hardness supplies the available edge falloff.',
         status: 'missing',
       },
     ],
