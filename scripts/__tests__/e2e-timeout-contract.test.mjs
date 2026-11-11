@@ -177,4 +177,12 @@ describe('E2E timeout contract', () => {
       minimumJobHeadroomMinutes
     );
   });
+
+  it('leaves the configured timeout in control of the npm scripts used by baseline capture', () => {
+    for (const name of ['test:e2e:update-baselines', 'test:e2e']) {
+      const command = String(packageManifest.scripts[name] ?? '');
+      expect(command).toMatch(/^node scripts\/e2e-run\.mjs(?:\s|$)/);
+      expect(command).not.toMatch(/(?:^|\s)--global-timeout(?:=|\s|$)/);
+    }
+  });
 });

@@ -705,6 +705,17 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
     expect(observeHeld(boardDir.env).status, 'taking no queue is not the same as taking a bad one').toBe(0);
   });
 
+  it('does not add a CLI global timeout that overrides the Playwright config', async () => {
+    const suite = fakeSuite();
+    await run(['--workers=1'], {
+      env: { ...boardDir.env, CI: '1' },
+      log: recorder().log,
+      runPlaywright: suite,
+    });
+
+    expect(suite.calls[0].args).toEqual(['test', '--workers=1']);
+  });
+
   it('renews the lease while the suite runs, and says so if a renewal fails', async () => {
     // The board renews this run's own lock too (`renewOwnLocks`, while the
     // worktree is on disk), so this timer is belt and braces rather than the only
