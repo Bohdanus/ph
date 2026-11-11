@@ -19,7 +19,7 @@ import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
 import type { SingleColumnMarqueeToolArgs, SingleRowMarqueeToolArgs } from './singleRowColumnMarquee.ts';
 import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } from './featherMagneticLasso.ts';
 import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
-import { ERASER_HARDNESS_DEFAULT, ERASER_SPACING_PERCENT, type EraserToolArgs } from './eraser.ts';
+import { ERASER_FLOW_DEFAULT, ERASER_HARDNESS_DEFAULT, ERASER_SPACING_PERCENT, type EraserToolArgs } from './eraser.ts';
 import type { FillToolArgs } from './fill.ts';
 import {
   COLOR_REPLACEMENT_SMOOTHNESS_DEFAULT,
@@ -258,6 +258,7 @@ export const defaultSettings = {
     alpha: 1,
     hardness: ERASER_HARDNESS_DEFAULT,
     spacing: ERASER_SPACING_PERCENT,
+    flow: ERASER_FLOW_DEFAULT,
     color: '#000000',
     points: [],
     toolName: 'eraser',
