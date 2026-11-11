@@ -323,6 +323,38 @@ describe('toolDescriptions', () => {
     });
   });
 
+  it('qualifies the Smudge R shortcut against current and older Adobe sources', () => {
+    const smudge = toolDescriptions.smudge;
+    const shortcut = smudge.shortcuts.find((item) => item.keys === 'R');
+
+    expect(shortcut?.action).toMatch(
+      /current desktop Smudge guide says R cycles through retouching tools.*2023 guide labels Smudge with R.*2019 Photoshop reference lists R for Rotate View.*Keyboard Shortcuts and Menus dialog.*active binding/i
+    );
+    expect(smudge.sources).toEqual(
+      expect.arrayContaining([
+        'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
+        'https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html',
+      ])
+    );
+  });
+
+  it('separates Adobe Dodge/Burn Exposure digits from app shortcut support', () => {
+    const reference = 'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf';
+
+    for (const name of ['dodge', 'burn'] as const) {
+      const description = toolDescriptions[name];
+      const exposureShortcut = description.shortcuts.find((item) => item.keys === '0–9');
+      const tool = name === 'dodge' ? 'Dodge' : 'Burn';
+
+      expect(exposureShortcut?.action).toMatch(
+        /In Photoshop, number keys 0–9 set Exposure.*0 = 100%, 1 = 10%, and two quick digits set an exact percentage.*with Airbrush enabled, use Shift\+number/i
+      );
+      expect(exposureShortcut?.action).toContain(`This app does not implement ${tool} Exposure digit shortcuts`);
+      expect(description.sources).toContain(reference);
+      expect(description.appNotes).toMatch(/does not implement Exposure digit shortcuts for Dodge or Burn/i);
+    }
+  });
+
   describe('modifiers and shortcuts consistency', () => {
     it('ensures modifier keys use standard notation', () => {
       const knownModifierWords = [
