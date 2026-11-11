@@ -389,6 +389,7 @@ describe('usePaintStroke', () => {
     act(() => result.current.onPointerLeave(leave(50, 50)));
 
     expect(callbacks.onCancel).not.toHaveBeenCalled();
+    expect(pointerPositionMock.releasePointer).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(true);
   });
 
@@ -510,6 +511,7 @@ describe('usePaintStroke', () => {
     });
 
     expect(callbacks.onCancel).not.toHaveBeenCalled();
+    expect(pointerPositionMock.releasePointer).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(true);
     expect(isDocumentGestureOpen()).toBe(true);
 

@@ -305,6 +305,7 @@ export const usePaintStroke = (
       if (!isGestureActiveRef.current || claimedPointerIdRef.current !== event.pointerId) return;
 
       clearGesture();
+      // `usePointerPosition` owns capture release on the same native cancellation event.
       abortCallbackRef.current?.();
     };
     const handleLostPointerCapture = (event: globalThis.PointerEvent) => {
