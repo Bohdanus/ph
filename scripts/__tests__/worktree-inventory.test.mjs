@@ -32,6 +32,7 @@ import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/wo
 import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
 import { formatSummary, inventoryTarget, parseArgs, validatePinnedNow } from '../worktree-inventory.mjs';
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
+import { parseHandoffDoc } from '../lib/agent-board/handoff-import.mjs';
 import {
   __testables,
   collectWorktrees,
@@ -82,6 +83,7 @@ const NOW = 1_790_000_000_000;
 
 /** The curated table's SOURCE, for the checks that a JS object cannot answer. */
 const CURATED_PATH = resolve(import.meta.dirname, '../lib/worktree-inventory/curated.mjs');
+const OPEN_PROBLEMS_PATH = resolve(import.meta.dirname, '../../e2e/OPEN_PROBLEMS.md');
 
 /**
  * Remove JS comments from a source line, respecting string literals.
@@ -3102,6 +3104,27 @@ describe('the curated table', () => {
         expect(issue.title, `${name} has an issue with no title`).toBeTruthy();
       }
     }
+  });
+
+  it('keeps imported P-level E2E references aligned with live ledger origins', () => {
+    const parsed = parseHandoffDoc({
+      file: 'e2e/OPEN_PROBLEMS.md',
+      text: readFileSync(OPEN_PROBLEMS_PATH, 'utf8'),
+    });
+    expect(parsed.scope).toBe('e2e');
+
+    // The importer owns this origin grammar and slug limit. Reuse it instead of
+    // maintaining a second Markdown slugger that can drift from board imports.
+    const liveOrigins = new Set(parsed.items.map(({ origin }) => `e2e/${origin}`));
+    const references = Object.entries(CURATED).flatMap(([name, entry]) =>
+      (entry.issues ?? [])
+        .filter(({ ref }) => /^e2e\/OPEN_PROBLEMS\.md#p\d+-/i.test(ref))
+        .map(({ ref }) => ({ name, ref }))
+    );
+    expect(references.length, 'the curated table should exercise E2E ledger origin validation').toBeGreaterThan(0);
+
+    const stale = references.filter(({ ref }) => !liveOrigins.has(ref));
+    expect(stale, stale.map(({ name, ref }) => `${name}: ${ref}`).join('\n')).toEqual([]);
   });
 });
 

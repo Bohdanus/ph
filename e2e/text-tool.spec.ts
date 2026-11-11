@@ -3374,7 +3374,7 @@ test.describe('Text tool', () => {
    * should be reversible through the history stack.
    */
   test.describe('Undo/redo for text editing', () => {
-    test('undo reverts text content changes within a draft', async ({ page }, _testInfo) => {
+    test('undo restores text content and redo reapplies it', async ({ page }) => {
       const box = await canvasBox(page);
 
       await setTextToolColor(page, TEXT_COLOR);
@@ -3401,9 +3401,18 @@ test.describe('Text tool', () => {
       // Click the text again to verify content
       await page.mouse.click(textCenterX, textCenterY);
       await expect(draftOverlay(page)).toHaveText('Original');
+
+      const cancel = cancelButton(page);
+      await revealToolbarAction(cancel);
+      await cancel.click();
+      await expect(draftOverlay(page)).toHaveCount(0);
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toHaveText('Modified');
     });
 
-    test('undo reverts style changes applied to a text layer', async ({ page }, _testInfo) => {
+    test('undo restores text style and redo reapplies it', async ({ page }) => {
       const box = await canvasBox(page);
 
       await setTextToolColor(page, TEXT_COLOR);
@@ -3431,6 +3440,16 @@ test.describe('Text tool', () => {
       await page.mouse.click(textCenterX, textCenterY);
       await expect(draftOverlay(page)).toBeVisible();
       await expect(styleToggle(page, 'Bold')).toHaveAttribute('aria-pressed', 'false');
+
+      const cancel = cancelButton(page);
+      await revealToolbarAction(cancel);
+      await cancel.click();
+      await expect(draftOverlay(page)).toHaveCount(0);
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toBeVisible();
+      await expect(styleToggle(page, 'Bold')).toHaveAttribute('aria-pressed', 'true');
     });
   });
 });

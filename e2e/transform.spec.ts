@@ -532,6 +532,10 @@ test.describe('Transform tool', () => {
       await takeLineScreenshot(page, box, 'drag-in-motion', testInfo, wholeCanvas)
     );
     expect(midDrag, 'the drag is previewed while the pointer is down').not.toBeNull();
+    expect(
+      midDrag!.height,
+      'the in-flight rotation materially increases the horizontal bar height before pointer release'
+    ).toBeGreaterThan(before!.height * 2);
 
     // And now the release. This is the step that must write history.
     await page.mouse.move(sliderBox!.x + sliderBox!.width * 0.98, y);
