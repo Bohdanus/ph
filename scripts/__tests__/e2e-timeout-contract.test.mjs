@@ -16,7 +16,10 @@ const packageLock = JSON.parse(readFileSync(join(testDirectory, '../../package-l
 // This is nominal job headroom: GitHub's clock includes setup while Playwright's starts at test launch.
 // The reserved budget must cover setup and report/upload work across each workflow.
 const minimumJobHeadroomMinutes = 10;
+// Playwright PR https://github.com/microsoft/playwright/pull/43605 disables TcpPortRandomizationWin starting in v1.65.0.
 const minimumWindowsSocketFixVersion = '1.65.0';
+const focusedRunnerExpression =
+  "${{ github.event.client_payload.platform == 'linux' && 'ubuntu-latest' || github.event.client_payload.platform == 'windows' && 'windows-latest' || github.event.client_payload.platform == 'macos' && 'macos-latest' || 'ubuntu-latest' }}";
 
 function compareVersions(left, right) {
   const leftParts = left.split('.').map(Number);
@@ -152,16 +155,8 @@ describe('E2E timeout contract', () => {
     const jobTimeoutMinutes = readFixedJobTimeoutMinutes(job, 'focused-e2e');
     const playwrightTimeouts = readPlaywrightCiTimeouts();
     expect(readPlaywrightRunCommands(job)).toEqual(['npx playwright test --workers=1 "$E2E_SPEC"']);
-    const runners = {
-      linux: 'ubuntu-latest',
-      windows: 'windows-latest',
-      macos: 'macos-latest',
-    };
-
-    const focusedRunnerExpression = readWorkflowScalar(job, 'runs-on');
-    expect(focusedRunnerExpression.trim()).toMatch(/^\$\{\{ .+ \}\}$/);
-    for (const [platform, runner] of Object.entries(runners)) {
-      expect(focusedRunnerExpression).toContain(`client_payload.platform == '${platform}' && '${runner}'`);
+    expect(readWorkflowScalar(job, 'runs-on').trim()).toBe(focusedRunnerExpression);
+    for (const platform of ['linux', 'windows', 'macos']) {
       const playwrightTimeoutMinutes = platform === 'macos' ? playwrightTimeouts.macos : playwrightTimeouts.other;
       expect(jobTimeoutMinutes - playwrightTimeoutMinutes).toBeGreaterThanOrEqual(minimumJobHeadroomMinutes);
     }
