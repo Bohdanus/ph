@@ -71,9 +71,12 @@ are `mode: primary` and keep `read: allow` and `question: allow`.
 Two of these are only as good as their honesty about limits:
 
 - `bash: allow` makes `edit: deny` a **soft** boundary on `code-reviewer` and
-  `test-engineer`. One shell call is a write. The Serena denials above close the
-  tidy path, not that one, and the gap is deliberate: a reviewer that cannot run
-  the tests cannot review them.
+  `test-engineer`. One shell call is a write. These local profiles are not suitable
+  for free Kilo children: [`AGENTS.md`](../AGENTS.md) requires free children to deny
+  Bash and all file-mutation tools. Use the tracked read-only `explore` or
+  `read-only-research` profile, or the tool-free free-completion runner when the host
+  cannot enforce that boundary. The Serena denials close only the direct edit path;
+  they do not replace the free-child permission policy.
 - `architect` has `bash: deny`, so it cannot verify anything by running it. That is
   the intended trade for a planning agent, and it is why its plan must name the
   command that would confirm each claim rather than asserting it.

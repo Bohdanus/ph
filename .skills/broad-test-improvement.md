@@ -51,9 +51,10 @@ These files are **never** modified by this skill, under any circumstances:
 
 The default scope is unit tests in `src`: `src/**/*.test.{ts,tsx}`, including `src/App.test.tsx`,
 which sits in neither an `__tests__` directory nor a family folder. E2E specs and E2E-helper unit
-tests are in scope only when the request names them; they use different runners and must be
-baselined separately (`npm run test:e2e` and `npm run test:e2e:unit`). Do not treat their absence
-from the default Vitest report as a passing result. **Counts are re-derived, never trusted** — an
+tests are in scope only when the request names them. Run helper unit tests with
+`npm run test:e2e:unit`; use a focused local browser run only to reproduce a specific spec, and use
+the mirror workflow for broad E2E validation (`npm run test:e2e:mirror -- --full`). Do not treat
+their absence from the default Vitest report as a passing result. **Counts are re-derived, never trusted** — an
 earlier revision said "currently 55 files, ~400 tests" against a tree that held 259 test files:
 
 ```bash
@@ -70,14 +71,39 @@ the task worktree under `.kilo/worktrees`. Verify the new checkout before dispat
 launched from main would share files with other sessions, and `task` does not create a worktree.
 
 ```bash
+# Run from an existing verified task worktree under `.kilo/worktrees`.
 git worktree list --porcelain
 # Set this to the absolute path from the stanza with: branch refs/heads/main
 MAIN_WORKTREE="<absolute-main-worktree-path>"
+: "${MAIN_WORKTREE:?Set MAIN_WORKTREE from the refs/heads/main worktree stanza}"
+if [ "$MAIN_WORKTREE" = "<absolute-main-worktree-path>" ]; then
+  printf 'Replace the MAIN_WORKTREE placeholder with the path from the refs/heads/main stanza\n' >&2
+  exit 1
+fi
 TASK_NAME="test-improve-<slug>"
-TASK_WORKTREE="$MAIN_WORKTREE/.kilo/worktrees/$TASK_NAME"
+if [ "$TASK_NAME" = "test-improve-<slug>" ]; then
+  printf 'Replace the TASK_NAME slug placeholder before creating the worktree\n' >&2
+  exit 1
+fi
+GIT_COMMON_DIR="$(git -C "$MAIN_WORKTREE" rev-parse --path-format=absolute --git-common-dir)"
+PROJECT_ROOT="$(dirname "$GIT_COMMON_DIR")"
+case "$MAIN_WORKTREE" in
+  "$PROJECT_ROOT"/.kilo/worktrees/*) ;;
+  *) printf 'Selected main worktree is outside the repository-managed .kilo/worktrees directory: %s\n' "$MAIN_WORKTREE" >&2; exit 1 ;;
+esac
+TASK_WORKTREE="$PROJECT_ROOT/.kilo/worktrees/$TASK_NAME"
+cd "$MAIN_WORKTREE" || exit 1
+pwd
+git -C "$MAIN_WORKTREE" rev-parse --show-toplevel
+git -C "$MAIN_WORKTREE" rev-parse --git-dir --git-common-dir
+test "$(pwd -P)" = "$(git rev-parse --show-toplevel)" || exit 1
+test "$(git rev-parse --abbrev-ref HEAD)" = "main" || exit 1
 git -C "$MAIN_WORKTREE" worktree add -b "task/$TASK_NAME" "$TASK_WORKTREE" main
-cd "$TASK_WORKTREE"
+cd "$TASK_WORKTREE" || exit 1
+pwd
 git rev-parse --show-toplevel
+git rev-parse --git-dir --git-common-dir
+test "$(pwd -P)" = "$(git rev-parse --show-toplevel)" || exit 1
 ```
 
 Create it, **then** dispatch, then put the **absolute** worktree path in every brief — a subagent's
@@ -99,14 +125,21 @@ into `pre-commit` and `pre-merge-commit`; `docs/ORCHESTRATION.md` is its one hom
 
 ## Phase 0: Baseline Capture (Mandatory First Step)
 
+The coordinator runs these commands from the verified task worktree. Free/read-only subagents do
+not run npm commands or builds; they only summarize bounded output supplied by the coordinator.
+
 ```bash
 # Capture baseline for regression detection (`npm test` already supplies --run)
 npm test -- --reporter=json > /tmp/test-baseline.json 2>&1
 npm run lint:check > /tmp/lint-baseline.txt 2>&1
 npm run tsc > /tmp/tsc-baseline.txt 2>&1
-# If E2E suites are in scope, capture their baselines separately.
+npm run build > /tmp/build-baseline.txt 2>&1
+# If E2E-helper unit tests are in scope:
 # npm run test:e2e:unit
-# npm run test:e2e
+# For a focused local browser reproduction:
+# npm run test:e2e -- e2e/<spec>.spec.ts
+# For broad E2E validation, use the mirror workflow:
+# npm run test:e2e:mirror -- --full
 git status --porcelain > /tmp/git-baseline.txt
 ```
 
@@ -198,47 +231,51 @@ report is not equivalent to passing. Keep the protected-file set and severity de
 identical across agents. If parallel reports disagree materially, reconcile the scripts and
 definitions before prioritizing fixes.
 
-### 1A. Test Runner Subagent
+### 1A. Test Runner Output Normalizer
 
 ```
-Run: npm test -- --reporter=json
-Return JSON with:
+The coordinator runs `npm test -- --reporter=json` in the task worktree and supplies the complete
+report. Return a normalized summary JSON (not the reporter's raw schema). Mark these observed tool
+results with `status: "observed"`; they are not root-cause diagnoses and do not belong in severity
+findings until the coordinator traces the cause:
 {
   "totalTests": number,
   "passed": number,
   "failed": number,
   "testFiles": [{"file": "path", "status": "passed|failed", "passes": number, "failures": number}],
-  "errors": [{"file": "path", "test": "name", "error": "message", "line": number}],
-  "unhandledErrors": [{"file": "path", "message": "string"}],
+  "errors": [{"file": "path", "test": "name", "error": "message", "status": "observed"}],
+  "unhandledErrors": [{"file": "path", "message": "string", "status": "observed"}],
   "durationMs": number
 }
 ```
 
-### 1B. Lint Check Subagent
+### 1B. Lint Output Normalizer
 
 ```
-Run: npm run lint:check
-Return JSON with:
+The coordinator runs `npm run lint:check` in the task worktree and supplies the complete output.
+Return a normalized summary JSON (not the tool's raw output). Mark these observed tool results with
+`status: "observed"`; they are not root-cause diagnoses and do not belong in severity findings
+until the coordinator traces the cause:
 {
-  "errors": [{"file": "path", "line": number, "rule": "string", "message": "string"}],
-  "warnings": [{"file": "path", "line": number, "rule": "string", "message": "string"}]
+  "errors": [{"file": "path", "rule": "string", "message": "string", "identifier": "symbol or test name when available", "status": "observed"}],
+  "warnings": [{"file": "path", "rule": "string", "message": "string", "identifier": "symbol or test name when available", "status": "observed"}]
 }
 ```
 
 ### 1C. Pattern Scanner Subagent
 
 ```
-Search ALL in-scope src test files (`src/**/*.test.{ts,tsx}`, including `src/App.test.tsx`) for these patterns.
-Return JSON array of findings: [{"file": "path", "line": number, "pattern": "id", "match": "exact matched text", "severity": "critical|high|medium|low"}]
+Search ALL in-scope src test files (`src/**/*.test.{ts,tsx}`, including `src/App.test.tsx`) for these patterns using approved read-only repository search tools. If the host cannot provide read-only search, the coordinator runs ripgrep and supplies candidate matches plus enough surrounding source to verify them.
+Return JSON array entries with `file`, `pattern`, `match`, `identifier`, `status`, `evidence`, and `severity`. Use `status: "candidate"` and `severity: null` until the source contract, scope, and cleanup paths confirm a defect. Use `status: "confirmed"` and a severity only with concrete source evidence. An exact text match alone is never a confirmed finding. `identifier` is a symbol, test name, heading, or unique matched text when none exists; do not include source line numbers.
 
-Patterns to scan (use ripgrep with -n --json):
+Patterns to scan:
 
 CRITICAL — mock shape mismatches:
 1. "useTheme\\s*:\\s*\\(\\s*\\)\\s*=>\\s*\\["  (array mock for object return — useTheme returns {theme, toggleTheme})
-2. "vi\\.mock\\([^)]+\\)" inside describe/it block (Vitest 5 hoisting violation)
-3. "beforeEach.*requestAnimationFrame|beforeEach.*cancelAnimationFrame|beforeEach.*Path2D" (global override without fake timers)
-4. "vi\\.stubGlobal\\([^)]+\\)" without corresponding "vi\\.unstubAllGlobals\\(\\)" in afterEach
-5. "useStore\\s*:\\s*\\(\\s*\\)\\s*=>\\s*\\["  (candidate tuple-shape match — inspect whether the exercised code reads a missing element)
+2. "vi\\.mock\\([^)]+\\)" inside describe/it block (candidate only: confirm the match is a real call nested in a callback; in Vitest 5, classify a confirmed nested call as a critical hoisting-scope defect. A text match alone is not proof)
+3. "beforeEach.*requestAnimationFrame|beforeEach.*cancelAnimationFrame|beforeEach.*Path2D" (candidate only: confirm the code replaces shared globals without fake-timer isolation or matching restoration; classify a confirmed cross-test leak as critical)
+4. "vi\\.stubGlobal\\([^)]+\\)" without corresponding "vi\\.unstubAllGlobals\\(\\)" in afterEach (candidate only: inspect every cleanup path; classify a confirmed global leak as critical, since absence in one afterEach block alone is not proof)
+5. "useStore\\s*:\\s*\\(\\s*\\)\\s*=>\\s*\\["  (candidate tuple-shape match — compare with the actual useStore contract and classify as critical only if exercised code reads a missing or wrong tuple element)
 
 CRITICAL — global cleanup hygiene:
 6. "vi\\.restoreAllMocks\\(\\)" in a file that also uses fake timers without a verified timer reset in cleanup (candidate only)
@@ -272,7 +309,8 @@ LOW — style/hygiene:
 
 ## Phase 2: Categorize & Prioritize
 
-Aggregate findings from all 3 subagents. Group by file and severity.
+Aggregate the runner observations, lint observations, and pattern-scan candidates. Group
+diagnosed findings by file and severity only after confirming their root causes.
 
 **Priority Matrix**:
 
@@ -287,7 +325,7 @@ Aggregate findings from all 3 subagents. Group by file and severity.
 | Medium   | Missing keyboard nav                    | Add coverage in Phase 5   |
 | Low      | Style/hygiene/nesting                   | Optional, batch at end    |
 
-**Output**: `triage.json` with `{critical: [], high: [], medium: [], low: [], files: []}`. Findings contain `{file, line, pattern, description, fixStrategy}`; `files` contains one entry per scanned test file with `{file, runner, baselineStatus, gtdScore, classification}`. `baselineStatus` is `passed`, `failed`, or `not-in-baseline`; never infer `passed` from absence in runner output.
+**Output**: `triage.json` with `{critical: [], high: [], medium: [], low: [], candidates: [], observations: [], files: []}`. Only `confirmed` defects may appear in severity buckets; unconfirmed pattern matches stay in `candidates` with `status: "candidate"` and no severity. Raw test and lint results stay in `observations` with `status: "observed"`; an observed failure is not yet a confirmed product defect. A diagnosed root cause goes into `candidates` until source evidence confirms it. Findings contain `{file, pattern, identifier, status, evidence, description, fixStrategy}`; `identifier` is a symbol, test name, heading, or unique matched text when none exists. Do not include source line numbers. `files` contains one entry per scanned test file with `{file, runner, baselineStatus, gtdScore, classification}`. `baselineStatus` is `passed`, `failed`, or `not-in-baseline`; never infer `passed` from absence in runner output.
 
 ---
 
@@ -373,9 +411,12 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 }));
 
 // GOOD
-const storeState = { hasImage: true, dispatch: vi.fn() };
+const { storeState, dispatchMock } = vi.hoisted(() => ({
+  storeState: { hasImage: true },
+  dispatchMock: vi.fn(),
+}));
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeState, storeState.dispatch],
+  useStore: () => [storeState, dispatchMock],
 }));
 ```
 
@@ -429,11 +470,9 @@ expect(screen.getByTestId('save-dialog-save-button')).toBeInTheDocument();
 expect(toolbar).toHaveClass('w-[6.5rem]');
 expect(firstSection).toHaveClass('grid-cols-2');
 
-// GOOD
-expect(toolbar).toHaveStyle({ width: '104px' }); // or computed style
-expect(firstSection).toHaveStyle({ gridTemplateColumns: 'repeat(1, minmax(0, 1fr))' });
-// OR test behavior:
-expect(screen.getByTestId('left-toolbar-tools')).toHaveAttribute('data-layout', 'two-column');
+Prefer testing user-observable behavior at the appropriate level. If the actual layout is a
+contract, verify it in the browser-based suite using the project E2E setup (`./fixtures/extended-test`) rather than assuming the unit-test environment
+loads the production stylesheet or computes layout.
 ```
 
 #### 4.3 Replace Weak Assertions
@@ -534,7 +573,10 @@ Target: <specific gap from triage>
 Constraints:
 - Only propose test-file changes; do not edit files or run commands
 - Follow existing test patterns in the file
-- Use vi.useFakeTimers() for async
+- Use vi.useFakeTimers() for async only when needed; always pair it with
+  `vi.useRealTimers()` in the suite that owns those fake timers, after its cleanup work. In nested
+  suites, do not restore real timers in an inner `afterEach` if an outer cleanup still needs the
+  fake timers; put restoration in the outer suite's `afterEach` after that cleanup.
 - Use getByRole/getByLabelText/getByText first
 - If no accessible query works, report the smallest needed source change separately; source remains out of scope
 - Test both success and failure paths
@@ -568,12 +610,12 @@ Constraints:
 | Text.test.tsx                 | Happy path only                     | Font size change, text input, disabled state, `!hasImage` early return                     | Medium   |
 | SaveDialog.test.tsx           | Happy path + cancel                 | Error paths, file name validation, empty name                                              | Medium   |
 | NewImageDialog.test.tsx       | Happy path only                     | Invalid dimensions, cancel flow, error paths                                               | Medium   |
-| bmp-utils.test.tsx            | 1 test (round-trip)                 | Invalid header, invalid dimensions, error paths                                            | Medium   |
-| tiff-utils.test.tsx           | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
-| ico-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
-| gif-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
-| svg-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
-| avif-utils.test.tsx           | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| bmp-utils.test.ts             | 1 test (round-trip)                 | Invalid header, invalid dimensions, error paths                                            | Medium   |
+| tiff-utils.test.ts            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| ico-utils.test.ts             | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| gif-utils.test.ts             | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| svg-utils.test.ts             | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| avif-utils.test.ts            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
 | SidebarRight.test.tsx         | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
 | ToolbarHorizontal.test.tsx    | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
 | BottomToolbar.test.tsx        | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
@@ -590,6 +632,7 @@ Constraints:
 npm test -- --reporter=json > /tmp/test-final.json
 npm run lint:check > /tmp/lint-final.txt
 npm run tsc > /tmp/tsc-final.txt
+npm run build > /tmp/build-final.txt
 
 # Compare vs baseline
 # - Test count must be >= baseline
@@ -618,10 +661,10 @@ If ANY regression detected:
 - Typecheck: pass/fail
 
 ### Critical Fixed (N)
-- file.test.tsx:line - [pattern] - description of fix
+- file.test.tsx — <test name or symbol> — [pattern] — description of fix
 
 ### High Fixed (N)
-- file.test.tsx:line - [pattern] - description of fix
+- file.test.tsx — <test name or symbol> — [pattern] — description of fix
 
 ### Coverage Added (N tests across M files)
 - file.test.tsx: +N tests for [specific scenario]
@@ -632,7 +675,7 @@ If ANY regression detected:
 - Typecheck: pass
 
 ### Remaining (Manual Review)
-- file.test.tsx:line - [pattern] - reason not auto-fixed
+- file.test.tsx — <test name, symbol, heading, or unique matched text> — [pattern] — reason not auto-fixed
 ```
 
 ---
@@ -731,17 +774,17 @@ below as live defects or targets.
 The following table is a historical snapshot, not a current issue list. Re-check every entry before
 using it; pattern matches and old GTD scores do not establish a defect or justify an edit.
 
-| Pattern                                                           | Where                                                                                                                    | GTD           | Severity | Evidence                                                |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------- | -------- | ------------------------------------------------------- |
-| `getByTitle` used instead of accessible query                     | `Transform.test.tsx` — its `screen.getByTitle('Rotate 90° Left')` assertions                                             | Shallow (1)   | High     | `screen.getByTitle('Rotate 90° Left')` — not accessible |
-| `getByText(...).toBeTruthy()` instead of `toBeInTheDocument`      | `Transform.test.tsx`, `Levels.test.tsx`                                                                                  | Shallow (1)   | High     | Truthy assertion on DOM node                            |
-| `getByLabelText(...).toBeTruthy()` instead of `toBeInTheDocument` | `Draw.test.tsx`, `Levels.test.tsx`                                                                                       | Shallow (1)   | High     | Truthy assertion on DOM node                            |
-| `vi.mock` inside describe block                                   | the `SidebarLeft` suites under `src/components/SidebarLeft/__tests__/`                                                   | Gold (7)      | Critical | Vitest 5 hoisting violation                             |
-| `useTheme` array mock (object return)                             | `DesktopHeader.test.tsx` — its `useTheme` mock (was fixed)                                                               | Solid (6)     | Critical | Already addressed in prior session                      |
-| `mockResolvedValue` without error path                            | `DesktopHeader.test.tsx` — its `openNewImageDialog` mock                                                                 | Solid (6)     | Medium   | Only success path tested                                |
-| Format-utils shallow (mocked codec)                               | bmp-utils.test.tsx, tiff-utils.test.tsx, ico-utils.test.tsx, gif-utils.test.tsx, svg-utils.test.tsx, avif-utils.test.tsx | Shallow (0-1) | Medium   | Real round-trip only in psd-utils.test.ts               |
-| `vi.hoisted` used correctly                                       | `MagicWand.test.tsx` — its `dispatchMock` hoisted declaration                                                            | Shallow (1)   | Good     | Pattern to replicate                                    |
-| `vi.stubGlobal` + `vi.unstubAllGlobals`                           | `DesktopHeader.test.tsx`                                                                                                 | Solid (6)     | Good     | Pattern to replicate                                    |
+| Pattern                                                           | Where                                                                                                              | GTD           | Severity | Evidence                                                |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------- | -------- | ------------------------------------------------------- |
+| `getByTitle` used instead of accessible query                     | `Transform.test.tsx` — its `screen.getByTitle('Rotate 90° Left')` assertions                                       | Shallow (1)   | High     | `screen.getByTitle('Rotate 90° Left')` — not accessible |
+| `getByText(...).toBeTruthy()` instead of `toBeInTheDocument`      | `Transform.test.tsx`, `Levels.test.tsx`                                                                            | Shallow (1)   | High     | Truthy assertion on DOM node                            |
+| `getByLabelText(...).toBeTruthy()` instead of `toBeInTheDocument` | `Draw.test.tsx`, `Levels.test.tsx`                                                                                 | Shallow (1)   | High     | Truthy assertion on DOM node                            |
+| `vi.mock` inside describe block                                   | the `SidebarLeft` suites under `src/components/SidebarLeft/__tests__/`                                             | Gold (7)      | Critical | Vitest 5 hoisting violation                             |
+| `useTheme` array mock (object return)                             | `DesktopHeader.test.tsx` — its `useTheme` mock (was fixed)                                                         | Solid (6)     | Critical | Already addressed in prior session                      |
+| `mockResolvedValue` without error path                            | `DesktopHeader.test.tsx` — its `openNewImageDialog` mock                                                           | Solid (6)     | Medium   | Only success path tested                                |
+| Format-utils shallow (mocked codec)                               | bmp-utils.test.ts, tiff-utils.test.ts, ico-utils.test.ts, gif-utils.test.ts, svg-utils.test.ts, avif-utils.test.ts | Shallow (0-1) | Medium   | Real round-trip only in psd-utils.test.ts               |
+| `vi.hoisted` used correctly                                       | `MagicWand.test.tsx` — its `dispatchMock` hoisted declaration                                                      | Shallow (1)   | Good     | Pattern to replicate                                    |
+| `vi.stubGlobal` + `vi.unstubAllGlobals`                           | `DesktopHeader.test.tsx`                                                                                           | Solid (6)     | Good     | Pattern to replicate                                    |
 
 ### Gold-Standard Files (DO NOT TOUCH)
 
@@ -777,9 +820,12 @@ rg -n --glob '*.test.ts' --glob '*.test.tsx' "pattern" src
 
 # Baseline capture
 npm test -- --reporter=json > /tmp/test-baseline.json
-# Run separately when these suites are in scope; they are not in the default Vitest baseline.
+# Run helper unit tests separately when they are in scope; they are not in the default Vitest baseline.
 npm run test:e2e:unit
-npm run test:e2e
+# Broad browser E2E validation uses the mirror workflow, not a local full-suite run.
+npm run test:e2e:mirror -- --full
+# Use a focused local run only for reproducing a specific browser spec.
+npm run test:e2e -- e2e/<spec>.spec.ts
 npm run lint:check > /tmp/lint-baseline.txt 2>&1
 npm run tsc > /tmp/tsc-baseline.txt 2>&1
 ```
