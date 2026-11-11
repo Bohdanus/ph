@@ -227,27 +227,6 @@ test('viewport-derived stroke tolerance stays bounded on live canvas geometry', 
 
 test.describe('Viewport Drawing', () => {
   /**
-   * SKIPPED BY OPERATOR DECISION, not because the assertion is wrong.
-   *
-   * The earlier raw-CDP capture path changed the browser viewport height during
-   * `Page.captureScreenshot` on macOS. `captureCanvasScreenshot` now uses Playwright's
-   * screenshot API, and `cdp-helpers.spec.ts` checks that capture leaves viewport
-   * geometry unchanged. This focused helper coverage does not re-verify the full
-   * viewport-drawing assertion across the configured viewports and CI platforms.
-   *
-   * Keep the operator's skip until that assertion is separately reviewed and
-   * authorized for re-enablement. Do not widen `ANTIALIASED_FLANGE_CSS_PX`, loosen
-   * the derived bound, or add retries to make it green. The geometry-only tolerance
-   * test above remains active while this pixel assertion is skipped.
-   *
-   * Operator decision, 2026-09-29.
-   */
-  test.skip(
-    true,
-    'Operator skip retained: viewport-drawing assertion has not been re-verified with the Playwright screenshot helper'
-  );
-
-  /**
    * ONE test over all three windows, where this was three tests in a `for` loop. The reason
    * is a property the loop cannot express: "these are three different windows" is a claim
    * about the SET. In a per-viewport loop each test is blind to the other two, so a

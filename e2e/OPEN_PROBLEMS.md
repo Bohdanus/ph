@@ -150,16 +150,11 @@ dark gaps, and antialiased checkerboard edges.
 
 ## Known-skip tests
 
-Two specs are `test.skip` by declaration:
+One spec is `test.skip` by declaration:
 
 - `e2e/export/photopea.spec.ts` — its `test.skip('exports to PSD and verifies in Photopea')`
   declaration. Round-trips through the external photopea.com, so it cannot run offline or in
   a sandboxed CI.
-- `e2e/viewport-drawing.spec.ts` — its unconditional `test.skip(true, …)` on the test
-  titled `line stays under cursor after window resize (normal, wide and narrow)`. Its
-  declaration is retained under the operator decision dated 2026-09-29. The shared capture
-  helper now uses Playwright's screenshot API and its focused spec verifies geometry
-  preservation; this viewport-drawing assertion itself remains unverified and operator-owned.
 
 ## Still unverified
 

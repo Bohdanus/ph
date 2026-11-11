@@ -533,9 +533,10 @@ module stops it testing the wrong code in the right tree.
 `Page.captureScreenshot`, which changed macOS viewport height from 720px to 633px. The local probe
 and mirror run `42935493395` reproduced that behavior. The helper now uses Playwright's
 `page.screenshot`; its focused headless spec passes and checks that viewport geometry stays fixed.
-The viewport-drawing assertion remains skipped by the operator decision dated 2026-09-29 and has
-not been re-verified under this implementation. The investigation below records the earlier
-failure chain; do not treat its raw-CDP cause as current or remove the skip without operator review.
+The viewport-drawing assertion is active again: the exact headless spec passed on local macOS,
+including the pixel comparison across all three windows, with its existing bound and no retries.
+The full mirror run remains the cross-platform gate for this candidate. The investigation below
+records the earlier failure chain; do not treat its raw-CDP cause as a current failure.
 
 **No rate is stated here, on purpose.** The captured runs have not been reconciled into a
 per-case distribution — one test over three windows reports a single failure carrying three
@@ -545,10 +546,11 @@ unreconciled, and a wrong one here would be quoted as fact by whoever next picks
 is established:** the test fails intermittently, and the window that fails moves between cases.
 **What is not:** how often.
 
-**The skip is a gate decision, not a fix or a waiver.** `e2e/viewport-drawing.spec.ts` carries a
-`test.skip(true, …)` with the operator's reason. The capture-helper change addresses the measured
-raw-CDP viewport mutation, but this full viewport assertion has not been re-verified, so the skip
-remains in place pending operator review.
+**Historical gate decision (2026-09-29):** `e2e/viewport-drawing.spec.ts` was skipped while
+`Page.captureScreenshot` changed the macOS viewport during capture. The helper now uses
+Playwright's screenshot API, and the full three-window pixel assertion passed locally after that
+change. The prior skip reason is historical; the exact assertion remains enabled without a wider
+bound or retries.
 
 **Do not "fix" this by loosening anything.** Widening `ANTIALIASED_FLANGE_CSS_PX`, raising the
 derived bound, raising the drift guard, or adding retries all treat a symptom whose second cause
@@ -594,9 +596,8 @@ a soft assertion. Nothing in it records which one gave. That is the same defect 
 and 8 describe for the unit suite — an uncaptured intermittent failure is a hunting ground,
 not something to close by re-running until green.
 
-**Remaining verification:** the skipped viewport-drawing assertion needs a separate review and
-operator decision before it can be re-enabled. The helper-level change does not prove the full
-three-viewport stroke-to-cursor assertion on every CI platform.
+**Cross-platform gate:** the six-shard mirror workflow runs this assertion on Linux, Windows and
+macOS; its aggregate skip-baseline check must find only the external Photopea test still skipped.
 
 ## 13. A spec that loads the page many times loses on Playwright's 30s default, not on its own assertions
 
@@ -702,8 +703,8 @@ fixed two false claims in the new comments, but that is not the review.
 - `playwright.config.ts` — the `webServer` block, where `reuseExistingServer: false` is
   now unconditional and why, and the `--strictPort` that turns a lost port race into a
   startup failure instead of Vite's silent hop
-- `e2e/viewport-drawing.spec.ts` — the spec behind section 12, and the `test.skip` that
-  records the operator decision with its reason inline
+- `e2e/viewport-drawing.spec.ts` — the active regression from section 12; its former skip reason
+  and the re-enablement evidence are recorded above
 - `scripts/__tests__/e2e-run.test.mjs` — the only coverage of the lock, including a
   test that reads the board as another agent while a suite is "running"
 - `scripts/__tests__/suite-budgets.test.mjs` — the tripwire behind section 14, which
