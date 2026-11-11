@@ -168,6 +168,7 @@ describe('E2E timeout contract', () => {
     const playwrightTimeouts = readPlaywrightCiTimeouts();
     const playwrightRuns = readPlaywrightRunCommands(job);
 
+    // Budget each invocation at its full globalTimeout; current spec runtime is not a safe upper bound.
     expect(job).toContain('runs-on: ubuntu-latest');
     expect(playwrightRuns).toEqual([
       'npm run test:e2e:update-baselines -- --workers=1',
