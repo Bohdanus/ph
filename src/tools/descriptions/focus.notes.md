@@ -1132,21 +1132,9 @@ a binding is **absent**, which is the stronger form of the same objection.
     walkthrough describes a Mode menu with a limited list; Wikiversity and other secondary
     sources also report menus and choices, but none establish current availability or a complete
     current list. The data file omits the row until a current tool-specific source resolves it.
-14. **The provenance of the keyboard bindings, which are reproductions rather than Adobe's page.**
-    The Smudge's `R`, the Dodge's and the Burn's `Shift+Alt+S/M/H`, the `0` for Exposure and the
-    `[`/`]` brush-size pair are all in Adobe's published default-keyboard list, and three
-    independent reproductions of it agree on the wording
-    (<https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>,
-    <https://shortcutkeys.net/adobe-photoshop-shortcut-keys/>,
-    <https://shortcuts.design/data/design/toolspage-adobephotoshop-windows>). **Adobe's own
-    default-keyboard page was not opened**, so the rows carry a third-party citation for a
-    first-party fact. The Smudge's `R` is the one that is not in this category: Adobe's current
-    tool page states it in the body text ("Select the Smudge tool (R) from the toolbar"), so that
-    row is first-party. What is still open under this item is the `R` for the **Blur** and the
-    **Sharpen**: Adobe's current Blur page names no letter, and the current Sharpen page could not
-    be opened, so neither tool's `shortcuts` array carries `R` even though they share the flyout
-    and Photoshop Elements' own reference prints `R` for all three
-    (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>).
+14. **The Smudge R evidence is versioned.** Adobe's current 2026 desktop Smudge guide says to press R to cycle through retouching tools until Smudge appears; its 2023 guide labels Smudge with R but does not describe cycling. Adobe's Photoshop reference PDF, last updated in 2019, assigns R to Rotate View in its tool-switch table and omits Smudge from that table. Adobe's current [View keyboard shortcuts](https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html) article says to inspect the Keyboard Shortcuts and Menus dialog under Tools, but does not publish the binding. The data row preserves the current tool-specific instruction, discloses the older conflict, and points readers to the installed dialog; no current Photoshop installation was checked. Do not infer R for Blur or Sharpen, or Shift+R cycling.
+
+    The 2019 PDF also lists the Dodge/Burn range keys, Exposure digit changes, brush-size brackets, and the shared-tool cycling preference. Adobe's current Dodge/Burn guide documents Airbrush but not those digit bindings, so the reference's date remains relevant. The third-party shortcut reproductions in the tool source arrays are secondary corroboration and do not replace current tool-specific documentation.
 
 15. **Which `Mode` the Sponge's bar opens on. Adobe states no default, and one source is not
     enough.** `helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html` is

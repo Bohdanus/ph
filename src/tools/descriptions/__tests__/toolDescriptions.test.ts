@@ -323,6 +323,21 @@ describe('toolDescriptions', () => {
     });
   });
 
+  it('qualifies the Smudge R shortcut against current and older Adobe sources', () => {
+    const smudge = toolDescriptions.smudge;
+    const shortcut = smudge.shortcuts.find((item) => item.keys === 'R');
+
+    expect(shortcut?.action).toMatch(
+      /current desktop Smudge guide says R cycles through retouching tools.*2023 guide labels Smudge with R.*2019 Photoshop reference lists R for Rotate View.*Keyboard Shortcuts and Menus dialog.*active binding/i
+    );
+    expect(smudge.sources).toEqual(
+      expect.arrayContaining([
+        'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
+        'https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html',
+      ])
+    );
+  });
+
   describe('modifiers and shortcuts consistency', () => {
     it('ensures modifier keys use standard notation', () => {
       const knownModifierWords = [

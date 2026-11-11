@@ -179,7 +179,8 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     shortcuts: [
       {
         keys: 'R',
-        action: 'R cycles through the retouching tools until Smudge is selected.',
+        action:
+          "Adobe's current desktop Smudge guide says R cycles through retouching tools until Smudge appears; Adobe's 2023 guide labels Smudge with R, and its 2019 Photoshop reference lists R for Rotate View. Check Photoshop's Keyboard Shortcuts and Menus dialog in your version for the active binding.",
       },
       {
         keys: '[',
@@ -207,6 +208,8 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/smudge-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html',
+      'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
+      'https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html',
       'https://www.adobe.com/products/photoshop/blend-colors.html',
       'https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf',
       'https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/',
