@@ -136,12 +136,21 @@ commits or alter logical history authority.
    differences are not product-path failures because admission refuses those records and the app
    retains legacy rendering/export. The root cause remains unknown. Keep the
    gate closed and isolate the first differing intermediate surface before changing production code.
-   The diagnostic fixture now records differing-pixel document coordinates, RGBA/alpha, aggregate
-   bounds, source/backdrop samples, and exact runtime/export/PNG/PSD surface bounds. Its opacity-only
-   and multiply-only controls run at both the affine cursor and fractional frame. The root cause is
-   still unknown: use these samples to isolate the first surface where legacy and durable bytes
-   diverge. Compare the same frame, transform, clipping, layer order, and opaque backdrop; continue
-   with the transparent-backdrop and frame-surface-copy versus tight-bitmap-placement controls.
+   The diagnostic fixture records differing-pixel document coordinates, RGBA/alpha, aggregate bounds,
+   source/backdrop samples, and exact runtime/export/PNG/PSD surface bounds. Its opacity-only and
+   multiply-only controls run at both the affine cursor and fractional frame. The [Linux mirror run
+   for commit `0535f48d`](https://github.com/Bohdanus/ph/actions/runs/42987298464) reproduces refused
+   adapter differences: runtime/export/PNG differ by 118 channel bytes (91 pixels, maximum delta 1)
+   at the affine cursor and 86 bytes (69 pixels, maximum delta 1) after the fractional frame. PSD is
+   exact at the affine cursor; after the fractional frame its composite differs by 51 bytes across
+   15 pixels, the background layer by 39 bytes across 15 pixels, and the foreground layer is exact.
+   The measured layer bounds agree. At the reported source/backdrop samples, raw source and backdrop
+   values agree; tight-bitmap premultiplied pixels and the fresh-canvas Invert result are exact. The
+   raw frame surfaces differ only at alpha-boundary pixels (101 bytes/91 pixels at the affine cursor,
+   94 bytes/82 pixels after the fractional frame), but this fixture does not yet compare those frame
+   surfaces in premultiplied space. That is the next comparison needed to tell straight-alpha
+   readback variation from a meaningful placement difference. Keep the gate closed and test the
+   transparent-backdrop and direct frame-surface-copy versus tight-bitmap-placement controls.
    Check operation order and intermediate alpha/premultiplication around
    `drawEvaluatedPresentation()` and `renderExportCanvas()`; `durable-compositor.ts` explicitly
    disables image smoothing on its composition path, so smoothing is not an established explanation.
@@ -174,13 +183,14 @@ not impose a dependency between them.
    premultiplied pixels. The Invert check pins a fresh-canvas consumer readback, not raw OffscreenCanvas
    backing-store identity. Adapter measurements are intentionally diagnostic because the normal gate
    refuses retained operations.
-   Use the diagnostic fixture's document-coordinate pixel samples, source/backdrop RGBA, exact
-   bounds, and opacity-only/multiply-only controls at both the affine cursor and fractional frame to
-   find the earliest intermediate surface where legacy and durable bytes diverge. Compare the direct
-   original-source draw, materialized bitmap at matching frame-grid coordinates, and projected-record
-   draw. Hold canvas type, transform, clipping, layer order, and destination constant; next compare an
-   opaque versus transparent backdrop and a direct frame-surface copy versus tight-bitmap placement,
-   changing one condition at a time. Inspect intermediate alpha/premultiplication and operation
+   Add or inspect a premultiplied comparison of the legacy and durable frame surfaces, then use the
+   fixture's document-coordinate pixel samples, source/backdrop RGBA, exact bounds, and
+   opacity-only/multiply-only controls at both cursors to identify the first meaningful divergence.
+   Compare the direct original-source draw, materialized bitmap at matching frame-grid coordinates,
+   and projected-record draw. Hold canvas type, transform, clipping, layer order, and destination
+   constant; next compare an opaque versus transparent backdrop and a direct frame-surface copy versus
+   tight-bitmap placement, changing one condition at a time. Inspect intermediate
+   alpha/premultiplication and operation
    order; preserve the explicit `imageSmoothingEnabled = false` setting rather than attributing the
    result to filtering without evidence. For PSD, isolate the legacy and durable background-layer
    bytes before encoding at `savePsd()`'s equal integer bounds, inspect `left`/`top`/width/height
