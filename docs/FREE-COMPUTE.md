@@ -1,7 +1,8 @@
 # Free and Low-Cost Model Compute
 
-**Policy and routing checked: 2026-11-08.** Catalogs, pricing, terms, and quotas change; refresh
-before use. The dated observations below are point-in-time results, not a fresh availability check.
+**Policy and routing checked: 2026-11-08. OpenRouter free-model limits rechecked: 2026-11-11.**
+Catalogs, pricing, terms, and quotas change; refresh before use. The dated observations below are
+point-in-time results, not a fresh availability check.
 
 ## Model preferences
 
