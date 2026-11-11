@@ -27,9 +27,9 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  * real 2D context. Only a browser composes the two halves into pixels.
  *
  * The assertions are geometric and scale-free: bounding boxes compared to each other,
- * never to absolute pixel counts, because the same suite has to pass on a 1x and a 2x
- * display and the CDP helper in this file's sibling spec documents that the capture
- * multiplier is not even a function of the emulated devicePixelRatio.
+ * never to absolute pixel counts, because the same suite has to pass across context
+ * device scales. Screenshot dimensions are measured from the decoded image rather than
+ * assumed from the host.
  */
 
 /** [DOCUMENT] endpoints of each horizontal bar. */

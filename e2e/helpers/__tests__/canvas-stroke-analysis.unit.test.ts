@@ -548,7 +548,7 @@ describe('getStrokeAnalysis across capture scales', () => {
  * EACH MEASUREMENT IS SCALED BY ITS OWN AXIS.
  *
  * On a faithful capture the two axes of the scale are equal — `expectFaithfulCaptureOf` in
- * cdp-helpers.spec.ts pins that for the CDP path, and every fixture above is a whole-number
+ * cdp-helpers.spec.ts pins that for the Playwright-backed helper path, and every fixture above is a whole-number
  * 1x or 2x capture — so those tests cannot tell a per-axis scale from a single scalar. This
  * block is what tells them apart, and it is deliberately EXAGGERATED.
  *

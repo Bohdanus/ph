@@ -331,12 +331,10 @@ decision to the operator.
   so a run's machine-readable result survives it. A run through the wrapper writes
   under `test-results/runs/<run-id>/` and prints that path before the suite starts.
 - **The latest recorded full headless run passed; its machine-specific result is
-  in `e2e/OPEN_PROBLEMS.md`.** Two tests are `test.skip` by declaration: the Photopea
-  round-trip needs an external service, and `e2e/viewport-drawing.spec.ts` is skipped
-  by the operator's decision of 2026-09-29 because of intermittent capture drift. Its
-  frequency is unknown: `TEST-FLAKES.md` §12 explicitly says the observations have
-  not been reconciled into a rate. The skip is a gate decision, not a fix or waiver;
-  do not loosen the assertion or add retries.
+  in `e2e/OPEN_PROBLEMS.md`.** The Photopea round-trip is the only declared `test.skip` because
+  it needs an external service. The three-viewport viewport-drawing pixel assertion is active
+  again with its exact derived bound and no retries; its historical failure and verification
+  status are in `TEST-FLAKES.md` §12.
 - The CI skip baseline check recombines the JSON reports from all three platforms
   and both shards before comparing them with `e2e/skip-baseline.json`. Each reviewed
   skip must appear exactly once per platform; adding or removing one requires a
