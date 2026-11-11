@@ -389,8 +389,10 @@ and it changes how the committed border is painted, not how a gesture combines w
 selection — so it shares a name with the thing it is not. `LassoToolArgs` carries `alpha`,
 `lineWidth`, `color` and `fill`, none of which Photoshop puts on this bar.
 
-**Shortcut gap.** Photoshop binds `Return`/`Enter` to select the tool and focus the `Feather`
-field, so a feather can be typed before the next trace. Nothing in the app binds it.
+**Shortcut gap.** With the Lasso tool selected, `Return` (macOS) / `Enter` (Windows) highlights
+the `Feather` field so a feather can be set before the next trace; it does not select or activate
+the tool. This behavior is described by [Julieanne Kost's selection shortcuts](https://jkost.com/blog/2021/07/25-shortcuts-and-tips-for-creating-better-selections-in-photoshop.html).
+Nothing in the app binds it.
 
 **Modifier gap.** None of this tool's Photoshop modifiers is implemented, and neither is the
 `Space`-to-Hand mid-trace binding. The freehand lasso is drawn by `PolygonClickToolArea` — the

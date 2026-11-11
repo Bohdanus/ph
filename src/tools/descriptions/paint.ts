@@ -757,7 +757,7 @@ export const paintDescriptions: Record<
     summary:
       'Copies pixels from an Alt-clicked source point and paints them under the cursor, in Aligned or Independent mode, with a soft or hard tip.',
     purpose:
-      'The Clone Stamp copies pixels from one part of an image and paints them into another. Alt-click (Option-click on macOS) sets the source point; release the modifier and drag to lay the copy down. Aligned, which is the default, fixes the offset at the displacement of the first stroke after the Alt-click and holds it for every later stroke, so a pattern continues across a series of strokes; with it off, every stroke restarts from the original sampling point, which is what makes repeatedly stamping one patch of clean skin work. Sample chooses whether the source is read from the active layer alone, from the active layer and those below it, or from all visible layers, and Ignore Adjustment Layers keeps adjustment layers out of a merged sample. The tool is a copy rather than a paint, so it carries the source’s own color and alpha and needs no foreground color at all. A stroke that overlaps the area it is copying from can read back what it has just laid down, which is why the documented technique when the source is close to the target is to clone a little, release, and start again.',
+      'The Clone Stamp copies pixels from one part of an image and paints them into another. Alt-click (Option-click on macOS) sets the source point; release the modifier and drag to lay the copy down. Aligned is off by default. With it selected, the source offset stays locked across strokes; with it deselected, each stroke restarts from the original sampling point, which makes it useful for repeatedly stamping one patch of clean skin. Sample chooses whether the source is read from the active layer alone, from the active layer and those below it, or from all visible layers, and Ignore Adjustment Layers keeps adjustment layers out of a merged sample. The tool is a copy rather than a paint, so it carries the source’s own color and alpha and needs no foreground color at all. A stroke that overlaps the area it is copying from can read back what it has just laid down, which is why the documented technique when the source is close to the target is to clone a little, release, and start again.',
     options: [
       {
         control: 'Tool Preset Picker',
@@ -803,7 +803,7 @@ export const paintDescriptions: Record<
       {
         control: 'Aligned',
         detail:
-          'A checkbox, on by default. On, the source and destination stay locked together and the offset is the displacement of the first stroke after the Alt-click, held until the next Alt-click. Off, every stroke restarts from the original sampling point, so the sampling position is fixed and only the destination moves.',
+          'A checkbox, off by default. On, the source and destination stay locked together and the offset is the displacement of the first stroke after the Alt-click, held until the next Alt-click. Off, every stroke restarts from the original sampling point, so the sampling position is fixed and only the destination moves.',
         status: 'partial',
         appRef: 'src/tools/cloneStamp.ts:89',
       },
