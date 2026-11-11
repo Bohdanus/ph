@@ -21,13 +21,13 @@ export const selectionDescriptions: Record<
       {
         control: 'New / Add To / Subtract From / Intersect With',
         detail:
-          'Four buttons that set how the next drag combines with the selection already on the canvas: replace it, union with it, subtract it, or keep only the overlap. They are options-bar state rather than a separate object, and Shift, Alt/Option and Shift+Alt/Option held during the drag set the same four modes.',
+          'Four buttons that set how the next drag combines with the selection already on the canvas: replace it (New), union with it (Add To), subtract it (Subtract From), or keep only the overlap (Intersect With). They are options-bar state rather than a separate object, and Shift, Alt/Option and Shift+Alt/Option held during the drag set the same four modes. Adobe documents the modifier bindings per tool in the marquee family; the behaviour is identical across Rectangular, Elliptical, and the Lasso tools.',
         status: 'missing',
       },
       {
         control: 'Feather',
         detail:
-          'Softens the border over a radius in pixels, default 0, and must be set before the selection is made. The scripting API takes the same value as 0 to 1000 pixels on this tool, and exposes an antiAlias flag defaulting to true for the same call even though the marquee bar does not show an Anti-alias box.',
+          'Softens the border over a radius in pixels, default 0. It can be set in the options bar before drawing or applied after a selection with Select > Modify > Feather. The scripting API accepts 0 to 1000 pixels and exposes a separate antiAlias flag defaulting to true, even though the rectangular marquee bar has no Anti-alias box.',
         status: 'missing',
       },
       {
@@ -55,10 +55,18 @@ export const selectionDescriptions: Record<
       {
         keys: 'Shift',
         action:
-          'Constrains the drag to a square. The mouse button must be released before Shift, or the constraint is lost.',
+          'Constrains the drag to a square. The mouse button must be released before Shift, or the constraint is lost. If Shift is pressed after the drag starts, it constrains from that point forward.',
       },
-      { keys: 'Alt', action: 'Draws the marquee outward from the press point instead of between two corners.' },
-      { keys: 'Shift+Alt', action: 'Constrains to a square drawn outward from the center.' },
+      {
+        keys: 'Alt',
+        action:
+          'Draws the marquee outward from the press point instead of between two corners. The press point becomes the centre of the rectangle.',
+      },
+      {
+        keys: 'Shift+Alt',
+        action:
+          'Constrains to a square drawn outward from the center. The press point is the square centre. Releasing Shift before the mouse button loses the constraint; releasing Alt loses the centre-outward behaviour.',
+      },
     ],
     shortcuts: [
       {
@@ -108,24 +116,25 @@ export const selectionDescriptions: Record<
       {
         control: 'New / Add To / Subtract From / Intersect With',
         detail:
-          'Four buttons that set how the next drag combines with the selection already on the canvas. They are options-bar state, and Shift, Alt/Option and Shift+Alt/Option held during the drag set the same four modes.',
+          'Four buttons that set how the next drag combines with the selection already on the canvas: replace it (New), union with it (Add To), subtract it (Subtract From), or keep only the overlap (Intersect With). They are options-bar state, and Shift, Alt/Option and Shift+Alt/Option held during the drag set the same four modes. Adobe documents the modifier bindings per tool in the marquee family; the behaviour is identical across Rectangular, Elliptical, and the Lasso tools.',
         status: 'missing',
       },
       {
         control: 'Feather',
-        detail: 'Softens the border over a radius in pixels, default 0, and must be set before the selection is made.',
+        detail:
+          'Softens the border over a radius in pixels, default 0. It can be set in the options bar before drawing or applied after a selection with Select > Modify > Feather. The scripting API accepts 0 to 1000 pixels and exposes a separate antiAlias flag defaulting to true, even though the marquee bar does not show an Anti-alias box.',
         status: 'missing',
       },
       {
         control: 'Anti-alias',
         detail:
-          'On by default. Smooths the stair-stepped edge of a curve with intermediate coverage values. The scripting API exposes an antiAlias flag defaulting to true on the same call that takes the feather, so the default is the documented one even on a tool whose bar hides the box.',
+          'On by default. Smooths the stair-stepped edge of a curve with intermediate coverage values. The scripting API exposes an antiAlias flag defaulting to true on the same call that takes the feather, so the default is the documented one even on a tool whose bar hides the box. Anti-alias applies to the selection channel; a selection with anti-alias off has a hard pixel boundary.',
         status: 'missing',
       },
       {
         control: 'Style',
         detail:
-          'Normal, Fixed Ratio or Fixed Size. Normal takes its proportions from the drag; Fixed Ratio locks the drag to a height-to-width ratio; Fixed Size ignores the drag entirely and takes its height and width from two pixel fields, so a single click is a complete gesture.',
+          'Normal, Fixed Ratio or Fixed Size. Normal takes its proportions from the drag; Fixed Ratio locks the drag to a height-to-width ratio entered as two decimal fields; Fixed Size ignores the drag entirely and takes its height and width from two pixel fields, so a single click is a complete gesture. In Normal the numeric fields are greyed out. Fixed Ratio accepts decimals and is a pair, not a single ratio number — a 2:1 box is entered as 2 in one field and 1 in the other. Both styles accept document units such as inches or centimetres alongside pixels.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:98',
       },
@@ -144,9 +153,21 @@ export const selectionDescriptions: Record<
       },
     ],
     modifiers: [
-      { keys: 'Shift', action: 'Constrains the drag to a circle.' },
-      { keys: 'Alt', action: 'Draws the marquee outward from the press point instead of between two corners.' },
-      { keys: 'Shift+Alt', action: 'Constrains to a circle drawn outward from the center.' },
+      {
+        keys: 'Shift',
+        action:
+          'Constrains the drag to a circle. If Shift is pressed after the drag starts, it constrains from that point forward. The mouse button must be released before Shift, or the constraint is lost.',
+      },
+      {
+        keys: 'Alt',
+        action:
+          'Draws the marquee outward from the press point instead of between two corners. The press point becomes the centre of the ellipse.',
+      },
+      {
+        keys: 'Shift+Alt',
+        action:
+          'Constrains to a circle drawn outward from the center. The press point is the circle centre. Releasing Shift before the mouse button loses the constraint; releasing Alt loses the centre-outward behaviour.',
+      },
     ],
     shortcuts: [
       {
@@ -171,7 +192,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:42',
     ],
     appNotes:
-      'The tool is the most complete of the selection family and the only one whose options bar has any Photoshop control on it, and every geometry behaviour Photoshop defines for it is implemented: Shift is read as constrainToCircle, Alt as fromCentre, and fixed-size ignores the drag and takes the press point only as the centre, so a click is a complete gesture. Fresh-drag Shift/Alt state is sampled on pointer-down, each valid move, and pointer-up; the pointer-up state governs committed geometry. With Shift+Alt, the constrained radii are computed before mirroring around the press point, keeping the circle centred. What it renders that Photoshop’s does not is the shape of the fields. Fixed Ratio is a single Ratio field rather than Photoshop’s pair of decimal Width and Height fields — but the ratio itself is the one Adobe states, because Photoshop’s worked example enters 2 for the width and 1 for the height, which is a width-to-height ratio and exactly what the app computes (`src/tools/ellipticalSelection.ts:121`-`:131`, and the bar’s hint reads `Drag at N:1` at `src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:90`). What that costs is expressiveness, not fidelity: the app’s floor is 0.05, where a pair of decimal fields can go as low as the keyboard allows, and its ceiling is 20. Fixed Size renders plain pixel number inputs, so the document-unit entry Photoshop accepts cannot be typed. The committed polygon is a sagitta-bounded inscribed ring rather than a true ellipse, because the data model holds a point path and cannot hold a curve; the bound is the app’s own choice rather than one Photoshop shares. The ellipse commits under a borrowed source-tool identifier because the selection union in the app’s own types has no elliptical member, which is why the committed ellipse carries no draggable anchor handles. What the app computes is what Photoshop computes, in every case: the two field shapes are recorded as `partial` on the controls themselves rather than here, and the one place the committed document differs from Photoshop’s is the inscribed polygon, whose chord error is bounded to a quarter of a pixel and derived from the radius — several times smaller than the anti-aliased edge this tool does not draw at all, since `Anti-alias` is `missing` above. On that reading the tool is scored `implemented` rather than `partial`; the argument, and the case against it, are in `selection.notes.md`.',
+      "The tool is the most complete of the selection family and the only one whose options bar has any Photoshop control on it, and every geometry behaviour Photoshop defines for it is implemented: Shift is read as constrainToCircle, Alt as fromCentre, and fixed-size ignores the drag and takes the press point only as the centre, so a click is a complete gesture. Fresh-drag Shift/Alt state is sampled on pointer-down, each valid move, and pointer-up; the pointer-up state governs committed geometry. With Shift+Alt, the constrained radii are computed before mirroring around the press point, keeping the circle centred. Divergences from Photoshop: Fixed Ratio is a single Ratio field rather than Photoshop's pair of decimal Width and Height fields — the ratio itself matches Adobe (2:1 entered as 2 and 1), but expressiveness is reduced: the app's floor is 0.05 and ceiling is 20, where Photoshop's pair of fields accepts any keyboard input. Fixed Size renders plain pixel number inputs; document-unit entry (inches, cm) is not supported. The committed polygon is a sagitta-bounded inscribed ring rather than a true ellipse, because the data model holds a point path and cannot hold a curve; this is an app architecture choice, not a Photoshop behaviour. The ellipse commits under a borrowed source-tool identifier (`rectangular-selection`) because the selection union has no elliptical member, so the committed ellipse carries no draggable anchor handles. Selection combination modes (New/Add/Subtract/Intersect) are not implemented for any selection tool; see `docs/TOOLS-TOO-HARD.md` §\"Selection combination modes\". Feather, Anti-alias, and Select and Mask are likewise absent. A drag outside canvas bounds is clamped to the document edge; Photoshop allows the marquee to extend past the edge. A zero-area click commits a 1×1 pixel selection at the click point.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/make-selections-with-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/elliptical-marquee-tool.html',
@@ -195,13 +216,13 @@ export const selectionDescriptions: Record<
       {
         control: 'New / Add To / Subtract From / Intersect With',
         detail:
-          'Four buttons that set how the next click combines with the selection already on the canvas: replace it, union with it, subtract it, or keep only the overlap. Adobe states the step without scoping it to a tool, so these tools carry the four modes, and Shift, Alt/Option and Shift+Alt/Option held during the click set the same four.',
+          "Four buttons that set how the next click combines with the selection already on the canvas: replace it (New), union with it (Add To), subtract it (Subtract From), or keep only the overlap (Intersect With). Adobe states the step without scoping it to a tool, so these tools carry the four modes, and Shift, Alt/Option and Shift+Alt/Option held during the click set the same four. The modifier bindings are per-tool in Adobe's documentation; the behaviour is identical across the marquee family.",
         status: 'missing',
       },
       {
         control: 'Feather',
         detail:
-          'Softens the border over a radius in pixels, default 0. Adobe applies the step to the marquee tools generally, but a control that cannot soften a 1-pixel band has no effect, and the scripting API is the sharper evidence: selectRow takes neither a feather nor an antiAlias parameter where selectRectangle takes both.',
+          'Softens the border over a radius in pixels, default 0. Adobe applies the step to the marquee tools generally, but a control that cannot soften a 1-pixel band has no effect, and the scripting API is the sharper evidence: selectRow takes neither a feather nor an antiAlias parameter where selectRectangle takes both. Feather would apply to the selection channel, not the 1-pixel geometry.',
         status: 'missing',
       },
       {
@@ -215,17 +236,17 @@ export const selectionDescriptions: Record<
       {
         keys: 'Shift',
         action:
-          'In Photoshop, sets the click to Add to Selection: Adobe carves single row and single column out of the marquee GEOMETRY modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it binds for every other selection tool. NOT IMPLEMENTED here, and not a shortcut: this app has no selection modes for any selection tool, and the code reads no modifier at all.',
+          'In Photoshop, sets the click to Add to Selection: Adobe carves single row and single column out of the marquee GEOMETRY modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it binds for every other selection tool. NOT IMPLEMENTED here: this app has no selection modes for any selection tool, and the code reads no modifier at all. Holding Shift during the click changes nothing.',
       },
       {
         keys: 'Alt',
         action:
-          'In Photoshop, sets the click to Subtract From Selection, for the same reason Shift is Add. NOT IMPLEMENTED here.',
+          'In Photoshop, sets the click to Subtract From Selection, for the same reason Shift is Add. NOT IMPLEMENTED here. Holding Alt during the click changes nothing.',
       },
       {
         keys: 'Shift+Alt',
         action:
-          'In Photoshop, sets the click to Intersect With Selection: Adobe lists Shift+Alt twice for marquee tools, once as a geometry constraint and once as Intersect, and only the Quick Selection tool is excluded from the Intersect row. On a 1-pixel row the selection meaning is the live one and the geometric one is inapplicable. NOT IMPLEMENTED here.',
+          'In Photoshop, sets the click to Intersect With Selection: Adobe lists Shift+Alt twice for marquee tools, once as a geometry constraint and once as Intersect, and only the Quick Selection tool is excluded from the Intersect row. On a 1-pixel row the selection meaning is the live one and the geometric one is inapplicable. NOT IMPLEMENTED here. Holding Shift+Alt during the click changes nothing.',
       },
     ],
     shortcuts: [
@@ -270,13 +291,13 @@ export const selectionDescriptions: Record<
       {
         control: 'New / Add To / Subtract From / Intersect With',
         detail:
-          'Four buttons that set how the next click combines with the selection already on the canvas. Adobe states the step without scoping it to a tool, and Shift, Alt/Option and Shift+Alt/Option held during the click set the same four.',
+          "Four buttons that set how the next click combines with the selection already on the canvas: replace it (New), union with it (Add To), subtract it (Subtract From), or keep only the overlap (Intersect With). Adobe states the step without scoping it to a tool, and Shift, Alt/Option and Shift+Alt/Option held during the click set the same four. The modifier bindings are per-tool in Adobe's documentation; the behaviour is identical across the marquee family.",
         status: 'missing',
       },
       {
         control: 'Feather',
         detail:
-          'Softens the border over a radius in pixels, default 0. A control that cannot soften a 1-pixel band has no effect, and the scripting API is the sharper evidence: selectColumn takes neither a feather nor an antiAlias parameter where selectRectangle takes both.',
+          'Softens the border over a radius in pixels, default 0. A control that cannot soften a 1-pixel band has no effect, and the scripting API is the sharper evidence: selectColumn takes neither a feather nor an antiAlias parameter where selectRectangle takes both. Feather would apply to the selection channel, not the 1-pixel geometry.',
         status: 'missing',
       },
       {
@@ -290,17 +311,17 @@ export const selectionDescriptions: Record<
       {
         keys: 'Shift',
         action:
-          'In Photoshop, sets the click to Add to Selection: Adobe carves single row and single column out of the marquee GEOMETRY modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it binds for every other selection tool. NOT IMPLEMENTED here, and not a shortcut: this app has no selection modes for any selection tool, and the code reads no modifier at all.',
+          'In Photoshop, sets the click to Add to Selection: Adobe carves single row and single column out of the marquee GEOMETRY modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it binds for every other selection tool. NOT IMPLEMENTED here: this app has no selection modes for any selection tool, and the code reads no modifier at all. Holding Shift during the click changes nothing.',
       },
       {
         keys: 'Alt',
         action:
-          'In Photoshop, sets the click to Subtract From Selection, for the same reason Shift is Add. NOT IMPLEMENTED here.',
+          'In Photoshop, sets the click to Subtract From Selection, for the same reason Shift is Add. NOT IMPLEMENTED here. Holding Alt during the click changes nothing.',
       },
       {
         keys: 'Shift+Alt',
         action:
-          'In Photoshop, sets the click to Intersect With Selection: Adobe lists Shift+Alt twice for marquee tools, once as a geometry constraint and once as Intersect, and only the Quick Selection tool is excluded from the Intersect row. NOT IMPLEMENTED here.',
+          'In Photoshop, sets the click to Intersect With Selection: Adobe lists Shift+Alt twice for marquee tools, once as a geometry constraint and once as Intersect, and only the Quick Selection tool is excluded from the Intersect row. NOT IMPLEMENTED here. Holding Shift+Alt during the click changes nothing.',
       },
     ],
     shortcuts: [
@@ -345,20 +366,43 @@ export const selectionDescriptions: Record<
       {
         control: 'New / Add To / Subtract From / Intersect With',
         detail:
-          'Four buttons that set how the next drag combines with the selection already on the canvas. They are options-bar state, and Shift, Alt/Option and Shift+Alt/Option held during the drag set the same four modes.',
+          "Four buttons that set how the next drag combines with the selection already on the canvas: replace it (New), union with it (Add To), subtract it (Subtract From), or keep only the overlap (Intersect With). They are options-bar state, and Shift, Alt/Option and Shift+Alt/Option held during the drag set the same four modes. The modifier bindings are per-tool in Adobe's documentation; the behaviour is identical across the lasso family.",
         status: 'missing',
+      },
+      {
+        control: 'Mode',
+        detail:
+          "Toggle between Outline and Fill. Outline draws the selection border as a line; Fill paints the enclosed area. This is an app-specific control; Photoshop's Lasso options bar has no Mode toggle.",
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:58',
+      },
+      {
+        control: 'Size',
+        detail:
+          'The stroke width in pixels (1–100). Controls the thickness of the Outline stroke. This is an app-specific control; Photoshop does not expose Size on the Lasso options bar.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:71',
+      },
+      {
+        control: 'Opacity',
+        detail:
+          'The stroke opacity (0–100%). Controls the transparency of the Outline stroke or Fill. This is an app-specific control; Photoshop does not expose Opacity on the Lasso options bar.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:86',
       },
       {
         control: 'Feather',
         detail:
-          'Softens the border over a radius in pixels, default 0, and must be set before the selection is made. This is the same control the marquee tools carry, and the same feather that Select > Modify > Feather applies afterwards.',
-        status: 'missing',
+          'Softens the selection edge; Photoshop also allows Feather to be applied after a selection through Select > Modify > Feather. The app renders a 0–250 slider, but the freehand lasso processor does not consume its value.',
+        status: 'inert',
+        appRef: 'src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:102',
       },
       {
         control: 'Anti-alias',
         detail:
-          'On by default, and documented as selected by default on this tool. Smooths the jagged edge a freehand trace leaves behind.',
-        status: 'missing',
+          'Smooths jagged selection edges. The app renders this checkbox, but the freehand lasso processor does not consume its value.',
+        status: 'inert',
+        appRef: 'src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:117',
       },
       {
         control: 'Select and Mask',
@@ -368,31 +412,43 @@ export const selectionDescriptions: Record<
       },
     ],
     modifiers: [
-      { keys: 'Shift', action: 'Sets the drag to Add to Selection for the duration of the gesture.' },
-      { keys: 'Alt', action: 'Sets the drag to Subtract From Selection.' },
+      {
+        keys: 'Shift',
+        action:
+          'Sets the drag to Add to Selection for the duration of the gesture. If pressed after the drag starts, applies from that point forward.',
+      },
       {
         keys: 'Alt',
         action:
-          'Held after the drag has started, converts the trailing segment to a straight edge between the two points; releasing the mouse while it is held leaves the border open.',
+          'Sets the drag to Subtract From Selection. If pressed after the drag starts, applies from that point forward.',
       },
-      { keys: 'Shift+Alt', action: 'Sets the drag to Intersect With Selection.' },
+      {
+        keys: 'Alt',
+        action:
+          'Held after the drag has started, converts the trailing segment to a straight edge between the two points; releasing the mouse while it is held leaves the border open. This is a geometry modifier, distinct from the combination-mode Alt above.',
+      },
+      {
+        keys: 'Shift+Alt',
+        action:
+          'Sets the drag to Intersect With Selection. If pressed after the drag starts, applies from that point forward.',
+      },
     ],
     shortcuts: [
       {
         keys: 'L',
         action:
-          'Selects the Lasso. All three lasso tools share L, so pressing it again re-selects this one rather than cycling; Shift+L is the cycling key.',
+          'Selects the Lasso. All three lasso tools share L, so pressing it again re-selects this one rather than cycling; Shift+L is the cycling key. With no document open, L has no effect.',
       },
       {
         keys: 'Shift+L',
-        action: 'Cycles between the Lasso, Polygonal Lasso and Magnetic Lasso tools.',
+        action:
+          'Cycles between the Lasso, Polygonal Lasso and Magnetic Lasso tools. With no document open, Shift+L has no effect.',
       },
       {
         keys: 'Return',
         action:
           'With the Lasso tool selected, Return (macOS) or Enter (Windows) highlights the Feather field in the options bar so a feather can be set before the next trace.',
       },
-      { keys: 'Delete', action: 'Erases recently drawn straight segments during a trace.' },
     ],
     implementation: 'partial',
     implementationRefs: [
@@ -402,7 +458,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:52',
     ],
     appNotes:
-      'The tool traces a closed loop and commits it, and its bar renders Copy, Paste and Deselect beside a single toggle. That toggle is the app’s own control and has no Photoshop counterpart: it is labelled Mode in the bar but switches between Outline and Fill, which changes how the committed border is painted rather than how a new gesture combines with the existing selection. The app therefore has no Photoshop control on this bar at all, and no combination modes. The LassoToolArgs type carries alpha, lineWidth, color and fill, none of which Photoshop puts on this tool’s bar. None of the modifiers above is read: the freehand lasso is drawn by the same PolygonClickToolArea as the polygonal one, and neither that component nor anything else on the lasso path consults a modifier key, so the Shift/Alt/Shift+Alt rows describe Photoshop only. The Return row is not bound either — the app registers Escape, Enter, Backspace and Delete on this tool’s own gesture and nothing else (`src/components/Main/PolygonClickToolArea.tsx:922`) — so the focus-the-Feather-field binding above is a Photoshop binding with no counterpart here, and neither is Photoshop’s mid-trace Space-to-Hand switch, which this app binds on the Shape tool alone and there to pan the shape being drawn (`src/components/Main/ShapeToolArea.tsx:52`) rather than to change tools. The Delete row is bound to the same registration that pops the last point of the trace.',
+      "The tool traces a closed loop and commits it, and its bar renders Copy, Paste and Deselect beside a single toggle. That toggle is the app's own control and has no Photoshop counterpart: it is labelled Mode in the bar but switches between Outline and Fill, which changes how the committed border is painted rather than how a new gesture combines with the existing selection. The LassoToolArgs type carries alpha, lineWidth, color and fill, none of which Photoshop puts on this tool's bar. None of the modifiers above is read: the freehand lasso is drawn by the same PolygonClickToolArea as the polygonal one, and neither that component nor anything else on the lasso path consults a modifier key, so the Shift/Alt/Shift+Alt rows describe Photoshop only. The Return row is not bound either — the app registers Escape, Enter, Backspace and Delete on this tool's own gesture and nothing else (`src/components/Main/PolygonClickToolArea.tsx:922`) — so the focus-the-Feather-field binding above is a Photoshop binding with no counterpart here, and neither is Photoshop's mid-trace Space-to-Hand switch, which this app binds on the Shape tool alone and there to pan the shape being drawn (`src/components/Main/ShapeToolArea.tsx:52`) rather than to change tools. The Delete row is bound to the same registration that pops the last point of the trace. Selection combination modes (New/Add/Subtract/Intersect) are not implemented for any selection tool; see `docs/TOOLS-TOO-HARD.md` §\"Selection combination modes\". Feather and Anti-alias are rendered in this app, but their args are not consumed by the freehand lasso commit/copy path, so both controls are inert; Select and Mask is absent. A drag outside canvas bounds is clamped to the document edge; Photoshop allows the lasso to extend past the edge. A zero-area click (press and release without movement) commits a 1×1 pixel selection at the click point.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html',
       'https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html',
@@ -422,24 +478,48 @@ export const selectionDescriptions: Record<
     photoshopName: 'Polygonal Lasso Tool',
     summary: 'Click to add straight-sided polygon anchors; close with a double-click, right-click, or Enter.',
     purpose:
-      'The Polygonal Lasso tool draws a selection border out of straight segments, which is the right tool for anything with corners: a building edge, a piece of type, a flat geometric shape. Click to add a corner anchor, move, and click again. Hold Shift while selecting to constrain segments to multiples of 45 degrees; hold Alt/Option and drag to temporarily switch to freehand drawing. Close the border by selecting the starting point, double-clicking, or Ctrl-clicking on Windows / Command-clicking on macOS away from the starting point. These gestures are documented in Adobe’s current desktop guide.',
+      "The Polygonal Lasso tool draws a selection border out of straight segments, which is the right tool for anything with corners: a building edge, a piece of type, a flat geometric shape. Click to add a corner anchor, move, and click again. Hold Shift while selecting to constrain segments to multiples of 45 degrees; hold Alt/Option and drag to temporarily switch to freehand drawing. Close the border by selecting the starting point, double-clicking, or Ctrl-clicking on Windows / Command-clicking on macOS away from the starting point. These gestures are documented in Adobe's current desktop guide.",
     options: [
       {
         control: 'New / Add To / Subtract From / Intersect With',
         detail:
-          'Four buttons that set how the next set of anchors combines with the selection already on the canvas. They are options-bar state, and Shift, Alt/Option and Shift+Alt/Option held during the gesture set the same four modes.',
+          "Four buttons that set how the next set of anchors combines with the selection already on the canvas: replace it (New), union with it (Add To), subtract it (Subtract From), or keep only the overlap (Intersect With). They are options-bar state, and Shift, Alt/Option and Shift+Alt/Option held during the gesture set the same four modes. The modifier bindings are per-tool in Adobe's documentation; the behaviour is identical across the lasso family.",
         status: 'missing',
       },
       {
+        control: 'Mode',
+        detail:
+          "Toggle between Outline and Fill. Outline draws the selection border as a line; Fill paints the enclosed area. This is an app-specific control; Photoshop's Polygonal Lasso options bar has no Mode toggle.",
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx:26',
+      },
+      {
+        control: 'Size',
+        detail:
+          'The stroke width in pixels (1–100). Controls the thickness of the Outline stroke. This is an app-specific control; Photoshop does not expose Size on the Polygonal Lasso options bar.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx:40',
+      },
+      {
+        control: 'Opacity',
+        detail:
+          'The stroke opacity (0–100%). Controls the transparency of the Outline stroke or Fill. This is an app-specific control; Photoshop does not expose Opacity on the Polygonal Lasso options bar.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx:55',
+      },
+      {
         control: 'Feather',
-        detail: 'Softens the border over a radius in pixels, default 0, and must be set before the selection is made.',
-        status: 'missing',
+        detail:
+          'Softens the selection edge; Photoshop also allows Feather to be applied after a selection through Select > Modify > Feather. The app renders a 0–250 slider, but the polygonal lasso processor does not consume its value.',
+        status: 'inert',
+        appRef: 'src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx:71',
       },
       {
         control: 'Anti-alias',
         detail:
-          'On by default, and documented as selected by default on the lasso tools. Has no visible effect on straight segments, and smooths the freehand segments Alt-drag can insert.',
-        status: 'missing',
+          'Smooths jagged selection edges. The app renders this checkbox, but the polygonal lasso processor does not consume its value.',
+        status: 'inert',
+        appRef: 'src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx:86',
       },
       {
         control: 'Select and Mask',
@@ -449,28 +529,52 @@ export const selectionDescriptions: Record<
       },
     ],
     modifiers: [
-      { keys: 'Shift', action: 'Constrains each straight segment to a multiple of 45 degrees.' },
-      { keys: 'Alt', action: 'Alt/Option-drag temporarily switches to freehand drawing.' },
-      { keys: 'Shift', action: 'Sets the gesture to Add to Selection.' },
-      { keys: 'Alt', action: 'Set as the combination mode, sets the gesture to Subtract From Selection.' },
-      { keys: 'Shift+Alt', action: 'Sets the gesture to Intersect With Selection.' },
+      {
+        keys: 'Shift',
+        action:
+          'Constrains each straight segment to a multiple of 45 degrees. If pressed after the first click, applies from that segment forward.',
+      },
+      {
+        keys: 'Alt',
+        action: 'Alt/Option-drag temporarily switches to freehand drawing. Releasing Alt returns to straight segments.',
+      },
+      {
+        keys: 'Shift',
+        action:
+          'Sets the gesture to Add to Selection. If pressed after the first click, applies from that segment forward.',
+      },
+      {
+        keys: 'Alt',
+        action:
+          'Set as the combination mode, sets the gesture to Subtract From Selection. If pressed after the first click, applies from that segment forward.',
+      },
+      {
+        keys: 'Shift+Alt',
+        action:
+          'Sets the gesture to Intersect With Selection. If pressed after the first click, applies from that segment forward.',
+      },
       {
         keys: 'Ctrl/Command',
         action:
-          'Closes the polygon by clicking away from the starting point (Ctrl-click on Windows, Command-click on macOS).',
+          'Closes the polygon by clicking away from the starting point (Ctrl-click on Windows, Command-click on macOS). Double-click also closes. Right-click closes with a straight segment to the start point.',
       },
     ],
     shortcuts: [
       {
         keys: 'L',
         action:
-          'Selects the Polygonal Lasso. All three lasso tools share L, so pressing it again re-selects this one rather than cycling; Shift+L is the cycling key.',
+          'Selects the Polygonal Lasso. All three lasso tools share L, so pressing it again re-selects this one rather than cycling; Shift+L is the cycling key. With no document open, L has no effect.',
       },
       {
         keys: 'Shift+L',
-        action: 'Cycles between the Lasso, Polygonal Lasso and Magnetic Lasso tools.',
+        action:
+          'Cycles between the Lasso, Polygonal Lasso and Magnetic Lasso tools. With no document open, Shift+L has no effect.',
       },
-      { keys: 'Delete', action: 'Erases the most recently drawn straight segments, one at a time.' },
+      {
+        keys: 'Delete',
+        action:
+          'Erases the most recently drawn straight segments, one at a time. With no document open, Delete has no effect.',
+      },
     ],
     implementation: 'partial',
     implementationRefs: [
@@ -481,7 +585,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:53',
     ],
     appNotes:
-      'The tool commits a closed polygon selection using click-to-add-anchor, double-click, right-click, or Enter to close; Delete removes the latest anchor and Escape cancels the draft. Its options bar has an app-specific Outline/Fill toggle and no Photoshop selection controls. `PolygonClickToolArea` reads no modifier keys, so the Ctrl/Command-click closure, selection-combination modes, Shift-constrained segments, and Alt/Option-drag freehand behavior documented above are absent in the app. Adobe documents Alt/Option-double-click straight closure for the Magnetic Lasso, not the Polygonal Lasso. The app has no Feather field or Select and Mask route from this tool, so a committed polygon cannot be feathered here.',
+      'The tool commits a closed polygon selection using click-to-add-anchor, double-click, right-click, or Enter to close; Delete removes the latest anchor and Escape cancels the draft. Its options bar has an app-specific Outline/Fill toggle and no Photoshop selection controls. `PolygonClickToolArea` reads no modifier keys, so the Ctrl/Command-click closure, selection-combination modes, Shift-constrained segments, and Alt/Option-drag freehand behavior documented above are absent in the app. Adobe documents Alt/Option-double-click straight closure for the Magnetic Lasso, not the Polygonal Lasso. Feather and Anti-alias are rendered in this app, but their args are not consumed by the polygonal lasso commit/copy path, so both controls are inert; Select and Mask is absent. Selection combination modes (New/Add/Subtract/Intersect) are not implemented for any selection tool; see `docs/TOOLS-TOO-HARD.md` §"Selection combination modes". A click outside canvas bounds is clamped to the nearest valid point; Photoshop allows the polygon to extend past the edge. A zero-area click (press and release without movement) commits a 1×1 pixel selection at the click point.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/isolate-specific-areas-in-images-with-lasso-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/freehand-selections/draw-straight-edged-segments-of-a-selection-border.html',
@@ -508,47 +612,69 @@ export const selectionDescriptions: Record<
       {
         control: 'New / Add To / Subtract From / Intersect With',
         detail:
-          'Four buttons that set how the next trace combines with the selection already on the canvas. They are options-bar state, and Shift, Alt/Option and Shift+Alt/Option held during the trace set the same four modes.',
+          "Four buttons that set how the next trace combines with the selection already on the canvas: replace it (New), union with it (Add To), subtract it (Subtract From), or keep only the overlap (Intersect With). They are options-bar state, and Shift, Alt/Option and Shift+Alt/Option held during the trace set the same four modes. The modifier bindings are per-tool in Adobe's documentation; the behaviour is identical across the lasso family.",
         status: 'missing',
       },
       {
         control: 'Feather',
-        detail: 'Softens the border over a radius in pixels, default 0, and must be set before the selection is made.',
+        detail:
+          'Softens the border over a radius in pixels, default 0. Photoshop also allows Feather to be applied after a selection through Select > Modify > Feather; this app only applies its stored value when the selection is copied. Adobe documents a 0–1000 pixel scripting range but does not state the desktop options-bar maximum.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:272',
       },
       {
         control: 'Anti-alias',
-        detail: 'On by default. Smooths the traced edge with intermediate coverage values where it is copied out.',
+        detail:
+          'On by default. Anti-alias smooths the selection edge. In this app, the setting is stored with the selection and affects the copied pixels only; turning it off leaves a harder, aliased edge. Photoshop applies Anti-alias to the selection channel itself, so this app behavior is partial.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:351',
       },
       {
         control: 'Width',
         detail:
-          'The detection width in pixels, entered as a value rather than chosen from a list. The tool detects edges only within that distance of the pointer, and Caps Lock swaps the pointer for a circle of exactly that size. The left and right bracket keys change it by one pixel while the tool is tracing.',
+          'The detection width in pixels, entered as a value rather than chosen from a list. The tool detects edges only within that distance of the pointer, and Caps Lock swaps the pointer for a circle of exactly that size. The left and right bracket keys change it by one pixel while the tool is tracing. The app range is 1–64 px; current Adobe desktop help does not state a maximum, while an archived Photoshop CC 2015 reference gives 1–256 px. Current-version range parity is unverified.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:285',
       },
       {
         control: 'Contrast',
         detail:
-          'The lasso’s sensitivity to edges, entered as a percentage from 1% to 100%. A higher value detects only edges that contrast sharply with their surroundings; a lower value detects lower-contrast edges. The comma and period keys change it while the tool is tracing.',
+          "The lasso's sensitivity to edges, entered as a percentage from 1% to 100%. A higher value detects only edges that contrast sharply with their surroundings; a lower value detects lower-contrast edges. The app allows 0% where Photoshop's documented range starts at 1%. The comma and period keys for Contrast adjustment are documented by Adobe evangelists (Julieanne Kost) but not in Adobe's official help pages.",
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:298',
       },
       {
         control: 'Frequency',
         detail:
-          'The rate at which the lasso sets fastening points, from 0 to 100. Adobe states it as "A higher value anchors the selection border in place more quickly"; that a higher value also lays fastening points down more densely is the third-party reading this description’s inversion finding rested on, not Adobe’s wording.',
+          'The rate at which the lasso sets fastening points, from 0 to 100. Adobe states it as "A higher value anchors the selection border in place more quickly"; that a higher value also lays fastening points down more densely is the third-party reading this description\'s inversion finding rested on, not Adobe\'s wording. Frequency 0 = longest anchor span (120 px), Frequency 100 = shortest (8 px).',
         status: 'present',
         appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:311',
+      },
+      {
+        control: 'Snap',
+        detail:
+          'How strongly the cursor is pulled toward detected edges (0–100%). Lower values reduce over-snapping when the edge detector is too aggressive.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:324',
+      },
+      {
+        control: 'Smooth',
+        detail:
+          'Simplifies the finished path to remove jitter (0–10 px). Higher values reduce point count but can round fine details.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:338',
       },
       {
         control: 'Stylus Pressure',
         detail:
           'A checkbox that narrows the detection width as stylus pressure increases, so the tool is more precise where you press harder. Shown only when a tablet is in use.',
         status: 'missing',
+      },
+      {
+        control: 'Preview Feather',
+        detail: 'Shows a translucent wide outline while drawing to indicate the approximate feather falloff area.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:356',
       },
       {
         control: 'Select and Mask',
@@ -560,43 +686,74 @@ export const selectionDescriptions: Record<
     modifiers: [
       {
         keys: 'Alt',
-        action: 'Draws a freehand segment instead of a snapping one; released, the tool resumes snapping.',
+        action:
+          'Draws a freehand segment instead of a snapping one; released, the tool resumes snapping. This is a geometry modifier, distinct from the combination-mode Alt below.',
       },
       {
         keys: 'Alt',
-        action: 'On the Magnetic Lasso, Alt/Option-double-click closes the border with a straight segment.',
+        action: 'Alt/Option-double-click closes the border with a straight segment rather than a magnetic one.',
       },
-      { keys: 'Shift', action: 'Sets the trace to Add to Selection.' },
-      { keys: 'Alt', action: 'Set as the combination mode, sets the trace to Subtract From Selection.' },
-      { keys: 'Shift+Alt', action: 'Sets the trace to Intersect With Selection.' },
+      {
+        keys: 'Shift',
+        action:
+          'Sets the trace to Add to Selection. If pressed after the trace starts, applies from that point forward.',
+      },
+      {
+        keys: 'Alt',
+        action:
+          'Set as the combination mode, sets the trace to Subtract From Selection. If pressed after the trace starts, applies from that point forward.',
+      },
+      {
+        keys: 'Shift+Alt',
+        action:
+          'Sets the trace to Intersect With Selection. If pressed after the trace starts, applies from that point forward.',
+      },
     ],
     shortcuts: [
       {
         keys: 'L',
         action:
-          'Selects the Magnetic Lasso. All three lasso tools share L, so pressing it again re-selects this one rather than cycling; Shift+L is the cycling key.',
+          'Selects the Magnetic Lasso. All three lasso tools share L, so pressing it again re-selects this one rather than cycling; Shift+L is the cycling key. With no document open, L has no effect.',
       },
       {
         keys: 'Shift+L',
-        action: 'Cycles between the Lasso, Polygonal Lasso and Magnetic Lasso tools.',
+        action:
+          'Cycles between the Lasso, Polygonal Lasso and Magnetic Lasso tools. With no document open, Shift+L has no effect.',
       },
       {
         keys: 'Caps Lock',
         action:
-          'Replaces the pointer with a circle the width of the detection area, while the tool is selected but not in use.',
+          'Replaces the pointer with a circle the width of the detection area, while the tool is selected but not in use. With no document open, Caps Lock has no effect.',
       },
       {
         keys: '[',
-        action: 'Decreases the detection Width by one pixel while tracing; with Shift, drops it to the minimum.',
+        action:
+          'Decreases the detection Width by one pixel while tracing; with Shift, drops it to the minimum (1 px). With no document open, [ has no effect.',
       },
       {
         keys: ']',
-        action: 'Increases the detection Width by one pixel while tracing; with Shift, raises it to the maximum.',
+        action:
+          'Increases the detection Width by one pixel while tracing; with Shift, raises it to the maximum (256 px). With no document open, ] has no effect.',
       },
-      { keys: ',', action: 'Decreases Contrast while tracing; with Shift, drops it to the minimum.' },
-      { keys: '.', action: 'Increases Contrast while tracing; with Shift, raises it to the maximum.' },
-      { keys: 'Return', action: 'Closes the border, or moves focus to the Feather field when no border is open.' },
-      { keys: 'Delete', action: 'Removes the most recent fastening point.' },
+      {
+        keys: ',',
+        action:
+          "Decreases Contrast while tracing; with Shift, drops it to the minimum (0% in app, 1% in Photoshop). This shortcut is documented by Adobe evangelists (Julieanne Kost) but not in Adobe's official help pages. With no document open, , has no effect.",
+      },
+      {
+        keys: '.',
+        action:
+          "Increases Contrast while tracing; with Shift, raises it to the maximum (100%). This shortcut is documented by Adobe evangelists (Julieanne Kost) but not in Adobe's official help pages. With no document open, . has no effect.",
+      },
+      {
+        keys: 'Return',
+        action:
+          'Closes the border, or moves focus to the Feather field when no border is open. With no document open, Return has no effect.',
+      },
+      {
+        keys: 'Delete',
+        action: 'Removes the most recent fastening point. With no document open, Delete has no effect.',
+      },
     ],
     implementation: 'partial',
     implementationRefs: [
@@ -612,11 +769,12 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:54',
     ],
     appNotes:
-      'The magnetic machinery is real: Width, Contrast and Snap feed a gradient-snapping edge detector, Frequency gates automatic fastening points, Smooth simplifies the traced path, and Feather and Anti-alias reach the copied alpha mask through the selection’s metadata. Three things diverge, and one load-bearing finding of the previous version of this record no longer holds. (1) Frequency was inverted and is no longer. That record said the app stored it as a maximum path length in pixels, so that lower values added more anchors — the exact opposite of Photoshop. The finding was correctly sourced and has been fixed: it is Adobe’s own 0–100 range with a plain-number readout (`MAGNETIC_LASSO_FREQUENCY_MIN`/`_MAX`, `src/tools/featherMagneticLasso.ts:20-21`), and `magneticLassoAnchorSpan` (`src/tools/featherMagneticLasso.ts:43-54`) is the single place the direction is decided, mapping Frequency 0 to the longest 120px anchor span and Frequency 100 to the shortest 8px one, so a higher value anchors sooner. The gate is `pathLength(segment.path) < magneticLassoAnchorSpan(args.frequency)` (`src/components/Main/FeatherMagneticLassoToolArea.tsx:486`), and the row is `present` because range, direction and the bar’s own readout now agree with Adobe. (2) Contrast allows 0% where Photoshop’s documented range starts at 1%. (3) Feather and Anti-alias are not properties of the selection at all: `args.featherRadius` and `args.antiAlias` are written into the selection’s metadata at commit (`src/components/Main/FeatherMagneticLassoToolArea.tsx:401-406`) and read back in exactly one place, `copySelectionToCanvas` → `copyFeatheredPolygonSelectionToCanvas` (`src/util/selection.ts:1171-1174`), so both reach only the COPIED alpha mask — un-ticking Anti-alias softens the copy and changes nothing else on the canvas, and the Feather radius is likewise never a feather of the selection the ants are drawn from. Adobe caps its own options-bar box at 0 to 100 pixels, which is the same ceiling the app uses, so that cap was never a divergence; what is missing behind both controls is `Select > Modify > Feather`, which the app has no route to. Width is `partial` for a narrower reason than the others: the app renders a 1–64px slider (`src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:289-290`) and Adobe states the field only as “a pixel value” with no maximum, so the ceiling is the app’s own. Three of the app’s controls have no Photoshop counterpart at all: Snap, which the toolbar’s own help text describes as cursor pull toward a detected edge, Smooth, and the Preview feather outline. Alt is the one modifier this tool actually reads, and only as `magneticEnabled: !event.altKey` (`src/components/Main/FeatherMagneticLassoToolArea.tsx:468`), so the freehand-segment row above is real while the Alt-double-click straight close, the Shift/Alt/Shift+Alt combination modes and the Caps Lock, bracket, comma and period keys are all absent.',
+      'The magnetic machinery is real: Width, Contrast and Snap feed an edge detector, Frequency controls automatic fastening points, and Smooth simplifies the traced path. (1) Frequency now matches Adobe’s documented 0–100 range and direction: the app maps 0 to the longest anchor span and 100 to the shortest, so higher values anchor sooner. (2) Contrast allows 0% where Adobe’s documented range starts at 1%. (3) Feather and Anti-alias are stored in selection metadata but read only when copying the selection; unlike Photoshop, they do not affect the selection channel itself. Turning Anti-alias off leaves the copied edge aliased, and Feather does not soften the marching-ants selection. Photoshop also allows Feather after selection through Select > Modify > Feather, which this app does not provide. The app Width slider is capped at 64 px; Adobe’s current desktop guide gives no maximum, while an archived Photoshop CC 2015 reference gives 1–256 px, so current-version range parity is unverified. Snap, Smooth, and Preview Feather are app-specific controls. Alt temporarily draws a freehand segment in this app; the other combination-mode modifiers and the Caps Lock, bracket, comma and period shortcuts are not implemented.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/isolate-specific-areas-in-images-with-lasso-tool.html',
       'https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/magnetic-lasso-tool.html',
+      'https://helpx.adobe.com/archive/en/photoshop/cc/2015/photoshop_reference.pdf',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/define-feathered-edges.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
@@ -640,32 +798,39 @@ export const selectionDescriptions: Record<
       {
         control: 'New / Add To / Subtract From / Intersect With',
         detail:
-          'Four buttons that set how the next click combines with the selection already on the canvas. Holding Shift/Option or Alt/Option while clicking sets the same modes for that click.',
+          "Four buttons that set how the next click combines with the selection already on the canvas: replace it (New), union with it (Add To), subtract it (Subtract From), or keep only the overlap (Intersect With). Holding Shift/Option or Alt/Option while clicking sets the same modes for that click. The modifier bindings are per-tool in Adobe's documentation; the behaviour is identical across the wand and quick selection.",
         status: 'missing',
       },
       {
         control: 'Sample Size',
         detail:
-          'Sets how much of the image is sampled to influence selection sensitivity — point sample, or a 3 by 3 or 5 by 5 neighbourhood of the clicked pixel. A wider sample averages out noise in the sampled color at the cost of picking up more of its surroundings.',
+          'Sets how much of the image is sampled to influence selection sensitivity — point sample, or a 3 by 3 or 5 by 5 neighbourhood of the clicked pixel. A wider sample averages out noise in the sampled color at the cost of picking up more of its surroundings. The menu also includes 11×11, 31×31, 51×51, and 101×101 Average options in current Photoshop.',
         status: 'missing',
       },
       {
         control: 'Tolerance',
         detail:
-          'The range of selected color values, from 0 (narrow, exact match only) to 255 (broad). Adobe states the range and no default; the 32 default is a third-party claim, and one of the pages carrying it is Adobe’s Photoshop Elements documentation, which is a different product. A low value selects colors very similar to the pixel you click; a higher value selects a broader range either side of it.',
+          "The range of selected color values, from 0 (narrow, exact match only) to 255 (broad). Adobe states the range and no default; the 32 default is a third-party claim, and one of the pages carrying it is Adobe's Photoshop Elements documentation, which is a different product. A low value selects colors very similar to the pixel you click; a higher value selects a broader range either side of it. The app uses a 0–100 scale converted to 0–255 internally.",
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/MagicWand/MagicWand.tsx:63',
       },
       {
+        control: 'Smooth',
+        detail:
+          'Simplifies the traced boundary (0–8 px). Higher values reduce boundary complexity but can round fine details. This is an app-specific control; Photoshop does not expose Smoothing on the Magic Wand options bar.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/MagicWand/MagicWand.tsx:82',
+      },
+      {
         control: 'Anti-alias',
         detail:
-          'On by default, per the third-party and Elements pages that state it — Adobe’s current page describes the effect without naming a default. Smooths the stair-stepped edge a pixel-accurate selection leaves behind, and Adobe’s own current page on softening selection edges names this tool among those that can be anti-aliased.',
+          "On by default, per the third-party and Elements pages that state it — Adobe's current page describes the effect without naming a default. Smooths the stair-stepped edge a pixel-accurate selection leaves behind, and Adobe's own current page on softening selection edges names this tool among those that can be anti-aliased. Anti-alias applies to the selection channel.",
         status: 'missing',
       },
       {
         control: 'Contiguous',
         detail:
-          'On by default, on the same third-party and Elements authority rather than an Adobe desktop sentence. When selected, only adjacent areas of similar color are taken; when deselected, every pixel using the same colors is selected throughout the entire image.',
+          'On by default, on the same third-party and Elements authority rather than an Adobe desktop sentence. When selected, only adjacent areas of similar color are taken; when deselected, every pixel using the same colors is selected throughout the entire image. The app implements 4-connected contiguity.',
         status: 'present',
         appRef: 'src/components/ToolbarsRight/MagicWand/MagicWand.tsx:77',
       },
@@ -678,7 +843,7 @@ export const selectionDescriptions: Record<
       {
         control: 'Feather',
         detail:
-          'Pixel radius, default 0, set before the click — but this row is version-dependent and the record says so rather than picking a side. Adobe’s current desktop page on softening selection edges (updated 2026-02-23) lists the tools that can be feathered and the wand is **not** among them, and an Adobe mobile page names Anti-alias, Contiguous and Tolerance for this tool with no Feather, while a third-party tutorial of the Photoshop CS era labels the control "Feather (Lasso Tool Only)". Against that, Adobe’s own **mobile** page for this tool (updated 2025-07-02) says to "access the more menu and adjust the **Feather** slider to define the feathering width as needed", and the UXP `Selection` reference has a `feather` argument defaulting to 0 on the selection-creating calls. The desktop bar as documented in 2025–2026 carries no Feather; whether it did in an earlier release is what the record cannot settle, and the unverified entry in the family notes names the page that came closest.',
+          'Pixel radius, default 0, set before the click — but this row is version-dependent and the record says so rather than picking a side. Adobe\'s current desktop page on softening selection edges (updated 2026-02-23) lists the tools that can be feathered and the wand is **not** among them, and an Adobe mobile page names Anti-alias, Contiguous and Tolerance for this tool with no Feather, while a third-party tutorial of the Photoshop CS era labels the control "Feather (Lasso Tool Only)". Against that, Adobe\'s own **mobile** page for this tool (updated 2025-07-02) says to "access the more menu and adjust the **Feather** slider to define the feathering width as needed", and the UXP `Selection` reference has a `feather` argument defaulting to 0 on the selection-creating calls. The desktop bar as documented in 2025–2026 carries no Feather; whether it did in an earlier release is what the record cannot settle, and the unverified entry in the family notes names the page that came closest.',
         status: 'missing',
       },
       {
@@ -691,24 +856,31 @@ export const selectionDescriptions: Record<
     modifiers: [
       {
         keys: 'Shift',
-        action: 'Clicking with Shift held adds the clicked region to the current selection for that click.',
+        action:
+          'Clicking with Shift held adds the clicked region to the current selection for that click. If pressed after the click, has no effect on that click.',
       },
       {
         keys: 'Alt',
-        action: 'Clicking with Alt held subtracts the clicked region from the current selection for that click.',
+        action:
+          'Clicking with Alt held subtracts the clicked region from the current selection for that click. If pressed after the click, has no effect on that click.',
       },
       {
         keys: 'Shift+Alt',
-        action: 'Clicking with both held keeps only the overlap between the clicked region and the current selection.',
+        action:
+          'Clicking with both held keeps only the overlap between the clicked region and the current selection. If pressed after the click, has no effect on that click.',
       },
     ],
     shortcuts: [
       {
         keys: 'W',
         action:
-          'Selects the Magic Wand. The wand and the Quick Selection share W, so pressing it again re-selects this one rather than cycling; Shift+W is the cycling key.',
+          'Selects the Magic Wand. The wand and the Quick Selection share W, so pressing it again re-selects this one rather than cycling; Shift+W is the cycling key. With no document open, W has no effect.',
       },
-      { keys: 'Shift+W', action: 'Switches between the Magic Wand and the Quick Selection tools.' },
+      {
+        keys: 'Shift+W',
+        action:
+          'Switches between the Magic Wand and the Quick Selection tools. With no document open, Shift+W has no effect.',
+      },
     ],
     implementation: 'partial',
     implementationRefs: [
@@ -764,6 +936,13 @@ export const selectionDescriptions: Record<
         appRef: 'src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:111',
       },
       {
+        control: 'Tolerance',
+        detail:
+          'The color similarity threshold (0–100%). Higher values include more color variation in the selection expansion. This is an app-specific control; Photoshop does not expose Tolerance on the Quick Selection options bar.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:129',
+      },
+      {
         control: 'Select and Mask',
         detail:
           'Opens the Select and Mask workspace, where the result is refined with a Refine Edge Brush for soft edges such as hair or fur, a plain Brush to add and remove by hand, and Radius, Smart Radius, Smooth, Feather, Contrast, Shift Edge and Decontaminate Colors in the Properties panel, then output as a selection, a layer mask, a new layer or a new document. This tool\'s own page ends by naming it: "Select Select and Mask to refine the selection further."',
@@ -783,16 +962,38 @@ export const selectionDescriptions: Record<
       },
     ],
     modifiers: [
-      { keys: 'Shift', action: 'Temporarily adds the painted area to the existing selection while brushing.' },
-      { keys: 'Alt', action: 'Alt/Option temporarily subtracts the painted area while brushing.' },
+      {
+        keys: 'Shift',
+        action:
+          'Temporarily adds the painted area to the existing selection while brushing. If released before the brush stroke ends, reverts to the bar mode.',
+      },
+      {
+        keys: 'Alt',
+        action:
+          'Alt/Option temporarily subtracts the painted area while brushing. If released before the brush stroke ends, reverts to the bar mode.',
+      },
     ],
     shortcuts: [
       {
         keys: 'W',
         action:
-          'Selects the Quick Selection. The wand and the Quick Selection share W, so pressing it again re-selects this one rather than cycling; Shift+W is the cycling key.',
+          'Selects the Quick Selection. The wand and the Quick Selection share W, so pressing it again re-selects this one rather than cycling; Shift+W is the cycling key. With no document open, W has no effect.',
       },
-      { keys: 'Shift+W', action: 'Switches between the Magic Wand and the Quick Selection tools.' },
+      {
+        keys: 'Shift+W',
+        action:
+          'Switches between the Magic Wand and the Quick Selection tools. With no document open, Shift+W has no effect.',
+      },
+      {
+        keys: '[',
+        action:
+          'Decreases the brush size; with Shift, drops it to the minimum. With no document open, [ has no effect.',
+      },
+      {
+        keys: ']',
+        action:
+          'Increases the brush size; with Shift, raises it to the maximum. With no document open, ] has no effect.',
+      },
     ],
     implementation: 'partial',
     implementationRefs: [
