@@ -92,7 +92,8 @@ with coordinator-owned work that does not require paid inference.
 - Photoshop behavior, UX and non-trivial algorithms require Adobe or other primary-source
   research. Record source URLs, versions and unresolved claims in a research note or handoff.
 - Every non-trivial implementation requires a fresh read-only code review per
-  `docs/CODE-REVIEW.md` § "Review a subagent change" for the review brief; format findings with file paths and identifiers per `AGENTS.md`, without line numbers;
+  `docs/CODE-REVIEW.md` § "The prompt"; format each finding as a file path plus a symbol, test
+  name, heading, or unique matched phrase, with evidence and no source line number, per `AGENTS.md`;
   cross-module, persistence/migration, architecture-boundary and broad-regression changes require
   two reviewers split by concern. Fix and re-review blocking findings. See also
   `docs/ORCHESTRATION.md#the-task-lifecycle`.
@@ -265,7 +266,8 @@ For each selected issue:
    `docs/TESTING.md#gates` for commands and known failures. No broad or E2E suites by default.
 5. **Review**: `git diff main...HEAD` for unintended behavior, stale references, missing surfaces,
    out-of-scope changes. Complex task → a fresh read-only review subagent per `docs/CODE-REVIEW.md`
-   § "Review a subagent change" for the review brief; format findings with file paths and identifiers per `AGENTS.md`, without line numbers; cross-module/architecture
+   § "The prompt"; format each finding as a file path plus a symbol, test name, heading, or unique
+   matched phrase, with evidence and no source line number, per `AGENTS.md`; cross-module/architecture
    boundary changes → two reviewers split by concern. Fix and re-review blocking findings.
 6. **Commit**: update any verified-fixed `HANDOFF.md` entry per that document's retirement rules.
    Resolve the current host's chat ID using `docs/CHAT-ID.md`, stage only the reviewed paths, and
