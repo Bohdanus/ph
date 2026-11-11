@@ -22,7 +22,7 @@ const DEFAULT_FILE = resolve(
   process.env.FREE_MODEL_QUARANTINE_FILE || `${PROJECT_ROOT}/.kilo/free-model-quarantine.json`
 );
 const EMPTY_STATE = () => ({ schemaVersion: 1, entries: {} });
-const INITIAL_QUARANTINES = [
+const MIGRATION_V2_QUARANTINES = [
   { source: 'openrouter', model: 'thinkingmachines/inkling-small:free', reason: 'model_unavailable' },
   { source: 'openrouter', model: 'google/gemma-4-31b-it:free', reason: 'rate_limit' },
   { source: 'openrouter', model: 'xingchen-agi/xing4.0-29b-a4b:free', reason: 'rate_limit' },
@@ -30,6 +30,11 @@ const INITIAL_QUARANTINES = [
   { source: 'kilo', model: 'kilo-auto/free', reason: 'poor_performance' },
   { source: 'kilo', model: 'nvidia/nemotron-3.5-super-vl:free', reason: 'poor_performance' },
   { source: 'kilo', model: 'recursive/flint-v1.0:free', reason: 'poor_performance' },
+];
+const MIGRATION_V3_QUARANTINES = [
+  { source: 'kilo', model: 'nvidia/nemotron-3-ultra-550b-a55b:free', reason: 'poor_performance' },
+  { source: 'openrouter', model: 'nvidia/nemotron-3-ultra-550b-a55b:free', reason: 'poor_performance' },
+  { source: 'opencode', model: 'nvidia/nemotron-3-ultra-550b-a55b:free', reason: 'poor_performance' },
 ];
 
 const KILO_NEMOTRON_3_ULTRA_ID = 'nvidia/nemotron-3-ultra-550b-a55b';
@@ -57,8 +62,11 @@ export function validateQuarantineState(state) {
   if (!state.entries || typeof state.entries !== 'object' || Array.isArray(state.entries)) {
     throw new Error('Free-model quarantine entries must be an object');
   }
-  if (state.migration_v2 !== undefined && typeof state.migration_v2 !== 'boolean') {
-    throw new Error('Free-model quarantine migration marker must be boolean');
+  if (
+    (state.migration_v2 !== undefined && typeof state.migration_v2 !== 'boolean') ||
+    (state.migration_v3 !== undefined && typeof state.migration_v3 !== 'boolean')
+  ) {
+    throw new Error('Free-model quarantine migration markers must be boolean');
   }
   for (const [key, entry] of Object.entries(state.entries)) {
     if (
@@ -103,24 +111,33 @@ export async function loadQuarantineState(filePath = DEFAULT_FILE, now = Date.no
     await stat(filePath);
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
-    const state = EMPTY_STATE();
-    for (const { source, model, reason } of INITIAL_QUARANTINES) {
-      upsertQuarantine(state, { source, model, reason, hours: MAX_QUARANTINE_HOURS, now });
-    }
-    state.migration_v2 = true;
+    const state = migrateQuarantineState(EMPTY_STATE(), now);
     await writeQuarantineStateIfAbsent(state, filePath);
     return readQuarantineState(filePath);
   }
   return withQuarantineWriteLock(filePath, async (saveState) => {
     const state = await readQuarantineState(filePath);
-    if (state.migration_v2 === true) return state;
-    for (const { source, model, reason } of INITIAL_QUARANTINES) {
-      upsertQuarantine(state, { source, model, reason, hours: MAX_QUARANTINE_HOURS, now });
-    }
-    state.migration_v2 = true;
+    if (state.migration_v2 === true && state.migration_v3 === true) return state;
+    migrateQuarantineState(state, now);
     await saveState(state);
     return state;
   });
+}
+
+function migrateQuarantineState(state, now) {
+  if (state.migration_v2 !== true) {
+    for (const { source, model, reason } of MIGRATION_V2_QUARANTINES) {
+      upsertQuarantine(state, { source, model, reason, hours: MAX_QUARANTINE_HOURS, now });
+    }
+    state.migration_v2 = true;
+  }
+  if (state.migration_v3 !== true) {
+    for (const { source, model, reason } of MIGRATION_V3_QUARANTINES) {
+      upsertQuarantine(state, { source, model, reason, hours: MAX_QUARANTINE_HOURS, now });
+    }
+    state.migration_v3 = true;
+  }
+  return state;
 }
 
 async function writeQuarantineStateIfAbsent(state, filePath) {
@@ -143,11 +160,8 @@ async function writeQuarantineStateIfAbsent(state, filePath) {
 export async function loadQuarantineStateLocked(filePath = DEFAULT_FILE, now = Date.now()) {
   validateEpochMilliseconds(now);
   const state = await readQuarantineState(filePath);
-  if (state.migration_v2 === true) return state;
-  for (const { source, model, reason } of INITIAL_QUARANTINES) {
-    upsertQuarantine(state, { source, model, reason, hours: MAX_QUARANTINE_HOURS, now });
-  }
-  state.migration_v2 = true;
+  if (state.migration_v2 === true && state.migration_v3 === true) return state;
+  migrateQuarantineState(state, now);
   await writeQuarantineStateUnlocked(state, filePath);
   return state;
 }

@@ -62,16 +62,14 @@ with coordinator-owned work that does not require paid inference.
   `schedule_wakeup`: it fires once and will not re-arm itself if the chat
   dies. If cron creation returns an actual error, report it and use the normal operator recovery
   path rather than silently switching to a one-shot wake.
-- Model routing (read `MODELS.md` first): the preferred free route is NVIDIA Nemotron 3 Ultra,
-  model `nvidia/nemotron-3-ultra-550b-a55b:free`, provider `kilo`, variant `high`. Verify against the live catalog with
-  `node scripts/free-model-pool.mjs --list` and the 200 req/hour ceiling (MODELS.md). For bounded
-  single-model calls, use
-  `node scripts/free-model-pool.mjs --prompt-file PATH --output-file PATH --max-tokens N` to keep
-  large responses out of context. The runner uses the authenticated Kilo Code CLI, discovers it
-  from `PATH` or the editor extension, and gives it a tool-denied profile; do not replace it with
-  direct Kilo Gateway HTTP inference. Nemotron inference can take twelve minutes; other models
-  can take five, separately from catalog and quota checks. Never launch GPT (Luna/Terra/Sol)
-  subagents from a free session.
+- Model routing (read `MODELS.md` first): Nemotron models are disabled across providers and must not
+  be selected directly or assigned to subagents. Refresh eligible routes with
+  `node scripts/free-model-pool.mjs --list`; use a currently verified free model/provider pair and
+  never switch silently to paid inference. For bounded single-model calls, use
+  `node scripts/free-model-pool.mjs --prompt-file PATH --output-file PATH --max-tokens N`. The runner
+  uses the authenticated Kilo Code CLI with a tool-denied profile; do not replace it with direct
+  Kilo Gateway HTTP inference. Completion routes have a five-minute timeout, separately from
+  catalog and quota checks. Never launch GPT (Luna/Terra/Sol) subagents from a free session.
   Always pass `model` and `provider` together so a named paid model does not fall back to the
   zero-token gateway. Before and after a large OpenRouter-backed fan-out, run
   `node scripts/free-model-pool.mjs --openrouter-quota`; its server-side daily counter is
@@ -171,10 +169,9 @@ initial template to the actual request, preserving its scope and constraints.
 
 > do rigorous overnight hardening of the project. Reconstruct and understand issues in great
 > detail using docs, code, chat transcripts. Fan out bounded free read-only subagents to do deep research:
-> scan large amounts of docs, code, transcripts, do websearch, etc. Use the catalog entry
-> NVIDIA Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b:free`, provider `kilo`, variant `high`) heavily for broad
-> investigations when they appear in the refreshed free catalog; otherwise rotate to another
-> verified zero-priced model/provider or pause when none is available. Take most complex and
+> scan large amounts of docs, code, transcripts, do websearch, etc. Nemotron models are disabled
+> across providers; use another exact-zero model/provider from the refreshed catalog or pause when
+> none is available. Take most complex and
 > prioritised issues first. This must be long running
 > overnight autonomous session. Most likely points of failure: (1) llm decides task is done while
 > it should keep going; (2) free-model capacity might become temporarily unavailable; (3) other unknown

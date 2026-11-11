@@ -72,10 +72,10 @@ host's permission boundary.
   substitute `schedule_wakeup`: it fires once and will not re-arm itself if the chat dies. If
   cron creation returns an actual error, report it and use the normal operator recovery path
   rather than silently switching to a one-shot wake.
-- Model routing (read MODELS.md first): prefer NVIDIA Nemotron 3 Ultra
-  (`nvidia/nemotron-3-ultra-550b-a55b:free`), provider `kilo`, variant `high`. Verify against the live catalog with
-  `node scripts/free-model-pool.mjs --list` and the 200 req/hour ceiling (MODELS.md). For
-  bounded single-model calls, use
+- Model routing (read MODELS.md first): Nemotron models are disabled across providers; do not
+  select them directly or assign them to subagents. Refresh the live catalog with
+  `node scripts/free-model-pool.mjs --list`, and use only a currently verified free model/provider
+  pair. For bounded single-model calls, use
   `node scripts/free-model-pool.mjs --prompt-file PATH --output-file PATH --max-tokens N` to
   keep large responses out of context. Never launch GPT (Luna/Terra/Sol) subagents from a free
   session. Always pass `model` and `provider` together so a named paid model does not fall
@@ -197,10 +197,9 @@ initial template to the actual request, preserving its scope and constraints.
 > codebase. Fan out bounded **free read-only** subagents (`explore` role, writes/shell/git
 > denied) to do deep research: scan CI logs, read specs/helpers, audit coordinate handling,
 > survey chat transcripts. Keep the coordinator's own context lean by persisting wave results
-> to `.kilo/plans/` before each dispatch. Prefer NVIDIA Nemotron 3 Ultra
-> (`nvidia/nemotron-3-ultra-550b-a55b:free`, provider `kilo`, variant `high`) for broad investigations when it
-> appears in the refreshed free catalog; otherwise rotate to another verified zero-priced
-> model/provider or pause when none is available. Resume hourly via `cron_create` with
+> to `.kilo/plans/` before each dispatch. Nemotron models are disabled across providers. Use another
+> verified zero-priced model/provider from the refreshed catalog or pause when none is available.
+> Resume hourly via `cron_create` with
 > `cron: "0 * * * *"` and the resumer prompt below. Take most complex and prioritised issues
 > first. This must keep running and resume hourly until told to stop. The context-budget
 > discipline is critical: never read a full CI log or spec in the coordinator; always point a

@@ -188,11 +188,12 @@ Supported sources are `kilo`, `openrouter`, `groq`, and `opencode`. The quaranti
 provider/model routes; it does not imply that every provider exposes a quota preflight. This runner
 currently reads the daily free-model counter for OpenRouter.
 Supported reasons are `rate_limit`, `provider_outage`, `model_unavailable`,
-`poor_performance`, and `non_zero_cost`. Never automatically quarantine the Kilo
-Nemotron 3 Ultra route; its quarantine is operator-managed per `MODELS.md`. On first use,
-the state file imports the three previously hard-coded Kilo quarantine entries with the
-168-hour maximum expiry; this preserves their current exclusion
-briefly while making them eligible for review instead of keeping them banned forever.
+`poor_performance`, and `non_zero_cost`. Nemotron models are disabled by the shared model policy,
+independent of quarantine state; do not request them through a provider CLI or assign them to
+subagents. Re-enable only after an explicit operator request and review of the code and documentation.
+On first use, the state file imports the three previously hard-coded Kilo quarantine entries with
+the 168-hour maximum expiry. Migration v3 also seeds the canonical Nemotron 3 Ultra route on Kilo,
+OpenRouter, and OpenCode for 168 hours. These entries do not override disabled-model policy.
 The default file is the project-shared `.kilo/free-model-quarantine.json`, including when
 the command runs from a managed worktree; `FREE_MODEL_QUARANTINE_FILE` overrides it.
 Mutating commands take an adjacent exclusive lock and fail fast if another writer owns it.
@@ -231,13 +232,12 @@ expire after seven days, so the owning active session/goal must renew them as ne
 Serialize quarantine mutations through the CLI lock; if a schedule collides with another
 writer, retry on a later pass.
 
-## Nemotron reasoning
+## Disabled model families
 
-The free-model runner prefers `nvidia/nemotron-3-ultra-550b-a55b:free` on Kilo and OpenRouter
-when the live catalog verifies it as free. Kilo uses its `high` variant through the Kilo CLI.
-OpenRouter receives the model's completion-token budget through `max_tokens`; the runner does not
-send Kilo's variant flag to OpenRouter. The Kilo Nemotron 3 Ultra quarantine remains
-operator-managed; automatic cost or failure handling must not quarantine that route.
+Nemotron is disabled across Kilo, OpenRouter, OpenCode, and Groq. The shared runner filters IDs and
+catalog names containing `Nemotron`; Kilo and OpenCode adapters reject matching direct IDs, and
+the validator blocks the family before catalog checks or child launch. This policy is independent
+of the seven-day quarantine mechanism and remains in force after any quarantine entry expires.
 
 ## References
 
