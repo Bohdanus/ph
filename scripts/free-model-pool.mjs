@@ -701,7 +701,7 @@ function hasTypedOpenRouterUpstreamError(payload) {
 }
 
 function hasUpstreamProviderMetadata(payload) {
-  const metadata = [...responseErrorObjects(payload).map((error) => error.metadata), payload?.metadata];
+  const metadata = responseErrorObjects(payload).map((error) => error.metadata);
   return metadata.some(
     (entry) =>
       entry &&
