@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1185,38 +1186,64 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
 
   it('kills the OpenCode process tree after a timeout', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const parentPidFile = join(directory, 'opencode.pid');
     const pidFile = join(directory, 'descendant.pid');
+    const parentSentinel = join(directory, 'opencode-survived');
     const sentinel = join(directory, 'descendant-survived');
     // The timeout starts at spawn, so let both Node processes start under a busy Vitest worker.
     const timeoutMs = 5_000;
     const sentinelDelayMs = timeoutMs + 5_000;
     const descendantScript = [
       "process.on('SIGTERM', () => {});",
-      `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'), ${sentinelDelayMs});`,
+      `setTimeout(() => { try { require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'); } finally { process.exit(0); } }, ${sentinelDelayMs});`,
       'setInterval(() => {}, 1000);',
     ].join(' ');
     const command = await writeFakeOpenCode(
       directory,
-      `const { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nconst descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' });\nfs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));\nsetInterval(() => {}, 1000);\n`
+      `const { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nfs.writeFileSync(${JSON.stringify(parentPidFile)}, String(process.pid));\nconst descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' });\nfs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));\nsetTimeout(() => { try { fs.writeFileSync(${JSON.stringify(parentSentinel)}, 'alive'); } finally { process.exit(0); } }, ${sentinelDelayMs});\nsetInterval(() => {}, 1000);\n`
     );
+    let parentPid;
     let descendantPid;
+    let completionSettled = false;
+    let cleanupGuard;
+    const completion = runOpenCodeCompletion({
+      command,
+      model: 'beam-free',
+      prompt: 'prompt',
+      maxTokens: 8,
+      timeoutMs,
+    }).finally(() => {
+      completionSettled = true;
+    });
+    const completionGuard = new Promise((_, reject) => {
+      // A broken tree killer must fail this test soon enough for finally to clean up its fixtures.
+      cleanupGuard = setTimeout(
+        () => reject(new Error('OpenCode timeout test did not close its child process')),
+        timeoutMs + 15_000
+      );
+    });
 
     try {
-      await expect(
-        runOpenCodeCompletion({
-          command,
-          model: 'beam-free',
-          prompt: 'prompt',
-          maxTokens: 8,
-          timeoutMs,
-        })
-      ).rejects.toThrow(`OpenCode timed out after ${timeoutMs}ms`);
+      await expect(Promise.race([completion, completionGuard])).rejects.toThrow(
+        `OpenCode timed out after ${timeoutMs}ms`
+      );
+      clearTimeout(cleanupGuard);
+      parentPid = Number(await readFile(parentPidFile, 'utf8'));
       descendantPid = Number(await readFile(pidFile, 'utf8'));
       // Observe past the latest time the live descendant could create its sentinel.
       await new Promise((resolve) => setTimeout(resolve, sentinelDelayMs + 1_000));
       expect(existsSync(sentinel)).toBe(false);
+      expect(existsSync(parentSentinel)).toBe(false);
     } finally {
+      clearTimeout(cleanupGuard);
       try {
+        if (!Number.isSafeInteger(parentPid) || parentPid <= 0) {
+          try {
+            parentPid = Number(await readFile(parentPidFile, 'utf8'));
+          } catch (error) {
+            if (error?.code !== 'ENOENT') throw error;
+          }
+        }
         if (!Number.isSafeInteger(descendantPid) || descendantPid <= 0) {
           try {
             descendantPid = Number(await readFile(pidFile, 'utf8'));
@@ -1224,19 +1251,53 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
             if (error?.code !== 'ENOENT') throw error;
           }
         }
-        if (Number.isSafeInteger(descendantPid) && descendantPid > 0) {
-          try {
-            // The fake descendant ignores SIGTERM; force it down on every assertion path.
-            process.kill(descendantPid, 'SIGKILL');
-          } catch (error) {
-            if (error?.code !== 'ESRCH') throw error;
+        if (!completionSettled && Number.isSafeInteger(parentPid) && parentPid > 0) {
+          if (process.platform === 'win32') {
+            const result = spawnSync('taskkill.exe', ['/PID', String(parentPid), '/T', '/F'], {
+              encoding: 'utf8',
+              maxBuffer: 4_096,
+              timeout: 5_000,
+              windowsHide: true,
+            });
+            if (result.status !== 0) {
+              try {
+                process.kill(parentPid, 'SIGKILL');
+              } catch (error) {
+                if (error?.code !== 'ESRCH') throw error;
+              }
+            }
+          } else {
+            try {
+              // The runner starts OpenCode in its own process group on POSIX.
+              process.kill(-parentPid, 'SIGKILL');
+            } catch (error) {
+              if (error?.code !== 'ESRCH') throw error;
+            }
           }
         }
       } finally {
-        await rm(directory, { recursive: true, force: true });
+        try {
+          if (!Number.isSafeInteger(descendantPid) || descendantPid <= 0) {
+            try {
+              descendantPid = Number(await readFile(pidFile, 'utf8'));
+            } catch (error) {
+              if (error?.code !== 'ENOENT') throw error;
+            }
+          }
+          if (Number.isSafeInteger(descendantPid) && descendantPid > 0 && !existsSync(sentinel)) {
+            try {
+              // The fake descendant ignores SIGTERM; force it down on every assertion path.
+              process.kill(descendantPid, 'SIGKILL');
+            } catch (error) {
+              if (error?.code !== 'ESRCH') throw error;
+            }
+          }
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
       }
     }
-  }, 25_000);
+  }, 30_000);
 
   it.each([
     [
