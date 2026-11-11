@@ -1,6 +1,6 @@
 # Nemotron disablement — unproven for landing
 
-**Status:** Unproven; do not merge until two independent read-only reviews are complete and landing preflight is clear.
+**Status:** Unproven; do not merge until two independent read-only reviews cover the synchronized candidate and landing preflight is clear.
 
 **Branch:** `task/nemotron-quarantine-hardening-20261111`
 
@@ -11,6 +11,8 @@
 **Implementation commit:** `fe245f0af272d2c5de3ed185b66d5760a32cda98`
 
 **Implementation tree:** `a090a0721e0c37ff8d52de8f83a8e5e9e501ac16`
+
+**Synchronized with main:** `85a71c35d0f897a828c1363f4d0ca286417b101c` in merge commit `ae3d8f8db`
 
 ## Candidate behavior
 
@@ -34,20 +36,20 @@ The shared ignored quarantine file was migrated on 2026-11-11. Those three entri
 ## Remaining blockers
 
 `docs/CODE-REVIEW.md` requires two independent read-only reviews for this cross-module quarantine
-migration. No complete review response was obtained. The latest exact-zero attempts returned two
-OpenRouter HTTP 429 errors and one empty completion with `finish_reason=length`; earlier attempted
-free routes also failed or were denied by their read-only profile. No incomplete response is review
-evidence, and no paid reviewer was used.
+migration. Two paid reviewers returned no actionable findings on the pre-sync candidate
+`80c3573399d5d4f286497ebc8e0063ae45dea6ab` (tree
+`931971900b52fff4c3ff2092a5fd48d924f118a8`). Their reviews do not cover the synchronized candidate;
+review the final diff before landing.
 
-`npm run repo:state` currently reports five other worktrees in `AUTO_MERGE`; the live swarm check
-reports their claims as active. Do not inspect, repair, or clean those operations. The designated
-main landing checkout itself reports no owner record or Git operation, but the full repository
-preflight must be clear before landing.
+At the last preflight, `npm run repo:state` reported five other worktrees in `AUTO_MERGE`; the live
+swarm check reported their claims as active. Do not inspect, repair, or clean those operations. The
+designated main landing checkout itself reported no owner record or Git operation, but the full
+repository preflight must be clear before landing.
 
 ## Resume
 
-Obtain two independent read-only reviews of the exact candidate. After any review fixes, rerun the
-focused suite and project gates and review the final candidate again. Recheck `repo:state`, branch
-ownership, and `npm run main:landing -- status`; sync and land only through the pinned landing
+Obtain two independent read-only reviews of the exact synchronized candidate. After any review
+fixes, rerun the focused suite and project gates and review the final candidate again. Recheck
+`repo:state`, branch ownership, and `npm run main:landing -- status`; land only through the pinned
 workflow in `docs/ORCHESTRATION.md` when all active worktree operations are resolved by their
-owners.
+owners. Then resume documented project hardening from the current handoff and problem list.
