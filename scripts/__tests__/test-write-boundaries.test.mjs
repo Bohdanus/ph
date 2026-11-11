@@ -37,6 +37,10 @@ const REVIEWED = {
     scope: 'Baseline and report fixtures use unique OS temporary directories.',
     patterns: `filesystem-write:mkdtemp=2 filesystem-write:mkdir=4 filesystem-write:writeFile=3 filesystem-write:rm=2`,
   },
+  'e2e-timeout-contract.test.mjs': {
+    scope: 'Read-only workflow and Playwright config checks; no filesystem writes, subprocesses or databases.',
+    patterns: '',
+  },
   'find-session-id.test.mjs': {
     scope: 'Database and file fixtures live under unique OS temporary directories.',
     patterns: `database-open:DatabaseSync:write-capable=2 filesystem-write:mkdtempSync=18 filesystem-write:rmSync=18`,
