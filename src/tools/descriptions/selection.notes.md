@@ -1,9 +1,11 @@
 # Selection family — research notes
 
-The seven `ToolName`s in this family are the selection tools, and they share a shape that is
-worth stating once rather than seven times: in Photoshop every one of them carries the same
-four-mode combination control in its options bar, and four of the five that draw a border also
-carry the same Feather and Anti-alias pair. The UXP scripting reference makes the reason
+The nine `ToolName`s in this family are the selection tools, and they share a shape that is
+worth stating once rather than nine times: Photoshop provides selection-combination controls on
+these tools, though the current sources leave Quick Selection's Intersect button unresolved.
+Five of the nine draw a border; the current desktop guide explicitly lists Feather for the
+Rectangular Marquee and three Lasso tools, and Anti-alias for the Elliptical Marquee, three Lasso
+tools and Magic Wand. The UXP scripting reference makes the reason
 explicit — `Selection` is a pixel channel, not a vector, so `selectRectangle`, `selectEllipse`
 and `selectPolygon` each take a `feather` (default `0`) and an `antiAlias` (default `true`)
 argument, and each takes a `SelectionType` of `REPLACE`, `EXTEND`, `SUBTRACT` or `INTERSECT`
@@ -63,7 +65,7 @@ at `/Users/bkalynovskyi/ph/.kilo/plans/ps-research/` was read first and used as 
 index, but nothing was transcribed from it: where it disagrees with what a live source said
 this pass, the source wins, and the two places it loses are recorded at the end.
 
-## What is true of all seven
+## What is true of all nine
 
 - **Combination modes.** `New / Add To / Subtract From / Intersect With` appears on the marquee
   tools, the lasso tools and the Magic Wand. The current Quick Selection page lists three — New,
@@ -74,7 +76,7 @@ this pass, the source wins, and the two places it loses are recorded at the end.
   A grep for `shiftKey|altKey|metaKey|ctrlKey` across `src/components/Main/*.tsx` returns
   production hits in `CloneStampToolArea`, `EllipticalSelectionToolArea`,
   `FeatherMagneticLassoToolArea`, `RectangularSelectionToolArea`, `ShapeToolArea` and
-  `TextToolArea` only. Of the seven tools here, that leaves exactly three whose `modifiers[]`
+  `TextToolArea` only. Of the nine tools here, that leaves exactly three whose `modifiers[]`
   rows describe anything real: the rectangular marquee (Shift → square, Alt → from centre,
   `RectangularSelectionToolArea.tsx` asking for both in its `useRect` call and
   `useRect.ts` — `sampleFreshDragModifiers()` — sampling them per pointer event), the elliptical
@@ -127,8 +129,8 @@ this pass, the source wins, and the two places it loses are recorded at the end.
   (2025-10-27, last updated 2026-02-23), which says flatly that "Selecting Select and Mask from
   the options bar or from Select > Select and Mask gives you access to dedicated tools for refining
   edges" and frames the whole page around it — a page whose subject is the options bar itself.
-  It is therefore recorded as a `missing` control on all seven tools rather than on the one whose
-  own page happens to name it. The seven-tool generalization no longer rests on the 2022
+  It is therefore recorded as a `missing` control on all nine tools rather than on the one whose
+  own page happens to name it. The nine-tool generalization no longer rests on the 2022
   sentence alone; see the Quick Selection section. The workspace it opens is documented by Adobe
   (`refine-your-selection-and-mask.html`, last updated February 2026) as carrying a Refine Edge
   Brush for soft edges, a plain Brush for manual work, View Modes of `On Black`, `On White`,
@@ -180,7 +182,7 @@ from the center.
 | Control                                       | Photoshop                                                                 | App status | App ref                                                           |
 | --------------------------------------------- | ------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------- |
 | New / Add To / Subtract From / Intersect With | four modes, also Shift/Alt/Shift+Alt                                      | `missing`  | —                                                                 |
-| Feather                                       | pixel radius, default 0, set before the selection                         | `missing`  | —                                                                 |
+| Feather                                       | pixel radius, default 0; can also be applied after the selection          | `missing`  | —                                                                 |
 | Style                                         | Normal / Fixed Ratio / Fixed Size                                         | `partial`  | `RectangularSelection.tsx` — the `Style` select                   |
 | Width and Height                              | decimal pair for Fixed Ratio, whole pixels for Fixed Size, units accepted | `partial`  | `RectangularSelection.tsx` — `Ratio`, `Width` and `Height` inputs |
 | Select and Mask                               | on every selection tool's bar                                             | `missing`  | —                                                                 |
@@ -376,18 +378,20 @@ small gaps between your end point and starting point".
 
 ### Options table
 
-| Control                                       | Photoshop                     | App status | App ref |
-| --------------------------------------------- | ----------------------------- | ---------- | ------- |
-| New / Add To / Subtract From / Intersect With | four modes                    | `missing`  | —       |
-| Feather                                       | pixel radius, default 0       | `missing`  | —       |
-| Anti-alias                                    | on by default                 | `missing`  | —       |
-| Select and Mask                               | on every selection tool's bar | `missing`  | —       |
+| Control                                       | Photoshop                     | App status | App ref                    |
+| --------------------------------------------- | ----------------------------- | ---------- | -------------------------- |
+| New / Add To / Subtract From / Intersect With | four modes                    | `missing`  | —                          |
+| Feather                                       | pixel radius, default 0       | `inert`    | rendered, but not consumed |
+| Anti-alias                                    | on by default                 | `inert`    | rendered, but not consumed |
+| Select and Mask                               | on every selection tool's bar | `missing`  | —                          |
 
-**App fidelity: partial.** No Photoshop control is on this bar. The one control it does render
-is labelled `Mode` and toggles between `Outline` and `Fill`; that is the app's own invention
-and it changes how the committed border is painted, not how a gesture combines with an existing
-selection — so it shares a name with the thing it is not. `LassoToolArgs` carries `alpha`,
-`lineWidth`, `color` and `fill`, none of which Photoshop puts on this bar.
+**App fidelity: partial.** The bar renders `Feather` and `Anti-alias`, but the freehand lasso
+processor and copy path do not consume their args, so both controls are inert. Its `Mode` toggle
+switches between `Outline` and `Fill`; that is the app's own invention and changes how the
+committed border is painted, not how a gesture combines with an existing selection. The bar also
+has Copy, Paste and Deselect buttons, while the app has no Photoshop selection-combination modes.
+`LassoToolArgs` carries `alpha`, `lineWidth`, `color` and `fill`, none of which Photoshop puts on
+this bar.
 
 **Shortcut gap.** With the Lasso tool selected, `Return` (macOS) / `Enter` (Windows) highlights
 the `Feather` field so a feather can be set before the next trace. This behavior is described by
@@ -423,19 +427,20 @@ Alt/Option-double-click belongs to the Magnetic Lasso and remains documented the
 
 ### Options table
 
-| Control                                       | Photoshop                                                         | App status | App ref |
-| --------------------------------------------- | ----------------------------------------------------------------- | ---------- | ------- |
-| New / Add To / Subtract From / Intersect With | four modes                                                        | `missing`  | —       |
-| Feather                                       | pixel radius, default 0                                           | `missing`  | —       |
-| Anti-alias                                    | on by default; visible effect only on Alt-drawn freehand segments | `missing`  | —       |
-| Select and Mask                               | on every selection tool's bar                                     | `missing`  | —       |
+| Control                                       | Photoshop                                                         | App status | App ref                    |
+| --------------------------------------------- | ----------------------------------------------------------------- | ---------- | -------------------------- |
+| New / Add To / Subtract From / Intersect With | four modes                                                        | `missing`  | —                          |
+| Feather                                       | pixel radius, default 0                                           | `inert`    | rendered, but not consumed |
+| Anti-alias                                    | on by default; visible effect only on Alt-drawn freehand segments | `inert`    | rendered, but not consumed |
+| Select and Mask                               | on every selection tool's bar                                     | `missing`  | —                          |
 
 **App fidelity: partial**, and this is the most _gesturally_ faithful tool in the family — the
 click-to-add-anchor, double-click close, right-click close, `Enter` close, `Delete` anchor
 removal and `Escape` abort are all registered in `PolygonClickToolArea` — against the
-least complete bar. The bar is forty lines: one Outline/Fill toggle and a hint. It is also the
-only bar in the family with no Copy, Paste or Deselect buttons, which the freehand and magnetic
-lasso bars beside it both render.
+least complete bar. The bar renders `Feather` and `Anti-alias`, but the polygonal lasso processor
+and copy path do not consume their args, so both controls are inert. It also has an Outline/Fill
+toggle and a hint, but no Copy, Paste or Deselect buttons; the freehand and magnetic lasso bars
+beside it render those buttons.
 
 **Modifier gap, and it is larger than the combination modes.** `PolygonClickToolArea` reads no
 modifier key, so _none_ of this tool's `modifiers[]` rows is implemented: not the 45° constraint
@@ -709,7 +714,7 @@ to multiple, similar, tools. For example, all three Lasso tools have the shortcu
 them. To cycle through tools that use the same keyboard shortcut, add the Shift key (for example
 Shift + L will cycle through the Lasso, Polygonal, and Magnetic Lasso Tools)"
 (`jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html`). All
-seven `shortcuts[]` arrays are rewritten on that basis, each keeping its bare letter and gaining
+nine `shortcuts[]` arrays are rewritten on that basis, each keeping its bare letter and gaining
 the `Shift+<letter>` row for its group.
 
 The app happens to agree with the corrected reading rather than the old one: `M`, `L` and `W` are
@@ -826,11 +831,11 @@ evidence it does not start enabled. The default state itself is in `## Unverifie
 ### `Select and Mask` and `Mask`
 
 **`Select and Mask`** is sourced by Adobe six times and is on every selection tool's bar, so it is
-recorded on all seven:
+recorded on all nine:
 
 - "Open the Select and Mask workspace by choosing Select > Select and Mask, or by clicking
   Select and Mask in the Options bar **for any of the selection tools**." — Adobe, 2022-12-28. This
-  is the sentence that generalises it to all seven, and it remains the weakest of the six because
+  is the sentence that generalises it to all nine, and it remains the weakest of the six because
   it is a **2022 `ph_fil` tutorial**: a beginner how-to, not a current desktop reference page, and
   on a different locale line from the 2025 documentation this entry otherwise rests on.
 - "In the options bar, click Select and Mask to open the Select and Mask workspace." — Adobe
@@ -850,11 +855,11 @@ recorded on all seven:
   removal how-to names it on a **lasso** bar
   (`https://helpx.adobe.com/ph_fil/photoshop/how-to/retouch-remove-background.html`), which is the
   group the 2022 sentence was actually doing the work for. Neither page says "for any of the
-  selection tools", so the seven-tool generalization still rests on the 2022 sentence; what changed
+  selection tools", so the nine-tool generalization still rests on the 2022 sentence; what changed
   is that it is no longer the only thing carrying it, and that the two tools whose rows a reader is
   most likely to check do not rest on it at all.
 
-**And the eight controls are now named identically in all seven rows.** Five of the seven copies
+**And the eight controls are now named identically in all nine rows.** Five of the nine copies
 listed only "Radius, Smooth, Contrast, Shift Edge and Decontaminate Colors", omitting `Smart
 Radius` and `Feather`, while the Quick Selection's copy beside them listed all eight. That is a
 file that described the same panel two ways, and it is resolved: every row now carries the same
