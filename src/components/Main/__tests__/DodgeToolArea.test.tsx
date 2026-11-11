@@ -154,6 +154,10 @@ const stroke = (toolArea: HTMLDivElement, from: [number, number], to: [number, n
 
 type ToolLayerCall = { id?: string; toolArgs: { points: { x: number; y: number }[] } };
 
+const leave = (toolArea: HTMLDivElement, pointerId = 1) => {
+  fireEvent.pointerLeave(toolArea, { pointerId, button: 0, clientX: 0, clientY: 0 });
+};
+
 describe('DodgeToolArea', () => {
   beforeEach(() => {
     resetDocumentGestures();
@@ -221,5 +225,42 @@ describe('DodgeToolArea', () => {
       { x: 20, y: 20 },
       { x: 100, y: 60 },
     ]);
+  });
+
+  it('cancels preview on pointerLeave during an active stroke', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 20, clientY: 20 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    leave(toolArea, 1);
+
+    // Preview ran for the move
+    expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
+    // Commit did NOT run — gesture was aborted
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
+    // Cancel was called with the layer ID
+    expect(cancelLayerPreviewMock).toHaveBeenCalledWith('base');
+  });
+
+  it('does nothing on cancel when there was no active stroke', () => {
+    const toolArea = renderArea();
+
+    leave(toolArea, 1);
+
+    expect(cancelLayerPreviewMock).not.toHaveBeenCalled();
+    expect(tempUpdateLayerMock).not.toHaveBeenCalled();
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
+  });
+
+  it('does nothing on cancel after a completed stroke', () => {
+    const toolArea = renderArea();
+
+    stroke(toolArea, [20, 20], [100, 60]);
+    // Ref was cleared by onCommit
+    leave(toolArea, 1);
+
+    expect(cancelLayerPreviewMock).not.toHaveBeenCalled();
+    // Commit already ran exactly once
+    expect(updateLayerByToolMock).toHaveBeenCalledTimes(1);
   });
 });
