@@ -3,6 +3,7 @@ import {
   drawLine,
   getDarkPixelBounds,
   getWorkspaceCanvas,
+  workspaceDocumentPixelMask,
   viewportClip,
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
@@ -95,7 +96,14 @@ test.describe('Device pixel ratio', () => {
     // box, never from `devicePixelRatio`, so a 2x capture is read the same way as a 1x one
     // (see e2e/helpers/screenshot-scale.ts).
     const screenshot = await captureCanvasScreenshot(page, box, testInfo, 'dpr-2-line');
-    const bounds = await getDarkPixelBounds(screenshot);
+    const bounds = await getDarkPixelBounds(
+      screenshot,
+      await workspaceDocumentPixelMask(
+        page,
+        box,
+        viewportClip({ x: box.x, y: box.y, width: box.width, height: box.height })
+      )
+    );
     if (!bounds) throw new Error('line not found on screenshot');
     const line = imageBoundsToCss({ width: bounds.imageWidth, height: bounds.imageHeight }, box, bounds);
 

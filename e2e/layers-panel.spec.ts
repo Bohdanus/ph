@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type TestInfo } from './fixtures
 import {
   type BoundingBox,
   drawLine,
+  documentOnlyPixelMask,
   getColorAtPoint,
   getWorkspaceCanvas,
   hasDarkPixels,
@@ -77,7 +78,7 @@ const isRed = (color: Rgb | null): boolean =>
 const isGreen = (color: Rgb | null): boolean =>
   color !== null && color.green > 120 && color.red < 120 && color.blue < 120;
 
-const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot) => !(await hasDarkPixels(screenshot));
+const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask));
 
 async function canvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
@@ -602,9 +603,13 @@ test.describe('Layers panel', () => {
     // second erase is about to be aimed at is dark now, so "it went bare" afterwards is a
     // transition and not a state that already held.
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserSecond })), {
-        message: 'the second stroke is on its own layer, and it is still there before anything erases it',
-      })
+      .poll(
+        async () =>
+          hasDarkPixels(await page.screenshot({ clip: eraserSecond }), await documentOnlyPixelMask(page, eraserSecond)),
+        {
+          message: 'the second stroke is on its own layer, and it is still there before anything erases it',
+        }
+      )
       .toBe(true);
 
     await activateRow(layerRow(page, 'draw 2'), layerRow(page, 'draw 3'));
@@ -619,9 +624,13 @@ test.describe('Layers panel', () => {
       description: 'the first stroke, erased on the layer that was activated',
     });
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserSecond })), {
-        message: 'the second stroke is on the other layer, so erasing the active one must leave it alone',
-      })
+      .poll(
+        async () =>
+          hasDarkPixels(await page.screenshot({ clip: eraserSecond }), await documentOnlyPixelMask(page, eraserSecond)),
+        {
+          message: 'the second stroke is on the other layer, so erasing the active one must leave it alone',
+        }
+      )
       .toBe(true);
 
     // And the SAME GESTURE aimed at the OTHER band. Aimed at `LINE_START_Y` instead — which
@@ -640,9 +649,13 @@ test.describe('Layers panel', () => {
     // one. Checked once the transition above has landed, so it is read against the state the
     // second gesture produced rather than against the state before it.
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserFirst })), {
-        message: 'the second erase put the first stroke back — it edited the wrong layer',
-      })
+      .poll(
+        async () =>
+          hasDarkPixels(await page.screenshot({ clip: eraserFirst }), await documentOnlyPixelMask(page, eraserFirst)),
+        {
+          message: 'the second erase put the first stroke back — it edited the wrong layer',
+        }
+      )
       .toBe(false);
   });
 

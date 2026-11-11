@@ -3,6 +3,7 @@ import {
   getDarkPixelBounds,
   getSelectionBounds,
   getWorkspaceCanvas,
+  documentOnlyPixelMask,
   hasDarkPixels,
   loadImageData,
   documentToCanvasOffset,
@@ -690,7 +691,10 @@ test.describe('Selection tools', () => {
       width: stroke.to.x - stroke.from.x + BRUSH_PX * 4,
       height: BRUSH_PX * 4,
     });
-    const painted = await getDarkPixelBounds(await page.screenshot({ clip: barRegion }));
+    const painted = await getDarkPixelBounds(
+      await page.screenshot({ clip: barRegion }),
+      await documentOnlyPixelMask(page, barRegion)
+    );
     if (!painted) throw new Error(`No dark pixels painted in the bar region ${JSON.stringify(barRegion)}`);
     // `PixelBounds` is inclusive on both edges, so a bar of odd width has its centre half a pixel
     // out. One pixel of slack covers that quantisation and nothing else.

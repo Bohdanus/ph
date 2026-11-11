@@ -7,6 +7,7 @@ import {
   drawLine,
   getDarkPixelBounds,
   getWorkspaceCanvas,
+  workspaceDocumentPixelMask,
   viewportClip,
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
@@ -149,7 +150,14 @@ async function measureAtViewport(
       `box before ${JSON.stringify(boxBeforeCapture)}, after ${JSON.stringify(boxAfterCapture)}`
   ).toBeLessThanOrEqual(MAX_BOX_DRIFT_CSS_PX);
 
-  const bounds = await getDarkPixelBounds(screenshot);
+  const bounds = await getDarkPixelBounds(
+    screenshot,
+    await workspaceDocumentPixelMask(
+      page,
+      box,
+      viewportClip({ x: box.x, y: box.y, width: box.width, height: box.height })
+    )
+  );
   if (!bounds) throw new Error(`${name}: line not found on screenshot`);
 
   return {

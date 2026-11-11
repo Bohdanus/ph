@@ -6,6 +6,7 @@ import {
   getDarkPixelBounds,
   getWorkspaceCanvas,
   hasDarkPixels,
+  workspaceDocumentPixelMask,
   loadImageData,
   takeLineScreenshot,
   viewportClip,
@@ -176,7 +177,10 @@ async function measureStrokeHeight(
   clip: ViewportClip
 ): Promise<number> {
   await waitForCanvasPixels(page, clip, hasDarkPixels, { description: `the ${name} stroke` });
-  const bounds = await getDarkPixelBounds(await takeLineScreenshot(page, box, name, testInfo, clip));
+  const bounds = await getDarkPixelBounds(
+    await takeLineScreenshot(page, box, name, testInfo, clip),
+    await workspaceDocumentPixelMask(page, box, clip)
+  );
   if (!bounds) throw new Error(`${name}: getDarkPixelBounds found no dark pixels, so the stroke height is unmeasured`);
   return bounds.height;
 }
@@ -280,7 +284,7 @@ test.describe('Brush and Pencil options bar', () => {
     });
     const faint = await takeLineScreenshot(page, box, 'brush-opacity-15', testInfo, faintClip);
     expect(
-      await hasDarkPixels(faint),
+      await hasDarkPixels(faint, await workspaceDocumentPixelMask(page, box, faintClip)),
       `a ${FAINT_OPACITY}% black stroke over white stays well above the dark threshold`
     ).toBe(false);
 
@@ -290,7 +294,10 @@ test.describe('Brush and Pencil options bar', () => {
     await drawLine(page, box, STROKE_START_X, solidRow, STROKE_END_X, solidRow, { steps: STROKE_STEPS });
     await waitForCanvasPixels(page, solidClip, hasDarkPixels, { description: `the ${SOLID_OPACITY}% stroke` });
     const solid = await takeLineScreenshot(page, box, 'brush-opacity-100', testInfo, solidClip);
-    expect(await hasDarkPixels(solid), `a ${SOLID_OPACITY}% black stroke must lay down dark pixels`).toBe(true);
+    expect(
+      await hasDarkPixels(solid, await workspaceDocumentPixelMask(page, box, solidClip)),
+      `a ${SOLID_OPACITY}% black stroke must lay down dark pixels`
+    ).toBe(true);
   });
 
   // brush tool

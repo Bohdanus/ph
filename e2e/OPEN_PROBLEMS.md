@@ -101,53 +101,6 @@ opaque one. The other half of the file, `getDarkPixelBounds()` and
 `getSelectionBounds()`, filters on `a !== 0` instead — a different question
 asked with a boolean rather than a weight.
 
-## P2 — the letterbox is still read as ink by two predicates and by two of the four cell colours
-
-`e2e/helpers/canvas-helpers.ts` — `hasDarkPixels()`, `getDarkPixelBounds()` and `isLetterboxCell()`
-
-The workspace canvas sits on a 20px checkerboard chosen from the resolved theme:
-`#f3f3f3` over `#fff` for light and `#121212` over `#000` for dark
-(`.chessboard-light` and `.chessboard-dark` in `src/index.scss`, switched by `renderContent()`'s
-workspace-canvas `className` in `src/components/Main/Main.tsx`). The document is contained inside it
-with a centred letterbox, so a clip that is not derived from the contain fit can straddle that
-checkerboard.
-
-`isLetterboxCell` excludes the two exact RGB triples `LETTERBOX_LIGHT_CELL` and
-`LETTERBOX_DARK_CELL`, and it is applied inside `getStrokeAnalysis` only. Two things
-remain:
-
-1. **The exclusion is two colours, and the checkerboard is four.** `#000` gaps and the
-   anti-aliased cell edges between the two cells are still classified as ink, so a
-   `getStrokeAnalysis` clip straddling the dark letterbox can still report segments and
-   a vertical spread it did not draw.
-2. **`hasDarkPixels` and `getDarkPixelBounds` are not letterbox-aware at all.** Under
-   the dark theme their threshold is satisfied by `#121212` and `#000` alone, so a wait
-   on either can be satisfied by a clip containing no stroke.
-
-**The app-theme precondition is enforced by the shared test fixture, not by
-`colorScheme`.** `e2e/fixtures/extended-test.ts` seeds `localStorage.theme` to `light` in a
-fresh context, and `extended-fixture.unit.test.ts` plus
-`pinned-theme-payload.unit.test.ts` guard that behavior. Playwright's `colorScheme` option
-only sets `prefers-color-scheme`; `ThemeContext` no longer reads that query. A test that
-switches the app to dark and then passes a capture containing workspace backdrop to one of
-these color-only helpers can still wrong-pass. `canvasRedrawClip` keeps the standard stroke
-clip inside the document; review custom clips in any dark-theme test separately. Setting
-`colorScheme: 'dark'` alone does not select the app's dark theme.
-
-Pinned by the `#000`-wash case
-`it('reads a pure #000 capture as ink, so the dark theme's gaps are the residual it leaves')`
-in `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts`, which asserts that a
-full black capture classifies as `{type: 'spray'}` on purpose. A fix removes that pin
-in the same change.
-
-Do not widen RGB thresholds to hide the residual: the dark checkerboard's `#000` gaps are
-the same color as the app's default black ink. A generic backdrop-aware fix needs spatial
-context (at least the resolved theme, capture origin and scale, and document bounds or a
-backdrop mask) so it can exclude backdrop by position without excluding black ink in the
-document. Otherwise, keep dark-theme captures out of color-only helper calls. Regression
-coverage for a future fix must retain true `#000` document ink while excluding dark cells,
-dark gaps, and antialiased checkerboard edges.
-
 ## Known-skip tests
 
 One spec is `test.skip` by declaration:

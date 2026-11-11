@@ -680,6 +680,7 @@ interface LocatorSurface {
   count: Mock<() => Promise<number>>;
   isVisible: Mock<() => Promise<boolean>>;
   textContent: Mock<() => Promise<string | null>>;
+  getAttribute: Mock<(name: string) => Promise<string | null>>;
   boundingBox: Mock<() => Promise<Box | null>>;
   evaluate: Mock<(read: (element: unknown) => unknown) => Promise<unknown>>;
   setInputFiles: Mock<(file: string) => Promise<void>>;
@@ -775,6 +776,12 @@ function createLocatorMock(overrides: Partial<LocatorSurface> = {}): LocatorSurf
     count: vi.fn().mockResolvedValue(1),
     isVisible: vi.fn().mockResolvedValue(true),
     textContent: vi.fn().mockResolvedValue(''),
+    getAttribute: vi.fn(async (name: string) => {
+      if (name === 'data-view-rotation') return '0';
+      if (name === 'data-fit-document-width') return String(DEFAULT_DOCUMENT_WIDTH);
+      if (name === 'data-fit-document-height') return String(DEFAULT_DOCUMENT_HEIGHT);
+      return null;
+    }),
     boundingBox: vi.fn().mockResolvedValue(null),
     evaluate: vi.fn(async (read: (element: unknown) => unknown) => read(FAKE_CANVAS_ELEMENT)),
     setInputFiles: vi.fn().mockResolvedValue(undefined),
