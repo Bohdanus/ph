@@ -100,7 +100,7 @@ const REVIEWED = {
   },
   'main-landing-alert.test.mjs': {
     scope:
-      'Alert-claim marker fixtures cover malformed recovery, invalid JSON shapes, sent markers, and lock contention; each uses a unique temporary directory and is removed after the test.',
+      'Alert-claim marker fixtures use a unique temporary directory and are removed after the test. Expanded coverage includes malformed recovery, invalid JSON shapes, sent markers, and lock contention.',
     patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=7 filesystem-write:rmSync=2`,
   },
   'merge-release.test.mjs': {
