@@ -1,18 +1,14 @@
-# Nemotron disablement — unproven for landing
+# Nemotron disablement — landing handoff
 
-**Status:** Two independent reviews passed on the synchronized candidate; landing is blocked until repository preflight is clear.
+**Status:** Current-main sync is prepared. Both independent paid reviews passed, and the focused tests and project gates pass. Ready for pinned landing after the final ownership and pin preflight.
 
 **Branch:** `task/nemotron-quarantine-hardening-20261111`
 
 **Worktree:** `/Users/bkalynovskyi/ph/.kilo/worktrees/nemotron-quarantine-hardening-20261111`
 
-**Base:** `95533537f25a3dc28c204bf1772c880dd6359391`
+**Current main parent:** `7d431550c3f9571943dee3042989db2050759cf6`
 
 **Implementation commit:** `fe245f0af272d2c5de3ed185b66d5760a32cda98`
-
-**Implementation tree:** `a090a0721e0c37ff8d52de8f83a8e5e9e501ac16`
-
-**Synchronized with main:** `85a71c35d0f897a828c1363f4d0ca286417b101c` in merge commit `ae3d8f8db`
 
 ## Candidate behavior
 
@@ -27,28 +23,33 @@ The shared ignored quarantine file was migrated on 2026-11-11. Those three entri
 
 ## Validation
 
-- Focused free-model, validator, launcher, and quarantine suites: 341 passed, 1 skipped.
+After syncing current main and resolving its catalog-test overlap while preserving the isolated
+empty-quarantine fixture:
+
+- Free-model-pool and test-write-boundary suites: 117 passed, 1 skipped.
 - `npm run lint`: passed with 77 warnings and no errors.
 - `npm run tsc`: passed.
 - `npm run build`: passed.
-- `git diff --check`: passed.
+- `git diff --cached --check`: passed.
+- The boundary audit's current source counts are 29 `mkdtemp`/`rm` patterns in
+  `free-model-pool.test.mjs` and 9 in `free-model-quarantine.test.mjs`.
 
-## Remaining blockers
+## Review and landing state
 
-`docs/CODE-REVIEW.md` requires two independent read-only reviews for this cross-module quarantine
-migration. Two paid reviewers reviewed the synchronized candidate `d3fc78c7f289bf3000fa8c92b2f11be1be08618c`
-(tree `6b7cf23306594785d1449200c373354f95c824cb`) against current `main` and returned no actionable
-findings in their assigned scopes. The focused suite and project gates were rerun on this candidate.
+Two paid Luna reviewers checked the refreshed candidate against the current main parent and
+returned no actionable findings. The quarantine review verified that this handoff no longer cites
+an earlier tree for its review or gate evidence, and confirmed the focused test result and resource
+boundary counts above.
 
-At the last preflight, `npm run repo:state` reported five other worktrees in `AUTO_MERGE`; the live
-swarm check reported their claims as active. They are `e2e-hardening-20261110`,
-`free-model-pool-final-landing-20261110`, and the three `stateless-ghs-redaction` worktrees. Do not
-inspect, repair, or clean those operations. The designated main landing checkout itself reported no
-owner record or Git operation, but the full repository preflight must be clear before landing.
+`npm run main:landing -- status` reports the designated main checkout free. The scoped
+`repo:state --for-landing task/nemotron-quarantine-hardening-20261111` reports this landing scope
+clear. Five unrelated worktrees have active `AUTO_MERGE` operations; the scoped gate classifies
+them as unrelated. Preserve them and do not inspect, repair, or clean them.
 
-## Resume
+## Next action
 
-Recheck `repo:state`, branch ownership, and `npm run main:landing -- status` after the live worktree
-owners resolve their operations. If `main` advances, sync and review the new candidate before using
-the pinned landing workflow in `docs/ORCHESTRATION.md`. After this change lands, resume documented
-project hardening from the current handoff and problem list.
+Both final reviews have passed. Finish and commit the prepared sync merge in this worktree with the
+required `Chat:` trailer. Recheck source ownership, `repo:state --for-landing`, main landing status,
+and `git cherry`, then land using the pinned workflow in `docs/ORCHESTRATION.md` against current
+main. Verify the resulting main parents, tree, and clean status. Continue project hardening from
+the unresolved entries in `HANDOFF.md` and `e2e/OPEN_PROBLEMS.md`.
