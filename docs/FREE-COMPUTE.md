@@ -1,7 +1,8 @@
 # Free and Low-Cost Model Compute
 
-**Policy and routing checked: 2026-11-08.** Catalogs, pricing, terms, and quotas change; refresh
-before use. The dated observations below are point-in-time results, not a fresh availability check.
+**Policy and routing checked: 2026-11-08. OpenRouter free-model limits rechecked: 2026-11-11.**
+Catalogs, pricing, terms, and quotas change; refresh before use. The dated observations below are
+point-in-time results, not a fresh availability check.
 
 ## Model preferences
 
@@ -83,7 +84,7 @@ Provider rows are docs research unless an observed result is explicitly stated.
 
 | Provider                         | Published free allowance/access                                        | Notes                                                                                                                                                                                                    |
 | -------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OpenRouter                       | 1,000/day at lifetime-credit tier (≥$10); 20/min.                      | This account qualifies for 1,000/day tier; implementation grants higher tier one credit below threshold. Tier and quota-probe caveats below. [Limits](https://openrouter.ai/docs/api-reference/limits)   |
+| OpenRouter `:free` variants      | 20/min; 50/day default; up to 1,000/day.                               | Quota probe reads only the daily counter; it does not report the 20/min cap. [Policy](https://openrouter.ai/collections/free-models).                                                                    |
 | Gemini API                       | Gemini 3.1 Flash-Lite lists free Standard and Batch input/output.      | Project quotas apply. [Pricing](https://ai.google.dev/gemini-api/docs/pricing) · [Limits](https://ai.google.dev/gemini-api/docs/rate-limits)                                                             |
 | Google Antigravity CLI           | $0 Individual plan; dynamic weekly quota.                              | CLI supports async subagents and `/usage`; Teamwork and third-party access are paid. [Plans](https://www.antigravity.google/docs/plans) · [Subagents](https://www.antigravity.google/docs/cli-subagents) |
 | NVIDIA NIM                       | Free hosted developer access for prototyping.                          | May be rate limited; no fixed quota or unbounded gateway verified. [FAQ](https://docs.api.nvidia.com/nim/docs/product)                                                                                   |
@@ -93,6 +94,8 @@ Provider rows are docs research unless an observed result is explicitly stated.
 | Mistral                          | Free mode, no card, limited monthly usage.                             | Account-specific limits. [Free mode](https://docs.mistral.ai/getting-started/quickstarts/studio/activate-and-generate-api-key)                                                                           |
 | Cloudflare Workers AI            | 10,000 neurons/day on Workers Free.                                    | Neurons are not tokens; some models require paid Workers. [Pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)                                                                      |
 | Hugging Face Inference Providers | No free monthly credits.                                               | Requires purchased credits or PRO. [Pricing](https://huggingface.co/docs/inference-providers/pricing)                                                                                                    |
+
+OpenRouter policy raises the daily cap to 1,000 after $10 in credit purchases; the higher cap starts at $9 to absorb top-up fees. Other $0 models skip these caps but may face per-model limits set by OpenRouter or a provider.
 
 Chat-history search reads local databases, but model mode sends the query for term extraction and
 matching excerpts for summarization to the selected provider. Redaction is best-effort; do not

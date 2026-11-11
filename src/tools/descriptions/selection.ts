@@ -728,7 +728,7 @@ export const selectionDescriptions: Record<
     photoshopName: 'Quick Selection Tool',
     summary: 'Brush over an object and the selection grows along the image edges you cross; brush again to add.',
     purpose:
-      'The Quick Selection tool is a brush that paints a selection. Drag over an object to expand the selection along defined image edges. Its brush settings include Size, Hardness, Spacing, Angle and Roundness, with an option for pen-pressure or stylus-wheel size sensitivity. The Options bar offers New, Add to and Subtract from selection modes, plus Sample All Layers, Enhance Edge and Select and Mask. Adobe describes the tool as expanding a selection along defined edges; it does not publish the internal edge-detection algorithm.',
+      'The Quick Selection tool is a brush that paints a selection. Drag over an object to expand the selection along defined image edges. Its brush settings include Size, Hardness, Spacing, Angle and Roundness, with an option for pen-pressure or stylus-wheel size sensitivity. The current Quick Selection guide lists New, Add to and Subtract from selection modes, plus Sample All Layers, Enhance Edge and Select and Mask. Adobe’s general selection instructions also say any selection tool can intersect selections, and an Adobe tutorial names Quick Selection explicitly, so whether Photoshop Quick Selection offers Intersect remains unresolved across Adobe sources. Adobe describes the tool as expanding a selection along defined edges; it does not publish the internal edge-detection algorithm.',
     options: [
       {
         control: 'Tool presets',
@@ -737,16 +737,16 @@ export const selectionDescriptions: Record<
         status: 'missing',
       },
       {
-        control: 'New / Add to / Subtract from',
+        control: 'Selection mode',
         detail:
-          'Three buttons: New, Add to and Subtract from. Quick Selection has no Intersect with Selection mode. Adobe also documents Alt/Option while brushing to subtract temporarily; the app has no temporary modifier gesture.',
+          'The current Quick Selection guide lists New, Add to and Subtract from. Adobe’s general Intersect guide says to use any selection tool, and an Adobe tutorial explicitly includes Quick Selection; whether its Options bar also offers Intersect is unresolved across Adobe sources. Adobe documents Alt/Option while brushing to subtract temporarily; the app has no temporary modifier gesture.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:148',
       },
       {
         control: 'Size',
         detail:
-          'The brush diameter, taken from the brush preset picker that also carries Hardness, Spacing, Angle and Roundness. The brush is the whole mechanism: the region grows outward from under the cursor and stops where the image edge is, so the brush diameter sets how much of the image the tool is allowed to reason about, and a smaller brush gives a more accurate result — which is why it is the control a user reaches for at a soft edge. Photoshop exposes size and hardness directly in the options bar and lets the left and right bracket keys resize the cursor while the tool is active.',
+          'The brush diameter, taken from the brush preset picker that also carries Hardness, Spacing, Angle and Roundness. The brush is the whole mechanism: the region grows outward from under the cursor and stops where the image edge is, so the brush diameter sets how much of the image the tool is allowed to reason about, and a smaller brush gives a more accurate result — which is why it is the control a user reaches for at a soft edge. Photoshop exposes size and hardness directly in the options bar.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:111',
       },
@@ -780,8 +780,6 @@ export const selectionDescriptions: Record<
           'Selects the Quick Selection. The wand and the Quick Selection share W, so pressing it again re-selects this one rather than cycling; Shift+W is the cycling key.',
       },
       { keys: 'Shift+W', action: 'Switches between the Magic Wand and the Quick Selection tools.' },
-      { keys: '[', action: 'Decreases the brush size; with Shift, drops it to the minimum.' },
-      { keys: ']', action: 'Increases the brush size; with Shift, raises it to the maximum.' },
     ],
     implementation: 'partial',
     implementationRefs: [
@@ -796,9 +794,13 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:70',
     ],
     appNotes:
-      'The app offers Size (1–500 px), Tolerance (0–100%), and Add or Subtract. Adobe Photoshop also provides New selection, brush Hardness, Spacing, Angle and Roundness, pen-pressure sensitivity, Sample All Layers, Enhance Edge and Select and Mask; those controls are not implemented here. The app reads the merged visible document canvas, so it always samples the composite rather than offering a layer-sampling choice. It samples the stroke at fixed 25% brush-diameter spacing and grows a 4-connected RGBA-tolerance flood fill from sparse points inside each round brush stamp. This is not Photoshop’s image-edge-following Quick Selection algorithm, and the app-only Tolerance control exposes that difference. Temporary modifier gestures and bracket-key resizing are also absent. Add and Subtract strokes begin from the active selection rasterized to binary pixel membership. Simple results are stored as compound contours; highly fragmented results use an authoritative packed one-bit mask. Fractional positioning and antialiased coverage are quantized when an existing selection is edited, because the app has no persistent 8-bit selection channel. Quick Selection commits its own `quick-selection` provenance, and preserves disconnected regions and holes in either representation.',
+      'The app offers Size (1–500 px), Tolerance (0–100%), and Add or Subtract. Adobe Photoshop also provides New selection, brush Hardness, Spacing, Angle and Roundness, pen-pressure sensitivity, Sample All Layers, Enhance Edge and Select and Mask; those controls are not implemented here. Adobe’s current Quick Selection guide lists New, Add and Subtract, while its general Intersect guide says any selection tool can intersect and an Adobe tutorial explicitly includes Quick Selection; whether Photoshop Quick Selection offers Intersect is unresolved across these sources. The app reads the merged visible document canvas, so it always samples the composite rather than offering a layer-sampling choice. It samples the stroke at fixed 25% brush-diameter spacing and grows a 4-connected RGBA-tolerance flood fill from sparse points inside each round brush stamp. This is not Photoshop’s image-edge-following Quick Selection algorithm, and the app-only Tolerance control exposes that difference. Temporary Shift/Alt gestures and bracket-key resizing are not implemented in the app. Add and Subtract strokes begin from the active selection rasterized to binary pixel membership. Simple results are stored as compound contours; highly fragmented results use an authoritative packed one-bit mask. Fractional positioning and antialiased coverage are quantized when an existing selection is edited, because the app has no persistent 8-bit selection channel. Quick Selection commits its own `quick-selection` provenance, and preserves disconnected regions and holes in either representation.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/select-area-intersected-by-other-selections.html',
+      'https://helpx.adobe.com/lt/photoshop/how-to/add-to-subtract-from-selections.html',
+      'https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf?TVGll=wnKKa',
+      'https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/quick-selection-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/use-quick-selection-tool.html',
