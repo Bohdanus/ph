@@ -611,6 +611,7 @@ Sources:
 - <https://helpx.adobe.com/photoshop/using/paint-symmetry.html>
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html>
 - <https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html>
+- <https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf?TVGll=wnKKa>
 - <https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf>
 - <https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants>
 - <https://helpx.adobe.com/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html>
@@ -655,14 +656,13 @@ The Pencil is a Brush whose tip is always hard-edged, so its strokes never blend
 
 **Shortcuts**
 
-- `B` — Selects the Brush Tool. Holding Shift while pressing it cycles the shared slot — Brush, Pencil, Color Replacement Tool, Mixer Brush Tool.
-- `N` — Selects the Pencil Tool.
+- `B` — Brush, Pencil, Color Replacement and Mixer Brush all use B. Shift+B cycles this group when Use Shift Key for Tool Switch is enabled; otherwise, pressing B repeatedly cycles.
 - `[` — Decreases the brush size to the next smaller preset diameter. On the Brush, Pencil, Eraser, Color Replacement Tool, Smudge, Dodge, Burn and Clone Stamp.
 - `]` — Increases the brush size to the next larger preset diameter. On the Brush, Pencil, Eraser, Color Replacement Tool, Smudge, Dodge, Burn and Clone Stamp.
 - `0–9` — In current Photoshop, bare number keys 0–9 set Pencil Opacity: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. Adobe’s current Brush/Pencil guide documents this mapping. This app implements only 0 and 1 for Pencil Opacity.
 - `Shift+0–9` — Adobe’s current Brush/Pencil guide says Shift+number sets Flow. Adobe’s 2019 generic reference gives the sequence: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. The current guide limits Airbrush mode to the Brush, so its older Airbrush reversal does not apply to Pencil. This app does not implement numeric Flow shortcuts.
 
-**In this app:** `partial` — The app renders the Pencil through the same bar factory as the Brush, with its own three synthetic presets, and its stroke is one round-capped pass of the same painter. That reproduces the hard edge, so the two agree on the one property that distinguishes them, but it is a hard edge by construction rather than by a hard tip: a round cap is aliased because the canvas rasterizes it that way, and there is no tip model that could be made soft. The Pencil’s one own feature, Auto Erase, is absent entirely — there is no background color in the app’s tool state, so the checkbox has nothing to decide between, and no component renders it. The app offers sixteen canvas compositing operations, omits Photoshop’s Clear mode, and applies the selected mode to the layer the stroke creates rather than to the stroke’s own pixels. Photoshop’s available modes vary by image color mode, and Clear requires transparency locking to be off. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here — and it is capped at 500 px rather than the 5000 the picker offers, and the shared bar seeds Opacity at 100 percent, matching Photoshop’s 100. The `Alt` and `Shift` modifiers above are Photoshop’s own and the app binds neither: `AppKeyboardShortcuts.tsx` is the complete global table, it registers no Alt override and no Shift constraint for any paint tool, and `altKey` in a pointer handler is read only by the shape, the magnetic lasso, the elliptical selection and the clone stamp. `[`, `]`, bare `0` and bare `1` are implemented for the Pencil; the app does not implement digits `2`–`9`, two-digit exact Opacity, or Shift+number Flow shortcuts. The Pencil has no keyboard shortcut of its own here for the tool-select row: it is reached by cycling the Brush tile with Shift+B, where Photoshop binds it to N. As with the Brush, each stroke creates a new layer rather than painting the active one.
+**In this app:** `partial` — The app renders the Pencil through the same bar factory as the Brush, with its own three synthetic presets, and its stroke is one round-capped pass of the same painter. That reproduces the hard edge, so the two agree on the one property that distinguishes them, but it is a hard edge by construction rather than by a hard tip: a round cap is aliased because the canvas rasterizes it that way, and there is no tip model that could be made soft. The Pencil’s one own feature, Auto Erase, is absent entirely — there is no background color in the app’s tool state, so the checkbox has nothing to decide between, and no component renders it. The app offers sixteen canvas compositing operations, omits Photoshop’s Clear mode, and applies the selected mode to the layer the stroke creates rather than to the stroke’s own pixels. Photoshop’s available modes vary by image color mode, and Clear requires transparency locking to be off. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here — and it is capped at 500 px rather than the 5000 the picker offers, and the shared bar seeds Opacity at 100 percent, matching Photoshop’s 100. The `Alt` and `Shift` modifiers above are Photoshop’s own and the app binds neither: `AppKeyboardShortcuts.tsx` is the complete global table, it registers no Alt override and no Shift constraint for any paint tool, and `altKey` in a pointer handler is read only by the shape, the magnetic lasso, the elliptical selection and the clone stamp. `[`, `]`, bare `0` and bare `1` are implemented for the Pencil; the app does not implement digits `2`–`9`, two-digit exact Opacity, or Shift+number Flow shortcuts. Desktop Photoshop has no unique Pencil shortcut: it shares B with the Brush, Color Replacement and Mixer Brush. Shift+B cycles that group when Use Shift Key for Tool Switch is enabled; otherwise, pressing B repeatedly cycles through the group. This app also puts Pencil in a Shift+B group with Brush and Color Replacement, but it has no Mixer Brush tool. As with the Brush, each stroke creates a new layer rather than painting the active one.
 
 Implementation:
 
@@ -679,12 +679,11 @@ Sources:
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/auto-erase-with-the-pencil-tool.html>
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html>
 - <https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html>
+- <https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf?TVGll=wnKKa>
 - <https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf>
 - <https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants>
 - <https://helpx.adobe.com/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html>
 - <https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=337>
-- <https://www.oreilly.com/library/view/photoshop-elements-8/9780596809188/ch12s04.html>
-- <https://www.dummies.com/article/the-new-partial-sketch-photoshop-elements-feature-259266>
 - <https://asktimgrey.com/2025/08/08/pencil-versus-brush/>
 - <https://asktimgrey.com/2017/03/21/pencil-brush-shape/>
 - <https://flylib.com/books/en/4.462.1.114/1/>
