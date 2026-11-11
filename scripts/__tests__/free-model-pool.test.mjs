@@ -304,19 +304,28 @@ describe('free model catalog filtering', () => {
   });
 
   it('keeps Kilo candidates available when the optional OpenRouter catalog is down', async () => {
-    const fetchImpl = readableFetch((url) =>
-      url.includes('openrouter')
-        ? Promise.resolve({ ok: false, status: 401 })
-        : Promise.resolve({ ok: true, json: async () => [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')] })
-    );
-    const errors = [];
-    const candidates = await loadCatalogs({
-      fetchImpl,
-      openRouterKey: 'test',
-      onCatalogError: (source) => errors.push(source),
-    });
-    expect(candidates.map((row) => row.model)).toEqual(['nvidia/nemotron-3-ultra-550b-a55b:free']);
-    expect(errors).toEqual(['openrouter']);
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-catalog-fallback-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+
+    try {
+      await writeFile(quarantineFile, JSON.stringify({ schemaVersion: 1, entries: {} }), 'utf8');
+      const fetchImpl = readableFetch((url) =>
+        url.includes('openrouter')
+          ? Promise.resolve({ ok: false, status: 401 })
+          : Promise.resolve({ ok: true, json: async () => [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')] })
+      );
+      const errors = [];
+      const candidates = await loadCatalogs({
+        fetchImpl,
+        openRouterKey: 'test',
+        quarantineFile,
+        onCatalogError: (source) => errors.push(source),
+      });
+      expect(candidates.map((row) => row.model)).toEqual(['nvidia/nemotron-3-ultra-550b-a55b:free']);
+      expect(errors).toEqual(['openrouter']);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('refuses an oversized catalog body', async () => {

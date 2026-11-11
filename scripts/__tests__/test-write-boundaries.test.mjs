@@ -65,8 +65,8 @@ const REVIEWED = {
   },
   'free-model-pool.test.mjs': {
     scope:
-      'Model/provider and cost-safety fixtures use unique OS temporary directories; PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
-    patterns: `filesystem-write:mkdtemp=31 filesystem-write:rm=31 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+      'Model/provider and cost-safety fixtures use unique OS temporary directories, including an empty quarantine fixture for catalog fallback; PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
+    patterns: `filesystem-write:mkdtemp=32 filesystem-write:rm=32 filesystem-write:writeFile=14 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
