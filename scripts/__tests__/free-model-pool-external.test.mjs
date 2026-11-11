@@ -1554,6 +1554,53 @@ describe('provider rate-limit diagnostics', () => {
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
+  it('does not treat generic top-level metadata as upstream evidence for a 429', async () => {
+    const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: { code: 429, message: 'Rate limit exceeded' },
+            metadata: { provider_name: 'unverified provider' },
+          }),
+          { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '2' } }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            model: 'r2:free',
+            choices: [{ message: { content: 'second model completed' }, finish_reason: 'stop' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      );
+    const keyInfo = vi.fn(() => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }));
+    const onOpenRouterQuota = vi.fn();
+    const fetchImpl = catalogFetchWithoutInjectedRateLimitHeaders({
+      kilo: [],
+      opencode: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo,
+      chat,
+    });
+
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'rk',
+      waitForRetryAfter,
+      onOpenRouterQuota,
+    });
+
+    expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'second model completed' });
+    expect(chat.mock.calls.map(([, options]) => JSON.parse(options.body).model)).toEqual(['r1:free', 'r2:free']);
+    expect(waitForRetryAfter).not.toHaveBeenCalled();
+    expect(keyInfo).toHaveBeenCalledTimes(2);
+    expect(onOpenRouterQuota).toHaveBeenNthCalledWith(1, { used: 10, limit: 50, remaining: 40, reason: 'ok' });
+    expect(onOpenRouterQuota).toHaveBeenNthCalledWith(2, { used: 10, limit: 50, remaining: 40, reason: 'ok' });
+  });
+
   it('retries the same OpenRouter model for an upstream provider_code 429 without platform headers', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi
