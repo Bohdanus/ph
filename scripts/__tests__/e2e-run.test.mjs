@@ -707,13 +707,15 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
 
   it('does not add a CLI global timeout that overrides the Playwright config', async () => {
     const suite = fakeSuite();
-    await run(['--workers=1'], {
+    const options = {
       env: { ...boardDir.env, CI: '1' },
       log: recorder().log,
       runPlaywright: suite,
-    });
+    };
+    await run([], options);
+    await run(['--workers=1'], options);
 
-    expect(suite.calls[0].args).toEqual(['test', '--workers=1']);
+    expect(suite.calls.map(({ args }) => args)).toEqual([['test'], ['test', '--workers=1']]);
   });
 
   it('renews the lease while the suite runs, and says so if a renewal fails', async () => {
