@@ -323,6 +323,86 @@ describe('toolDescriptions', () => {
     });
   });
 
+  it('qualifies the Smudge R shortcut against current and older Adobe sources', () => {
+    const smudge = toolDescriptions.smudge;
+    const shortcut = smudge.shortcuts.find((item) => item.keys === 'R');
+
+    expect(shortcut?.action).toMatch(
+      /current desktop Smudge guide says R cycles through retouching tools.*2023 guide labels Smudge with R.*2019 Photoshop reference lists R for Rotate View.*Keyboard Shortcuts and Menus dialog.*active binding/i
+    );
+    expect(smudge.sources).toEqual(
+      expect.arrayContaining([
+        'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
+        'https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html',
+      ])
+    );
+  });
+
+  it('separates Adobe Dodge/Burn Exposure digits from app shortcut support', () => {
+    const reference = 'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf';
+
+    for (const name of ['dodge', 'burn'] as const) {
+      const description = toolDescriptions[name];
+      const exposureShortcut = description.shortcuts.find((item) => item.keys === '0–9');
+      const tool = name === 'dodge' ? 'Dodge' : 'Burn';
+
+      expect(exposureShortcut?.action).toMatch(
+        /In Photoshop, number keys 0–9 set Exposure.*0 = 100%, 1 = 10%, and two quick digits set an exact percentage.*with Airbrush enabled, use Shift\+number/i
+      );
+      expect(exposureShortcut?.action).toContain(`This app does not implement ${tool} Exposure digit shortcuts`);
+      expect(description.sources).toContain(reference);
+      expect(description.appNotes).toMatch(/does not implement Exposure digit shortcuts for Dodge or Burn/i);
+    }
+  });
+
+  it('documents current Brush/Pencil digit bindings and their app limits', () => {
+    const currentGuide =
+      'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/brushes-presets/paint-with-brush-or-pencil-tool.html';
+    const reference = 'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf';
+
+    for (const name of ['brush', 'pencil'] as const) {
+      const description = toolDescriptions[name];
+      const opacity = description.shortcuts.find((item) => item.keys === '0–9');
+      const flow = description.shortcuts.find((item) => item.keys === 'Shift+0–9');
+
+      expect(opacity?.action).toMatch(
+        /current Photoshop.*bare number keys 0–9 set (Brush|Pencil) Opacity.*two quick digits set an exact percentage.*only 0 and 1/i
+      );
+      expect(flow?.action).toMatch(
+        /Shift\+number sets Flow.*two quick digits set an exact percentage.*does not implement numeric Flow shortcuts/i
+      );
+      expect(description.sources).toEqual(expect.arrayContaining([currentGuide, reference]));
+      expect(description.appNotes).toMatch(/does not implement digits `2`–`9`, two-digit exact Opacity/i);
+
+      if (name === 'brush') {
+        expect(flow?.action).toMatch(/2019 generic reference.*Airbrush enabled/i);
+        expect(flow?.action).toMatch(/bare numbers set Flow and Shift\+number sets Opacity/i);
+      } else {
+        expect(flow?.action).toMatch(/limits Airbrush mode to the Brush.*does not apply to Pencil/i);
+      }
+    }
+  });
+
+  it("limits Sponge digit documentation to Adobe's generic Flow reference", () => {
+    const sponge = toolDescriptions.sponge;
+    const flow = sponge.shortcuts.find((item) => item.keys === 'Shift+0–9');
+
+    expect(flow?.action).toMatch(
+      /2019 generic painting\/editing shortcut reference says Shift\+number sets Flow.*historical generic evidence rather than a current Sponge-specific confirmation.*Airbrush.*does not establish whether that exception applies to the Sponge/i
+    );
+    expect(sponge.shortcuts.filter((item) => /[0-9]/.test(item.keys))).toEqual([flow]);
+    expect(sponge.purpose).not.toMatch(/bare digit keys step Flow/i);
+    expect(sponge.appNotes).toMatch(
+      /2026 Sponge guide documents Flow but no numeric binding.*2019 generic painting\/editing reference assigns Flow to Shift\+number.*no Shift\+number handler sets Flow/i
+    );
+    expect(sponge.sources).toEqual(
+      expect.arrayContaining([
+        'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/adjust-color-saturation-in-selected-image-areas.html',
+        'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
+      ])
+    );
+  });
+
   describe('modifiers and shortcuts consistency', () => {
     it('ensures modifier keys use standard notation', () => {
       const knownModifierWords = [
