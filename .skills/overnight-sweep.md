@@ -43,8 +43,10 @@ If the current root session is free, restrict it to read-only research and hand 
 authorized coordinator before any Git operation. If no coordinator is available, return a concise
 blocked handoff and stop; do not create a second session/worktree just to evade the host's
 permission boundary. Use the exact current free model/provider pair from the live
-catalog for children; a paid Luna reviewer is considered only when the coordinator's budget policy
-allows it and no suitable free reviewer can do the bounded task.
+catalog for children. Do not use paid inference unless the operator explicitly authorizes it in
+the current conversation; a coordinator's budget policy alone is not authorization. If no suitable
+free reviewer is available and no authorization was given, record the blocker and continue only
+with coordinator-owned work that does not require paid inference.
 
 ## Operating Rules
 
@@ -74,8 +76,8 @@ allows it and no suitable free reviewer can do the bounded task.
   zero-token gateway. Before and after a large OpenRouter-backed fan-out, run
   `node scripts/free-model-pool.mjs --openrouter-quota`; its server-side daily counter is
   authoritative for this account and is separate from the Kilo per-IP hourly ceiling.
-- **Quota-aware subagent protocol** (MODELS.md "Free Model Rotation" and "Token-Saving Research
-  Protocol"): the current `swarm` CLI does not expose `tokens --json`, so do not treat that
+- **Quota-aware subagent protocol** (`MODELS.md` §Routing and §Free-agent boundaries): the current
+  `swarm` CLI does not expose `tokens --json`, so do not treat that
   command or `swarm status` as budget telemetry. Refresh eligibility with
   `node scripts/free-model-pool.mjs --list`, use only exact zero-priced model/provider pairs, and
   never fall back silently to paid inference. If the host exposes separate budget data, follow its
@@ -90,7 +92,7 @@ allows it and no suitable free reviewer can do the bounded task.
 - Photoshop behavior, UX and non-trivial algorithms require Adobe or other primary-source
   research. Record source URLs, versions and unresolved claims in a research note or handoff.
 - Every non-trivial implementation requires a fresh read-only code review per
-  `docs/CODE-REVIEW.md` § "Review a subagent change" (verbatim brief, `file:line` finding format);
+  `docs/CODE-REVIEW.md` § "Review a subagent change" for the review brief; format findings with file paths and identifiers per `AGENTS.md`, without line numbers;
   cross-module, persistence/migration, architecture-boundary and broad-regression changes require
   two reviewers split by concern. Fix and re-review blocking findings. See also
   `docs/ORCHESTRATION.md#the-task-lifecycle`.
@@ -263,7 +265,7 @@ For each selected issue:
    `docs/TESTING.md#gates` for commands and known failures. No broad or E2E suites by default.
 5. **Review**: `git diff main...HEAD` for unintended behavior, stale references, missing surfaces,
    out-of-scope changes. Complex task → a fresh read-only review subagent per `docs/CODE-REVIEW.md`
-   § "Review a subagent change" (verbatim brief, `file:line` findings); cross-module/architecture
+   § "Review a subagent change" for the review brief; format findings with file paths and identifiers per `AGENTS.md`, without line numbers; cross-module/architecture
    boundary changes → two reviewers split by concern. Fix and re-review blocking findings.
 6. **Commit**: update any verified-fixed `HANDOFF.md` entry per that document's retirement rules.
    Resolve the current host's chat ID using `docs/CHAT-ID.md`, stage only the reviewed paths, and
@@ -318,9 +320,10 @@ second checkout of the `main` ref.
   try a different currently eligible free provider/model in a new bounded task only if the refreshed
   catalog supports it. Do not assume a resumed task changes its model and do not use paid fallback.
   If no free route is available, record the limit and continue coordinator-owned work or wait.
-- **Token wall on a paid model**: keep research on eligible free routes. Consider a paid Luna
-  reviewer only when the current quota policy permits it, no suitable free reviewer is available,
-  and the coordinator records why the paid review is necessary (MODELS.md).
+- **Token wall on a paid model**: keep research on eligible free routes. Do not retry through
+  another paid model unless the operator explicitly authorizes paid inference in the current
+  conversation; a quota policy or coordinator assessment alone is not authorization. Otherwise
+  record the blocker and continue coordinator-owned work that does not require paid inference.
 - **Network loss / stopped chat**: the recurring hourly cron stays armed if an invocation ends
   unexpectedly; the next scheduled tick resumes when the session is available. Missed ticks are
   not replayed. Re-read the plan and findings and rederive repository state from the task worktree

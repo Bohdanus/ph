@@ -336,9 +336,11 @@ of the chat that wrote it.
   copy a provider/model from an old transcript. Reviewers are read-only and receive
   the branch's absolute worktree path. They review the pinned candidate SHA, not a
   moving branch name, and do not use the main checkout as their working directory.
-- **Tell them what to return:** `file:line` for every finding, with the evidence
-  they got it from. A claim without a line number is not a review, it is an
-  opinion. Ask for candidate results _and_ how they obtained them.
+- **Tell them what to return:** the file path and a symbol, test name, or heading for every
+  finding, plus the evidence. A claim without a specific identifier and evidence is an opinion.
+  For files without a named symbol, test, or heading, include a short unique matched phrase,
+  property, or selector. Do not use a source line number. Ask for candidate results _and_ how they
+  obtained them.
 - **What to ask for, in this order of value:** (a) does it do what step 2 said it
   was for, including the parts nobody committed; (b) what did it break that the
   diff does not show — silent revert candidates from step 3, a gate that now
@@ -347,8 +349,8 @@ of the chat that wrote it.
   coverage); (d) platform fidelity, for anything user-visible.
 
 **When reviewers disagree:** do not average them, and do not let the louder one
-win. Take the specific, reproducible claim — a `file:line` with a failure you can
-reproduce — over the general one, and reproduce it yourself before acting. If both
+win. Take the specific, reproducible claim — identify the file and symbol, test, or heading,
+with a failure you can reproduce — over the general one, and reproduce it yourself before acting. If both
 claims survive reproduction, that is a decision about intent, and intent belongs
 to the operator: write the question into a file and say so in your final message,
 rather than deciding it silently in a commit.
@@ -452,6 +454,10 @@ REVIEWED_CANDIDATE_SHA=$(git -C "$WORKTREE" rev-parse HEAD)
 REVIEWED_TREE=$(git -C "$WORKTREE" rev-parse 'HEAD^{tree}')
 git -C "$WORKTREE" status --short
 ```
+
+The sync-merge commit is checked by `merge-takeover-guard` through the Git hooks. If it refuses,
+inspect the reported paths and resolve the actual conflict in this candidate worktree; never bypass
+the guard with `--no-verify`.
 
 Follow `docs/CHAT-ID.md` for the current host. Verify the selected session is this current
 conversation. Copy a phrase from the current user's request, not a branch name or generic project

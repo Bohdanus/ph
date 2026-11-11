@@ -190,8 +190,8 @@ or logic defects, returns:
       "reason": "Test interrupted: undo button not enabled — state management issue, not rendering"
     }
   ],
-  "logicDefects": ["sponge-tool.spec.ts:589"],
-  "envBoundFailures": ["visual-regression.spec.ts:83", ...]
+  "logicDefects": ["sponge-tool.spec.ts — Vibrance confines a saturate stroke to one gamut-boundary channel per pixel"],
+  "envBoundFailures": ["visual-regression.spec.ts — exports to JPEG matches visual baseline", ...]
 }
 ```
 
@@ -203,11 +203,33 @@ or logic defects, returns:
 git worktree list --porcelain
 # Set this to the absolute path from the stanza with: branch refs/heads/main
 MAIN_WORKTREE="<absolute-main-worktree-path>"
+: "${MAIN_WORKTREE:?Set MAIN_WORKTREE from the refs/heads/main worktree stanza}"
 TASK_NAME="fix-ci-failures-$(date +%Y%m%d)"
-TASK_WORKTREE="$MAIN_WORKTREE/.kilo/worktrees/$TASK_NAME"
+# Reject the example value before invoking Git with it.
+if [ "$MAIN_WORKTREE" = "<absolute-main-worktree-path>" ]; then
+  printf 'Replace the MAIN_WORKTREE placeholder with the path from the refs/heads/main stanza\n' >&2
+  exit 1
+fi
+GIT_COMMON_DIR="$(git -C "$MAIN_WORKTREE" rev-parse --path-format=absolute --git-common-dir)"
+PROJECT_ROOT="$(dirname "$GIT_COMMON_DIR")"
+# Keep task worktrees in the repository-managed directory, not nested inside MAIN_WORKTREE.
+case "$MAIN_WORKTREE" in
+  "$PROJECT_ROOT"|"$PROJECT_ROOT"/.kilo/worktrees/*) ;;
+  *) printf 'Selected main worktree is outside the expected repository: %s\n' "$MAIN_WORKTREE" >&2; exit 1 ;;
+esac
+TASK_WORKTREE="$PROJECT_ROOT/.kilo/worktrees/$TASK_NAME"
+# Before creating the worktree, verify the exact designated main checkout mapping.
+cd "$MAIN_WORKTREE" || exit 1
+pwd
+git -C "$MAIN_WORKTREE" rev-parse --show-toplevel
+git -C "$MAIN_WORKTREE" rev-parse --git-dir --git-common-dir
+test "$(pwd -P)" = "$(git rev-parse --show-toplevel)" || exit 1
+test "$(git rev-parse --abbrev-ref HEAD)" = "main" || exit 1
 git -C "$MAIN_WORKTREE" worktree add -b "task/$TASK_NAME" "$TASK_WORKTREE" main
-cd "$TASK_WORKTREE"
-git rev-parse --show-toplevel
+cd "$TASK_WORKTREE" || exit 1
+pwd
+git -C "$TASK_WORKTREE" rev-parse --show-toplevel
+git -C "$TASK_WORKTREE" rev-parse --git-dir --git-common-dir
 ```
 
 ### Step 2.2: Dispatch read-only fix analysis
@@ -254,17 +276,32 @@ npm run build          # must pass
 ### Step 3.2: Commit
 
 ```bash
-cd <worktree>
+TASK_WORKTREE="<absolute-task-worktree-path>"
+: "${TASK_WORKTREE:?Set TASK_WORKTREE to the verified absolute task worktree path}"
+cd "$TASK_WORKTREE" || exit 1
+pwd
+git -C "$TASK_WORKTREE" rev-parse --show-toplevel
+git -C "$TASK_WORKTREE" rev-parse --git-dir --git-common-dir
+test "$(pwd -P)" = "$(git rev-parse --show-toplevel)" || exit 1
+# Stop if this is not the expected task-worktree mapping.
 # Stage only specific files, never git add -A
-git add <fix-files...>    # the specific files the coordinator changed and reviewed
-git add .skills/parallel-test-hardening.md
+git add path/to/fix-file  # replace with each specific file the coordinator changed and reviewed
 
+# Use the current host's configured Git identity; do not hardcode another host's identity.
 # Resolve the native session ID for the current host using docs/CHAT-ID.md.
 # Verify the match; do not guess or select the first database row.
 CHAT_ID="<verified-native-session-id>"
+if [ "$CHAT_ID" = "<verified-native-session-id>" ]; then
+  printf 'Resolve and verify the current host chat ID before committing\n' >&2
+  exit 1
+fi
 
-git -c user.name="Kilo" -c user.email="kilo@kilo.ai" commit \
-  -m "Fix CI failures: <description of the fixes>" \
+pwd
+git -C "$TASK_WORKTREE" rev-parse --show-toplevel
+git -C "$TASK_WORKTREE" rev-parse --git-dir --git-common-dir
+test "$(pwd -P)" = "$(git rev-parse --show-toplevel)" || exit 1
+# Recheck the mapping before the commit mutation; stop if anything is unexpected.
+git commit -m "Fix CI failures: <description of the fixes>" \
   -m "Chat: $CHAT_ID"
 ```
 
