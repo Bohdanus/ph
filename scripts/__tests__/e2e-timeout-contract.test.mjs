@@ -11,9 +11,21 @@ const baselineCaptureWorkflow = readFileSync(
   'utf8'
 );
 const playwrightConfig = readFileSync(join(testDirectory, '../../playwright.config.ts'), 'utf8');
+const packageManifest = JSON.parse(readFileSync(join(testDirectory, '../../package.json'), 'utf8'));
+const packageLock = JSON.parse(readFileSync(join(testDirectory, '../../package-lock.json'), 'utf8'));
 // This is nominal job headroom: GitHub's clock includes setup while Playwright's starts at test launch.
 // The reserved budget must cover setup and report/upload work across each workflow.
 const minimumJobHeadroomMinutes = 10;
+const minimumWindowsSocketFixVersion = '1.65.0';
+
+function compareVersions(left, right) {
+  const leftParts = left.split('.').map(Number);
+  const rightParts = right.split('.').map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
+  }
+  return 0;
+}
 
 function readCiE2EMatrix() {
   const e2eJobStart = ciWorkflow.indexOf('\n  e2e:\n');
@@ -52,7 +64,7 @@ function readCiE2EMatrix() {
 
 function readPlaywrightCiTimeouts() {
   const timeoutMatch = playwrightConfig.match(
-    /globalTimeout:\s*process\.env\.CI\s*\?\s*\(process\.platform\s*===\s*['"]darwin['"]\s*\?\s*(\d+)\s*:\s*(\d+)\)\s*\*\s*60_000/
+    /^[ \t]*globalTimeout:[ \t]*process\.env\.CI[ \t]*\?[ \t]*\(process\.platform[ \t]*===[ \t]*['"]darwin['"][ \t]*\?[ \t]*(\d+)[ \t]*:[ \t]*(\d+)\)[ \t]*\*[ \t]*60_000/m
   );
   if (!timeoutMatch) {
     throw new Error('Could not find the explicit CI globalTimeout expression in playwright.config.ts');
@@ -62,6 +74,12 @@ function readPlaywrightCiTimeouts() {
     macos: Number(timeoutMatch[1]),
     other: Number(timeoutMatch[2]),
   };
+}
+
+function readWorkflowScalar(jobBlock, fieldName) {
+  const fieldMatch = jobBlock.match(new RegExp(`^ {4}${fieldName}:[ \\t]*([^\\r\\n]+)$`, 'm'));
+  if (!fieldMatch) throw new Error(`Could not find the active ${fieldName} field in the workflow job`);
+  return fieldMatch[1];
 }
 
 function readJobBlock(workflow, jobName) {
@@ -86,6 +104,17 @@ function readPlaywrightRunCommands(jobBlock) {
 }
 
 describe('E2E timeout contract', () => {
+  it('keeps the Windows Chromium socket exhaustion fix in the locked Playwright version', () => {
+    const declaredRange = String(packageManifest.devDependencies['@playwright/test'] ?? '');
+    const declaredMinimum = declaredRange.match(/^[~^]?([0-9]+\.[0-9]+\.[0-9]+)$/)?.[1] ?? '0.0.0';
+    const lockedCoreVersion = String(packageLock.packages['node_modules/playwright-core']?.version ?? '0.0.0');
+
+    expect(declaredMinimum).not.toBe('0.0.0');
+    expect(compareVersions(declaredMinimum, minimumWindowsSocketFixVersion)).toBeGreaterThanOrEqual(0);
+    expect(lockedCoreVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
+    expect(compareVersions(lockedCoreVersion, minimumWindowsSocketFixVersion)).toBeGreaterThanOrEqual(0);
+  });
+
   it('keeps ten minutes of nominal job headroom for every CI shard', () => {
     const job = readJobBlock(ciWorkflow, 'e2e');
     const matrix = readCiE2EMatrix();
@@ -129,8 +158,10 @@ describe('E2E timeout contract', () => {
       macos: 'macos-latest',
     };
 
+    const focusedRunnerExpression = readWorkflowScalar(job, 'runs-on');
+    expect(focusedRunnerExpression.trim()).toMatch(/^\$\{\{ .+ \}\}$/);
     for (const [platform, runner] of Object.entries(runners)) {
-      expect(job).toContain(`client_payload.platform == '${platform}' && '${runner}'`);
+      expect(focusedRunnerExpression).toContain(`client_payload.platform == '${platform}' && '${runner}'`);
       const playwrightTimeoutMinutes = platform === 'macos' ? playwrightTimeouts.macos : playwrightTimeouts.other;
       expect(jobTimeoutMinutes - playwrightTimeoutMinutes).toBeGreaterThanOrEqual(minimumJobHeadroomMinutes);
     }
