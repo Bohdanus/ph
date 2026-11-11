@@ -153,7 +153,24 @@ describe('toolDescriptions', () => {
       ])
     );
     expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option while brushing to subtract/i);
-    expect(quick.appNotes).toMatch(/Temporary modifier gestures.*absent/i);
+    expect(quick.appNotes).toMatch(/Temporary Shift\/Alt gestures.*not implemented/i);
+    expect(quick.appNotes).toMatch(/bracket-key resizing are not implemented/i);
+    expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
+      /whether its Options bar also offers Intersect is unresolved across Adobe sources/i
+    );
+    const quickShortcutKeys = quick.shortcuts.map((shortcut) => shortcut.keys);
+    for (const key of ['[', ']', 'Shift+[', 'Shift+]']) {
+      expect(quickShortcutKeys).not.toContain(key);
+    }
+    expect(quick.sources).toEqual(
+      expect.arrayContaining([
+        'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html',
+        'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/select-area-intersected-by-other-selections.html',
+        'https://helpx.adobe.com/lt/photoshop/how-to/add-to-subtract-from-selections.html',
+        'https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf?TVGll=wnKKa',
+        'https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html',
+      ])
+    );
     expect(quick.summary, 'the Quick Selection tooltip must not promise an unimplemented modifier gesture').not.toMatch(
       /\bAlt\b/i
     );
