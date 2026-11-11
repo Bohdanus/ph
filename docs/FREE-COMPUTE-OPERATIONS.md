@@ -55,14 +55,20 @@ node scripts/free-model-pool.mjs --openrouter-quota
 
 The runner refreshes OpenRouter's public catalog and requires exact-zero pricing. It probes
 `GET /api/v1/key` only when routing reaches the first OpenRouter inference route, then uses the live
-`used`, `limit`, and `remaining` counters. If remaining is zero, it stores the current UTC date and
-skips OpenRouter until the date changes; no scheduled reset is required. If the probe is unknown,
-only one inference request is permitted and the quota-present retry is disabled. A positive quota
-allows one same-route retry after a bounded wait (maximum 60 seconds). HTTP 401/402 exhausts
+`used`, `limit`, and `remaining` counters. OpenRouter notes the tier counter is not enforced for every
+account or endpoint and does not gate BYOK; this runner conservatively stops when its live counter
+reports zero. If remaining is zero, it stores the current UTC date and
+skips OpenRouter until the date changes; no scheduled reset is required. If the initial probe is
+unknown, only one inference request is permitted in that run; a positive post-attempt refresh does
+not unlock another attempt. Quota-present retries require a positive initial probe. A positive quota
+allows one bounded same-route retry for a transient OpenRouter response (maximum wait 60 seconds).
+If that retry also fails, the pool rotates to another eligible OpenRouter model when a fresh quota
+check is still positive and the per-source attempt ceiling permits it. HTTP 401/402 exhausts
 OpenRouter for the run. A zero `X-RateLimit-Remaining` on a 429 identifies a platform rate limit and
 skips the source for that run without blaming the model. A zero daily counter persists today's
-exhaustion marker. Three confirmed upstream/model 429s for the same OpenRouter model in three hours
-create a two-hour model quarantine; 250 confirmed model-attributable failures in seven days create a
+exhaustion marker. Three confirmed upstream/model rate-limit failures (HTTP 429 or typed
+`rate_limit_exceeded`) for the same OpenRouter model in three hours create a two-hour quarantine; 250
+confirmed model-attributable failures in seven days create a
 seven-day quarantine. Network errors, truncation, empty responses, and unresolved model IDs do not
 increment those counters. OpenRouter currently documents 20 requests per minute and 50 daily by
 default, rising to 1,000 after qualifying lifetime credit purchases; failed attempts count. These
@@ -196,6 +202,22 @@ across providers, including Kilo and OpenCode; HTTP 200 with `finish_reason: con
 stops routing. Reported cost from Kilo Nemotron 3 Ultra still stops the run but is not automatically
 quarantined; that exact Kilo route is operator-managed. `--list` refreshes public catalogs and does
 not send an inference request.
+OpenRouter upstream 429 responses can include typed `error.metadata.error_type` and may include
+`error.metadata.provider_code` without platform rate-limit headers; with verified positive daily quota,
+the runner keeps that failure attributable to its model and applies a same-route retry if quota remains.
+Typed 502 `provider_unavailable`, 503 `provider_overloaded`, and 504 `timeout` errors establish upstream
+attribution even when `provider_code` is absent; generic HTTP 500 `server` errors remain unattributed
+unless other provider metadata is present.
+Because failed requests can consume the daily cap, the runner refreshes quota after a nonterminal failed
+or incomplete attempt, including transport and response parsing failures, before another OpenRouter
+inference. A zero or unknown refreshed quota stops the source;
+terminal safety outcomes do not send another inference. At most one bounded transient retry is allowed per
+OpenRouter run. A platform `X-RateLimit-Remaining: 0` still stops OpenRouter for the run. After HTTP 200 is
+committed, typed provider errors may appear in top-level `error.metadata` or `choices[].error.metadata`;
+transient rate-limit, overloaded, unavailable, and timeout types receive the same retry.
+`content_policy_violation` and `refusal` in the typed error metadata stop all provider fallback; see the
+[OpenRouter error reference](https://openrouter.ai/docs/api_reference/errors-and-debugging) and
+[free-model limits](https://openrouter.ai/collections/free-models).
 `--openrouter-quota` reads OpenRouter's daily counter only; it does not report Kilo's separate
 IP-based free-model limit. See [MODELS.md](../MODELS.md) for published limits. The URL runner
 accepts at most 20 public HTTPS URLs and writes only its condensed result. Quarantine operations are
