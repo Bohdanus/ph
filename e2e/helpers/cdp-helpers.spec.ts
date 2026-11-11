@@ -115,6 +115,21 @@ function countPixelsDifferingFrom(
   return differing;
 }
 
+function expectPixelNear(
+  imageData: ImageDataResult,
+  x: number,
+  y: number,
+  expected: { red: number; green: number; blue: number }
+): void {
+  const offset = (y * imageData.width + x) * 4;
+  const delta = Math.max(
+    Math.abs(imageData.data[offset] - expected.red),
+    Math.abs(imageData.data[offset + 1] - expected.green),
+    Math.abs(imageData.data[offset + 2] - expected.blue)
+  );
+  expect(delta, `pixel (${x},${y}) should match ${JSON.stringify(expected)}`).toBeLessThanOrEqual(COLOR_TOLERANCE);
+}
+
 function countTransparentPixels(imageData: ImageDataResult): number {
   let transparent = 0;
   for (let index = 3; index < imageData.data.length; index += 4) {
@@ -134,25 +149,9 @@ async function decodeScreenshot(screenshot: Buffer): Promise<ImageDataResult> {
 /**
  * Asserts the capture is a faithful image of `rect`, expressed in CSS pixels.
  *
- * It deliberately does **not** assert the absolute capture scale, and it must not:
- * `Page.captureScreenshot` returns native device pixels, and on this HiDPI host that
- * scale is a function of the browser mode rather than of the emulated
- * `deviceScaleFactor`. Measured, a 240x160 CSS clip decodes to 480x320 while
- * `window.devicePixelRatio` reports 1; sweeping the project-level `deviceScaleFactor`
- * over 1, 2 and 3 produced the same 480. So the old
- * `imageWidth === rect.width * devicePixelRatio` failed in one mode and passed in the
- * other for byte-identical code, and no amount of DPR bookkeeping fixes it.
- *
- * Deriving the scale from the decoded image instead would be tautological, so what is
- * asserted here is the part that is true in every mode and that consumers depend on: the
- * capture preserves the requested rect's ASPECT RATIO at one integral scale shared by both
- * axes. An anisotropic capture fails it, and a capture of some other rect at an integral
- * scale does NOT — a full 240x160 canvas answering a 120x80 clip decodes 240s x 160s, which
- * is 2s on both axes and passes for s = 1 and s = 2 alike. The absolute scale is
- * deliberately unconstrained, and correctly so: downstream, `screenshotBoundsToCss` and
- * `screenshot-scale.ts` derive it from the decoded dimensions, so it is an input rather
- * than a promise. A test that needs the extent pinned as well anchors it to a reference
- * capture of the same rect, which is what the two below do.
+ * The scale is the Playwright context's device scale and is intentionally checked
+ * through the captured pixels rather than assumed from the host. A reference capture
+ * of the same rect pins tests that also need to detect an added rescaling step.
  */
 function expectFaithfulCaptureOf(imageData: ImageDataResult, rect: { width: number; height: number }): void {
   const scaleX = imageData.width / rect.width;
@@ -163,13 +162,11 @@ function expectFaithfulCaptureOf(imageData: ImageDataResult, rect: { width: numb
   expect(scaleX).toBeGreaterThanOrEqual(1);
 }
 
-test.describe('CDP Helpers', () => {
+test.describe('Canvas screenshot helper', () => {
   /**
-   * Output contract of `captureCanvasScreenshot`: the CDP clip is expressed in CSS
-   * pixels and the result is a faithful image of exactly that rect, at whatever device
-   * scale Chrome captured at. The scale itself is not asserted — it is a property of
-   * the browser and the host, not of this helper, and it differs between headed and
-   * headless on a HiDPI machine. See `expectFaithfulCaptureOf` for the measurement.
+   * Output contract of `captureCanvasScreenshot`: the viewport-relative clip is
+   * expressed in CSS pixels and the result is a faithful image of exactly that rect
+   * at Playwright's device scale.
    *
    * What every test below does pin is the part that is ours: the capture preserves the
    * requested rect's aspect at one integral scale shared by both axes, and the two that can
@@ -179,7 +176,7 @@ test.describe('CDP Helpers', () => {
    * be all red.
    */
   test.describe('captureCanvasScreenshot', () => {
-    test('captures screenshot via CDP', async ({ page }, testInfo) => {
+    test('captures the requested screenshot region', async ({ page }, testInfo) => {
       await page.setContent(RED_CANVAS_PAGE);
       const box = FULL_CANVAS_BOX;
 
@@ -193,7 +190,7 @@ test.describe('CDP Helpers', () => {
       expectFaithfulCaptureOf(imageData, box);
     });
 
-    test('captures screenshot with clip options', async ({ page }, testInfo) => {
+    test('captures the requested clip options', async ({ page }, testInfo) => {
       await page.setContent(RED_CANVAS_PAGE);
       const box = FULL_CANVAS_BOX;
       const clip = { x: CANVAS_LEFT, y: CANVAS_TOP, width: 120, height: 80 };
@@ -240,7 +237,7 @@ test.describe('CDP Helpers', () => {
       expect(imageData.height, 'a capture that took the whole canvas instead of the box').toBe(reference.height);
     });
 
-    test('captures screenshot via CDP without explicit DPR scaling', async ({ page }, testInfo) => {
+    test('captures the requested clip at device scale', async ({ page }, testInfo) => {
       await page.setContent(RED_CANVAS_PAGE);
       const box = FULL_CANVAS_BOX;
       const clip = { x: CANVAS_LEFT, y: CANVAS_TOP, width: 150, height: 100 };
@@ -252,8 +249,8 @@ test.describe('CDP Helpers', () => {
 
       const imageData = await decodeScreenshot(screenshot);
       expect(countPixelsDifferingFrom(imageData, EXPECTED_CANVAS_RED)).toBe(0);
-      // The helper adds no DPR conversion of its own on top of the `scale: 1` it
-      // already sends; Chrome's own device-pixel rendering is the only multiplier.
+      // The helper requests Playwright's device scale directly and adds no second
+      // scaling step after the browser captures the clip.
       expectFaithfulCaptureOf(imageData, clip);
     });
 
@@ -290,20 +287,13 @@ test.describe('CDP Helpers', () => {
      * the browser's layout engine, rather than checking the capture for internal
      * consistency alone.
      *
-     * On a static `setContent` page the 87px CDP height drift does NOT reproduce
-     * (TEST-FLAKES.md §12, OPEN_PROBLEMS.md P2) — the page cannot re-layout while the
-     * capture is in flight — so this is NOT a regression guard for that specific
-     * defect. What it IS is a spatial-correctness tripwire: if the helper ever
-     * mis-projects the clip into page coordinates, or if `viewportRectToPageRect`
-     * drifts, the captured region will not land where `getBoundingClientRect` says
-     * the canvas is, and the pixel colour at the captured origin will be wrong. The
-     * page-side read is the independent oracle the comparison is checked against.
+     * This is a spatial-correctness tripwire: if the helper ever passes the viewport
+     * clip incorrectly, the captured region will not land where `getBoundingClientRect`
+     * says the canvas is, and the pixel colour at the captured origin will be wrong.
+     * The page-side read is the independent oracle the comparison is checked against.
      *
-     * The read uses `getBoundingClientRect` from inside the page, not from
-     * `Locator.boundingBox()` — both are viewport-relative, but the page-side read is
-     * the same source `cdp-helpers.ts` itself consults via `getPageScroll`, so it is
-     * the same convention the conversion is defined against. The synthetic page is static,
-     * so a direct read is sufficient here.
+     * The read uses `getBoundingClientRect` from inside the page rather than a test
+     * constant. The synthetic page is static, so a direct read is sufficient here.
      */
     test('captured region agrees with the page layout geometry', async ({ page }, testInfo) => {
       await page.setContent(RED_CANVAS_PAGE);
@@ -337,7 +327,7 @@ test.describe('CDP Helpers', () => {
       expect(canvasRect!.height).toBeCloseTo(CANVAS_HEIGHT, 1);
 
       // The capture region (100x80) is a sub-rect of the 240x160 canvas. If the clip
-      // were mis-projected into page space, the capture would land on the blue page
+      // were shifted from viewport space, the capture would land on the blue page
       // background instead of the red canvas — the colour check catches that, and the
       // spatial check above confirms the canvas is where the capture expects it.
       expect(countPixelsDifferingFrom(imageData, EXPECTED_CANVAS_RED)).toBe(0);
@@ -385,34 +375,104 @@ test.describe('CDP Helpers', () => {
      * doubling the resolution is a real change to the helper's output, so it is pinned
      * here against a reference rather than against a constant.
      *
-     * Playwright's own `page.screenshot({ scale: 'device' })` is that reference: it
-     * captures the same surface at the same native device scale. Comparing the two
-     * sizes pins the helper's `scale: 1` without naming the absolute scale, so the
-     * assertion holds on a 1x host, a 2x host, headed and headless alike.
+     * Playwright's own `page.screenshot({ scale: 'device' })` is the reference. Comparing
+     * sizes catches any rescaling the helper might add after that device-scale capture.
      */
     test('adds no rescaling of its own, matching Playwright device-scale capture', async ({ page }, testInfo) => {
       await page.setContent(RED_CANVAS_PAGE);
       const box = FULL_CANVAS_BOX;
       const clip = { x: CANVAS_LEFT, y: CANVAS_TOP, width: 120, height: 80 };
 
-      const cdpCapture = await decodeScreenshot(
+      const helperCapture = await decodeScreenshot(
         await captureCanvasScreenshot(page, box, testInfo, 'test-capture-vs-playwright', clip)
       );
       const playwrightCapture = await decodeScreenshot(await page.screenshot({ clip, scale: 'device', type: 'png' }));
 
-      expect(cdpCapture.width).toBe(playwrightCapture.width);
-      expect(cdpCapture.height).toBe(playwrightCapture.height);
+      expect(helperCapture.width).toBe(playwrightCapture.width);
+      expect(helperCapture.height).toBe(playwrightCapture.height);
+    });
+
+    test('preserves viewport geometry during screenshot capture', async ({ page }, testInfo) => {
+      await page.setContent(RED_CANVAS_PAGE);
+      const before = await page.evaluate(() => ({
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+      }));
+
+      await captureCanvasScreenshot(page, FULL_CANVAS_BOX, testInfo, 'test-capture-geometry');
+
+      const after = await page.evaluate(() => ({
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+      }));
+      expect(after).toEqual(before);
+    });
+
+    test('captures a visible viewport clip at a non-zero document scroll', async ({ page }, testInfo) => {
+      const documentTop = 650;
+      const scrollTop = 500;
+      await page.setContent(RED_CANVAS_PAGE);
+      await page.addStyleTag({
+        content: `html, body { height: 1500px; } #test-canvas { top: ${documentTop}px; }`,
+      });
+      await page.evaluate((y) => window.scrollTo(0, y), scrollTop);
+      await page.evaluate(() => {
+        const canvas = document.getElementById('test-canvas') as HTMLCanvasElement | null;
+        const context = canvas?.getContext('2d');
+        if (!canvas || !context) throw new Error('the scrolled capture canvas is unavailable');
+        const halfWidth = canvas.width / 2;
+        const halfHeight = canvas.height / 2;
+        context.fillStyle = '#ff0000';
+        context.fillRect(0, 0, halfWidth, halfHeight);
+        context.fillStyle = '#00ff00';
+        context.fillRect(halfWidth, 0, halfWidth, halfHeight);
+        context.fillStyle = '#ffff00';
+        context.fillRect(0, halfHeight, halfWidth, halfHeight);
+        context.fillStyle = '#00ffff';
+        context.fillRect(halfWidth, halfHeight, halfWidth, halfHeight);
+      });
+
+      const box = await page.locator('#test-canvas').boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.y).toBe(documentTop - scrollTop);
+
+      const screenshot = await captureCanvasScreenshot(page, box!, testInfo, 'test-capture-scrolled');
+      const imageData = await decodeScreenshot(screenshot);
+
+      expectFaithfulCaptureOf(imageData, box!);
+      const splitX = Math.floor(imageData.width / 2);
+      const splitY = Math.floor(imageData.height / 2);
+      expectPixelNear(imageData, splitX - 1, splitY - 1, EXPECTED_CANVAS_RED);
+      expectPixelNear(imageData, splitX, splitY - 1, { red: 0, green: 255, blue: 0 });
+      expectPixelNear(imageData, splitX - 1, splitY, { red: 255, green: 255, blue: 0 });
+      expectPixelNear(imageData, splitX, splitY, { red: 0, green: 255, blue: 255 });
+      expect(await page.evaluate(() => window.scrollY)).toBe(scrollTop);
+    });
+
+    test('rejects a viewport clip that would be partially cut off by scrolling', async ({ page }, testInfo) => {
+      await page.setContent(`<!doctype html>
+        <style>html, body { margin: 0; height: 1500px; background: blue; } canvas { position: absolute; top: 100px; left: 40px; }</style>
+        <canvas width="240" height="160"></canvas>`);
+      await page.evaluate(() => window.scrollTo(0, 150));
+      const box = await page.locator('canvas').boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.y).toBe(-50);
+
+      await expect(captureCanvasScreenshot(page, box!, testInfo, 'offscreen-capture')).rejects.toThrow(
+        'extends outside the current viewport'
+      );
     });
 
     /**
      * P2 — viewport vs page coordinate mismatch at the zero-size boundary.
      *
      * A canvas with zero intrinsic dimensions reports a zero-area
-     * `getBoundingClientRect`. The helper's `viewportRectToPageRect` conversion
-     * still applies, and CDP `Page.captureScreenshot` is asked for a clip of width
-     * 0 / height 0 — which Chrome may reject or return an empty image for. This
-     * pins the boundary so there is a named assertion for the case rather than a
-     * silent crash in the error path.
+     * `getBoundingClientRect`. Playwright rejects a zero-area screenshot clip; this
+     * pins the boundary so the helper has a named assertion for that error path.
      */
     test('rejects a capture request for a zero-size canvas', async ({ page }, testInfo) => {
       await page.setContent(ZERO_SIZE_CANVAS_PAGE);
@@ -437,8 +497,8 @@ test.describe('CDP Helpers', () => {
      * attribute width/height. `getBoundingClientRect` returns the post-transform
      * rect (480x320) while the backing store stays 240x160. This pins that the
      * capture region matches the TRANSFORMED rect — the page layout, not the
-     * attribute — and that the viewport-to-page coordinate conversion still lands
-     * the clip in the right document location.
+     * attribute — and that the viewport-relative clip still lands on the visible
+     * transformed element.
      */
     test('captures the visually scaled bounds of a CSS-transformed canvas', async ({ page }, testInfo) => {
       await page.setContent(TRANSFORMED_CANVAS_PAGE);
@@ -471,18 +531,10 @@ test.describe('CDP Helpers', () => {
   });
 
   /**
-   * The default project runs at an emulated `deviceScaleFactor` of 1, so nothing
-   * above can tell a 1x host apart from a 2x one. This block forces the emulation to
-   * 2 to prove the suite does not silently depend on the default — the helper still
-   * returns a faithful capture, and the scale-agnostic conversion in
-   * `screenshotBoundsToCss` still reconstructs the clip rect exactly.
-   *
-   * It deliberately does not assert a capture scale of 2. The emulated ratio is a
-   * Playwright setting applied to `window.devicePixelRatio`; what CDP captures at is
-   * Chrome's surface scale. Measured on this host the two diverge (a 240x160 CSS clip
-   * decodes to 480x320 at an emulated ratio of 1, and unchanged at 1, 2 and 3), so
-   * asserting `emulated x` here is what kept this block red in exactly the modes it
-   * was meant to protect.
+   * Force the emulated deviceScaleFactor to 2 so this path verifies the requested clip
+   * at high DPI, not only at the project's default scale. The helper explicitly asks
+   * Playwright for device-scale pixels, and the pixel bounds must map back to CSS with
+   * the measured scale.
    */
   test.describe('captureCanvasScreenshot at an emulated deviceScaleFactor of 2', () => {
     test.use({ deviceScaleFactor: 2 });
@@ -505,6 +557,8 @@ test.describe('CDP Helpers', () => {
       const imageData = await decodeScreenshot(screenshot);
       expect(countPixelsDifferingFrom(imageData, EXPECTED_CANVAS_RED)).toBe(0);
       expectFaithfulCaptureOf(imageData, clip);
+      expect(imageData.width).toBe(clip.width * 2);
+      expect(imageData.height).toBe(clip.height * 2);
     });
 
     test('returns the box region at one integral scale', async ({ page }, testInfo) => {

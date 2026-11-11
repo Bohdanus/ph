@@ -285,12 +285,10 @@ with `PLAYWRIGHT_PORT=5711` and `reuseExistingServer` off, all headless:
    failing test's setup. The overflow that made the page 1177px tall was fixed by
    `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx`
    — the rail `<aside>`'s own class list); the canvas box is a constant `108,100 922x583` from
-   tool click to capture. The 1177px/440px figures in `e2e/helpers/screenshot-scale.ts` —
-   `viewportRectToPageRect()`'s note — `e2e/helpers/cdp-helpers.ts` —
-   `captureCanvasScreenshot()`'s note — and `e2e/helpers/toolbar-helpers.ts` —
-   `preservingScroll()`'s note, together with four unit-test comments, now describe a
-   layout this build does not produce. **They are stale, not load-bearing, and
-   correcting them is its own change.**
+   tool click to capture. The 1177px/440px figures were historical measurements from
+   an older layout. Helper comments now describe the current scroll-preservation
+   behavior; unit tests that use nonzero scroll offsets exercise coordinate functions
+   with synthetic inputs and do not claim that the app currently scrolls by that amount.
 
 **What the failure therefore is, and is not.** `hasRedPixels`
 (`e2e/helpers/canvas-helpers.ts` — its `STROKE_ANALYSIS.RED_PIXEL_*` comparison) wants
@@ -529,9 +527,15 @@ the CODE THAT RAN. That is the same discipline as section 10, one level down, an
 compose: pinning the port stops the run testing the wrong tree, and verifying the served
 module stops it testing the wrong code in the right tree.
 
-## 12. `viewport-drawing.spec.ts` has intermittent capture drift, not because of anything it asserts
+## 12. Historical report: viewport drawing and raw-CDP capture drift
 
-**Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision). Reproduced more than once, and the failing window moves between `wide` and `narrow` between runs. Not fixed. Not a known-failing test; it is intermittent.**
+**Current status (2026-11-11):** the old `captureCanvasScreenshot` implementation used raw
+`Page.captureScreenshot`, which changed macOS viewport height from 720px to 633px. The local probe
+and mirror run `42935493395` reproduced that behavior. The helper now uses Playwright's
+`page.screenshot`; its focused headless spec passes and checks that viewport geometry stays fixed.
+The viewport-drawing assertion remains skipped by the operator decision dated 2026-09-29 and has
+not been re-verified under this implementation. The investigation below records the earlier
+failure chain; do not treat its raw-CDP cause as current or remove the skip without operator review.
 
 **No rate is stated here, on purpose.** The captured runs have not been reconciled into a
 per-case distribution — one test over three windows reports a single failure carrying three
@@ -541,13 +545,10 @@ unreconciled, and a wrong one here would be quoted as fact by whoever next picks
 is established:** the test fails intermittently, and the window that fails moves between cases.
 **What is not:** how often.
 
-**The skip is a gate decision, not a fix, and it is not a waiver.** `e2e/viewport-drawing.spec.ts`
-carries a `test.skip(true, …)` with the reason in it. It was skipped because the suite's contract is
-that a default headless run has **zero** failures, and a test that is red one run in four makes
-roughly a quarter of all unrelated merges look broken — which trains the response of ignoring the
-gate, and costs more than this one test buys. A flaky assertion is also worse than no assertion: a
-green result from it carries no information, so it cannot justify a change either. **Nothing about
-the defect is waived; the work below is un-done and filed, and the skip is one line to remove.**
+**The skip is a gate decision, not a fix or a waiver.** `e2e/viewport-drawing.spec.ts` carries a
+`test.skip(true, …)` with the operator's reason. The capture-helper change addresses the measured
+raw-CDP viewport mutation, but this full viewport assertion has not been re-verified, so the skip
+remains in place pending operator review.
 
 **Do not "fix" this by loosening anything.** Widening `ANTIALIASED_FLANGE_CSS_PX`, raising the
 derived bound, raising the drift guard, or adding retries all treat a symptom whose second cause
@@ -567,17 +568,10 @@ off the message, not off separate test results.
 Before `ffb51607` this file ran three tests in a `for` loop and attribution was direct; anything
 recorded against the pre-`ffb51607` shape describes a file that no longer exists.
 
-What is established, and is the useful part: one cause is **measured**, not hypothesised, and
-lives 40 lines above the assertions in that file. `captureCanvasScreenshot` intermittently
-returns a page 87 CSS px SHORTER than the one that was measured, which re-projects the contain
-fit and makes a correctly committed stroke look like it missed the cursor by ~31px. The
-`expect` before the stroke assertion is a hard guard for exactly that, it is a filed defect
-(`e2e/OPEN_PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
-A red run _without_ that message is therefore evidence of a **second** cause, and the three
-remaining candidates are `waitForCanvasRedraw` (polls a CDP screenshot for ink),
-`getDarkPixelBounds` (thresholds that screenshot), and the derived `toleranceFor(box)` — 6.7-8.4px
-across the three windows, **not** the 25px `LEGACY_FIXED_SLACK_CSS_PX`, which is a ceiling the
-derived bound is asserted against and never applied.
+The historical 87px viewport change was confirmed inside raw `Page.captureScreenshot`: the
+browser emitted a `Page.frameResized` event and changed `window.innerHeight` from 720 to 633. The
+Playwright-backed helper no longer uses that direct protocol call, and its current spec asserts
+that the measured viewport dimensions and scroll offsets are unchanged after a capture.
 
 **Do not instrument the 25px bound.** An earlier version of this entry and of the skip's comment
 named it as a candidate failure point, which sent a reader to a constant that is not on the
@@ -600,10 +594,9 @@ a soft assertion. Nothing in it records which one gave. That is the same defect 
 and 8 describe for the unit suite — an uncaptured intermittent failure is a hunting ground,
 not something to close by re-running until green.
 
-**Exact remaining verification:** capture the failing run. `--retries=1` yields a trace
-(`trace: 'on-first-retry'`, inert at the local `retries: 0`), and the trace plus
-`test-results/` is the only artefact that can say whether the ink was absent, mis-thresholded
-or mislocated. Until a failing run is captured, a fix here would be a guess.
+**Remaining verification:** the skipped viewport-drawing assertion needs a separate review and
+operator decision before it can be re-enabled. The helper-level change does not prove the full
+three-viewport stroke-to-cursor assertion on every CI platform.
 
 ## 13. A spec that loads the page many times loses on Playwright's 30s default, not on its own assertions
 
@@ -740,7 +733,7 @@ fixed two false claims in the new comments, but that is not the review.
 - `e2e/viewport-drawing.spec.ts` — `measureAtViewport()`'s `captureCanvasScreenshot()`
   call, and the widest-tolerance `toBeLessThan(LEGACY_FIXED_SLACK_CSS_PX)` guard inside
   `it('line stays under cursor after window resize (normal, wide and narrow)')` — the
-  CDP capture, and the `toBeLessThan(25)` CEILING guard section 12 measures. It is a hard
+  Playwright screenshot, and the `toBeLessThan(25)` CEILING guard section 12 measures. It is a hard
   assertion on the derived tolerance, not one of the soft stroke assertions, which are in
   the same test body
 - `e2e/viewport-drawing.spec.ts` — `VIEWPORTS` — the `{ name, width, height }` list whose

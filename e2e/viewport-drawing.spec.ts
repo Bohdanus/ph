@@ -227,60 +227,24 @@ test('viewport-derived stroke tolerance stays bounded on live canvas geometry', 
 
 test.describe('Viewport Drawing', () => {
   /**
-   * SKIPPED BY DECISION, not because the assertion is wrong.
+   * SKIPPED BY OPERATOR DECISION, not because the assertion is wrong.
    *
-   * This test is intermittently red (TEST-FLAKES.md §12), and the failing window
-   * MOVES between `wide` and `narrow` across the runs that have been captured. A
-   * deterministic defect does not move between cases, so whatever is wrong is in the
-   * test's own measurement chain rather than in the app's viewport mapping.
+   * The earlier raw-CDP capture path changed the browser viewport height during
+   * `Page.captureScreenshot` on macOS. `captureCanvasScreenshot` now uses Playwright's
+   * screenshot API, and `cdp-helpers.spec.ts` checks that capture leaves viewport
+   * geometry unchanged. This focused helper coverage does not re-verify the full
+   * viewport-drawing assertion across the configured viewports and CI platforms.
    *
-   * ## What is already known, and what is not
+   * Keep the operator's skip until that assertion is separately reviewed and
+   * authorized for re-enablement. Do not widen `ANTIALIASED_FLANGE_CSS_PX`, loosen
+   * the derived bound, or add retries to make it green. The geometry-only tolerance
+   * test above remains active while this pixel assertion is skipped.
    *
-   * KNOWN, and measured in this file 40 lines above: `captureCanvasScreenshot`
-   * intermittently returns a page that is 87 CSS px SHORTER than the one measured, and
-   * that drift is a filed defect (`e2e/OPEN_PROBLEMS.md`, the CDP-capture P2). The
-   * `expect` before the stroke assertion exists to catch it and it is a HARD
-   * assertion, so a drift failure names itself and prints both bounding boxes.
-   *
-   * NOT known: whether the remaining red runs are all that same drift, or a second
-   * cause. The chain from screenshot to verdict is `waitForCanvasRedraw` (polls a
-   * CDP screenshot for ink) then `getDarkPixelBounds` (thresholds that screenshot)
-   * then `toleranceFor(box)` — 6.7-8.4px across the three
-   * windows, NOT the 25px `LEGACY_FIXED_SLACK_CSS_PX`, which is a ceiling the
-   * derived bound is asserted *against* and is never applied to anything. Nothing in
-   * the chain records which step gave, so a red run does not yet say.
-   *
-   * Why skipping beats shipping it:
-   *
-   * - The suite's contract is that a default headless run has ZERO failures. A test
-   *   that is red in some runs makes unrelated merges look broken, and the response
-   *   it trains is to ignore the gate — which costs far more than the coverage this
-   *   single test buys.
-   * - A flaky assertion is worse than no assertion, not better: it cannot justify a
-   *   change either, because a green result from it carries no information.
-   *
-   * This is NOT a "known failure" in the sense of a defect that is accepted. Nothing
-   * here is waived; the work is un-done and filed. It is also NOT the fix — do not
-   * widen `ANTIALIASED_FLANGE_CSS_PX`, loosen the bound, raise the drift guard, or
-   * add retries to make it green. Every one of those treats a symptom whose second
-   * cause is still unknown, and raising the drift guard would remove the only check
-   * that names the known one.
-   *
-   * Exact remaining verification, and the one-line un-skip (delete the statement
-   * below): capture a failing run with
-   * `npm run test:e2e -- e2e/viewport-drawing.spec.ts --retries=1`, which yields a
-   * `trace: 'on-first-retry'` trace plus the failure PNG under
-   * `test-results/runs/<run-id>/`. The drift guard's own message distinguishes the two
-   * causes: it fires with "the page moved across captureCanvasScreenshot" for the
-   * known one, and a red run WITHOUT that message is evidence of a second cause. Do
-   * not close this by re-running until green.
-   *
-   * Operator decision, 2026-09-29, after the skip was requested and the suite
-   * reported this test green locally.
+   * Operator decision, 2026-09-29.
    */
   test.skip(
     true,
-    'Intermittent: the failing window moves between cases, known CDP capture drift is one cause — TEST-FLAKES.md §12'
+    'Operator skip retained: viewport-drawing assertion has not been re-verified with the Playwright screenshot helper'
   );
 
   /**

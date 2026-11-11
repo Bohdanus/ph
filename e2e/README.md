@@ -81,9 +81,9 @@ intermittent, it also looks exactly like a real race, so the two get conflated a
 both get filed as "flaky".
 
 **To be precise about the evidence:** no operator-input-caused failure has ever been
-reproduced in this suite. Headless is a preventive default. What _was_ measured, and
-what made headless the default rather than a preference, is that headed mode also
-changed which tests fail, independently of any human:
+reproduced in this suite. Headless is a preventive default. The following headed and
+headless failures were measured with the previous raw-CDP screenshot helper; they are
+historical observations, not results for the current Playwright-backed helper:
 
 | formerly failing tests                                                                                                                                                                                                                                                                                                                | headed | headless |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------- |
@@ -91,11 +91,10 @@ changed which tests fail, independently of any human:
 | two cases in that file's `captureCanvasScreenshot at an emulated deviceScaleFactor of 2` block — `reports the emulated ratio, so the override provably applied` and `returns the box region at one integral scale`                                                                                                                    | pass   | 2 fail   |
 
 The two groups were disjoint and each mode's set reproduced identically across
-repeats. Both are now fixed — the assertions no longer name a capture scale, so they
-are mode-independent by construction — and the suite is green headless. A headed run
-is expected to be green too, but that has not been measured here, and per
-`AGENTS.md` it should not be: an operator's stray click reaching the page is
-indistinguishable from a real race, so a green headed run would be weak evidence.
+repeats. `captureCanvasScreenshot` now uses Playwright's screenshot API, and its
+current headless spec verifies clip location, device scale and unchanged viewport
+geometry. Current headed behavior remains unmeasured; per `AGENTS.md`, agents do not
+run headed tests because operator input can become indistinguishable from a real race.
 
 **What headless does not fix:** a real race. This suite had one —
 `sidebar-keyboard.spec.ts` raced on "flyout closed after Enter" and fired in **headless**

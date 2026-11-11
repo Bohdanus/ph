@@ -87,49 +87,6 @@ Playwright UI mode returns before `globalSetup`, so the in-process guard cannot 
 window. `npm run test:e2e:headed` is the supported operator opt-in; agents use
 `npm run test:e2e`.
 
-## P2 — `boundingBox()` is viewport-relative and a CDP capture clip is page-relative
-
-`e2e/helpers/screenshot-scale.ts` — `viewportRectToPageRect()`, `e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`
-
-The hazard, for whoever refactors this next. `Locator.boundingBox()` measures against
-the VIEWPORT and goes negative the moment the page scrolls, and `page.mouse` shares
-that space. But `page.screenshot({ clip })` and CDP `Page.captureScreenshot`, which
-this suite calls directly, take their clip against the DOCUMENT origin. The two take
-**opposite** conventions from each other for the same numbers: Playwright takes a
-viewport clip and adds the scroll offset itself, so converting there moves the clip
-the wrong way; raw CDP takes a page clip, so converting nothing moves the capture away
-from the region the caller measured. Neither direction throws. A clip derived from a
-scrolled `boundingBox()` and handed to CDP untranslated either returns the wrong region
-or lands off-canvas, where the failure surfaces as `Clipped area is either empty or
-outside the resulting image` and reads as a capture bug rather than a coordinate bug.
-
-**This app no longer scrolls, so the numbers in the original version of this entry no
-longer describe it.** An earlier version opened "The app is taller than Playwright's
-720px window, so the window scrolls… a canvas scrolled 440px down reports `y: -340`
-where it reported `y: 100` before" — measured, that was true of a layout that no longer
-exists. The shell is now exactly viewport-tall at every size in
-`e2e/no-document-overflow.spec.ts`'s matrix, so `getPageScroll` returns `{0, 0}`,
-`boundingBox()` is not negative, and `preservingScroll` has nothing to undo. The
-hazard above is kept because it is about the two conventions disagreeing, which is a
-property of Playwright and CDP rather than of this app, and the same class of bug
-returns the moment anything is allowed to scroll the document again.
-
-**The helper-level fix is done, and it is recorded here so a refactor does not
-undo it.** The conversion is the pure function `viewportRectToPageRect()`
-(`screenshot-scale.ts`), it is applied **at the CDP site only** — inside
-`captureCanvasScreenshot()` in `cdp-helpers.ts`, not in the callers — the scroll
-offset is read per capture rather than cached (`getPageScroll()` in
-`canvas-helpers.ts` — the offset is a live read because a page that scrolls can
-scroll again between captures, whatever currently makes it scroll), and the rule is
-unit-tested for a non-zero offset by `describe('viewportRectToPageRect')` in
-`e2e/helpers/__tests__/screenshot-scale.unit.test.ts`. That unit test is the
-load-bearing part now: it is the only coverage of the non-zero-offset case, since the
-app cannot produce one.
-
-What is left is a rule for new code: a spec that mixes `boundingBox()` with a CDP
-capture must not assume the two agree, and must not introduce a second conversion
-somewhere that already has one.
-
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 
 `dominantRed()` and `getColorAtPoint()` in `e2e/helpers/canvas-helpers.ts` **[pinned]**
@@ -191,57 +148,6 @@ document. Otherwise, keep dark-theme captures out of color-only helper calls. Re
 coverage for a future fix must retain true `#000` document ink while excluding dark cells,
 dark gaps, and antialiased checkerboard edges.
 
-## P2 — a CDP capture intermittently returns a screenshot of a page 87px shorter than the one measured
-
-`e2e/helpers/cdp-helpers.ts`
-
-**Signature.** `captureCanvasScreenshot` returns a plausible image of a page that is not the one
-the caller measured. In a 700px window, `window.innerHeight` reported 700 before the call and 613
-after; in a 900px window, 900 before and 813 after. **The same 87px both times**, with the capture
-the only thing between the two readings. The box before was 844x563 and after 844x476 — width and
-origin unchanged, height alone. The image looks correct, so nothing downstream can tell; the
-caller maps a stroke it measured under the old layout through the new one and the mismatch reads
-as a geometry bug in the app.
-
-**How it was found, and what it is not.** `e2e/viewport-drawing.spec.ts` reported a 32.5px /
-31.05px line-vs-cursor error at the `wide` viewport, which predicted the 763→676 box change
-exactly. The obvious suspect was the rail's new width, and that was wrong: measured per viewport,
-all three windows are **height-limited** (the fit never crosses modes, and width-limited at `wide`
-would need a 970px-tall window), the app's pointer→document mapping
-(`getLocalCoords()` in `src/hooks/usePointerPosition.ts`) and its `object-contain` paint agree
-exactly in CSS space, and painting the app's own document point back through its own fit returns
-the cursor to the decimal. The residual 3–5.5px is the brush's half-width. So the mapping is
-self-consistent and the geometry is fine; the capture is the liar.
-
-**Not fixed.** `captureBeyondViewport: false` is now passed explicitly, which is the documented
-scope and the obvious suspect, and it did **not** eliminate the drift: 1 failure in 15 repeats
-with it set. Across **50 controlled captures at a fixed viewport the drift did not reproduce at
-all** — not once through the full sequence (load, select draw, `drawLine`, `waitForCanvasRedraw`,
-marker injection, capture), which is what makes it a race rather than a scope problem, and why
-the CDP mechanism is still open. Settling it needs native tracing (`--trace` on a run that
-reproduces, or CDP tracing around the call), not more attempts to reproduce it in a loop.
-
-**Fail-closed mitigation.** `captureCanvasScreenshot` now snapshots viewport dimensions and scroll
-offsets before opening CDP and compares them after the response. A change rejects the capture before
-an artifact is written or attached, so other callers cannot treat a plausible image from different
-page geometry as valid evidence. The endpoint comparison cannot detect a transient geometry change
-that returns to its original values before the post-read, or a change between the caller measuring
-`box` and this helper's initial read. Callers needing box/capture consistency must bracket their
-measurement around the helper; the `viewport-drawing.spec.ts` guard does this. This does not explain
-or prevent Chrome's resize race; native tracing is still required, and the spec remains skipped
-until the cause is understood.
-
-**What is done about the reporting.** `e2e/viewport-drawing.spec.ts` now re-measures the box
-across the capture and fails with _"the capture is of a DIFFERENT page than the one that was
-measured, so every offset below is meaningless"_ plus both boxes. That guard fired on the real
-drift during a 10x repeat run, so it is not theoretical. Before it, the same drift surfaced as a
-32.5px app geometry error, which would have sent the next agent to the drawing engine.
-
-**Do not "fix" this by widening a tolerance.** The same spec's tolerance is now DERIVED from the
-stroke's own geometry — `(lineWidth / 2) x containFit(box).scale + 2`, which is 6.7–8.4px and
-roughly a third of the fixed 25px it replaced — and there is a control asserting the widest
-derived tolerance stays below 25 so a later edit cannot silently re-widen it.
-
 ## Known-skip tests
 
 Two specs are `test.skip` by declaration:
@@ -251,23 +157,18 @@ Two specs are `test.skip` by declaration:
   a sandboxed CI.
 - `e2e/viewport-drawing.spec.ts` — its unconditional `test.skip(true, …)` on the test
   titled `line stays under cursor after window resize (normal, wide and narrow)`. Its
-  declaration's own reason is the intermittent CDP capture drift that `TEST-FLAKES.md`
-  §12 still records as open, behind an operator decision dated 2026-09-29.
+  declaration is retained under the operator decision dated 2026-09-29. The shared capture
+  helper now uses Playwright's screenshot API and its focused spec verifies geometry
+  preservation; this viewport-drawing assertion itself remains unverified and operator-owned.
 
 ## Still unverified
 
 **Not verified:**
 
-- A headed run of the whole suite. It was never re-measured here, and
-  `AGENTS.md` forbids it. The CDP fix removes the only headed-failing group and is
-  written to be mode-independent, so headed is expected to be green too — but that
-  is an inference from the assertions' shape, not a measurement. The operator-input
-  hazard that made headed runs untrustworthy is also why: a headed green run here
-  would not be strong evidence.
-- Whether the CDP capture scale reproduces on CI's headless Linux runner, a third
-  configuration never observed directly. It no longer matters for correctness — the
-  assertions no longer name a scale — but it is why the helper's comment still
-  describes the capture as "native device pixels" rather than a known factor.
+- A headed run of the whole suite. It was never measured here, and `AGENTS.md`
+  forbids it. The helper now uses Playwright's screenshot API, but its headed behavior
+  has not been measured. The operator-input hazard also makes a headed green run weak
+  evidence.
 - Any operator-input-caused failure. None has ever been reproduced here; the
   headless default is preventive.
 - The pixel baselines are verified against a **dev-server** build, because

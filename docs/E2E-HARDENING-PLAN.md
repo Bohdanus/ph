@@ -68,8 +68,9 @@ wasted work.
   a silent scope reduction on every local run — the suite collects one test, prints it green, and
   the operator reads green as coverage. A guard reads the config with `CI` deleted **and** set,
   because one reading cannot discriminate: the old expression is already true under CI.
-- **A rejecting CDP `detach()` no longer replaces the capture error.** The detach failure is held,
-  the capture error is thrown first, and the detach error rides as `cause`.
+- **Historical CDP session handling.** `captureCanvasScreenshot` used to open and detach a raw
+  CDP session. It now uses Playwright's `page.screenshot`, so that detach lifecycle no longer
+  exists; do not restore the old session path without re-establishing its need.
 - **The size-mismatch path, the poll counter and the coverage universe** — see the rows below; the
   coverage universe remains in flight.
 

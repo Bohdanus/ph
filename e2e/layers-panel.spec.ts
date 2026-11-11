@@ -215,21 +215,19 @@ test.describe('Layers panel', () => {
     if (!viewport) throw new Error('Page has no viewport size');
 
     /**
-     * Both captures are pinned to ONE rect, because the two capture paths disagree about any
-     * part of the canvas that leaves the viewport: `page.screenshot({clip})` comes back
-     * clipped to the viewport, while the CDP helper returns the whole clipped rect. A rect
-     * only one of them honours is a rect where the two samplers read different rows of the
-     * same stroke and every colour assertion misses, so the coordinates below are mapped
-     * onto the INTERSECTION of the canvas box and the viewport rather than onto the box.
+     * Both captures use Playwright screenshots, but `waitForCanvasPixels` can scroll a clip
+     * into view while `captureCanvasScreenshot` captures the supplied viewport clip directly.
+     * Pin both to the INTERSECTION of the canvas box and viewport so they read the same rows
+     * of each stroke instead of comparing different regions.
      *
      * That intersection is the canvas box itself, and the reason is worth recording because
      * the claim it replaced was wrong: `html`, `body` and `#root` are all `height: 100%`
-     * (`src/index.scss:58`), and `<main>` is a `1fr` grid item carrying `overflow-y-auto`
+     * (`src/index.scss`), and `<main>` is a `1fr` grid item carrying `overflow-y-auto`
      * whose only child with a document open is `absolute h-full w-full`
-     * (`src/components/Main/Main.tsx:230`). The document does not scroll, and the canvas
+     * (`src/components/Main/Main.tsx`). The document does not scroll, and the canvas
      * element cannot leave the viewport. The clamp stays because it is free while it is the
      * identity and the file still has to be right if that stops holding - `.zoom-container`
-     * carries a commented-out `transform: scale(zoom)` (`Main.tsx:236`) that would put the
+     * carries a commented-out `transform: scale(zoom)` that would put the
      * element box outside the viewport again.
      */
     const region = viewportClip({
@@ -239,7 +237,7 @@ test.describe('Layers panel', () => {
       height: Math.min(box.y + box.height, viewport.height) - Math.max(box.y, 0),
     });
 
-    /** Screenshot of `region`, captured and attached by the CDP helper. */
+    /** Screenshot of `region`, captured and attached by the shared helper. */
     const capture = (name: string, testInfo: TestInfo) => captureCanvasScreenshot(page, region, testInfo, name);
 
     const stroke = async (color: string, line: { from: Point; to: Point }) => {
