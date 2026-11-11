@@ -20,6 +20,47 @@ afterEach(() => {
 });
 
 describe('main landing alert claims', () => {
+  it('recovers a malformed alert marker while holding the recovery control lock', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-alert-'));
+    tempDirectories.push(lockDir);
+    const alertFile = join(lockDir, 'alert-15m.json');
+    const controlFile = join(lockDir, 'owner-control.lock');
+    writeFileSync(alertFile, '{ malformed json');
+
+    const owner = { leaseId: 'recovered-lease' };
+    expect(claimAlert({ lockDir }, owner, 15)).toBe(true);
+    const pending = JSON.parse(readFileSync(alertFile, 'utf8'));
+    expect(pending).toMatchObject({
+      status: 'pending',
+      leaseId: owner.leaseId,
+    });
+    expect(existsSync(controlFile)).toBe(false);
+
+    expect(claimAlert({ lockDir }, { leaseId: 'second-lease' }, 15)).toBe(false);
+    expect(JSON.parse(readFileSync(alertFile, 'utf8'))).toEqual(pending);
+  });
+
+  it('preserves a malformed alert marker while another process owns the recovery control lock', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-alert-'));
+    tempDirectories.push(lockDir);
+    const alertFile = join(lockDir, 'alert-15m.json');
+    const controlFile = join(lockDir, 'owner-control.lock');
+    const malformed = '{ malformed json';
+    const control = {
+      leaseId: 'active-lease',
+      pid: process.pid,
+      host: hostname(),
+      platform: process.platform,
+      startedAt: new Date().toISOString(),
+    };
+    writeFileSync(alertFile, malformed);
+    writeFileSync(controlFile, JSON.stringify(control));
+
+    expect(claimAlert({ lockDir }, { leaseId: 'new-lease' }, 15)).toBe(false);
+    expect(readFileSync(alertFile, 'utf8')).toBe(malformed);
+    expect(readFileSync(controlFile, 'utf8')).toBe(JSON.stringify(control));
+  });
+
   it('preserves a stale pending marker while another process owns the recovery control lock', () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-alert-'));
     tempDirectories.push(lockDir);
