@@ -941,7 +941,12 @@ export const paintDescriptions: Record<
         detail: 'Current & Below and All Layers are deferred; the MVP edits the active layer.',
         status: 'missing',
       },
-      { control: 'Diffusion', detail: 'Adobe’s 1–7 diffusion control is deferred.', status: 'missing' },
+      {
+        control: 'Diffusion',
+        detail:
+          'Adobe documents a Diffusion slider that controls how quickly the repaired area blends with its surroundings; current desktop guidance favors lower values for detail and higher values for smooth areas, but does not publish numeric bounds.',
+        status: 'missing',
+      },
     ],
     modifiers: [{ keys: 'Alt/Option-click', action: 'Sets the sampled source point without creating history.' }],
     shortcuts: [{ keys: 'J', action: 'Selects the healing-tool family; this app selects Healing Brush directly.' }],
@@ -997,7 +1002,8 @@ export const paintDescriptions: Record<
       },
       {
         control: 'Diffusion',
-        detail: 'Adobe’s 1–5 diffusion control is not exposed; tip hardness supplies the available edge falloff.',
+        detail:
+          'Adobe’s 2022 Healing examples identify a Diffusion slider for Spot Healing and give general low/high guidance; the current 2026 desktop Spot Healing page omits Diffusion, and neither source publishes numeric bounds. The app does not expose the control; tip hardness supplies the available edge falloff.',
         status: 'missing',
       },
     ],
@@ -1013,6 +1019,7 @@ export const paintDescriptions: Record<
       'The stroke is one replayable raster history action and uses the active layer’s presented raster. The processor is deterministic and does not claim Photoshop Content-Aware fidelity.',
     sources: [
       'https://www.adobe.com/products/photoshop/spot-heal.html',
+      'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/remove-small-spots-with-the-spot-healing-brush.html',
       'https://helpx.adobe.com/photoshop/using/healing-examples.html',
       'https://helpx.adobe.com/photoshop/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html',
     ],
