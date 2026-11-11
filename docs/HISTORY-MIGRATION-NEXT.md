@@ -136,12 +136,14 @@ commits or alter logical history authority.
    differences are not product-path failures because admission refuses those records and the app
    retains legacy rendering/export. The root cause remains unknown. Keep the
    gate closed and isolate the first differing intermediate surface before changing production code.
-   The diagnostic test records pixel offsets and channel values; extend that capture with document
-   coordinates, alpha, source/backdrop pixels, and exact surface bounds. Compare identical frame,
-   transform, clipping, layer order, and opaque backdrop, then vary one factor at a time: opacity 1
-   versus 0.58, source-over versus multiply, integer versus fractional frame, and direct frame-surface
-   copy versus tight-bitmap placement. Check operation order and intermediate alpha/premultiplication
-   around `drawEvaluatedPresentation()` and `renderExportCanvas()`; `durable-compositor.ts` explicitly
+   The diagnostic fixture now records differing-pixel document coordinates, RGBA/alpha, aggregate
+   bounds, source/backdrop samples, and exact runtime/export/PNG/PSD surface bounds. Its opacity-only
+   and multiply-only controls run at both the affine cursor and fractional frame. The root cause is
+   still unknown: use these samples to isolate the first surface where legacy and durable bytes
+   diverge. Compare the same frame, transform, clipping, layer order, and opaque backdrop; continue
+   with the transparent-backdrop and frame-surface-copy versus tight-bitmap-placement controls.
+   Check operation order and intermediate alpha/premultiplication around
+   `drawEvaluatedPresentation()` and `renderExportCanvas()`; `durable-compositor.ts` explicitly
    disables image smoothing on its composition path, so smoothing is not an established explanation.
    Investigate the fractional PSD discrepancy separately by comparing legacy and durable background
    raster bytes before encoding at identical integer bounds, then check layer placement relative to
@@ -172,14 +174,12 @@ not impose a dependency between them.
    premultiplied pixels. The Invert check pins a fresh-canvas consumer readback, not raw OffscreenCanvas
    backing-store identity. Adapter measurements are intentionally diagnostic because the normal gate
    refuses retained operations.
-   First identify the earliest intermediate surface where legacy and durable bytes diverge. Reuse the
-   same opaque backdrop, layer order, frame, transform, clipping, opacity, and blend settings, and
-   capture the differing pixel coordinates, channels, alpha, source/backdrop samples, and bounds.
-   At each cursor, compare the direct original-source draw, the materialized bitmap drawn at matching
-   frame-grid coordinates, and the projected-record draw. Hold canvas type, transform, clipping, and
-   destination constant; include controls that prove the transform and blend each affect pixels.
-   Then vary opacity 1 versus 0.58, source-over versus multiply, integer versus fractional frame,
-   opaque versus transparent backdrop, and direct frame-surface copy versus tight-bitmap placement,
+   Use the diagnostic fixture's document-coordinate pixel samples, source/backdrop RGBA, exact
+   bounds, and opacity-only/multiply-only controls at both the affine cursor and fractional frame to
+   find the earliest intermediate surface where legacy and durable bytes diverge. Compare the direct
+   original-source draw, materialized bitmap at matching frame-grid coordinates, and projected-record
+   draw. Hold canvas type, transform, clipping, layer order, and destination constant; next compare an
+   opaque versus transparent backdrop and a direct frame-surface copy versus tight-bitmap placement,
    changing one condition at a time. Inspect intermediate alpha/premultiplication and operation
    order; preserve the explicit `imageSmoothingEnabled = false` setting rather than attributing the
    result to filtering without evidence. For PSD, isolate the legacy and durable background-layer
