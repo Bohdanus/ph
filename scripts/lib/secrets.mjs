@@ -21,7 +21,7 @@ const SECRET_PATTERNS = [
     pattern: /(?:gh[pousr]_[a-zA-Z0-9_]{12,}|github_pat_[a-zA-Z0-9_]{12,}|xox[baprs]-[a-zA-Z0-9-]{8,})/gi,
     replacement: '***REDACTED***',
   },
-  { pattern: /AKIA[0-9A-Z]{16}/g, replacement: '***REDACTED***' },
+  { pattern: /(?:AKIA|ASIA)[0-9A-Z]{16}/g, replacement: '***REDACTED***' },
   { pattern: /xn--[a-zA-Z0-9-]{10,}/gi, replacement: 'xn--***REDACTED***' },
 ];
 

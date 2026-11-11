@@ -95,7 +95,8 @@ describe('secret key redaction', () => {
     ['GitHub app', `ghs_${'c'.repeat(36)}`],
     ['GitHub fine-grained', `github_pat_${'d'.repeat(50)}`],
     ['Slack', `xoxb-${'e'.repeat(24)}`],
-    ['AWS', 'AKIAIOSFODNN7EXAMPLE'],
+    ['AWS long-term', 'AKIAIOSFODNN7EXAMPLE'],
+    ['AWS temporary', 'ASIAIOSFODNN7EXAMPLE'],
   ];
 
   it.each(tokenCases)('redacts a standalone %s token in free text', (_kind, token) => {
