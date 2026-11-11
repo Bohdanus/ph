@@ -16,7 +16,7 @@ const SECRET_PATTERNS = [
   { pattern: /(?:kilo[_-]?cli|KILO_CLI)\s*[=:]\s*([^\s]{10,})/gi, replacement: 'KILO_CLI=***REDACTED***' },
   { pattern: /Bearer\s+([a-zA-Z0-9_-]{20,})/gi, replacement: 'Bearer ***REDACTED***' },
   { pattern: /Authorization:\s*Bearer\s+([a-zA-Z0-9_-]{20,})/gi, replacement: 'Authorization: Bearer ***REDACTED***' },
-  { pattern: /sk-[a-zA-Z0-9_-]{12,}/gi, replacement: 'sk-***REDACTED***' },
+  { pattern: /sk-[a-zA-Z0-9_-]{20,}/gi, replacement: 'sk-***REDACTED***' },
   {
     pattern: /(?:gh[pousr]_[a-zA-Z0-9_]{12,}|github_pat_[a-zA-Z0-9_]{12,}|xox[baprs]-[a-zA-Z0-9-]{8,})/gi,
     replacement: '***REDACTED***',

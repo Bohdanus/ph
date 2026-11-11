@@ -45,6 +45,11 @@ describe('secret key redaction', () => {
     });
   });
 
+  it.each(['api_key_12', 'access_key_id_42'])('redacts numeric suffixes in %s', (key) => {
+    expect(isSecretKey(key)).toBe(true);
+    expect(sanitizeForOutput({ [key]: 'value' })).toEqual({ [key]: '***REDACTED***' });
+  });
+
   it('redacts lowercase concatenated auth token and SigV4 names', () => {
     expect(
       sanitizeForOutput({
@@ -61,7 +66,7 @@ describe('secret key redaction', () => {
     });
   });
 
-  it('does not catastrophically backtrack on a long near-match object key', () => {
+  it('does not catastrophically backtrack on long near-match keys in object and text sanitization', () => {
     const sanitizerUrl = pathToFileURL(resolve('scripts/lib/secrets.mjs')).href;
     const source = `
       import { sanitizeErrorMessage, sanitizeForOutput } from ${JSON.stringify(sanitizerUrl)};
@@ -81,7 +86,7 @@ describe('secret key redaction', () => {
     expect(result.status, result.stderr).toBe(0);
     const key = `key${'1'.repeat(64)}x`;
     const message = `request failed: ${key}=ordinary value`;
-    expect(result.stdout.trim()).toBe(JSON.stringify({ object: { [key]: 'ordinary value' }, message }));
+    expect(JSON.parse(result.stdout.trim())).toEqual({ object: { [key]: 'ordinary value' }, message });
   });
 
   const tokenCases = [
@@ -110,6 +115,12 @@ describe('secret key redaction', () => {
     expect(sanitizedObjectMessage).not.toContain(token);
     expect(sanitizedObjectMessage).toContain('prefix');
     expect(sanitizedObjectMessage).toContain('suffix');
+  });
+
+  it('preserves short sk-like identifiers in free text', () => {
+    const message = 'missing identifier: sk-abcdefghijkl';
+    expect(sanitizeErrorMessage(message)).toBe(message);
+    expect(sanitizeForOutput({ message }).message).toBe(message);
   });
 
   it('redacts quoted credential assignments from error messages', () => {
