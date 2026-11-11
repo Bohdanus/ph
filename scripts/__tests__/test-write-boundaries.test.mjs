@@ -174,8 +174,9 @@ const REVIEWED = {
     patterns: '',
   },
   'secrets.test.mjs': {
-    scope: 'In-memory secret-key and redaction assertions; no filesystem mutations, subprocesses, or database access.',
-    patterns: '',
+    scope:
+      'In-memory secret-key/redaction assertions plus one bounded Node child for the adversarial key; no filesystem or database access.',
+    patterns: `subprocess:spawnSync=1`,
   },
   'suite-budgets.test.mjs': {
     scope: 'Unit tests with mocked data; no filesystem mutations, subprocesses, or database access.',
