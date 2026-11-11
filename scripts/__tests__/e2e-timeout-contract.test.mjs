@@ -79,8 +79,10 @@ function readFixedJobTimeoutMinutes(jobBlock, jobName) {
   return Number(timeoutMatch[1]);
 }
 
-function countPlaywrightRuns(jobBlock) {
-  return jobBlock.match(/^[ \t]+run:[ \t].*(?:npx playwright test|scripts\/e2e-run\.mjs|test:e2e)/gm)?.length ?? 0;
+function readPlaywrightRunCommands(jobBlock) {
+  return [...jobBlock.matchAll(/^[ \t]+run:[ \t]+([^\r\n]*)$/gm)]
+    .map((match) => match[1])
+    .filter((command) => /(?:npx playwright test|scripts\/e2e-run\.mjs|test:e2e)/.test(command));
 }
 
 describe('E2E timeout contract', () => {
@@ -97,7 +99,9 @@ describe('E2E timeout contract', () => {
       'windows/shard-1',
       'windows/shard-2',
     ]);
-    expect(countPlaywrightRuns(job)).toBe(1);
+    expect(readPlaywrightRunCommands(job)).toEqual([
+      'npx playwright test --shard=${{ matrix.shard }}/${{ matrix.shards }}',
+    ]);
 
     for (const entry of matrix) {
       expect(entry.os).toBe(
@@ -118,7 +122,7 @@ describe('E2E timeout contract', () => {
     const job = readJobBlock(focusedE2EWorkflow, 'focused-e2e');
     const jobTimeoutMinutes = readFixedJobTimeoutMinutes(job, 'focused-e2e');
     const playwrightTimeouts = readPlaywrightCiTimeouts();
-    expect(countPlaywrightRuns(job)).toBe(1);
+    expect(readPlaywrightRunCommands(job)).toEqual(['npx playwright test --workers=1 "$E2E_SPEC"']);
     const runners = {
       linux: 'ubuntu-latest',
       windows: 'windows-latest',
@@ -136,11 +140,14 @@ describe('E2E timeout contract', () => {
     const job = readJobBlock(baselineCaptureWorkflow, 'capture');
     const jobTimeoutMinutes = readFixedJobTimeoutMinutes(job, 'baseline capture');
     const playwrightTimeouts = readPlaywrightCiTimeouts();
-    const playwrightRunCount = countPlaywrightRuns(job);
+    const playwrightRuns = readPlaywrightRunCommands(job);
 
     expect(job).toContain('runs-on: ubuntu-latest');
-    expect(playwrightRunCount).toBe(2);
-    expect(jobTimeoutMinutes - playwrightRunCount * playwrightTimeouts.other).toBeGreaterThanOrEqual(
+    expect(playwrightRuns).toEqual([
+      'npm run test:e2e:update-baselines -- --workers=1',
+      'npm run test:e2e -- e2e/export/visual-regression.spec.ts --workers=1',
+    ]);
+    expect(jobTimeoutMinutes - playwrightRuns.length * playwrightTimeouts.other).toBeGreaterThanOrEqual(
       minimumJobHeadroomMinutes
     );
   });
