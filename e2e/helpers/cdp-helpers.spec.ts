@@ -544,6 +544,25 @@ test.describe('Canvas screenshot helper', () => {
       expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
     });
 
+    test('preserves a fractional clip at device scale', async ({ page }, testInfo) => {
+      await page.setContent(RED_CANVAS_PAGE);
+      expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
+      const box = FULL_CANVAS_BOX;
+      const clip = { x: CANVAS_LEFT - 0.25, y: CANVAS_TOP - 0.25, width: 120.5, height: 80.5 };
+
+      const screenshot = await captureCanvasScreenshot(page, box, testInfo, 'test-capture-2x-fractional', clip);
+      const actual = await decodeScreenshot(screenshot);
+      const reference = await decodeScreenshot(await page.screenshot({ clip, scale: 'device', type: 'png' }));
+
+      // Fractional CSS extents rasterize to integer device-pixel dimensions on each axis;
+      // compare the exact decoded capture to Playwright's direct result instead of assuming
+      // one scalar pixel ratio survives independent per-axis rounding.
+      expect(actual.width).toBe(reference.width);
+      expect(actual.height).toBe(reference.height);
+      expect(Buffer.from(actual.data)).toEqual(Buffer.from(reference.data));
+      expectPixelNear(actual, Math.floor(actual.width / 2), Math.floor(actual.height / 2), EXPECTED_CANVAS_RED);
+    });
+
     test('returns the clip region at one integral scale', async ({ page }, testInfo) => {
       await page.setContent(RED_CANVAS_PAGE);
       const box = FULL_CANVAS_BOX;

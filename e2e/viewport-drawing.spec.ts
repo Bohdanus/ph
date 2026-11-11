@@ -116,22 +116,22 @@ async function measureAtViewport(
    * The capture must not have moved the page, and this is checked BEFORE the stroke is
    * measured, because a capture that moves the page invalidates every number below it.
    *
-   * MEASURED, and it is the cause of this test's historical flakiness rather than a
-   * hypothesis: `captureCanvasScreenshot` (`e2e/helpers/cdp-helpers.ts:8`) intermittently
-   * leaves the page's emulated viewport 87 CSS px SHORTER than it was — `window.innerHeight`
-   * 700 -> 613 at the `narrow` window and 900 -> 813 at `wide`, the same 87 both times, with
-   * nothing but that call between the two readings. `#root` and the shell grid shrink by the
-   * same 87, the canvas box goes 563 -> 476, and the app's contain fit re-projects from
-   * 0.9383 to 0.7933. The stroke was committed under the OLD fit, so the captured frame shows
-   * it at the OLD document point drawn through the NEW fit: 30px in x and 31.05px in y at
-   * `narrow`, 32.5px and 31.05px at `wide`. Those are the numbers this test used to report as
-   * a stroke that missed the cursor, and they are a capture of the wrong page.
+   * HISTORICALLY MEASURED on the former CDP capture path: that helper intermittently left the
+   * page's emulated viewport 87 CSS px SHORTER than it was — `window.innerHeight` 700 -> 613 at
+   * the `narrow` window and 900 -> 813 at `wide`, the same 87 both times, with nothing but the
+   * capture between the readings. `#root` and the shell grid shrank by the same 87, the canvas
+   * box went 563 -> 476, and the app's contain fit re-projected from 0.9383 to 0.7933. The
+   * stroke had been committed under the OLD fit, so the captured frame showed it at the old
+   * document point through the NEW fit: 30px in x and 31.05px in y at `narrow`, 32.5px and
+   * 31.05px at `wide`. Those were measurements of a capture of the wrong page, not a stroke
+   * that missed the cursor.
    *
    * So the check is a guard, not a tolerance: it turns "the line is 32px from the cursor"
    * into a statement of what is actually true, and it keeps the per-window tolerances below
-   * honest for as long as the helper behaves. The FIX belongs in the helper — see
-   * `e2e/OPEN_PROBLEMS.md` — and this spec deliberately does not paper over it, because a
-   * spec that re-took the shot until the numbers looked right would be asserting nothing.
+   * honest. The helper now uses Playwright's screenshot API; this guard remains a hard
+   * regression check that the capture does not change the measured viewport. Do not retry or
+   * widen the bound if it fires: the test must report a changed capture geometry before any
+   * pixel comparison can be trusted.
    */
   expect(
     boxBeforeCapture && boxAfterCapture
@@ -162,9 +162,9 @@ async function measureAtViewport(
 }
 
 /**
- * Keeps the viewport-specific tolerance proof active while the pixel comparison below remains
- * skipped. It reads only the live canvas box and contain-fit geometry; it never captures,
- * samples, or compares pixels, so it does not depend on the unresolved capture drift.
+ * Keeps the viewport-specific tolerance formula and geometry non-vacuity proof independent of
+ * the active pixel comparison below. It reads only the live canvas box and contain-fit geometry;
+ * it never captures or samples pixels, so the two checks fail for different reasons.
  */
 test('viewport-derived stroke tolerance stays bounded on live canvas geometry', async ({ page }) => {
   test.setTimeout(DEFAULT_TEST_TIMEOUT_MS * VIEWPORTS.length);
@@ -255,7 +255,7 @@ test.describe('Viewport Drawing', () => {
     }
 
     // The tolerance and geometry non-vacuity controls run in the separate active test above.
-    // Keep this skipped body limited to the pixel assertion whose cause remains under study.
+    // Keep these pixel assertions exact; measureAtViewport rejects capture drift first.
     for (const { name, box, start, end, line } of measurements) {
       const tolerance = toleranceFor(box);
       expect.soft(Math.abs(line.left - start.x), `${name}: line start far from cursor`).toBeLessThanOrEqual(tolerance);
