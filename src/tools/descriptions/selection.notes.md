@@ -390,8 +390,8 @@ selection — so it shares a name with the thing it is not. `LassoToolArgs` carr
 `lineWidth`, `color` and `fill`, none of which Photoshop puts on this bar.
 
 **Shortcut gap.** With the Lasso tool selected, `Return` (macOS) / `Enter` (Windows) highlights
-the `Feather` field so a feather can be set before the next trace; it does not select or activate
-the tool. This behavior is described by [Julieanne Kost's selection shortcuts](https://jkost.com/blog/2021/07/25-shortcuts-and-tips-for-creating-better-selections-in-photoshop.html).
+the `Feather` field so a feather can be set before the next trace. This behavior is described by
+[Julieanne Kost's selection shortcuts](https://jkost.com/blog/2021/07/25-shortcuts-and-tips-for-creating-better-selections-in-photoshop.html).
 Nothing in the app binds it.
 
 **Modifier gap.** None of this tool's Photoshop modifiers is implemented, and neither is the
