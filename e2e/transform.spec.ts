@@ -123,6 +123,146 @@ test.describe('Transform tool', () => {
   // ambiguity instead of leaving it to be rediscovered as a flaky failure.
   test.use({ viewport: { width: 1600, height: 1200 } });
 
+  test('resizeX slider scales layer horizontally', async ({ page }, testInfo) => {
+    await page.goto('/');
+    const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
+    expect(canvasBox).not.toBeNull();
+    const box = canvasBox!;
+    const wholeCanvas = viewportClip({
+      x: box.x,
+      y: box.y,
+      width: Math.floor(box.width),
+      height: Math.floor(box.height),
+    });
+
+    await clickToolButton(page, 'draw');
+    await page.locator('#size-slider').fill(String(BRUSH_SIZE));
+    await drawDocumentBar(page, box, Math.round(DEFAULT_DOCUMENT_SIZE.height * 0.5));
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const before = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'resize-x-before', testInfo, wholeCanvas)
+    );
+    expect(before).not.toBeNull();
+
+    await openTransformTool(page);
+    await page.locator('#resize-x-slider').fill('150');
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const after = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'resize-x-after', testInfo, wholeCanvas)
+    );
+    expect(after).not.toBeNull();
+    expect(after!.width / before!.width).toBeGreaterThan(1.3);
+    const heightRatio = after!.height / before!.height;
+    expect(heightRatio).toBeGreaterThan(0.9);
+    expect(heightRatio).toBeLessThan(1.1);
+  });
+
+  test('resizeY slider scales layer vertically', async ({ page }, testInfo) => {
+    await page.goto('/');
+    const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
+    expect(canvasBox).not.toBeNull();
+    const box = canvasBox!;
+    const wholeCanvas = viewportClip({
+      x: box.x,
+      y: box.y,
+      width: Math.floor(box.width),
+      height: Math.floor(box.height),
+    });
+
+    await clickToolButton(page, 'draw');
+    await page.locator('#size-slider').fill(String(BRUSH_SIZE));
+    await drawDocumentBar(page, box, Math.round(DEFAULT_DOCUMENT_SIZE.height * 0.5));
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const before = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'resize-y-before', testInfo, wholeCanvas)
+    );
+    expect(before).not.toBeNull();
+
+    await openTransformTool(page);
+    await page.locator('#resize-y-slider').fill('150');
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const after = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'resize-y-after', testInfo, wholeCanvas)
+    );
+    expect(after).not.toBeNull();
+    expect(after!.height / before!.height).toBeGreaterThan(1.3);
+    const widthRatio = after!.width / before!.width;
+    expect(widthRatio).toBeGreaterThan(0.9);
+    expect(widthRatio).toBeLessThan(1.1);
+  });
+
+  test('skewX slider slants layer horizontally', async ({ page }, testInfo) => {
+    await page.goto('/');
+    const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
+    expect(canvasBox).not.toBeNull();
+    const box = canvasBox!;
+    const wholeCanvas = viewportClip({
+      x: box.x,
+      y: box.y,
+      width: Math.floor(box.width),
+      height: Math.floor(box.height),
+    });
+
+    await clickToolButton(page, 'draw');
+    await page.locator('#size-slider').fill(String(BRUSH_SIZE));
+    await drawLineFromDocument(page, box, 250, 150, 250, 350, {}, DEFAULT_DOCUMENT_SIZE);
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const before = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'skew-x-before', testInfo, wholeCanvas)
+    );
+    expect(before).not.toBeNull();
+
+    await openTransformTool(page);
+    await page.locator('#skew-x-slider').fill('30');
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const after = await getDarkPixelBounds(await takeLineScreenshot(page, box, 'skew-x-after', testInfo, wholeCanvas));
+    expect(after).not.toBeNull();
+    expect(after!.width / before!.width).toBeGreaterThan(1.3);
+    const heightRatio = after!.height / before!.height;
+    expect(heightRatio).toBeGreaterThan(0.9);
+    expect(heightRatio).toBeLessThan(1.1);
+  });
+
+  test('skewY slider slants layer vertically', async ({ page }, testInfo) => {
+    await page.goto('/');
+    const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
+    expect(canvasBox).not.toBeNull();
+    const box = canvasBox!;
+    const wholeCanvas = viewportClip({
+      x: box.x,
+      y: box.y,
+      width: Math.floor(box.width),
+      height: Math.floor(box.height),
+    });
+
+    await clickToolButton(page, 'draw');
+    await page.locator('#size-slider').fill(String(BRUSH_SIZE));
+    await drawDocumentBar(page, box, Math.round(DEFAULT_DOCUMENT_SIZE.height * 0.5));
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const before = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'skew-y-before', testInfo, wholeCanvas)
+    );
+    expect(before).not.toBeNull();
+
+    await openTransformTool(page);
+    await page.locator('#skew-y-slider').fill('30');
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const after = await getDarkPixelBounds(await takeLineScreenshot(page, box, 'skew-y-after', testInfo, wholeCanvas));
+    expect(after).not.toBeNull();
+    expect(after!.height / before!.height).toBeGreaterThan(1.3);
+    const widthRatio = after!.width / before!.width;
+    expect(widthRatio).toBeGreaterThan(0.9);
+    expect(widthRatio).toBeLessThan(1.1);
+  });
+
   test('rotates a drawn layer 90 degrees and keeps the rotation after the commit', async ({ page }, testInfo) => {
     await page.goto('/');
     const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
@@ -392,6 +532,10 @@ test.describe('Transform tool', () => {
       await takeLineScreenshot(page, box, 'drag-in-motion', testInfo, wholeCanvas)
     );
     expect(midDrag, 'the drag is previewed while the pointer is down').not.toBeNull();
+    expect(
+      midDrag!.height,
+      'the in-flight rotation materially increases the horizontal bar height before pointer release'
+    ).toBeGreaterThan(before!.height * 2);
 
     // And now the release. This is the step that must write history.
     await page.mouse.move(sliderBox!.x + sliderBox!.width * 0.98, y);
