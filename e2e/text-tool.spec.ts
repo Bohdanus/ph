@@ -3324,4 +3324,113 @@ test.describe('Text tool', () => {
     const ink = await scanPixelsForBounds(image, isRedInk);
     expect(ink.found, 'a 0.01px font rendered red ink above the isRedInk threshold').toBe(false);
   });
+
+  /**
+   * Right alignment: the committed ink's right inset is small and the left
+   * inset is large, mirroring left alignment on the opposite side.
+   *
+   * `renderTextInto` resolves `'right'` to `boxRight - width`, so the
+   * ink's right edge sits at the rectangle's right edge minus padding.
+   * The `inset` field measures how far INSIDE the rectangle each edge of
+   * the ink sits, so for right-aligned text `inset.right` is small.
+   */
+  test('right alignment aligns the committed ink to the right edge of the dragged rectangle', async ({
+    page,
+  }, testInfo) => {
+    const box = await canvasBox(page);
+    const alignSelect = page.locator('#align-select');
+    const [left, right] = await commitStyledSeries(page, testInfo, box, 'WAVE', [
+      { name: 'text-align-left', rect: DRAFT_RECT, apply: async () => undefined },
+      {
+        name: 'text-align-right',
+        rect: SECOND_DRAFT_RECT,
+        apply: async () => {
+          await expect(alignSelect, 'alignment is not enabled on a paragraph draft').toBeEnabled();
+          await alignSelect.selectOption({ value: 'right' });
+          await expect(alignSelect).toHaveValue('right');
+        },
+      },
+    ]);
+
+    // Left-aligned (baseline): the ink hugs the left edge and recedes from the right.
+    expect(left.inset.left, 'left-aligned text did not start near the left edge').toBeLessThan(20);
+    expect(left.inset.right, 'left-aligned text did not reach away from the right edge').toBeGreaterThan(50);
+
+    // Right-aligned: the ink hugs the right edge and recedes from the left.
+    expect(right.inset.right, 'right-aligned text did not end near the right edge').toBeLessThan(20);
+    expect(right.inset.left, 'right-aligned text did not start away from the left edge').toBeGreaterThan(50);
+    // And the right commit's right inset is smaller than the left-aligned one's.
+    expect(
+      left.inset.right - right.inset.right,
+      'right alignment did not move the ink to the right edge'
+    ).toBeGreaterThan(20);
+
+    expectInkInsideRect(left, DRAFT_RECT, 'the left-aligned commit');
+    expectInkInsideRect(right, SECOND_DRAFT_RECT, 'the right-aligned commit');
+  });
+
+  /**
+   * Undo/redo for text editing operations: typing, style changes, and commits
+   * should be reversible through the history stack.
+   */
+  test.describe('Undo/redo for text editing', () => {
+    test('undo reverts text content changes within a draft', async ({ page }, _testInfo) => {
+      const box = await canvasBox(page);
+
+      await setTextToolColor(page, TEXT_COLOR);
+      await dragDraftRect(page, box);
+      await replaceDraftText(page, 'Original');
+      await commitDraft(page);
+
+      // Re-enter edit mode on the committed layer by clicking on the canvas at the text position
+      const textCenterX = box.x + (DRAFT_RECT.x1 + DRAFT_RECT.x2) / 2;
+      const textCenterY = box.y + (DRAFT_RECT.y1 + DRAFT_RECT.y2) / 2;
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toBeVisible();
+      await expect(draftOverlay(page)).toHaveText('Original');
+
+      // Change the text
+      await replaceDraftText(page, 'Modified');
+      await expect(draftOverlay(page)).toHaveText('Modified');
+      await commitDraft(page);
+
+      // Undo should revert to 'Original'
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(draftOverlay(page)).toHaveCount(0);
+
+      // Click the text again to verify content
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toHaveText('Original');
+    });
+
+    test('undo reverts style changes applied to a text layer', async ({ page }, _testInfo) => {
+      const box = await canvasBox(page);
+
+      await setTextToolColor(page, TEXT_COLOR);
+      await dragDraftRect(page, box);
+      await replaceDraftText(page, 'Style test');
+      await commitDraft(page);
+
+      // Re-enter edit mode by clicking on the canvas at the text position
+      const textCenterX = box.x + (DRAFT_RECT.x1 + DRAFT_RECT.x2) / 2;
+      const textCenterY = box.y + (DRAFT_RECT.y1 + DRAFT_RECT.y2) / 2;
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toBeVisible();
+
+      // Apply bold
+      await styleToggle(page, 'Bold').click();
+      await expect(styleToggle(page, 'Bold')).toHaveAttribute('aria-pressed', 'true');
+      await replaceDraftText(page, 'Style test');
+      await commitDraft(page);
+
+      // Undo should revert the bold style
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(draftOverlay(page)).toHaveCount(0);
+
+      // The layer should no longer be bold. Click to re-enter and verify.
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toBeVisible();
+      await expect(styleToggle(page, 'Bold')).toHaveAttribute('aria-pressed', 'false');
+    });
+  });
 });
