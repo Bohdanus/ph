@@ -221,6 +221,16 @@ marker injection, capture), which is what makes it a race rather than a scope pr
 the CDP mechanism is still open. Settling it needs native tracing (`--trace` on a run that
 reproduces, or CDP tracing around the call), not more attempts to reproduce it in a loop.
 
+**Fail-closed mitigation.** `captureCanvasScreenshot` now snapshots viewport dimensions and scroll
+offsets before opening CDP and compares them after the response. A change rejects the capture before
+an artifact is written or attached, so other callers cannot treat a plausible image from different
+page geometry as valid evidence. The endpoint comparison cannot detect a transient geometry change
+that returns to its original values before the post-read, or a change between the caller measuring
+`box` and this helper's initial read. Callers needing box/capture consistency must bracket their
+measurement around the helper; the `viewport-drawing.spec.ts` guard does this. This does not explain
+or prevent Chrome's resize race; native tracing is still required, and the spec remains skipped
+until the cause is understood.
+
 **What is done about the reporting.** `e2e/viewport-drawing.spec.ts` now re-measures the box
 across the capture and fails with _"the capture is of a DIFFERENT page than the one that was
 measured, so every offset below is meaningless"_ plus both boxes. That guard fired on the real
