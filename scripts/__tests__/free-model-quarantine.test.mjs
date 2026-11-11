@@ -41,7 +41,7 @@ describe('free-model quarantine lifecycle', () => {
     );
   });
 
-  it('migrates legacy and newly identified models once with a seven-day expiry', async () => {
+  it('migrates legacy, newly identified, and disabled Nemotron routes once with a seven-day expiry', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-migration-'));
     const filePath = join(directory, 'state.json');
     const now = Date.parse('2026-10-26T12:00:00.000Z');
@@ -60,10 +60,17 @@ describe('free-model quarantine lifecycle', () => {
         'kilo:kilo-auto/free',
         'kilo:nvidia/nemotron-3.5-super-vl:free',
         'kilo:recursive/flint-v1.0:free',
+        'kilo:nvidia/nemotron-3-ultra-550b-a55b:free',
+        'openrouter:nvidia/nemotron-3-ultra-550b-a55b:free',
+        'opencode:nvidia/nemotron-3-ultra-550b-a55b:free',
       ]);
       expect(state.migration_v2).toBe(true);
-      expect(activeQuarantineKeys(state, now).size).toBe(7);
+      expect(state.migration_v3).toBe(true);
+      expect(activeQuarantineKeys(state, now).size).toBe(10);
       expect(state.entries['openrouter:thinkingmachines/inkling-small:free'].reason).toBe('model_unavailable');
+      const disabledNemotron = state.entries['kilo:nvidia/nemotron-3-ultra-550b-a55b:free'];
+      expect(disabledNemotron.reason).toBe('poor_performance');
+      expect(disabledNemotron.expiresAt).toBe(new Date(now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).toISOString());
       expect(activeQuarantineKeys(state, now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).size).toBe(0);
       expect(await readQuarantineState(filePath)).toEqual(state);
     } finally {
@@ -95,6 +102,7 @@ describe('free-model quarantine lifecycle', () => {
       await writeQuarantineState(state, filePath);
       const migrated = await loadQuarantineState(filePath, now);
       expect(migrated.migration_v2).toBe(true);
+      expect(migrated.migration_v3).toBe(true);
       expect(migrated.entries[unrelatedKey]).toEqual(state.entries[unrelatedKey]);
       expect(migrated.entries['kilo:kilo-auto/free'].expiresAt).toBe(
         new Date(now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).toISOString()
@@ -110,12 +118,44 @@ describe('free-model quarantine lifecycle', () => {
     }
   });
 
+  it('adds the seven-day Nemotron quarantine to existing v2 state without extending prior entries', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-v3-migration-'));
+    const filePath = join(directory, 'state.json');
+    const now = Date.parse('2026-11-11T12:00:00.000Z');
+    const state = { schemaVersion: 1, migration_v2: true, entries: {} };
+    const existingKey = upsertQuarantine(state, {
+      source: 'openrouter',
+      model: 'vendor/existing:free',
+      reason: 'poor_performance',
+      hours: 6,
+      now: now - 60 * 60 * 1000,
+    });
+
+    try {
+      await writeQuarantineState(state, filePath);
+      const migrated = await loadQuarantineState(filePath, now);
+      expect(migrated.entries[existingKey]).toEqual(state.entries[existingKey]);
+      expect(migrated.entries['kilo:nvidia/nemotron-3-ultra-550b-a55b:free'].expiresAt).toBe(
+        new Date(now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).toISOString()
+      );
+      expect(migrated.entries['openrouter:nvidia/nemotron-3-ultra-550b-a55b:free'].expiresAt).toBe(
+        new Date(now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).toISOString()
+      );
+      expect(migrated.entries['opencode:nvidia/nemotron-3-ultra-550b-a55b:free'].expiresAt).toBe(
+        new Date(now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).toISOString()
+      );
+      expect(activeQuarantineKeys(migrated, now).size).toBe(4);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('does not reseed an existing, intentionally empty state file', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-empty-'));
     const filePath = join(directory, 'state.json');
 
     try {
-      const emptyState = { schemaVersion: 1, migration_v2: true, entries: {} };
+      const emptyState = { schemaVersion: 1, migration_v2: true, migration_v3: true, entries: {} };
       await writeQuarantineState(emptyState, filePath);
       expect(await loadQuarantineState(filePath)).toEqual(emptyState);
     } finally {
@@ -278,7 +318,7 @@ describe('free-model quarantine lifecycle', () => {
   it('supports list, add, release, and prune against an injected state path', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-cli-'));
     const filePath = join(directory, 'state.json');
-    const emptyState = { schemaVersion: 1, migration_v2: true, entries: {} };
+    const emptyState = { schemaVersion: 1, migration_v2: true, migration_v3: true, entries: {} };
     await writeQuarantineState(emptyState, filePath);
     const output = { stdout: { value: '' }, stderr: { value: '' } };
     output.stdout.write = (text) => {
@@ -308,7 +348,7 @@ describe('free-model quarantine lifecycle', () => {
         })
       ).toBe(0);
 
-      const expiredState = { schemaVersion: 1, migration_v2: true, entries: {} };
+      const expiredState = { schemaVersion: 1, migration_v2: true, migration_v3: true, entries: {} };
       upsertQuarantine(expiredState, {
         source: 'kilo',
         model: 'expired:free',

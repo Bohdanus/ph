@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -59,9 +59,9 @@ const args = process.argv.slice(2);
 const message = fs.readFileSync(0, 'utf8');
 const valueAfter = (flag) => args[args.indexOf(flag) + 1];
 if (!args.includes('--pure') || valueAfter('--format') !== 'json') process.exit(4);
-if (valueAfter('--model') !== 'kilo/nvidia/nemotron-3-ultra-550b-a55b:free') process.exit(5);
+if (valueAfter('--model') !== 'kilo/xingchen-agi/xing4.0-29b-a4b:free') process.exit(5);
 if (valueAfter('--agent') !== 'free-completion') process.exit(6);
-if (!args.includes('--variant') || valueAfter('--variant') !== 'high') process.exit(7);
+if (args.includes('--variant')) process.exit(7);
 if (args.includes('--file')) process.exit(8);
 if (!message.startsWith('Answer the provided request directly, in plain text, using at most 65536 output tokens.')) process.exit(9);
 if (!message.includes('private prompt')) process.exit(10);
@@ -77,7 +77,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       await expect(
         runKiloCompletion({
           command,
-          model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+          model: 'xingchen-agi/xing4.0-29b-a4b:free',
           prompt: 'private prompt',
           maxTokens: 65536,
           env: {
@@ -96,7 +96,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           },
         })
       ).resolves.toEqual({
-        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        model: 'xingchen-agi/xing4.0-29b-a4b:free',
         content: 'safe response',
         finishReason: 'stop',
         usage: { input_tokens: 10, output_tokens: 3, reasoning_tokens: 1, cost: 0 },
@@ -568,5 +568,18 @@ process.exitCode = 1;`
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it('blocks Nemotron before starting the Kilo CLI', async () => {
+    const spawnImpl = vi.fn();
+    await expect(
+      runKiloCompletion({
+        command: '/fake-kilo',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        prompt: 'private prompt',
+        spawnImpl,
+      })
+    ).resolves.toEqual({ error: 'Nemotron models are disabled by free-model policy' });
+    expect(spawnImpl).not.toHaveBeenCalled();
   });
 });

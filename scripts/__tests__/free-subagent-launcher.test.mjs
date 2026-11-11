@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  getDefaultFreeModel,
-  launchFreeResearchSubagents,
-  launchFreeSubagent,
-  launchFreeSubagents,
-} from '../free-subagent-launcher.mjs';
+import { launchFreeResearchSubagents, launchFreeSubagent, launchFreeSubagents } from '../free-subagent-launcher.mjs';
 
 const NEMOTRON = 'nvidia/nemotron-3-ultra-550b-a55b:free';
 const XING = 'xingchen-agi/xing4.0-29b-a4b:free';
@@ -15,7 +10,7 @@ function jsonResponse(payload) {
   return new Response(JSON.stringify(payload));
 }
 
-function kiloFetch(models = [NEMOTRON, XING]) {
+function kiloFetch(models = [XING]) {
   const calls = [];
   const fetchImpl = vi.fn(async (url) => {
     const requestUrl = String(url);
@@ -39,8 +34,14 @@ const options = (fetchImpl) => ({
 });
 
 describe('free subagent launcher', () => {
-  it('defaults to the preferred Kilo Nemotron model and high variant', () => {
-    expect(getDefaultFreeModel()).toEqual({ model: NEMOTRON, provider: 'kilo', variant: 'high' });
+  it('requires an explicit model/provider pair instead of selecting a default model', async () => {
+    const { fetchImpl } = kiloFetch();
+    const agentManager = vi.fn();
+    await expect(
+      launchFreeSubagents({ tasks: ['Inspect the code'], agentManager, ...options(fetchImpl) })
+    ).rejects.toThrow('explicit model and provider');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(agentManager).not.toHaveBeenCalled();
   });
 
   it('validates each task override before invoking the host tool', async () => {
@@ -61,7 +62,7 @@ describe('free subagent launcher', () => {
     const agentManager = vi.fn(async (request) => request);
     const result = await launchFreeSubagents({
       tasks: [
-        { prompt: 'Inspect routing', model: ` ${NEMOTRON} `, provider: ' KILO ' },
+        { prompt: 'Inspect routing', model: ` ${XING} `, provider: ' KILO ' },
         { prompt: 'Inspect tests', model: XING, provider: 'kilo' },
       ],
       maxSubagents: 2,
@@ -71,7 +72,7 @@ describe('free subagent launcher', () => {
 
     expect(agentManager).toHaveBeenCalledOnce();
     expect(result.tasks).toMatchObject([
-      { prompt: 'Inspect routing', model: NEMOTRON, provider: 'kilo', variant: 'high', agent: 'read-only-research' },
+      { prompt: 'Inspect routing', model: XING, provider: 'kilo', agent: 'read-only-research' },
       { prompt: 'Inspect tests', model: XING, provider: 'kilo', agent: 'read-only-research' },
     ]);
   });
@@ -116,28 +117,47 @@ describe('free subagent launcher', () => {
     await expect(
       launchFreeSubagent({
         prompt: 'Research one bounded question',
+        model: XING,
+        provider: 'kilo',
         agentManager,
         ...options(fetchImpl),
       })
     ).resolves.toMatchObject({
       mode: 'worktree',
       versions: false,
-      tasks: [{ model: NEMOTRON, provider: 'kilo', variant: 'high', agent: 'read-only-research' }],
+      tasks: [{ model: XING, provider: 'kilo', agent: 'read-only-research' }],
     });
   });
 
   it('does not let extra options replace the research tasks', async () => {
-    const { fetchImpl } = kiloFetch([NEMOTRON]);
+    const { fetchImpl } = kiloFetch([XING]);
     const agentManager = vi.fn(async (request) => request);
     const result = await launchFreeResearchSubagents({
       prompts: ['Do bounded research'],
+      model: XING,
+      provider: 'kilo',
       tasks: [{ prompt: 'Override paid model', model: 'gpt-4o', provider: 'kilo' }],
       agentManager,
       ...options(fetchImpl),
     });
     expect(result.tasks).toMatchObject([
-      { prompt: 'Do bounded research', model: NEMOTRON, provider: 'kilo', agent: 'read-only-research' },
+      { prompt: 'Do bounded research', model: XING, provider: 'kilo', agent: 'read-only-research' },
     ]);
     expect(agentManager).toHaveBeenCalledOnce();
+  });
+
+  it('rejects Nemotron from the live free catalog before launching a child', async () => {
+    const { fetchImpl } = kiloFetch([NEMOTRON]);
+    const agentManager = vi.fn();
+    await expect(
+      launchFreeSubagent({
+        prompt: 'Inspect a failure',
+        model: NEMOTRON,
+        provider: 'kilo',
+        agentManager,
+        ...options(fetchImpl),
+      })
+    ).rejects.toThrow('Nemotron models are disabled by free-model policy');
+    expect(agentManager).not.toHaveBeenCalled();
   });
 });
