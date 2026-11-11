@@ -22,7 +22,7 @@ const SECRET_PATTERNS = [
   { pattern: /sk-[a-zA-Z0-9_-]{20,}/gi, replacement: 'sk-***REDACTED***' },
   {
     pattern:
-      /(?:ghs_[a-zA-Z0-9_-]{12,}(?:\.[a-zA-Z0-9_-]+){2}|gh[pousr]_[a-zA-Z0-9_]{12,}|github_pat_[a-zA-Z0-9_]{12,}|(?:xoxe\.xox[bp]-|xoxe-|xapp-|xwfp-|xox[baprs]-)[a-zA-Z0-9_-]{8,})/gi,
+      /(?:ghs_[a-zA-Z0-9_-]{12,}(?:\.[a-zA-Z0-9_-]+){2}|gh[pousr]_[a-zA-Z0-9_]{12,}|github_pat_[a-zA-Z0-9_]{12,}|(?:xoxe\.xox[bp]-\d+-|xoxe\.xapp-\d+-|xwfp-|(?<!xoxe\.)(?:xapp-|xox[baprs]-))[a-zA-Z0-9_-]{8,}|xoxe-\d+-[a-zA-Z0-9_-]{7,})/gi,
     replacement: '***REDACTED***',
   },
   { pattern: /(?:AKIA|ASIA)[0-9A-Z]{16}/g, replacement: '***REDACTED***' },
@@ -494,7 +494,7 @@ export function redactSensitiveText(value) {
     value
       .replace(/\b(bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1[REDACTED]')
       .replace(
-        /(?:\bsk-[A-Za-z0-9_-]{12,}|ghs_[A-Za-z0-9_-]{12,}(?:\.[A-Za-z0-9_-]+){2}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|(?:xoxe\.xox[bp]-|xoxe-|xapp-|xwfp-|xox[baprs]-)[A-Za-z0-9_-]{8,})/gi,
+        /(?:\bsk-[A-Za-z0-9_-]{12,}|ghs_[A-Za-z0-9_-]{12,}(?:\.[A-Za-z0-9_-]+){2}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|(?:xoxe\.xox[bp]-\d+-|xoxe\.xapp-\d+-|xwfp-|(?<!xoxe\.)(?:xapp-|xox[baprs]-))[A-Za-z0-9_-]{8,}|xoxe-\d+-[A-Za-z0-9_-]{7,})/gi,
         '[REDACTED]'
       )
       .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, '[REDACTED]')

@@ -109,11 +109,13 @@ describe('secret key redaction', () => {
     ['GitHub fine-grained', `github_pat_${'d'.repeat(50)}`],
     ['Slack', `xoxb-${'e'.repeat(24)}`],
     ['Slack app-level', `xapp-${'f'.repeat(40)}`],
+    ['Slack rotating app-level', `xoxe.xapp-1-${'l'.repeat(40)}`],
     ['Slack app-level mixed case', `XAPP-${'k'.repeat(40)}`],
     ['Slack workflow', `xwfp-${'g'.repeat(32)}`],
     ['Slack rotated bot', `xoxe.xoxb-1-${'h'.repeat(40)}`],
     ['Slack rotated user', `xoxe.xoxp-1-${'i'.repeat(40)}`],
     ['Slack refresh', `xoxe-1-${'j'.repeat(40)}`],
+    ['Slack refresh documented example', 'xoxe-1-abcdefg'],
     ['AWS long-term', 'AKIAIOSFODNN7EXAMPLE'],
     ['AWS temporary', 'ASIAIOSFODNN7EXAMPLE'],
   ];
@@ -140,6 +142,20 @@ describe('secret key redaction', () => {
     expect(redactedText).not.toContain(token);
     expect(redactedText).toContain('prefix');
     expect(redactedText).toContain('suffix');
+  });
+
+  it('preserves ordinary xoxe example labels without a numeric token generation', () => {
+    const messages = [
+      'example xoxe-example-value',
+      'example xoxe.xapp-example-value',
+      'example xoxe.xoxb-example-value',
+    ];
+
+    for (const message of messages) {
+      expect(sanitizeErrorMessage(message)).toBe(message);
+      expect(sanitizeForOutput({ message })).toEqual({ message });
+      expect(redactSensitiveText(message)).toBe(message);
+    }
   });
 
   it.each(['Bearer ', 'Authorization: Bearer '])('redacts stateless GitHub JWT after %s', (prefix) => {
