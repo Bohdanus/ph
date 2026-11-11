@@ -230,6 +230,15 @@ describe("Photoshop's opacity number keys", () => {
     expect(patchToolArgs).not.toHaveBeenCalled();
   });
 
+  it.each(['dodge', 'burn'] as const)('does not apply Opacity digits to %s, which uses Exposure', (toolName) => {
+    selectTool(toolName, { size: 32, hardness: 50, exposure: 50, range: 'midtones', points: [] });
+    renderShortcuts();
+
+    expect(press('0')).toBe(false);
+    expect(press('1')).toBe(false);
+    expect(patchToolArgs).not.toHaveBeenCalled();
+  });
+
   it('does not fire while a number input is focused, where the key is text', () => {
     renderShortcuts();
     const input = document.createElement('input');
