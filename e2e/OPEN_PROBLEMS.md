@@ -87,20 +87,6 @@ Playwright UI mode returns before `globalSetup`, so the in-process guard cannot 
 window. `npm run test:e2e:headed` is the supported operator opt-in; agents use
 `npm run test:e2e`.
 
-## P3 — transparent pixels weighted as fully opaque (low confidence)
-
-`dominantRed()` and `getColorAtPoint()` in `e2e/helpers/canvas-helpers.ts` **[pinned]**
-
-`dominantRed` and `getColorAtPoint` skip only `alpha === 0`, so a nearly
-invisible pixel counts at full weight. A weighting concern rather than a
-correctness bug, and the only helper that reports the colour back to the caller.
-They are the two places the distinction bites hardest, because the other two
-`alpha === 0` filters, in `hasDarkPixels()` and `hasRedPixels()`, answer a yes/no
-question where one nearly-invisible pixel is the same as one
-opaque one. The other half of the file, `getDarkPixelBounds()` and
-`getSelectionBounds()`, filters on `a !== 0` instead — a different question
-asked with a boolean rather than a weight.
-
 ## Known-skip tests
 
 One spec is `test.skip` by declaration:
@@ -474,3 +460,17 @@ and **is not a defect here**:
   correct and every gate was passing in every one of them. A test suite that only fails
   on behaviour will not find this class, and a comment that over-credits what an
   assertion proves is invisible to `tsc`, to `eslint` and to a passing run.
+
+- **A prior P3 report treated raw partial-alpha samples as visible screenshot colors.** The
+  app-facing call sites of these sampling helpers use Playwright page screenshots or fully
+  opaque synthetic `ImageData`. The screenshot callers use Playwright's default
+  `omitBackground: false` and already contain the rendered composite (see the
+  [Playwright page API](https://playwright.dev/docs/api/class-page));
+  `file-roundtrip.spec.ts`'s `makeStroke` fixture sets every alpha byte to 255. The helper
+  integration spec `getColorAtPoint handles alpha channels (partial transparency)` also
+  creates a half-alpha offscreen PNG, but asserts only that the raw sample is present. The
+  alpha-1 counterexamples did not demonstrate a wrong-pass in an app-facing oracle. The helper
+  contract is raw-sample based: alpha zero means absent, any other alpha means present, and
+  stored RGB is not recomposited. Callers that need rendered color from a transparent raster
+  must composite against the intended backdrop first. The contract and tests now state that
+  explicitly.

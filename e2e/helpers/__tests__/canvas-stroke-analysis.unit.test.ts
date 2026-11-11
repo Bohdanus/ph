@@ -787,36 +787,17 @@ describe('dark pixel helpers apply spatial document masks', () => {
   });
 });
 
-/**
- * P3 — transparent pixels weighted as fully opaque (low confidence). `dominantRed` and
- * `getColorAtPoint` skip only `alpha === 0`, so a pixel at `alpha === 1` but with RGB
- * values that would be invisible when composited is counted at full weight. The
- * `hasDarkPixels` / `hasRedPixels` pair answer yes/no, so a single nearly-transparent
- * pixel can satisfy them just as an opaque one would — but `getDarkPixelBounds` and
- * `getSelectionBounds` use `a !== 0`, the other half of the byte, so they disagree on
- * the exact boundary. These tests pin all four edges of the divergence.
- */
-describe('transparent pixel weighting divergence', () => {
-  it('hasDarkPixels answers true for an alpha-1 dark pixel even if it would be invisible over white', async () => {
-    // A (0,0,0,1) pixel is black at full alpha — but at 1/255 coverage it composites to
-    // ~(254,254,254) over `#fff`, which is paper. The predicate still reports it as dark
-    // because it never composites. This is the wrong-pass in miniature: a single antialias
-    // fringe row at alpha 1 can satisfy a dark-pixel wait even though the eye sees none.
+describe('nonzero-alpha raw sample semantics', () => {
+  it('tests stored RGB for a nonzero-alpha dark sample without assuming a backdrop', async () => {
+    // This helper receives no backdrop, so raw ImageData is classified from its stored RGB.
+    // Production screenshot callers pass browser-composited captures.
     const image = createImageData(10, 10);
     fillAll(image, WHITE);
     setPixel(image, 5, 5, black, 1);
     expect(await hasDarkPixels(image, WHOLE_CAPTURE)).toBe(true);
   });
 
-  it('getColorAtPoint averages an alpha-1 pixel at full weight, not composited', async () => {
-    // The function reads `(r,g,b,a)` directly and skips only `a === 0`. A pixel with `a: 1`
-    // but RGB `(0,0,0)` is averaged as pure black, never composited against a background.
-    // This is pinned because `getColorAtPoint` is the only helper that RETURNS a colour
-    // to its caller — the other predicates answer yes/no.
-    //
-    // Radius 0 selects only the target pixel, so the average IS the pixel. If the function
-    // composited a-alpha-1 black against white instead, the result would be ~(255,255,255),
-    // not (0,0,0).
+  it('returns the stored RGB of a nonzero-alpha sample when no backdrop is supplied', async () => {
     const image = createImageData(10, 10);
     fillAll(image, WHITE);
     setPixel(image, 5, 5, black, 1);
@@ -825,20 +806,15 @@ describe('transparent pixel weighting divergence', () => {
     expect(color).toEqual({ red: 0, green: 0, blue: 0 });
   });
 
-  it('getDarkPixelBounds and hasDarkPixels agree on a-equals-0 but diverge at a-equals-1', async () => {
-    // `hasDarkPixels` skips `alpha === 0`; `getDarkPixelBounds` skips `a !== 0`. Both
-    // skip the same pixels (alpha 0), but the boundary is stated differently: one tests
-    // `=== 0`, the other tests `!== 0`. For any alpha EXCEPT 0, both proceed. The
-    // divergence is purely in the negation style — but a refactor to `< 0.5` or `> 0`
-    // would silently break one without the other.
+  it('hasDarkPixels and getDarkPixelBounds both use alpha zero as the absent boundary', async () => {
     const zeroAlpha = createImageData(5, 5);
     fillAll(zeroAlpha, WHITE, TRANSPARENT);
 
-    // Both skip alpha-0 pixels: a fully-transparent dark pixel is invisible to neither.
+    // Fully transparent source RGB is absent from both helpers.
     expect(await hasDarkPixels(zeroAlpha, WHOLE_CAPTURE)).toBe(false);
     expect(await getDarkPixelBounds(zeroAlpha, WHOLE_CAPTURE)).toBeNull();
 
-    // Both see alpha-1 dark pixels: a (0,0,0,1) pixel is dark to both.
+    // Both include the same nonzero-alpha dark source sample.
     setPixel(zeroAlpha, 2, 2, black, 1);
     expect(await hasDarkPixels(zeroAlpha, WHOLE_CAPTURE)).toBe(true);
     const bounds = await getDarkPixelBounds(zeroAlpha, WHOLE_CAPTURE);
@@ -847,37 +823,28 @@ describe('transparent pixel weighting divergence', () => {
     expect(bounds!.right).toBe(2);
   });
 
-  it('dominantRed weights an alpha-1 pixel as fully opaque, never compositing it', async () => {
-    // Like `getColorAtPoint`, `dominantRed` skips only `alpha === 0`. A (255,0,0,1) pixel
-    // is dominant red at full alpha even though it composites to ~(255,254,254) over white
-    // — which is no longer red-dominant at all. The function never composites, so the
-    // weighting divergence is by design, and this test pins it as an intentional limitation.
+  it('counts a nonzero-alpha red source sample once and reports its stored RGB', async () => {
     const image = await createTestImageData(WHITE, 20, 20);
     setPixel(image, 10, 10, RED, 1);
 
     const result = await dominantRed(image);
     expect(result).not.toBeNull();
-    // If the pixel had been composited against white, red=255 would not dominate.
     expect(result!.red).toBe(255);
     expect(result!.green).toBe(0);
     expect(result!.blue).toBe(0);
+    expect(result!.count).toBe(1);
   });
 });
 
 describe('pixel-analysis edge cases', () => {
-  /**
-   * OPEN_PROBLEMS.md P3 — transparent pixels weighted as fully opaque.
-   * `dominantRed` skips only `alpha === 0`; an alpha-1 pixel with RGB (0,0,0)
-   * is averaged as pure black at full weight, never composited against a background.
-   */
   it('dominantRed ignores fully-transparent pixels and returns null on an all-transparent image', async () => {
     const image = await createTestImageData(WHITE, 10, 10);
     fillAll(image, black, 0);
     expect(await dominantRed(image)).toBeNull();
   });
 
-  it('dominantRed skips alpha-0 pixels but counts alpha-1 pixels in the same colour group', async () => {
-    // RGB (255,0,0) at alpha 1 should be dominant; alpha-0 pixels of the same RGB are skipped.
+  it('dominantRed skips alpha-0 pixels and counts each nonzero-alpha source sample once', async () => {
+    // RGB (255,0,0) at alpha 1 is a present raw sample; alpha-0 pixels are absent.
     const image = await createTestImageData(WHITE, 10, 10);
     setPixel(image, 5, 5, RED, 1);
     const result = await dominantRed(image);

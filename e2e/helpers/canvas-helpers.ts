@@ -495,7 +495,7 @@ export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
 /** `[ms]` — the shared default poll interval of every redraw wait below. */
 export const CANVAS_REDRAW_POLL_INTERVAL_MS = 100;
 
-/** A colour and its population, both read off a capture. `[IMAGE]`-derived, no coordinates. */
+/** A stored colour and its nonzero-alpha pixel population. `[IMAGE]`-derived, no coordinates. */
 export interface DominantColor {
   red: number;
   green: number;
@@ -850,9 +850,10 @@ export async function takeLineScreenshot(
 }
 
 /**
- * The most frequent colour whose red dominates both other channels by `RED_DOMINANCE_FACTOR`.
- * `[IMAGE]` — the returned channels are 8-bit values off a decoded capture, and `count` is a
- * pixel count in the same capture, so it scales with the captured area and is not a proportion.
+ * The most frequent stored RGB whose red dominates both other channels by `RED_DOMINANCE_FACTOR`.
+ * Each qualifying nonzero-alpha pixel contributes one to `count`; RGB is not composited because
+ * this helper has no backdrop. `[IMAGE]` — `count` scales with the captured area and is not a
+ * proportion.
  */
 export async function dominantRed(screenshot: Buffer | ImageDataResult): Promise<DominantColor | null> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
@@ -880,9 +881,9 @@ export async function dominantRed(screenshot: Buffer | ImageDataResult): Promise
 }
 
 /**
- * True when any opaque pixel is below `DARK_PIXEL_THRESHOLD` in all three channels. `[IMAGE]`
- * — a predicate over a decoded capture, so it reports nothing about WHERE the dark pixel is;
- * `getDarkPixelBounds` is the export that also says where.
+ * True when any nontransparent pixel is below `DARK_PIXEL_THRESHOLD` in all three stored RGB
+ * channels. `[IMAGE]` — a predicate over a decoded capture, so it reports nothing about WHERE
+ * the dark pixel is; `getDarkPixelBounds` is the export that also says where.
  */
 export async function hasDarkPixels(screenshot: Buffer | ImageDataResult, mask: PixelMask): Promise<boolean> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
@@ -900,8 +901,9 @@ export async function hasDarkPixels(screenshot: Buffer | ImageDataResult, mask: 
 }
 
 /**
- * True when any opaque pixel is saturated enough to be the app's red foreground colour.
- * `[IMAGE]`; see `hasDarkPixels` for why this is a predicate and not a measurement.
+ * True when any nontransparent pixel's stored RGB is saturated enough to be the app's red
+ * foreground colour. `[IMAGE]`; see `hasDarkPixels` for why this is a predicate and not a
+ * measurement.
  */
 export async function hasRedPixels(screenshot: Buffer | ImageDataResult): Promise<boolean> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
@@ -1341,10 +1343,12 @@ export async function getSelectionBounds(
 }
 
 /**
- * Averages the opaque pixels within `radius` of the point, ignoring near-white ones when
- * `ignoreNearWhite` is set. Returns null when the point is outside the image or every
- * sampled pixel was skipped. `[IMAGE]` throughout — the point, the radius and the returned
- * channels are all in the capture's own pixels, and `radius` is NOT in CSS.
+ * Averages the stored RGB of nontransparent pixels within `radius` of the point, ignoring
+ * near-white ones when `ignoreNearWhite` is set. Alpha zero means absent; other alpha values
+ * contribute one sample each, and RGB is not composited because this helper has no backdrop.
+ * Returns null when the point is outside the image or every sampled pixel was skipped.
+ * `[IMAGE]` throughout — the point, radius and returned channels are in capture pixels; `radius`
+ * is NOT in CSS.
  *
  * `radius` is a sampling window, so it is clamped to 0 rather than rejected: a negative
  * window used to select no pixels at all, which reads as "nothing at this point" — a
