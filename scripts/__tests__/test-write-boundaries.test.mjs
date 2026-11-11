@@ -37,6 +37,10 @@ const REVIEWED = {
     scope: 'Baseline and report fixtures use unique OS temporary directories.',
     patterns: `filesystem-write:mkdtemp=2 filesystem-write:mkdir=4 filesystem-write:writeFile=3 filesystem-write:rm=2`,
   },
+  'e2e-timeout-contract.test.mjs': {
+    scope: 'Read-only workflow and Playwright config checks; no filesystem writes, subprocesses or databases.',
+    patterns: '',
+  },
   'find-session-id.test.mjs': {
     scope: 'Database and file fixtures live under unique OS temporary directories.',
     patterns: `database-open:DatabaseSync:write-capable=2 filesystem-write:mkdtempSync=18 filesystem-write:rmSync=18`,
@@ -61,8 +65,8 @@ const REVIEWED = {
   },
   'free-model-pool.test.mjs': {
     scope:
-      'Model/provider and cost-safety fixtures use unique OS temporary directories; PATH overrides are restored in finally blocks.',
-    patterns: `filesystem-write:mkdtemp=31 filesystem-write:rm=31 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
+      'Model/provider and cost-safety fixtures use unique OS temporary directories; PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
+    patterns: `filesystem-write:mkdtemp=31 filesystem-write:rm=31 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -95,8 +99,9 @@ const REVIEWED = {
     patterns: `subprocess:execFileSync=1 subprocess:spawnSync=45 filesystem-write:mkdtempSync=10 filesystem-write:writeFileSync=35 filesystem-write:rmSync=13 filesystem-write:mkdirSync=5`,
   },
   'main-landing-alert.test.mjs': {
-    scope: 'Alert-claim marker fixtures use a unique temporary directory and are removed after the test.',
-    patterns: `filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=3 filesystem-write:rmSync=2`,
+    scope:
+      'Alert-claim marker fixtures use a unique temporary directory and are removed after the test. Expanded coverage includes malformed recovery, invalid JSON shapes, sent markers, and lock contention.',
+    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=7 filesystem-write:rmSync=2`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',

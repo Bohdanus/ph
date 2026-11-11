@@ -14,9 +14,9 @@ const SECRET_PATTERNS = [
     replacement: 'GROQ_API_KEYS=***REDACTED***',
   },
   { pattern: /(?:kilo[_-]?cli|KILO_CLI)\s*[=:]\s*([^\s]{10,})/gi, replacement: 'KILO_CLI=***REDACTED***' },
-  { pattern: /Bearer\s+([a-zA-Z0-9._~+/-]{20,}=*)/gi, replacement: 'Bearer ***REDACTED***' },
+  { pattern: /Bearer\s+([a-zA-Z0-9._~+/-]{1,}=*)/gi, replacement: 'Bearer ***REDACTED***' },
   {
-    pattern: /Authorization:\s*Bearer\s+([a-zA-Z0-9._~+/-]{20,}=*)/gi,
+    pattern: /Authorization:\s*Bearer\s+([a-zA-Z0-9._~+/-]{1,}=*)/gi,
     replacement: 'Authorization: Bearer ***REDACTED***',
   },
   { pattern: /sk-[a-zA-Z0-9_-]{20,}/gi, replacement: 'sk-***REDACTED***' },

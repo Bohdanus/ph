@@ -116,22 +116,22 @@ async function measureAtViewport(
    * The capture must not have moved the page, and this is checked BEFORE the stroke is
    * measured, because a capture that moves the page invalidates every number below it.
    *
-   * MEASURED, and it is the cause of this test's historical flakiness rather than a
-   * hypothesis: `captureCanvasScreenshot` (`e2e/helpers/cdp-helpers.ts:8`) intermittently
-   * leaves the page's emulated viewport 87 CSS px SHORTER than it was — `window.innerHeight`
-   * 700 -> 613 at the `narrow` window and 900 -> 813 at `wide`, the same 87 both times, with
-   * nothing but that call between the two readings. `#root` and the shell grid shrink by the
-   * same 87, the canvas box goes 563 -> 476, and the app's contain fit re-projects from
-   * 0.9383 to 0.7933. The stroke was committed under the OLD fit, so the captured frame shows
-   * it at the OLD document point drawn through the NEW fit: 30px in x and 31.05px in y at
-   * `narrow`, 32.5px and 31.05px at `wide`. Those are the numbers this test used to report as
-   * a stroke that missed the cursor, and they are a capture of the wrong page.
+   * HISTORICALLY MEASURED on the former CDP capture path: that helper intermittently left the
+   * page's emulated viewport 87 CSS px SHORTER than it was — `window.innerHeight` 700 -> 613 at
+   * the `narrow` window and 900 -> 813 at `wide`, the same 87 both times, with nothing but the
+   * capture between the readings. `#root` and the shell grid shrank by the same 87, the canvas
+   * box went 563 -> 476, and the app's contain fit re-projected from 0.9383 to 0.7933. The
+   * stroke had been committed under the OLD fit, so the captured frame showed it at the old
+   * document point through the NEW fit: 30px in x and 31.05px in y at `narrow`, 32.5px and
+   * 31.05px at `wide`. Those were measurements of a capture of the wrong page, not a stroke
+   * that missed the cursor.
    *
    * So the check is a guard, not a tolerance: it turns "the line is 32px from the cursor"
    * into a statement of what is actually true, and it keeps the per-window tolerances below
-   * honest for as long as the helper behaves. The FIX belongs in the helper — see
-   * `e2e/OPEN_PROBLEMS.md` — and this spec deliberately does not paper over it, because a
-   * spec that re-took the shot until the numbers looked right would be asserting nothing.
+   * honest. The helper now uses Playwright's screenshot API; this guard remains a hard
+   * regression check that the capture does not change the measured viewport. Do not retry or
+   * widen the bound if it fires: the test must report a changed capture geometry before any
+   * pixel comparison can be trusted.
    */
   expect(
     boxBeforeCapture && boxAfterCapture
@@ -162,9 +162,9 @@ async function measureAtViewport(
 }
 
 /**
- * Keeps the viewport-specific tolerance proof active while the pixel comparison below remains
- * skipped. It reads only the live canvas box and contain-fit geometry; it never captures,
- * samples, or compares pixels, so it does not depend on the unresolved capture drift.
+ * Keeps the viewport-specific tolerance formula and geometry non-vacuity proof independent of
+ * the active pixel comparison below. It reads only the live canvas box and contain-fit geometry;
+ * it never captures or samples pixels, so the two checks fail for different reasons.
  */
 test('viewport-derived stroke tolerance stays bounded on live canvas geometry', async ({ page }) => {
   test.setTimeout(DEFAULT_TEST_TIMEOUT_MS * VIEWPORTS.length);
@@ -227,63 +227,6 @@ test('viewport-derived stroke tolerance stays bounded on live canvas geometry', 
 
 test.describe('Viewport Drawing', () => {
   /**
-   * SKIPPED BY DECISION, not because the assertion is wrong.
-   *
-   * This test is intermittently red (TEST-FLAKES.md §12), and the failing window
-   * MOVES between `wide` and `narrow` across the runs that have been captured. A
-   * deterministic defect does not move between cases, so whatever is wrong is in the
-   * test's own measurement chain rather than in the app's viewport mapping.
-   *
-   * ## What is already known, and what is not
-   *
-   * KNOWN, and measured in this file 40 lines above: `captureCanvasScreenshot`
-   * intermittently returns a page that is 87 CSS px SHORTER than the one measured, and
-   * that drift is a filed defect (`e2e/OPEN_PROBLEMS.md`, the CDP-capture P2). The
-   * `expect` before the stroke assertion exists to catch it and it is a HARD
-   * assertion, so a drift failure names itself and prints both bounding boxes.
-   *
-   * NOT known: whether the remaining red runs are all that same drift, or a second
-   * cause. The chain from screenshot to verdict is `waitForCanvasRedraw` (polls a
-   * CDP screenshot for ink) then `getDarkPixelBounds` (thresholds that screenshot)
-   * then `toleranceFor(box)` — 6.7-8.4px across the three
-   * windows, NOT the 25px `LEGACY_FIXED_SLACK_CSS_PX`, which is a ceiling the
-   * derived bound is asserted *against* and is never applied to anything. Nothing in
-   * the chain records which step gave, so a red run does not yet say.
-   *
-   * Why skipping beats shipping it:
-   *
-   * - The suite's contract is that a default headless run has ZERO failures. A test
-   *   that is red in some runs makes unrelated merges look broken, and the response
-   *   it trains is to ignore the gate — which costs far more than the coverage this
-   *   single test buys.
-   * - A flaky assertion is worse than no assertion, not better: it cannot justify a
-   *   change either, because a green result from it carries no information.
-   *
-   * This is NOT a "known failure" in the sense of a defect that is accepted. Nothing
-   * here is waived; the work is un-done and filed. It is also NOT the fix — do not
-   * widen `ANTIALIASED_FLANGE_CSS_PX`, loosen the bound, raise the drift guard, or
-   * add retries to make it green. Every one of those treats a symptom whose second
-   * cause is still unknown, and raising the drift guard would remove the only check
-   * that names the known one.
-   *
-   * Exact remaining verification, and the one-line un-skip (delete the statement
-   * below): capture a failing run with
-   * `npm run test:e2e -- e2e/viewport-drawing.spec.ts --retries=1`, which yields a
-   * `trace: 'on-first-retry'` trace plus the failure PNG under
-   * `test-results/runs/<run-id>/`. The drift guard's own message distinguishes the two
-   * causes: it fires with "the page moved across captureCanvasScreenshot" for the
-   * known one, and a red run WITHOUT that message is evidence of a second cause. Do
-   * not close this by re-running until green.
-   *
-   * Operator decision, 2026-09-29, after the skip was requested and the suite
-   * reported this test green locally.
-   */
-  test.skip(
-    true,
-    'Intermittent: the failing window moves between cases, known CDP capture drift is one cause — TEST-FLAKES.md §12'
-  );
-
-  /**
    * ONE test over all three windows, where this was three tests in a `for` loop. The reason
    * is a property the loop cannot express: "these are three different windows" is a claim
    * about the SET. In a per-viewport loop each test is blind to the other two, so a
@@ -312,7 +255,7 @@ test.describe('Viewport Drawing', () => {
     }
 
     // The tolerance and geometry non-vacuity controls run in the separate active test above.
-    // Keep this skipped body limited to the pixel assertion whose cause remains under study.
+    // Keep these pixel assertions exact; measureAtViewport rejects capture drift first.
     for (const { name, box, start, end, line } of measurements) {
       const tolerance = toleranceFor(box);
       expect.soft(Math.abs(line.left - start.x), `${name}: line start far from cursor`).toBeLessThanOrEqual(tolerance);

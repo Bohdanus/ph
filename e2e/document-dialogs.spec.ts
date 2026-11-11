@@ -426,7 +426,7 @@ async function workspaceBox(page: Page): Promise<BoundingBox> {
   return box;
 }
 
-/** A capture of the whole workspace canvas element, via the suite's CDP helper. */
+/** A capture of the whole workspace canvas element, via the suite's screenshot helper. */
 async function captureWorkspace(page: Page, testInfo: TestInfo, name: string): Promise<Buffer> {
   return await captureCanvasScreenshot(page, await workspaceBox(page), testInfo, name);
 }

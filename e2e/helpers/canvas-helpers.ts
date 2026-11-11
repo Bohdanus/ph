@@ -618,8 +618,8 @@ function clamp(value: number, min: number, max: number): number {
  * The clip this takes and returns is VIEWPORT-relative (see `ViewportClip`); the scroll is
  * undone afterwards rather than left in place, because a caller's later `page.mouse`
  * coordinates are viewport-relative and were built against the window it expects to still
- * be in. A `Page.captureScreenshot` clip is document-relative and needs the opposite
- * treatment — see `cdp-helpers.ts`.
+ * be in. Playwright's `page.screenshot({ clip })` uses that same viewport space; raw CDP
+ * screenshot clips use document coordinates and need separate conversion.
  *
  * This is a SAFETY NET, not a workaround for a bug that is present. The rail now declares
  * `min-h-0 overflow-y-auto`, so the page no longer outgrows a 720px viewport and no region
@@ -1319,14 +1319,13 @@ export async function getColorAtPoint(
  * The CSS-pixel size of the region a capture was asked for, which is what makes the
  * capture's scale derivable without assuming anything about the host.
  *
- * `page.screenshot({ clip })` defaults to `scale: 'device'` and a CDP
- * `Page.captureScreenshot` comes back at Chrome's surface scale, so a capture of a CSS
- * region is not a CSS-resolution image, and never was one host-independently either. The
- * caller knows the CSS size it asked for and the decoded image knows its own pixel size, so
- * `imageWidth / region.width` and `imageHeight / region.height` are the scales: measured
- * rather than declared. It is a required argument rather than an option, because the one
- * thing this classifier must never do is quietly classify a 2x capture against thresholds
- * authored for 1x.
+ * `captureCanvasScreenshot` explicitly requests `page.screenshot({ scale: 'device' })`.
+ * A CSS region therefore need not be a CSS-resolution image, and its scale can vary with
+ * the browser context. The caller knows the CSS size it asked for and the decoded image
+ * knows its own pixel size, so `imageWidth / region.width` and
+ * `imageHeight / region.height` are the scales: measured rather than declared. The region
+ * is required because the classifier must never quietly classify a 2x capture against
+ * thresholds authored for 1x.
  */
 export interface CaptureRegion {
   /** `[CSS]` — pixel width of the clip the caller passed to the capture API. */
@@ -1343,10 +1342,10 @@ export interface CaptureRegion {
  * different ones: `verticalSpread` counts ROWS and the gap between occupied columns counts
  * COLUMNS, so spending one scalar on both scales the row measurement by the column axis.
  *
- * On a faithful capture the axes are equal — `expectFaithfulCaptureOf` in `cdp-helpers.spec.ts`
- * pins that, and only for captures taken through `captureCanvasScreenshot`. It does NOT pin
- * the `page.screenshot({ clip })` path, whose two axes are equal only when the clip's CSS
- * size is a whole number of device pixels.
+ * On a faithful capture the axes are equal — `expectFaithfulCaptureOf` in
+ * `cdp-helpers.spec.ts` pins that for the helper, which calls Playwright with
+ * `scale: 'device'`. Fractional clip dimensions can still round each image axis
+ * independently, so both axes are measured separately.
  *
  * So "no current call site is affected" is a fact about the call sites, not a guarantee from
  * the helper, and the two have to be checked separately. `adjustments.spec.ts` passes a

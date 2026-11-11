@@ -82,9 +82,11 @@ export default defineConfig({
   // out, and that is the whole reason this number is not 1800 or more.
   //
   // The macOS two-way shard reached the 20-minute limit after 280 tests, leaving
-  // 11 assigned tests unrun. Give macOS 30 minutes while preserving 10 minutes
-  // before its 40-minute job timeout for report upload. Linux and Windows keep
-  // 20 minutes because this run had no timeout there (jobs 35/40 minutes).
+  // 11 assigned tests unrun. Give macOS 30 minutes, leaving a nominal 10-minute
+  // gap before its 40-minute job timeout. The job clock also covers checkout and
+  // browser setup, so that gap must cover setup plus report upload. Linux and Windows
+  // keep 20 minutes because this run had no timeout there (jobs 35/40 minutes).
+  // The E2E timeout contract test checks every Playwright workflow against these budgets.
   // Local diagnostics retain the longer limit, and --debug disables it.
   globalTimeout: process.env.CI ? (process.platform === 'darwin' ? 30 : 20) * 60_000 : 45 * 60_000,
   // Windows CI shards run one worker. Repeated Windows flakes across unrelated specs

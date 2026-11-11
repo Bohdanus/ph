@@ -75,15 +75,11 @@ export interface CssBox {
  * viewport and adds `window.scrollX/Y` itself, and it trims the clip to the viewport, so a
  * region entirely above or below the fold collapses to zero height and throws.
  *
- * A same-named type once sat in `e2e/helpers/cdp-helpers.ts` and meant a DIFFERENT space.
- * `Page.captureScreenshot` reads its clip against the DOCUMENT origin, so the identical
- * numbers named a region `scrollY` pixels away. Passing a viewport-relative number to CDP
- * does not throw; it photographs the wrong pixels, which is how a capture came back as
- * mostly white — a plausible image of a document that is mostly white. Anything handed to
- * `captureCanvasScreenshot` must be converted with `viewportRectToPageRect` first, and
- * anything handed to `page.screenshot` must not be. `cdp-helpers.ts` imports this type and
- * states the same asymmetry in its own longer comment, at the call site that could get it
- * wrong.
+ * Raw CDP `Page.captureScreenshot` instead reads its clip against the DOCUMENT origin.
+ * Passing a viewport-relative number to that API can silently target different pixels;
+ * callers using raw CDP must convert it with `viewportRectToPageRect` first. The shared
+ * `captureCanvasScreenshot` helper uses Playwright's `page.screenshot`, so its clip stays
+ * viewport-relative and must not be converted.
  */
 export interface ClipOptions {
   x?: number;
@@ -121,22 +117,16 @@ export interface ScrollOffset {
  * Viewport-relative rect -> page-relative rect: the same rect with the scroll offset
  * added to its origin, extent untouched.
  *
- * `Locator.boundingBox()` measures against the viewport, so it goes negative as soon as
- * the window scrolls, while CDP `Page.captureScreenshot` — which this suite calls
- * directly in `cdp-helpers.ts` — takes its clip relative to the document origin. The
- * scroll offset is read live from `window.scrollX`/`window.scrollY` via `getPageScroll`
- * (canvas-helpers.ts); see `e2e/OPEN_PROBLEMS.md` for why the app no longer scrolls at
- * document level and what `onScreenClip` still scrolls into view. Without this
- * translation the capture silently lands offset from the region the caller measured — it
- * does not throw, it returns the wrong pixels, which is how `select-move.spec.ts` came to
- * read a moved line as unmoved.
+ * `Locator.boundingBox()` and `page.screenshot({ clip })` both use viewport coordinates.
+ * This conversion is used when `onScreenClip` reasons about the requested page position
+ * relative to the current scroll offset; raw CDP screenshot clips also use page
+ * coordinates, but `captureCanvasScreenshot` no longer calls that API.
  *
- * DO NOT apply this to `page.screenshot({ clip })`. That one is the odd one out: Playwright
- * takes the clip in VIEWPORT coordinates and adds the scroll offset itself, so converting
- * there moves the clip the wrong way. For example, a marker at document y=600 with the
- * window scrolled by 440px is at viewport y=160: Playwright needs y=160, while CDP needs
- * y=600. Passing either coordinate space to the other capture API targets different
- * pixels.
+ * Do not apply this conversion to `page.screenshot({ clip })`. Playwright takes the clip in
+ * viewport coordinates and applies the scroll offset itself. For example, a marker at
+ * document y=600 with the window scrolled by 440px is at viewport y=160: Playwright needs
+ * y=160, while raw CDP needs y=600. Passing either coordinate space to the other API
+ * targets different pixels.
  *
  * The offset is a parameter rather than something read here, so the rule stays pure and
  * testable; it must be read at the call site, per capture, because the window can scroll

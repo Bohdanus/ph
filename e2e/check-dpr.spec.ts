@@ -69,14 +69,9 @@ test.describe('Device pixel ratio', () => {
     // The precondition, and the reason the rest of this test is not vacuous: if the override
     // above were ever dropped, the page would report 1, every assertion below would still
     // pass, and the file would be the permanently-green test it was.
-    // Read off the page directly rather than through a helper. `getDevicePixelRatio` was
-    // deleted from `cdp-helpers.ts` as a dead export that re-invited the strategy this
-    // file's own history shows is wrong: CDP captures at Chrome's surface scale, so the
-    // emulated ratio is not the capture scale and asserting against it once made this test
-    // red in one mode and green in another. What IS worth asserting here is the
-    // EMULATED ratio, because that is the `test.use` above — and the page property is the
-    // only place that can confirm the override applied. `cdp-helpers.spec.ts`'s 2x block
-    // reads it the same way.
+    // Read the page property directly to prove the `test.use` override above took effect.
+    // The screenshot helper separately pins how that context scale affects captured pixels;
+    // this assertion only verifies the device emulation setting itself.
     const dpr = await page.evaluate(() => window.devicePixelRatio);
     expect(dpr).toBe(2);
     await expectCanvasBackingStoresMatchDocument(page, dpr);

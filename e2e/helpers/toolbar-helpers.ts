@@ -99,29 +99,14 @@ function escapeRegExp(value: string): string {
 /**
  * Runs a toolbar interaction and puts the window back where it was afterwards.
  *
- * This was written for a rail that did NOT fit: the toolbar was 1177px tall inside
- * Playwright's 720px window, so every click on a tool near the bottom of it dragged the
- * page 440px down. That scroll is invisible to the caller and fatal to the specs — a
- * canvas box measured after the click reported `y: -340` where it reported `y: 100`, so
- * the stroke was drawn and read 440px away from where the geometry says, and 19 specs
- * that passed on the parent commit failed for that one reason.
+ * The rail fits the viewport and its tiles collapse into the three-dots tile, so a tool
+ * click is expected not to scroll the document. Keep the caller's actual position
+ * anyway: the rail retains `overflow-y-auto`, and a future layout change must not leave
+ * later viewport-relative mouse actions at a different origin.
  *
- * The rail no longer outgrows the viewport: the column is `h-full` and the tiles
- * COLLAPSE into the three-dots tile instead of pushing the page taller, so a tool click
- * is now expected to scroll nothing. 440 is therefore a GUARD, not a derivation — it is
- * the size of the mistake this undoes, measured against the 1177px rail that no longer
- * exists, and nothing recomputes it. Do not re-derive it from the current layout, and do
- * not delete this function because the scroll stopped happening: the rail keeps
- * `overflow-y-auto` as a backstop on purpose, and any future layout that does grow the
- * page reintroduces the failure above silently and across the whole suite, which is the
- * worst way for it to come back.
- *
- * It is deliberately not "scroll to the top": a caller that has scrolled for its own
- * reasons must get its own position back, not a hardcoded one. The restore is
- * unconditional, so it also undoes a scroll the APP caused by selecting the tool — not
- * only the one Playwright caused to reach the button — and `window.scrollTo` to the
- * position the window is already at fires no scroll event, so the expected
- * no-scroll case costs one read and one no-op write.
+ * Restore the captured position instead of scrolling to the top. A caller that scrolled
+ * for its own reasons gets its position back, and this also undoes any scroll caused by
+ * selecting the tool. In the common no-scroll case the restore is a no-op.
  */
 async function preservingScroll(page: Page, action: () => Promise<void>): Promise<void> {
   const before = await getPageScroll(page);

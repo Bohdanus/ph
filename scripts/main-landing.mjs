@@ -343,6 +343,36 @@ function alertMarker(paths, minutes) {
   return join(paths.lockDir, 'alert-' + minutes + 'm.json');
 }
 
+function isValidAlertMarker(alert) {
+  if (!alert || typeof alert !== 'object' || Array.isArray(alert)) return false;
+  const hasLeaseId = typeof alert.leaseId === 'string' && alert.leaseId.trim().length > 0;
+  if (!hasLeaseId) return false;
+
+  if (alert.status === 'pending') {
+    return (
+      typeof alert.host === 'string' &&
+      alert.host.trim().length > 0 &&
+      typeof alert.platform === 'string' &&
+      alert.platform.length > 0 &&
+      Number.isSafeInteger(alert.pid) &&
+      alert.pid > 0 &&
+      typeof alert.startedAt === 'string' &&
+      Number.isFinite(Date.parse(alert.startedAt))
+    );
+  }
+
+  if (alert.status === 'sent') {
+    return (
+      typeof alert.sentAt === 'string' &&
+      Number.isFinite(Date.parse(alert.sentAt)) &&
+      typeof alert.message === 'string' &&
+      alert.message.length > 0
+    );
+  }
+
+  return false;
+}
+
 function readAlert(paths, minutes) {
   const file = alertMarker(paths, minutes);
   if (!existsSync(file)) return null;
@@ -352,11 +382,13 @@ function readAlert(paths, minutes) {
   } catch {
     return { status: 'unreadable' };
   }
+  let alert;
   try {
-    return JSON.parse(contents);
+    alert = JSON.parse(contents);
   } catch {
     return { status: 'corrupt' };
   }
+  return isValidAlertMarker(alert) ? alert : { status: 'corrupt' };
 }
 
 export function claimAlert(paths, owner, minutes) {

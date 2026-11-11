@@ -230,12 +230,11 @@ const INK_MARGIN = 6;
  * It does NOT have to stay inside a viewport, and the reason it used to say so is gone:
  * there is no fold at 1280x720 to truncate anything (see `DRAFT_RECT` above). What is
  * still true is the mechanism — `waitForCanvasPixels` reads through `page.screenshot`
- * (`canvas-helpers.ts:531`) with the clip re-derived on every poll by `onScreenClip`
- * (`canvas-helpers.ts:529`), which is a no-op while the region is in view, so with zero
- * page overflow it is a no-op on every poll. Measured, the clip this margin produces is
+ * with the clip re-derived on every poll by `onScreenClip`. That is a no-op while the
+ * region is in view, which is the case on this page. Measured, the clip this margin produces is
  * page x 232..680, y 276..444: inside the 1280x720 page and inside the 974x583 canvas
- * box, with room over. The CDP capture below does not go through either, which is why
- * the two clips differ.
+ * box, with room over. The later capture uses the full canvas box through the same
+ * Playwright API; the two captures have different clip extents for their separate checks.
  */
 const POLL_MARGIN = 24;
 
@@ -572,12 +571,11 @@ async function canvasBox(page: Page): Promise<BoundingBox> {
  * The crop of a capture a measurement is scanned from: the box-relative rectangle grown by
  * `STYLE_CROP_PAD` on every side, expressed in the CAPTURE's own pixels.
  *
- * The scale is derived from the decoded image rather than from `devicePixelRatio`, for the
- * reason `imageBoundsToCss` documents: CDP captures at Chrome's surface scale, which is not
- * the emulated ratio, and the committed-ink test's four capture assertions exist to keep a
- * caller from assuming otherwise. The clamp to the image is the same fact applied: a crop that
- * ran off the edge of the capture would slice out of range, and the numbers would be silently
- * short rather than loud.
+ * The scale is derived from the decoded image rather than assumed from `devicePixelRatio`.
+ * `captureCanvasScreenshot` requests Playwright's device scale, and fractional clip bounds can
+ * round each image axis independently. The clamp to the image keeps a crop inside the pixels
+ * actually returned, so coordinates beyond the captured edge cannot silently produce short
+ * measurements.
  */
 function cropWindow(
   image: ImageDataResult,
@@ -1689,11 +1687,11 @@ test.describe('Text tool', () => {
     // scan can see is inside it by construction, so all four comparisons below hold
     // whatever the app did. Capturing the canvas makes the ink bounds unconditional, so
     // ink anywhere else on it - a different origin, a shifted baseline - lands outside
-    // the rectangle and turns the run red. `viewport-drawing.spec.ts:61-69` is the same
+    // the rectangle and turns the run red. `viewport-drawing.spec.ts` is the same
     // pattern: capture an element, map with that element's box.
     //
-    // `box` is `captureCanvasScreenshot`'s fallback for when no clip is passed
-    // (`cdp-helpers.ts:67-72`); no clip is passed here, so the fallback IS the capture.
+    // `box` is `captureCanvasScreenshot`'s fallback for when no clip is passed;
+    // no clip is passed here, so the fallback IS the capture.
     const captureBox = await canvasBox(page);
     const capture = await captureCanvasScreenshot(page, captureBox, testInfo, 'text-committed');
     const image = await loadImageData(capture);
@@ -1703,18 +1701,10 @@ test.describe('Text tool', () => {
     // The capture really is the whole canvas box and not a clipped fragment of it, since
     // the mapping below divides by this box's extent.
     //
-    // The property asserted is the one that holds in every mode: the capture is exactly
-    // the requested rect at one integral scale shared by both axes. It is deliberately
-    // NOT `image.width === box.width * devicePixelRatio`. CDP's `Page.captureScreenshot`
-    // bypasses Playwright's device emulation and captures at Chrome's own surface
-    // scale, so the emulated ratio and the capture scale are not the same quantity.
-    // The two modes that expose it are named here because "it is wrong" is not
-    // reproducible without them: at an emulated `deviceScaleFactor: 2` CDP stayed at 1x
-    // while `window.devicePixelRatio` reported 2, and headed on a HiDPI host CDP was 2x
-    // while the ratio reported 1. Both make the DPR form red for a capture that is
-    // correct, which is what `getDevicePixelRatio` was deleted for. See
-    // `cdp-helpers.spec.ts` for the same measurement and `playwright.config.ts` for the
-    // headed/headless split.
+    // Playwright's device-scale screenshot varies with the context's device scale and
+    // rounds clip dimensions to image pixels. Derive the scale from the returned image
+    // and keep the shared-axis invariant instead of assuming a host-specific DPR. The
+    // helper's dedicated emulated-DPR spec pins the exact 2x case.
     const captureScaleX = image.width / captureBox.width;
     expect(
       Math.abs(image.height / captureBox.height - captureScaleX),
