@@ -56,7 +56,7 @@ const REVIEWED = {
   },
   'free-model-kilo.test.mjs': {
     scope: 'Each fake Kilo CLI and configuration fixture uses a unique OS temp directory with finally cleanup.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=18 filesystem-write:rm=18`,
+    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=19 filesystem-write:rm=19 subprocess:spawnSync=1`,
   },
   'free-model-pool-external.test.mjs': {
     scope:
@@ -123,6 +123,11 @@ const REVIEWED = {
   'orphan-branches.test.mjs': {
     scope: 'Git fixtures use a unique temporary repository.',
     patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=11 filesystem-write:writeFileSync=3 filesystem-write:rmSync=5`,
+  },
+  'path-identity.test.mjs': {
+    scope:
+      'Git path identity is read from the current checkout; directory and symlink fixtures are created under unique OS temporary directories and removed after each test.',
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=1 filesystem-write:rmSync=1 filesystem-write:mkdirSync=3 filesystem-write:writeFileSync=1 filesystem-write:symlinkSync=2`,
   },
   'quiet-command.test.mjs': {
     scope: 'Subprocess invocation is the command-wrapper behavior under test; review command and cwd.',

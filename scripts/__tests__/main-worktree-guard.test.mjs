@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { samePath } from '../lib/path-identity.mjs';
 
 import { createReplacementMainWorktree, land, watch } from '../main-landing.mjs';
 import { decide, registerMainWorktree, resolveWorktree, run, OVERRIDE_VAR } from '../main-worktree-guard.mjs';
@@ -240,9 +241,13 @@ describe('the guard tells a main worktree from a linked one on a real repository
 
       const preserved = resolveWorktree(mainLinked);
       expect(preserved).toMatchObject({ branchRef: 'refs/heads/main', isMainWorktree: true });
-      expect(git(root, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(realpathSync(replacement));
+      expect(
+        samePath(git(root, ['config', '--local', '--get', 'ph.mainWorktreePath']), realpathSync(replacement))
+      ).toBe(true);
       expect(resolveWorktree(replacement)).toMatchObject({ branchRef: 'refs/heads/main', isMainWorktree: true });
-      expect(git(root, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(realpathSync(replacement));
+      expect(
+        samePath(git(root, ['config', '--local', '--get', 'ph.mainWorktreePath']), realpathSync(replacement))
+      ).toBe(true);
     } finally {
       if (existsSync(replacement)) git(root, ['worktree', 'remove', '--force', replacement]);
       registerMainWorktree(mainLinked, { required: true });
@@ -640,10 +645,15 @@ describe('the guard is actually installed', () => {
         encoding: 'utf8',
       });
       expect(install.status).toBe(0);
-      expect(realpathSync(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeGitDir']))).toBe(
-        realpathSync(git(fixture, ['rev-parse', '--absolute-git-dir']))
+      expect(
+        samePath(
+          realpathSync(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeGitDir'])),
+          realpathSync(git(fixture, ['rev-parse', '--absolute-git-dir']))
+        )
+      ).toBe(true);
+      expect(samePath(realpathSync(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])), fixture)).toBe(
+        true
       );
-      expect(realpathSync(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath']))).toBe(fixture);
 
       // Upgrade the earlier path/gitdir-only registration while main is checked out.
       // An absent identity token must be seeded even when both old config values match.

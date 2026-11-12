@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { samePath } from '../lib/path-identity.mjs';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -353,9 +354,12 @@ describe('project main worktree detection', () => {
     gitAt(source, ['commit', '-qm', 'base']);
     gitAt(source, ['clone', '--separate-git-dir', commonGitDir, source, checkout]);
 
-    expect(realpathSync(resolve(checkout, gitAt(checkout, ['rev-parse', '--git-common-dir'])))).toBe(
-      realpathSync(commonGitDir)
-    );
+    expect(
+      samePath(
+        realpathSync(resolve(checkout, gitAt(checkout, ['rev-parse', '--git-common-dir']))),
+        realpathSync(commonGitDir)
+      )
+    ).toBe(true);
     expect(registerMainWorktree(checkout, { required: true })).toBe(true);
     expect(isProjectMainWorktree(checkout)).toBe(true);
   });

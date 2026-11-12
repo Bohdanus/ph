@@ -92,6 +92,7 @@ function readWorkflowScalar(jobBlock, fieldName) {
 }
 
 function readJobBlock(workflow, jobName) {
+  workflow = workflow.replace(/\r\n?/g, '\n');
   const jobStart = workflow.indexOf(`\n  ${jobName}:\n`);
   if (jobStart < 0) throw new Error(`Could not find the ${jobName} job`);
 
@@ -196,6 +197,8 @@ describe('E2E timeout contract', () => {
     }
     expect(readConditionalTestSkipCounts(scriptTestRoot, WINDOWS_ONLY_SKIP_PATTERN)).toEqual({
       'scripts/__tests__/free-model-pool.test.mjs': 1,
+      'scripts/__tests__/free-model-kilo.test.mjs': 1,
+      'scripts/__tests__/path-identity.test.mjs': 1,
       'scripts/__tests__/quiet-command.test.mjs': 2,
       'scripts/__tests__/windows-command-shim.test.mjs': 9,
       'scripts/__tests__/worktree-inventory.test.mjs': 1,
@@ -203,6 +206,7 @@ describe('E2E timeout contract', () => {
     expect(readConditionalTestSkipCounts(scriptTestRoot, WINDOWS_EXCLUDED_SKIP_PATTERN)).toEqual({
       'scripts/__tests__/free-chat-search-agent.test.mjs': 1,
       'scripts/__tests__/merge-takeover-guard.test.mjs': 11,
+      'scripts/__tests__/path-identity.test.mjs': 1,
       'scripts/__tests__/recover-stale-auto-merge.test.mjs': 1,
       'scripts/__tests__/repo-state-gate.test.mjs': 2,
       'scripts/__tests__/windows-command-shim.test.mjs': 1,

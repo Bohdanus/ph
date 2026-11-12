@@ -31,8 +31,9 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { relativePathInside } from '../path-identity.mjs';
 
 /**
  * v3, and the number is the union of two meanings that were numbered apart:
@@ -1923,9 +1924,12 @@ export class Board {
     // absolute path that matches nothing.
     if (direct === undefined) return undefined;
     const input = typed.split('\\').join('/');
-    const root = roots.find((candidate) => input.startsWith(candidate))?.slice(0, -1) ?? this.identity?.worktree;
+    const root =
+      roots.find((candidate) => input.startsWith(candidate))?.replace(/\/$/, '') ??
+      roots.find((candidate) => relativePathInside(candidate, typed) !== null)?.replace(/\/$/, '') ??
+      this.identity?.worktree;
     const canonicalize = (candidate) => canonicalizeExistingPathCase(root, candidate);
-    if (!input.startsWith('/')) return canonicalize(direct);
+    if (!isAbsolute(typed)) return canonicalize(direct);
     if (direct !== input.replace(/^\.\//, '')) return canonicalize(direct);
     const resolved = resolveSymlinksBestEffort(path);
     if (resolved === null) return canonicalize(direct);
@@ -2790,7 +2794,8 @@ function collapseSegments(path) {
  */
 export function normalizePaths(paths, { worktree = null, roots = null } = {}) {
   const list = Array.isArray(paths) ? paths : [paths];
-  const prefixes = (roots ?? (worktree ? [worktree] : []))
+  const rootPaths = roots ?? (worktree ? [worktree] : []);
+  const prefixes = rootPaths
     .map((root) => `${String(root).split('\\').join('/').replace(/\/+$/, '')}/`)
     .sort((a, b) => b.length - a.length);
   const out = [];
@@ -2799,10 +2804,22 @@ export function normalizePaths(paths, { worktree = null, roots = null } = {}) {
     const trimmed = raw.trim();
     if (!trimmed) continue;
     let normalized = trimmed.split('\\').join('/').replace(/^\.\//, '');
+    let matchedRoot = false;
     for (const prefix of prefixes) {
       if (normalized.startsWith(prefix)) {
         normalized = normalized.slice(prefix.length);
+        matchedRoot = true;
         break;
+      }
+    }
+    if (!matchedRoot && isAbsolute(trimmed)) {
+      for (const root of rootPaths) {
+        const relative = relativePathInside(root, trimmed);
+        if (relative !== null) {
+          normalized = relative;
+          matchedRoot = true;
+          break;
+        }
       }
     }
     // AFTER the prefix strip, so `a/b/../b/c` inside a worktree collapses too.

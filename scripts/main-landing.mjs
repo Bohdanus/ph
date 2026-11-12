@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readMergeHeadRefs, resolveWorktree } from './main-worktree-guard.mjs';
 import { readOperations } from './lib/git-operation-state.mjs';
+import { samePath } from './lib/path-identity.mjs';
 import { isProjectMainWorktree } from './merge-takeover-guard.mjs';
 
 const OWNER_FILE = 'owner.json';
@@ -94,13 +95,6 @@ function gitConfigValue(key, cwd) {
 function resolvePath(value, base) {
   if (!value) return null;
   return resolve(isAbsolute(value) ? value : join(base, value));
-}
-
-function samePath(left, right) {
-  if (!left || !right) return false;
-  const first = resolve(left).replace(/\\/g, '/');
-  const second = resolve(right).replace(/\\/g, '/');
-  return process.platform === 'win32' ? first.toLowerCase() === second.toLowerCase() : first === second;
 }
 
 function resolvePaths(cwd = process.cwd()) {

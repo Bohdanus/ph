@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { isDisabledFreeModel } from './free-model-policy.mjs';
 import { resolveCommandShim } from './windows-command-shim.mjs';
+import { terminateWindowsProcessTree } from './windows-process-tree.mjs';
 
 export const COMPLETION_TIMEOUT_MS = 300_000;
 export const MAX_KILO_OUTPUT_BYTES = 1024 * 1024;
@@ -311,42 +312,13 @@ export async function runKiloCompletion({
         let inputError = false;
         let settled = false;
         let killTimer;
-        const timer = setTimeout(() => {
-          timedOut = true;
-          child.kill('SIGTERM');
-          killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
-        }, timeoutMs);
+        let stopping = false;
+        let timer;
         const cleanup = () => {
           clearTimeout(timer);
           clearTimeout(killTimer);
         };
-        child.stdout.on('data', (chunk) => {
-          if (outputOverflow) return;
-          const remainingBytes = MAX_KILO_OUTPUT_BYTES - outputBytes;
-          outputBytes += chunk.byteLength;
-          if (outputBytes > MAX_KILO_OUTPUT_BYTES) {
-            if (remainingBytes > 0) chunks.push(Buffer.from(chunk.subarray(0, remainingBytes)));
-            outputOverflow = true;
-            child.kill('SIGTERM');
-            killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
-            return;
-          }
-          chunks.push(chunk);
-        });
-        child.stderr.on('data', (chunk) => {
-          const combined = Buffer.concat([stderrTail, chunk]);
-          stderrTail = Buffer.from(combined.subarray(Math.max(0, combined.length - MAX_KILO_STDERR_BYTES)));
-        });
-        child.stdin.on('error', () => {
-          inputError = true;
-        });
-        child.once('error', () => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          reject(Object.assign(new Error('Kilo CLI could not be started'), { code: 'KILO_SPAWN' }));
-        });
-        child.once('close', (code, signal) => {
+        const finishChild = (code, signal) => {
           if (settled) return;
           settled = true;
           cleanup();
@@ -369,6 +341,66 @@ export async function runKiloCompletion({
             inputError,
             malformed,
           });
+        };
+        const stopChild = () => {
+          if (stopping || settled) return;
+          stopping = true;
+          clearTimeout(timer);
+          if (process.platform === 'win32' && Number.isSafeInteger(child.pid) && child.pid > 0) {
+            void terminateWindowsProcessTree(child.pid).then(
+              () => finishChild(null, 'SIGKILL'),
+              (error) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                try {
+                  child.kill('SIGKILL');
+                } catch {}
+                reject(new Error(`Kilo process termination failed: ${error.message}`, { cause: error }));
+              }
+            );
+            return;
+          }
+          try {
+            child.kill('SIGTERM');
+          } catch {}
+          killTimer = setTimeout(() => {
+            try {
+              child.kill('SIGKILL');
+            } catch {}
+          }, 2_000);
+        };
+        timer = setTimeout(() => {
+          timedOut = true;
+          stopChild();
+        }, timeoutMs);
+        child.stdout.on('data', (chunk) => {
+          if (outputOverflow) return;
+          const remainingBytes = MAX_KILO_OUTPUT_BYTES - outputBytes;
+          outputBytes += chunk.byteLength;
+          if (outputBytes > MAX_KILO_OUTPUT_BYTES) {
+            if (remainingBytes > 0) chunks.push(Buffer.from(chunk.subarray(0, remainingBytes)));
+            outputOverflow = true;
+            stopChild();
+            return;
+          }
+          chunks.push(chunk);
+        });
+        child.stderr.on('data', (chunk) => {
+          const combined = Buffer.concat([stderrTail, chunk]);
+          stderrTail = Buffer.from(combined.subarray(Math.max(0, combined.length - MAX_KILO_STDERR_BYTES)));
+        });
+        child.stdin.on('error', () => {
+          inputError = true;
+        });
+        child.once('error', () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(Object.assign(new Error('Kilo CLI could not be started'), { code: 'KILO_SPAWN' }));
+        });
+        child.once('close', (code, signal) => {
+          finishChild(code, signal);
         });
         child.stdin.end(message);
       }
