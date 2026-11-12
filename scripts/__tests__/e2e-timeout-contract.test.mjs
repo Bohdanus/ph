@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -13,6 +13,10 @@ const baselineCaptureWorkflow = readFileSync(
 const playwrightConfig = readFileSync(join(testDirectory, '../../playwright.config.ts'), 'utf8');
 const packageManifest = JSON.parse(readFileSync(join(testDirectory, '../../package.json'), 'utf8'));
 const packageLock = JSON.parse(readFileSync(join(testDirectory, '../../package-lock.json'), 'utf8'));
+const WINDOWS_ONLY_SKIP_PATTERN =
+  /\b(?:it|test|describe|suite)\s*\.\s*skipIf\s*\(\s*process\s*\.\s*platform\s*!==\s*(['"])win32\1\s*\)/g;
+const WINDOWS_EXCLUDED_SKIP_PATTERN =
+  /\b(?:it|test|describe|suite)\s*\.\s*skipIf\s*\(\s*process\s*\.\s*platform\s*===\s*['"]win32['"]\s*\)|\(\s*process\s*\.\s*platform\s*===\s*['"]win32['"]\s*\?\s*(?:it|test|describe|suite)\s*\.\s*skip\s*:\s*(?:it|test|describe|suite)\s*\)/g;
 // This is nominal job headroom: GitHub's clock includes setup while Playwright's starts at test launch.
 // The reserved budget must cover setup and report/upload work across each workflow.
 const minimumJobHeadroomMinutes = 10;
@@ -106,7 +110,49 @@ function readPlaywrightRunCommands(jobBlock) {
     .filter((command) => /(?:npx playwright test|scripts\/e2e-run\.mjs|test:e2e)/.test(command));
 }
 
+function readConditionalTestSkipCounts(testRoots, pattern) {
+  const repositoryRoot = join(testDirectory, '../..');
+  const testFilePattern = /\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/;
+  const files = [];
+
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (entry.isFile() && testFilePattern.test(entry.name)) files.push(path);
+    }
+  };
+
+  for (const root of testRoots) visit(join(repositoryRoot, root));
+
+  const counts = Object.create(null);
+  for (const file of files) {
+    const count = readFileSync(file, 'utf8').match(pattern)?.length ?? 0;
+    if (count > 0) counts[relative(repositoryRoot, file).split(sep).join('/')] = count;
+  }
+  return Object.fromEntries(Object.entries(counts).sort(([left], [right]) => left.localeCompare(right)));
+}
+
 describe('E2E timeout contract', () => {
+  it('recognizes Windows-only conditional suite skips and aliases', () => {
+    const condition = ['process.platform', '!==', "'win32'"].join(' ');
+    const suiteSkips = ['describe', 'suite'].map(
+      (name) => `${name}.skipIf(${condition})('Windows-only suite', () => {})`
+    );
+
+    expect(suiteSkips.map((source) => [...source.matchAll(WINDOWS_ONLY_SKIP_PATTERN)].length)).toEqual([1, 1]);
+  });
+
+  it('recognizes direct and ternary tests excluded on Windows', () => {
+    const condition = ['process.platform', '===', "'win32'"].join(' ');
+    const directSkip = ['it.skipIf(', condition, ")('Windows-excluded test', () => {})"].join('');
+    const ternarySkip = `(${condition} ? test.skip : test)('Windows-excluded test', () => {})`;
+
+    expect(
+      [directSkip, ternarySkip].map((source) => [...source.matchAll(WINDOWS_EXCLUDED_SKIP_PATTERN)].length)
+    ).toEqual([1, 1]);
+  });
+
   it('reads the CI timeout values when the expression is formatted across lines', () => {
     const multilineConfig = playwrightConfig.replace(
       "globalTimeout: process.env.CI ? (process.platform === 'darwin' ? 30 : 20) * 60_000 : 45 * 60_000,",
@@ -126,6 +172,34 @@ describe('E2E timeout contract', () => {
     expect(compareVersions(declaredMinimum, minimumWindowsSocketFixVersion)).toBeGreaterThanOrEqual(0);
     expect(lockedCoreVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(compareVersions(lockedCoreVersion, minimumWindowsSocketFixVersion)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('runs script and E2E helper unit tests on Windows source SHA and requires them for CI', () => {
+    const job = readJobBlock(ciWorkflow, 'windows-platform-tests');
+    const runCommands = [...job.matchAll(/^[ \t]+run:[ \t]+([^\r\n]*)$/gm)].map((match) => match[1]);
+    expect(job).toContain('runs-on: windows-latest');
+    expect(job).toContain('ref: ${{ needs.validate-dispatch.outputs.source_sha }}');
+    expect(job).toContain('persist-credentials: false');
+    expect(runCommands).toEqual(['npm ci', 'npm run test -- scripts/__tests__', 'npm run test:e2e:unit']);
+    const testRoots = ['src', 'scripts/__tests__', 'e2e'];
+    expect(readConditionalTestSkipCounts(testRoots, WINDOWS_ONLY_SKIP_PATTERN)).toEqual({
+      'scripts/__tests__/free-model-pool.test.mjs': 1,
+      'scripts/__tests__/quiet-command.test.mjs': 2,
+      'scripts/__tests__/windows-command-shim.test.mjs': 9,
+      'scripts/__tests__/worktree-inventory.test.mjs': 1,
+    });
+    expect(readConditionalTestSkipCounts(testRoots, WINDOWS_EXCLUDED_SKIP_PATTERN)).toEqual({
+      'scripts/__tests__/free-chat-search-agent.test.mjs': 1,
+      'scripts/__tests__/merge-takeover-guard.test.mjs': 11,
+      'scripts/__tests__/recover-stale-auto-merge.test.mjs': 1,
+      'scripts/__tests__/repo-state-gate.test.mjs': 2,
+      'scripts/__tests__/windows-command-shim.test.mjs': 1,
+    });
+
+    const gate = readJobBlock(ciWorkflow, 'ci');
+    expect(gate).toContain('windows-platform-tests');
+    expect(gate).toContain('WINDOWS_PLATFORM_TESTS_RESULT: ${{ needs.windows-platform-tests.result }}');
+    expect(gate).toContain('[[ "$WINDOWS_PLATFORM_TESTS_RESULT" == "success" ]]');
   });
 
   it('keeps ten minutes of nominal job headroom for every CI shard', () => {
