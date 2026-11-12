@@ -5,8 +5,10 @@ import {
   tipAlphaAt,
   type BrushTipSettings,
 } from '../util/brush-engine.ts';
-import { blendPixel, clampPointToSize, forEachPixelInRect, readRgba } from '../util/pixels.ts';
+import { blendPixel, clampPointToSize, forEachPixelInRect, pixelIndex, readRgba } from '../util/pixels.ts';
 import { createSelectionAlphaMask } from '../util/selection.ts';
+import { advanceFlowCoverage, FLOW_COVERAGE_SCALE } from '../util/flow-coverage.ts';
+import { PAINT_FLOW_MAX, PAINT_FLOW_MIN } from '../util/brush-airbrush.ts';
 import type { Point, PositionedRasterSelectionMask, SelectionPointPaths, Size } from '../contexts/general-types.ts';
 import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
@@ -19,6 +21,8 @@ export type CloneStampToolArgs = {
   /** Most recent aligned sample point; absent in older saved settings and history. */
   alignedSource?: Point | null;
   aligned: boolean;
+  /** Flow percentage; absent on historical actions that use the pre-Flow renderer. */
+  flow?: number;
   /** Per-stroke source-to-destination offset; absent only on pre-fix durable history. */
   samplingOffset?: Point;
   points: Point[];
@@ -47,6 +51,17 @@ export type CloneStampToolSettings = Omit<CloneStampToolArgs, 'points'>;
  * options bar rather than buried at the call site, exactly as `SMUDGE_SPACING_PERCENT` is.
  */
 export const CLONE_STAMP_SPACING_PERCENT = BRUSH_SPACING_DEFAULT;
+
+/** The Flow slider range chosen for this app; Adobe's current Clone Stamp page states no range. */
+export const CLONE_STAMP_FLOW_MIN = PAINT_FLOW_MIN;
+export const CLONE_STAMP_FLOW_MAX = PAINT_FLOW_MAX;
+export const CLONE_STAMP_FLOW_DEFAULT = 100;
+
+/** Clamp saved or live Flow values to the app's slider range. */
+export const normalizeCloneStampFlow = (flow: number | undefined): number => {
+  const value = Number.isFinite(flow) ? flow! : CLONE_STAMP_FLOW_DEFAULT;
+  return Math.round(Math.min(CLONE_STAMP_FLOW_MAX, Math.max(CLONE_STAMP_FLOW_MIN, value)));
+};
 
 /** `Size` reduced to the integer extents a pixel buffer can address. */
 const extent = (value: number): number => (Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
@@ -169,6 +184,76 @@ const cloneDab = (
   });
 };
 
+const FLOW_TILE_SIZE = 64;
+const FLOW_TILE_AREA = FLOW_TILE_SIZE * FLOW_TILE_SIZE;
+
+type CloneCoverageTile = { coverage: Uint16Array };
+
+/**
+ * One Flow-aware dab. Coverage is retained per pixel for this stroke, not across preview frames
+ * or commits. Each updated pixel is recomposited from its original destination, avoiding color
+ * rounding from repeated incremental blends. The sampled alpha participates in source-over
+ * composition, while accumulated Flow coverage remains bounded by the tool's Opacity ceiling.
+ */
+const cloneDabWithFlow = (
+  sourceData: Uint8ClampedArray,
+  outputData: Uint8ClampedArray,
+  raster: Size,
+  center: Point,
+  offset: Point,
+  settings: BrushTipSettings,
+  flowRate: number,
+  selectionMask: Uint8Array | null,
+  coverageTiles: Map<number, CloneCoverageTile>
+): void => {
+  const radius = settings.size / 2;
+  const span = dabSpan(center, radius, raster.width, raster.height);
+  if (!span) return;
+
+  const deltaX = Math.round(offset.x);
+  const deltaY = Math.round(offset.y);
+  const tileColumns = Math.ceil(raster.width / FLOW_TILE_SIZE);
+
+  for (let y = span.top; y <= span.bottom; y++) {
+    const distanceY = y - center.y;
+    for (let x = span.left; x <= span.right; x++) {
+      const tipCoverage = tipAlphaAt(
+        Math.sqrt((x - center.x) * (x - center.x) + distanceY * distanceY),
+        radius,
+        settings.hardness
+      );
+      const selectionCoverage = selectionMask ? selectionMask[y * raster.width + x]! / 255 : 1;
+      if (!(selectionCoverage > 0)) continue;
+      const deposit = tipCoverage * flowRate;
+      if (!(deposit > 0)) continue;
+
+      const tileRow = Math.floor(y / FLOW_TILE_SIZE);
+      const tileColumn = Math.floor(x / FLOW_TILE_SIZE);
+      const tileKey = tileRow * tileColumns + tileColumn;
+      let tile = coverageTiles.get(tileKey);
+      if (!tile) {
+        tile = { coverage: new Uint16Array(FLOW_TILE_AREA) };
+        coverageTiles.set(tileKey, tile);
+      }
+
+      const localIndex = (y % FLOW_TILE_SIZE) * FLOW_TILE_SIZE + (x % FLOW_TILE_SIZE);
+      const previousUnits = tile.coverage[localIndex]!;
+      const nextUnits = advanceFlowCoverage(previousUnits, deposit, settings.opacity);
+      if (nextUnits === previousUnits) continue;
+      tile.coverage[localIndex] = nextUnits;
+
+      const offsetPoint = clampPointToSize({ x: x + deltaX, y: y + deltaY }, raster);
+      const source = readRgba(sourceData, offsetPoint.x, offsetPoint.y, raster.width);
+      const destinationIndex = pixelIndex(x, y, raster.width);
+      outputData[destinationIndex] = sourceData[destinationIndex]!;
+      outputData[destinationIndex + 1] = sourceData[destinationIndex + 1]!;
+      outputData[destinationIndex + 2] = sourceData[destinationIndex + 2]!;
+      outputData[destinationIndex + 3] = sourceData[destinationIndex + 3]!;
+      blendPixel(outputData, destinationIndex, source, (nextUnits / FLOW_COVERAGE_SCALE) * selectionCoverage);
+    }
+  }
+};
+
 /**
  * Clone a whole stroke onto a copy of the source raster.
  *
@@ -192,6 +277,7 @@ const cloneStroke = (
   points: Point[],
   aligned: boolean,
   samplingOffset: Point | undefined,
+  flow: number | undefined,
   settings: BrushTipSettings,
   selectionMask: Uint8Array | null
 ): void => {
@@ -227,8 +313,30 @@ const cloneStroke = (
         : null;
   if (!offset) return;
 
-  for (const center of centers) {
-    cloneDab(sourceData, outputData, raster, center, offset, settings, selectionMask);
+  if (flow === undefined) {
+    // Older saved actions, including actions created after Aligned was added but before Flow,
+    // retain their exact per-dab renderer.
+    for (const center of centers) {
+      cloneDab(sourceData, outputData, raster, center, offset, settings, selectionMask);
+    }
+  } else {
+    const flowRate = normalizeCloneStampFlow(flow) / CLONE_STAMP_FLOW_MAX;
+    if (!(flowRate > 0)) return;
+
+    const coverageTiles = new Map<number, CloneCoverageTile>();
+    for (const center of centers) {
+      cloneDabWithFlow(
+        sourceData,
+        outputData,
+        raster,
+        center,
+        offset,
+        settings,
+        flowRate,
+        selectionMask,
+        coverageTiles
+      );
+    }
   }
 
   ctx.putImageData(image, 0, 0);
@@ -275,6 +383,7 @@ export const cloneStamp =
     alpha,
     source,
     aligned,
+    flow,
     samplingOffset,
     points,
     selection,
@@ -299,7 +408,7 @@ export const cloneStamp =
     });
 
     const selectionMask = selection ? createSelectionAlphaMask(selection, size, selection) : null;
-    cloneStroke(ctx, size, source, points, aligned, samplingOffset, settings, selectionMask);
+    cloneStroke(ctx, size, source, points, aligned, samplingOffset, flow, settings, selectionMask);
 
     return [canvas];
   };

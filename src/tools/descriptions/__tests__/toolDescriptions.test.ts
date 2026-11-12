@@ -158,12 +158,20 @@ describe('toolDescriptions', () => {
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
       /whether its Options bar also offers Intersect is unresolved across Adobe sources/i
     );
+    const quickShortcutKeys = quick.shortcuts.map((shortcut) => shortcut.keys);
+    expect(quickShortcutKeys).toContain('[');
+    expect(quickShortcutKeys).toContain(']');
     // The shortcut list records Photoshop behavior; appNotes records that this app does not yet
     // implement bracket-key resizing. Keep those two claims separate instead of deleting the
     // source behavior to make the app look more complete.
-    expect(quick.shortcuts.map((shortcut) => shortcut.keys)).toEqual(['W', 'Shift+W', '[', ']']);
+    expect(quickShortcutKeys).toEqual(['W', 'Shift+W', '[', ']']);
+    const decreaseBrushShortcut = quick.shortcuts.find((shortcut) => shortcut.keys === '[');
+    const increaseBrushShortcut = quick.shortcuts.find((shortcut) => shortcut.keys === ']');
+    expect(decreaseBrushShortcut?.action).toMatch(/decreases the Quick Selection brush size/i);
+    expect(increaseBrushShortcut?.action).toMatch(/increases the Quick Selection brush size/i);
     expect(quick.sources).toEqual(
       expect.arrayContaining([
+        'https://www.adobe.com/learn/photoshop/web/use-quick-selection-tool',
         'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html',
         'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/select-area-intersected-by-other-selections.html',
         'https://helpx.adobe.com/lt/photoshop/how-to/add-to-subtract-from-selections.html',

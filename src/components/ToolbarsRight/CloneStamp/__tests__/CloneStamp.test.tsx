@@ -8,7 +8,7 @@ import {
   BRUSH_SIZE_MIN,
 } from '../../../../util/brush-engine.ts';
 import { defaultSettings } from '../../../../tools/settings.ts';
-import type { CloneStampToolArgs } from '../../../../tools/cloneStamp.ts';
+import { CLONE_STAMP_FLOW_MAX, CLONE_STAMP_FLOW_MIN, type CloneStampToolArgs } from '../../../../tools/cloneStamp.ts';
 
 /**
  * The args object the mocked `useCurrentTool` seeds its `useState` from. A real
@@ -61,6 +61,7 @@ const flushRaf = () => {
 const getSize = () => screen.getByLabelText('Size') as HTMLInputElement;
 const getHardness = () => screen.getByLabelText('Hardness') as HTMLInputElement;
 const getOpacity = () => screen.getByLabelText('Opacity') as HTMLInputElement;
+const getFlow = () => screen.getByLabelText('Flow') as HTMLInputElement;
 const getAligned = () => screen.getByLabelText('Aligned') as HTMLInputElement;
 
 /** The visible caption of the control, label text plus live readout. */
@@ -97,13 +98,12 @@ describe('CloneStamp toolbar', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders exactly the four controls the clone-stamp args can hold', () => {
+  it('renders exactly the five controls the clone-stamp args can hold', () => {
     render(<CloneStamp />);
 
-    // `CloneStampToolArgs` is `{ size, hardness, alpha, source, aligned, points }`. The source
-    // is an alt-clicked point, not a preference. Photoshop's Mode, Flow, Sample and Brush
-    // Preset Picker have no field here, so no select and no second checkbox.
-    expect(screen.getAllByRole('slider')).toHaveLength(3);
+    // The source is an alt-clicked point, not a preference. Photoshop's Mode, Sample and
+    // Brush Preset Picker have no field here, so no select and no second checkbox.
+    expect(screen.getAllByRole('slider')).toHaveLength(4);
     expect(screen.getAllByRole('checkbox')).toHaveLength(1);
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
   });
@@ -115,10 +115,12 @@ describe('CloneStamp toolbar', () => {
     expect(getSize()).toHaveValue('40');
     expect(getHardness()).toHaveValue('100');
     expect(getOpacity()).toHaveValue('100');
+    expect(getFlow()).toHaveValue('100');
     expect(getAligned()).not.toBeChecked();
     expect(caption(getSize())).toBe('Size40px');
     expect(caption(getHardness())).toBe('Hardness100%');
     expect(caption(getOpacity())).toBe('Opacity100%');
+    expect(caption(getFlow())).toBe('Flow100%');
   });
 
   it('takes the tip bounds from the shared brush engine and the opacity bounds from the bar', () => {
@@ -135,6 +137,9 @@ describe('CloneStamp toolbar', () => {
     expect(getOpacity()).toHaveAttribute('min', '0');
     expect(getOpacity()).toHaveAttribute('max', '100');
     expect(getOpacity()).toHaveAttribute('step', '1');
+    expect(getFlow()).toHaveAttribute('min', String(CLONE_STAMP_FLOW_MIN));
+    expect(getFlow()).toHaveAttribute('max', String(CLONE_STAMP_FLOW_MAX));
+    expect(getFlow()).toHaveAttribute('step', '1');
   });
 
   it('renders nothing while another tool is active', () => {
@@ -181,6 +186,29 @@ describe('CloneStamp toolbar', () => {
 
       expect(getOpacity()).toHaveValue('46');
       expect(caption(getOpacity())).toBe('Opacity46%');
+    });
+  });
+
+  describe('flow scale', () => {
+    it('publishes Flow as an integer percentage and keeps its readout in sync', () => {
+      render(<CloneStamp />);
+
+      fireEvent.change(getFlow(), { target: { value: '37' } });
+      flushRaf();
+
+      expect(mockPatchToolArgs).toHaveBeenCalledExactlyOnceWith('clone-stamp', expect.objectContaining({ flow: 37 }));
+      expect(getFlow()).toHaveValue('37');
+      expect(caption(getFlow())).toBe('Flow37%');
+    });
+
+    it('falls back to the seeded default when persisted settings predate Flow', () => {
+      const settings = { ...defaultSettings['clone-stamp'] } as Partial<CloneStampToolArgs>;
+      delete settings.flow;
+      resetToolArgs(settings);
+      render(<CloneStamp />);
+
+      expect(getFlow()).toHaveValue('100');
+      expect(caption(getFlow())).toBe('Flow100%');
     });
   });
 
@@ -285,6 +313,7 @@ describe('CloneStamp toolbar', () => {
         size: 50,
         hardness: 100,
         alpha: 1,
+        flow: 100,
         source,
         alignedSource: null,
         aligned: false,
@@ -307,7 +336,7 @@ describe('CloneStamp toolbar', () => {
     it('gives every control a stable accessible name that does not move with the readout', () => {
       render(<CloneStamp />);
 
-      for (const name of ['Size', 'Hardness', 'Opacity', 'Aligned']) {
+      for (const name of ['Size', 'Hardness', 'Opacity', 'Flow', 'Aligned']) {
         expect(screen.getByLabelText(name), name).toBeInTheDocument();
       }
 
@@ -332,7 +361,7 @@ describe('CloneStamp toolbar', () => {
     it('keeps every control reachable in tab order', () => {
       render(<CloneStamp />);
 
-      for (const get of [getSize, getHardness, getOpacity, getAligned]) {
+      for (const get of [getSize, getHardness, getOpacity, getFlow, getAligned]) {
         const control = get();
         expect(control.tabIndex).toBeGreaterThanOrEqual(0);
         control.focus();

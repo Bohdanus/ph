@@ -267,6 +267,34 @@ async function committedOutline(page: Page): Promise<CommittedBounds | null> {
 /** Whether a committed selection's border is on the ants canvas at all. */
 const antsPainted = async (page: Page): Promise<boolean> => (await committedOutline(page)) !== null;
 
+async function expectRectangularContour(page: Page, bounds: CommittedBounds): Promise<void> {
+  const frame = await antsContentBox(page);
+  const corners: Array<[string, PagePoint]> = [
+    ['top-left', { x: bounds.left, y: bounds.top }],
+    ['top-right', { x: bounds.right, y: bounds.top }],
+    ['bottom-left', { x: bounds.left, y: bounds.bottom }],
+    ['bottom-right', { x: bounds.right, y: bounds.bottom }],
+  ];
+  const edgeSamples: Array<[string, PagePoint]> = [];
+  for (const fraction of [0.25, 0.5, 0.75]) {
+    const x = bounds.left + outlineWidth(bounds) * fraction;
+    const y = bounds.top + outlineHeight(bounds) * fraction;
+    edgeSamples.push(
+      [`top edge at ${fraction}`, { x, y: bounds.top }],
+      [`bottom edge at ${fraction}`, { x, y: bounds.bottom }],
+      [`left edge at ${fraction}`, { x: bounds.left, y }],
+      [`right edge at ${fraction}`, { x: bounds.right, y }]
+    );
+  }
+  for (const [name, point] of [...corners, ...edgeSamples]) {
+    const radius = 3;
+    const windowOrigin = { x: point.x - radius, y: point.y - radius };
+    expect
+      .soft(await hasAntsNear(page, frame, windowOrigin, radius), `${name} should be on the rectangular contour`)
+      .toBe(true);
+  }
+}
+
 const outlineWidth = (bounds: CommittedBounds) => bounds.right - bounds.left;
 const outlineHeight = (bounds: CommittedBounds) => bounds.bottom - bounds.top;
 const outlineAspect = (bounds: CommittedBounds) => outlineWidth(bounds) / outlineHeight(bounds);
@@ -975,6 +1003,254 @@ test.describe('Elliptical marquee', () => {
     await openToolFlyoutViaKeyboard(page, 'rectangular-selection');
     await navigateAndSelectInFlyout(page, 'elliptical-selection', 'Elliptical Marquee Tool');
     await expect(marqueeBar(page)).toBeVisible();
+  });
+});
+
+test.describe('Rectangular Marquee Tool', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+  });
+
+  test('one undo removes the rectangular marquee history entry', async ({ page }) => {
+    await clickToolButton(page, 'rectangular-selection');
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
+    const box = await measureCanvas(page);
+    const rect = marqueeRect(box);
+
+    await dragOnCanvas(page, marqueeTopLeft(box, rect), marqueeBottomRight(box, rect), { steps: 20 });
+    await waitForCommittedAnts(page, 'the committed rectangular selection border');
+    await expect(page.getByTestId('undo-button')).toBeEnabled();
+
+    await page.getByTestId('undo-button').click();
+    expect
+      .soft(
+        await neverHappened(page, () => antsPainted(page), NEGATIVE_WINDOW_MS),
+        'one undo must remove the whole selection'
+      )
+      .toBe(true);
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
+  });
+
+  test('a rectangular marquee drag commits a rectangle matching the drag bounds', async ({ page }) => {
+    await clickToolButton(page, 'rectangular-selection');
+    const box = await measureCanvas(page);
+    const rect = marqueeRect(box);
+    const absolute = inCanvas(box, rect);
+
+    await dragOnCanvas(page, marqueeTopLeft(box, rect), marqueeBottomRight(box, rect), { steps: 12 });
+    await waitForCommittedAnts(page, 'the committed rectangular border');
+    const outline = await committedOutline(page);
+    expect.soft(outline, 'the drag should have committed a border').not.toBeNull();
+    await expectRectangularContour(page, outline!);
+
+    expect.soft(Math.abs(outline!.left - absolute.left) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'outline left').toBe(true);
+    expect.soft(Math.abs(outline!.top - absolute.top) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'outline top').toBe(true);
+    expect
+      .soft(Math.abs(outline!.right - (absolute.left + rect.width)) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'outline right')
+      .toBe(true);
+    expect
+      .soft(Math.abs(outline!.bottom - (absolute.top + rect.height)) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'outline bottom')
+      .toBe(true);
+  });
+
+  test('the Style select swaps fields for rectangular marquee', async ({ page }) => {
+    await clickToolButton(page, 'rectangular-selection');
+    const style = marqueeBar(page);
+    const ratio = page.getByRole('spinbutton', { name: 'Ratio' });
+    const width = page.getByRole('spinbutton', { name: 'Width' });
+    const height = page.getByRole('spinbutton', { name: 'Height' });
+
+    await expect(style).toBeVisible();
+    await expect(ratio).toBeHidden();
+    await expect(width).toBeHidden();
+    await expect(height).toBeHidden();
+
+    await style.selectOption('fixed-ratio');
+    await expect(ratio).toBeVisible();
+    await expect(width).toBeHidden();
+    await expect(height).toBeHidden();
+
+    await style.selectOption('fixed-size');
+    await expect(width).toBeVisible();
+    await expect(height).toBeVisible();
+    await expect(ratio).toBeHidden();
+  });
+
+  test('a fixed-ratio rectangular marquee locks the committed aspect', async ({ page }) => {
+    await clickToolButton(page, 'rectangular-selection');
+    const style = marqueeBar(page);
+    await style.selectOption('fixed-ratio');
+    const ratio = page.getByRole('spinbutton', { name: 'Ratio' });
+    await expect(ratio).toBeVisible();
+    await ratio.fill(FIXED_RATIO_VALUE);
+    await expect(ratio).toHaveValue(FIXED_RATIO_VALUE);
+
+    const box = await measureCanvas(page);
+    const rect = marqueeRect(box);
+    const dragAspect = rect.width / rect.height;
+    expect(dragAspect, 'the drag must be wider than the locked ratio').toBeGreaterThan(Number(FIXED_RATIO_VALUE));
+
+    await dragOnCanvas(page, marqueeTopLeft(box, rect), marqueeBottomRight(box, rect), { steps: 12 });
+    await waitForCommittedAnts(page, 'the committed border after the locked drag');
+    const outline = await committedOutline(page);
+    expect.soft(outline, 'the locked drag should have committed a border').not.toBeNull();
+    await expectRectangularContour(page, outline!);
+
+    expect
+      .soft(outlineAspect(outline!), `committed aspect should be ${FIXED_RATIO_VALUE}`)
+      .toBeCloseTo(Number(FIXED_RATIO_VALUE), 1);
+    expect
+      .soft(Math.abs(outlineHeight(outline!) - rect.height) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'locked height')
+      .toBe(true);
+    expect
+      .soft(
+        Math.abs(outlineWidth(outline!) - rect.height * Number(FIXED_RATIO_VALUE)) <= OUTLINE_BOUNDS_TOLERANCE_PX,
+        'the locked ratio should shorten the long side'
+      )
+      .toBe(true);
+  });
+
+  test('a fixed-size rectangular marquee uses the configured document-pixel dimensions', async ({ page }) => {
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1024, height: 768 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.goto('/');
+      await expect(page.getByTestId('footer-dimensions')).toContainText('Dimensions: 800 × 600 px');
+      await page.getByTestId('header-file-menu-button').click();
+      await page.getByTestId('header-file-new-button').click();
+      await acceptDiscardPrompt(page);
+      const dialog = page.getByTestId('new-image-dialog');
+      await expect(dialog).toBeVisible();
+      await page.getByTestId('new-image-width-input').fill('1600');
+      await page.getByTestId('new-image-height-input').fill('1200');
+      await page.getByTestId('new-image-dialog-submit-button').click();
+      await expect(dialog).toHaveCount(0);
+      await expect(page.getByTestId('footer-dimensions')).toContainText('Dimensions: 1600 × 1200 px');
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('width', '1600');
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('height', '1200');
+
+      await clickToolButton(page, 'rectangular-selection');
+      const style = marqueeBar(page);
+      await style.selectOption('fixed-size');
+      const fixedWidth = '400';
+      const fixedHeight = '200';
+      const width = page.getByRole('spinbutton', { name: 'Width' });
+      const height = page.getByRole('spinbutton', { name: 'Height' });
+      await width.fill(fixedWidth);
+      await height.fill(fixedHeight);
+      await expect(width).toHaveValue(fixedWidth);
+      await expect(height).toHaveValue(fixedHeight);
+
+      const workspace = page.getByTestId('workspace-container');
+      await expect(workspace).toHaveAttribute('data-fit-document-width', '1600');
+      await expect(workspace).toHaveAttribute('data-fit-document-height', '1200');
+      await expect(workspace).toHaveAttribute('data-fit-scale', /^\d+(?:\.\d+)?$/);
+      await expect(workspace).toHaveAttribute('data-view-pan-x', '0');
+      await expect(workspace).toHaveAttribute('data-view-pan-y', '0');
+      await expect(workspace).toHaveAttribute('data-view-effective-zoom', '1');
+      await expect(workspace).toHaveAttribute('data-view-rotation', '0');
+      const containerSize = await workspace.evaluate((element) => ({
+        width: element.clientWidth,
+        height: element.clientHeight,
+      }));
+      const fitOuterWidth = Number(await workspace.getAttribute('data-fit-outer-width'));
+      const fitOuterHeight = Number(await workspace.getAttribute('data-fit-outer-height'));
+      expect(Math.abs(fitOuterWidth - containerSize.width)).toBeLessThan(1.1);
+      expect(Math.abs(fitOuterHeight - containerSize.height)).toBeLessThan(1.1);
+      const fitScale = Number(await workspace.getAttribute('data-fit-scale'));
+      expect(fitScale).toBeGreaterThan(0);
+
+      const box = await measureCanvas(page);
+      const press = { x: box.x + box.width * 0.4, y: box.y + box.height * 0.4 };
+      const drag = { x: press.x + 24, y: press.y + 12 };
+      expect(Math.abs(Number(fixedWidth) * (1 - fitScale))).toBeGreaterThan(OUTLINE_BOUNDS_TOLERANCE_PX);
+      expect(Math.abs(Number(fixedHeight) * (1 - fitScale))).toBeGreaterThan(OUTLINE_BOUNDS_TOLERANCE_PX);
+
+      await dragOnCanvas(page, press, drag, { steps: 12 });
+      await waitForCommittedAnts(page, 'the committed border after the fixed-size drag');
+      const outline = await committedOutline(page);
+      expect.soft(outline, 'the fixed-size drag should have committed a border').not.toBeNull();
+      await expectRectangularContour(page, outline!);
+
+      const tolerance = OUTLINE_BOUNDS_TOLERANCE_PX;
+      const expectedWidth = Number(fixedWidth) * fitScale;
+      const expectedHeight = Number(fixedHeight) * fitScale;
+
+      expect(
+        expectedHeight,
+        'the fixed-size rectangle must keep the ellipse corner outside the 3px probe'
+      ).toBeGreaterThan(24);
+      expect.soft(Math.abs(outlineWidth(outline!) - expectedWidth) <= tolerance, 'fixed document width').toBe(true);
+      expect.soft(Math.abs(outlineHeight(outline!) - expectedHeight) <= tolerance, 'fixed document height').toBe(true);
+      expect.soft(outlineWidth(outline!), 'fixed width must exceed the drag displacement').toBeGreaterThan(48);
+      expect.soft(outlineHeight(outline!), 'fixed height must exceed the drag displacement').toBeGreaterThan(24);
+    }
+  });
+
+  test('holding Shift constrains a rectangular marquee drag to a square', async ({ page }) => {
+    await clickToolButton(page, 'rectangular-selection');
+    const box = await measureCanvas(page);
+    const rect = marqueeRect(box);
+    expect(Math.abs(rect.width - rect.height)).toBeGreaterThan(OUTLINE_BOUNDS_TOLERANCE_PX * 2);
+
+    await dragOnCanvas(page, marqueeTopLeft(box, rect), marqueeBottomRight(box, rect), {
+      steps: 12,
+      modifiers: ['Shift'],
+    });
+    await waitForCommittedAnts(page, 'the committed border after the Shift drag');
+    const outline = await committedOutline(page);
+    expect.soft(outline, 'the Shift drag should have committed a border').not.toBeNull();
+    await expectRectangularContour(page, outline!);
+
+    expect.soft(outlineAspect(outline!), 'Shift should have squared the committed rectangle').toBeCloseTo(1, 1);
+    expect
+      .soft(Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'square width')
+      .toBe(true);
+    expect.soft(outlineHeight(outline!), 'Shift should have grown the short side').toBeGreaterThan(rect.height);
+  });
+
+  test('holding Alt draws a rectangular marquee from its press point outwards', async ({ page }) => {
+    await clickToolButton(page, 'rectangular-selection');
+    const box = await measureCanvas(page);
+    const rect = marqueeRect(box);
+    const press = marqueeTopLeft(box, rect);
+
+    await dragOnCanvas(page, press, marqueeBottomRight(box, rect), { steps: 12, modifiers: ['Alt'] });
+    await waitForCommittedAnts(page, 'the committed border after the Alt drag');
+    const outline = await committedOutline(page);
+    expect.soft(outline, 'the Alt drag should have committed a border').not.toBeNull();
+    await expectRectangularContour(page, outline!);
+
+    const centre = outlineCenter(outline!);
+    expect
+      .soft(Math.abs(outlineWidth(outline!) - rect.width * 2) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'Alt width')
+      .toBe(true);
+    expect
+      .soft(Math.abs(outlineHeight(outline!) - rect.height * 2) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'Alt height')
+      .toBe(true);
+    expect.soft(Math.abs(centre.x - press.x) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'centre x').toBe(true);
+    expect.soft(Math.abs(centre.y - press.y) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'centre y').toBe(true);
+  });
+
+  test('a rectangular marquee click without movement commits nothing', async ({ page }) => {
+    await clickToolButton(page, 'rectangular-selection');
+    const box = await measureCanvas(page);
+    const rect = marqueeRect(box);
+    const press = { x: box.x + rect.left + rect.width / 2, y: box.y + rect.top + rect.height / 2 };
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
+
+    await page.mouse.click(press.x, press.y);
+
+    expect
+      .soft(
+        await neverHappened(page, () => antsPainted(page), NEGATIVE_WINDOW_MS),
+        'a click with no movement must not commit a selection'
+      )
+      .toBe(true);
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
   });
 });
 

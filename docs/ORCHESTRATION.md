@@ -803,18 +803,61 @@ establishing that its owner has stopped may the operator repeat the command with
 `--apply --confirm-owner-stopped`; it rechecks every predicate and removes only that
 worktree's `AUTO_MERGE` file.
 
+Before applying **any** recovery mode, manually verify that the owning root chat and
+every descendant have stopped, then recheck the current live-session overlay,
+relevant process tree and open files, and board claims/locks for the target worktree
+and paths. `--confirm-owner-stopped` is an operator assertion; the recovery command
+does not query chat liveness, the process tree, or the board.
+
+These checks are point-in-time checks, not a lock. Keep every editor, watcher, and
+other process that could write to the worktree stopped until apply returns. If the
+command reports that the worktree changed concurrently, `AUTO_MERGE` has already
+been removed and apply is not rolled back. Preserve modes leave the durable recovery
+ref in place. In clean mode, the marker tree matched `HEAD^{tree}` before removal;
+recheck `HEAD` and preserve the current files/index before taking any further recovery
+action.
+
 Dirty work may be preserved when the index still matches `HEAD`, there are no
 unresolved paths or other operation markers, and every tracked working file exactly
 matches the tree named by `AUTO_MERGE`. Run the read-only preflight with
-`--preserve-matching-worktree`; it prints the marker-tree and worktree-status pins.
-After confirming the owner stopped, apply only with those exact pins, `--apply`, and
-`--confirm-owner-stopped`. This path unlinks only `AUTO_MERGE`: it does not reset,
-stage, commit, or alter tracked or untracked files. Continue to review and preserve
-that work under the normal landing procedure. It refuses `main`, staged changes,
-conflicts, other operation markers, changed HEAD or status, malformed markers, and
-tracked content that differs from the marker. Do not use either path for a live or
-unresolved merge. Board file claims are separate: wait for their leases to expire or
-release them as their owner; Git recovery never overrides or clears board locks.
+`--preserve-matching-worktree`. It prints the exact HEAD, marker tree, worktree-status
+digest, worktree-content digest, and the recovery ref it will create or verify. The
+status digest covers Git's status records. The content digest covers changed tracked
+files and non-ignored untracked files identified by Git, including their paths, modes,
+file contents, and symlink targets; ignored files are not included. Preserve preflight
+fails closed if a path cannot be represented as UTF-8 or is neither a regular file nor
+a symlink (for example, a changed submodule directory); inspect and preserve that state
+manually. Preflight changes no files or refs. Apply only with the original
+`--expected-head` and all three printed worktree values: `--expected-auto-merge-tree`,
+`--expected-worktree-status-sha256`, and `--expected-worktree-content-sha256`, plus
+`--apply` and `--confirm-owner-stopped`. Before unlinking the marker,
+the command creates or verifies the durable tree ref
+`refs/recovery/auto-merge/<HEAD>/<TREE>` so the marker tree remains reachable after
+recovery. It then unlinks only `AUTO_MERGE`; it does not reset, stage, commit, or alter
+tracked or untracked files or the index. Keep the recovery ref as an audit anchor and
+review preserved work under the normal landing procedure. An apply that creates the
+anchor and then refuses a later recheck leaves that exact tree ref in place; retain it
+as an audit anchor. It refuses `main`, staged
+changes, conflicts, other operation markers, changed HEAD or pins, malformed markers,
+and tracked content that differs from the marker.
+
+If the owner family is proven stopped but tracked edits no longer match the marker
+tree, run the read-only preflight with `--preserve-divergent-worktree`. It still
+requires the index at `HEAD`, no unresolved paths, no other operation markers, and at
+least one unstaged tracked path whose working content differs from both `HEAD` and
+`AUTO_MERGE`. A difference on one path from `HEAD` and another from `AUTO_MERGE` is
+not enough; untracked-only work is not sufficient. It prints the same pins and records
+the count of tracked paths that differ from the marker. After the general owner,
+overlay, process, and board checks above, apply only with the original `--expected-head`,
+all three printed worktree values (`--expected-auto-merge-tree`,
+`--expected-worktree-status-sha256`, and `--expected-worktree-content-sha256`),
+`--apply`, and `--confirm-owner-stopped`. As in matching mode,
+the command creates or verifies the durable `refs/recovery/auto-merge/<HEAD>/<TREE>`
+anchor before removing `AUTO_MERGE`; it does not alter tracked files, untracked files,
+or the index. Re-review all preserved work under the normal landing procedure. Do not
+use either preserve mode for a live or unresolved merge. Board file claims are
+separate: wait for their leases to expire or release them as their owner; Git recovery
+never overrides or clears board locks.
 
 ## The list of worktrees: `WORKTREES.json`
 

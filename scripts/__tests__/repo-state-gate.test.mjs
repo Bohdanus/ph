@@ -705,6 +705,21 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.err).toContain('run the guarded recovery preflight from this worktree');
     expect(r.err).toContain('npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"');
     expect(r.err).toContain('--preserve-matching-worktree preflight');
+    expect(r.err).toContain('--preserve-divergent-worktree preflight');
+    expect(r.err).toContain(
+      '--preserve-divergent-worktree preflight only when at least one unstaged tracked path differs from both HEAD and AUTO_MERGE. Multiple qualifying paths are allowed'
+    );
+    expect(r.err).toContain('differences confined to separate paths and untracked-only changes do not qualify');
+    expect(r.err).toContain('original --expected-head plus these three printed values');
+    expect(r.err).toContain('--expected-worktree-content-sha256');
+    expect(r.err).toContain('refs/recovery/auto-merge/<HEAD>/<TREE>');
+    expect(r.err).toContain('before removing AUTO_MERGE');
+    expect(r.err).toContain('does not edit files or the index');
+    expect(r.err).toContain('full root/descendant owner family is stopped');
+    expect(r.err).toContain('live-session overlay');
+    expect(r.err).toContain('process tree/open files');
+    expect(r.err).toContain('board for target writers or locks');
+    expect(r.err).toContain('manual assertion');
     expect(r.err).toContain('--confirm-owner-stopped');
   });
 
