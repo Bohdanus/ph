@@ -41,7 +41,7 @@ describe('free-model quarantine lifecycle', () => {
     );
   });
 
-  it('migrates legacy, newly identified, and disabled Nemotron routes once with a seven-day expiry', async () => {
+  it('migrates legacy quarantines once without reseeding the restored Nemotron route', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-migration-'));
     const filePath = join(directory, 'state.json');
     const now = Date.parse('2026-10-26T12:00:00.000Z');
@@ -60,17 +60,12 @@ describe('free-model quarantine lifecycle', () => {
         'kilo:kilo-auto/free',
         'kilo:nvidia/nemotron-3.5-super-vl:free',
         'kilo:recursive/flint-v1.0:free',
-        'kilo:nvidia/nemotron-3-ultra-550b-a55b:free',
-        'openrouter:nvidia/nemotron-3-ultra-550b-a55b:free',
-        'opencode:nvidia/nemotron-3-ultra-550b-a55b:free',
       ]);
       expect(state.migration_v2).toBe(true);
       expect(state.migration_v3).toBe(true);
-      expect(activeQuarantineKeys(state, now).size).toBe(10);
+      expect(state.migration_v4).toBe(true);
+      expect(activeQuarantineKeys(state, now).size).toBe(7);
       expect(state.entries['openrouter:thinkingmachines/inkling-small:free'].reason).toBe('model_unavailable');
-      const disabledNemotron = state.entries['kilo:nvidia/nemotron-3-ultra-550b-a55b:free'];
-      expect(disabledNemotron.reason).toBe('poor_performance');
-      expect(disabledNemotron.expiresAt).toBe(new Date(now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).toISOString());
       expect(activeQuarantineKeys(state, now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).size).toBe(0);
       expect(await readQuarantineState(filePath)).toEqual(state);
     } finally {
@@ -118,8 +113,8 @@ describe('free-model quarantine lifecycle', () => {
     }
   });
 
-  it('adds the seven-day Nemotron quarantine to existing v2 state without extending prior entries', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-v3-migration-'));
+  it('clears obsolete poor-performance holds for approved Nemotron routes and preserves OpenCode', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-v4-migration-'));
     const filePath = join(directory, 'state.json');
     const now = Date.parse('2026-11-11T12:00:00.000Z');
     const state = { schemaVersion: 1, migration_v2: true, entries: {} };
@@ -130,21 +125,44 @@ describe('free-model quarantine lifecycle', () => {
       hours: 6,
       now: now - 60 * 60 * 1000,
     });
+    const nemotronModel = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    for (const source of ['kilo', 'openrouter', 'opencode']) {
+      upsertQuarantine(state, { source, model: nemotronModel, reason: 'poor_performance', now });
+    }
 
     try {
       await writeQuarantineState(state, filePath);
       const migrated = await loadQuarantineState(filePath, now);
       expect(migrated.entries[existingKey]).toEqual(state.entries[existingKey]);
-      expect(migrated.entries['kilo:nvidia/nemotron-3-ultra-550b-a55b:free'].expiresAt).toBe(
-        new Date(now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).toISOString()
-      );
-      expect(migrated.entries['openrouter:nvidia/nemotron-3-ultra-550b-a55b:free'].expiresAt).toBe(
-        new Date(now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).toISOString()
-      );
-      expect(migrated.entries['opencode:nvidia/nemotron-3-ultra-550b-a55b:free'].expiresAt).toBe(
-        new Date(now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000).toISOString()
-      );
-      expect(activeQuarantineKeys(migrated, now).size).toBe(4);
+      expect(migrated.migration_v3).toBe(true);
+      expect(migrated.migration_v4).toBe(true);
+      for (const source of ['kilo', 'openrouter']) {
+        expect(migrated.entries[`${source}:${nemotronModel}`]).toBeUndefined();
+      }
+      expect(migrated.entries[`opencode:${nemotronModel}`]).toEqual(state.entries[`opencode:${nemotronModel}`]);
+      expect(activeQuarantineKeys(migrated, now).size).toBe(2);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves an exact Nemotron route quarantine with a reason other than poor performance', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-v4-preserve-'));
+    const filePath = join(directory, 'state.json');
+    const now = Date.parse('2026-11-11T12:00:00.000Z');
+    const state = { schemaVersion: 1, migration_v2: true, migration_v3: true, entries: {} };
+    const key = upsertQuarantine(state, {
+      source: 'openrouter',
+      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      reason: 'rate_limit',
+      now,
+    });
+
+    try {
+      await writeQuarantineState(state, filePath);
+      const migrated = await loadQuarantineState(filePath, now);
+      expect(migrated.entries[key]).toEqual(state.entries[key]);
+      expect(migrated.migration_v4).toBe(true);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -155,7 +173,7 @@ describe('free-model quarantine lifecycle', () => {
     const filePath = join(directory, 'state.json');
 
     try {
-      const emptyState = { schemaVersion: 1, migration_v2: true, migration_v3: true, entries: {} };
+      const emptyState = { schemaVersion: 1, migration_v2: true, migration_v3: true, migration_v4: true, entries: {} };
       await writeQuarantineState(emptyState, filePath);
       expect(await loadQuarantineState(filePath)).toEqual(emptyState);
     } finally {
