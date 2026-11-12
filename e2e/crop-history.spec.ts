@@ -236,9 +236,16 @@ async function readFit(page: Page): Promise<Fit> {
           width: Math.max(0, node.clientWidth + rect.width - (node.offsetWidth || Math.round(rect.width))),
           height: Math.max(0, node.clientHeight + rect.height - (node.offsetHeight || Math.round(rect.height))),
         };
+        const backingScale = Number(canvas.getAttribute('data-hidpi-ratio') ?? 1);
+        const documentWidth = Number(node.getAttribute('data-fit-document-width'));
+        const documentHeight = Number(node.getAttribute('data-fit-document-height'));
         return (
-          node.getAttribute('data-fit-document-width') === String(canvas.width) &&
-          node.getAttribute('data-fit-document-height') === String(canvas.height) &&
+          Number.isFinite(backingScale) &&
+          backingScale > 0 &&
+          Number.isFinite(documentWidth) &&
+          Number.isFinite(documentHeight) &&
+          canvas.width === Math.round(documentWidth * backingScale) &&
+          canvas.height === Math.round(documentHeight * backingScale) &&
           node.getAttribute('data-fit-rect-x') === String(clientRect.left) &&
           node.getAttribute('data-fit-rect-y') === String(clientRect.top) &&
           node.getAttribute('data-fit-outer-width') === String(clientRect.width) &&
@@ -307,11 +314,23 @@ async function openDocument(page: Page): Promise<void> {
   await expect(getWorkspaceCanvas(page), 'the app mounted a document canvas').toBeVisible();
 }
 
-/** The committed document frame, read off the canvas element's intrinsic size. */
+/** The committed document frame, recovered from the visible canvas's backing pixels. */
 async function documentSize(page: Page): Promise<DocumentSize> {
   return await getWorkspaceCanvas(page).evaluate((node) => {
     const canvas = node as HTMLCanvasElement;
-    return { width: canvas.width, height: canvas.height };
+    const ratioAttribute = canvas.getAttribute('data-hidpi-ratio');
+    const backingScale = ratioAttribute === null ? 1 : Number(ratioAttribute);
+    if (!Number.isFinite(backingScale) || backingScale <= 0) {
+      throw new Error(`the workspace canvas has an invalid backing scale: ${ratioAttribute}`);
+    }
+    const width = Math.round(canvas.width / backingScale);
+    const height = Math.round(canvas.height / backingScale);
+    if (canvas.width !== Math.round(width * backingScale) || canvas.height !== Math.round(height * backingScale)) {
+      throw new Error(
+        `workspace canvas backing size ${canvas.width}x${canvas.height} does not encode an integer document frame at ${backingScale}x`
+      );
+    }
+    return { width, height };
   });
 }
 
@@ -458,15 +477,16 @@ async function attachCropInputProbe(page: Page, testInfo: TestInfo, name: string
 }
 
 /**
- * The band a document-space HEIGHT falls in, on the canvas element.
+ * The band a document-space HEIGHT falls in, on the workspace container.
  *
- * The vertical half of `documentPoint`, then the strip index. It is a function of the CURRENT fit
- * because that is what decides it: after a crop the document is smaller, the letterbox is a
- * different height, and the same document height lands in a different strip. Calling it with a
- * fit read before the crop is therefore the bug it exists to prevent.
+ * Use the app-published fit and the complete document-to-page transform, then measure that page
+ * point against the same container box the screenshot bands cover. Crop commits can change the
+ * contain scale and its compensation; using the raw contain offset alone drops the active view
+ * zoom and can assign a visible stroke to the wrong screen band.
  */
 function bandOfDocumentY(fit: Fit, documentY: number): number {
-  const canvasY = fit.offsetY + documentY * fit.scale;
+  const pagePoint = documentPoint(fit, fit.documentWidth / 2, documentY);
+  const canvasY = pagePoint.y - fit.rectY;
   const index = Math.floor((canvasY / fit.rectHeight) * BAND_COUNT);
   return Math.min(BAND_COUNT - 1, Math.max(0, index));
 }
@@ -550,23 +570,95 @@ async function openRasterFixture(page: Page, rootDir: string): Promise<void> {
 }
 
 async function readCanvasColor(page: Page, x: number, y: number) {
-  return getWorkspaceCanvas(page).evaluate(
-    (canvas, point) => {
-      const context = (canvas as HTMLCanvasElement).getContext('2d');
-      if (!context) throw new Error('document canvas has no 2D context');
-      const pixel = context.getImageData(point.x, point.y, 1, 1).data;
-      return { red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3] };
-    },
-    { x, y }
-  );
+  const [red, green, blue, alpha] = await readCanvasRegion(page, 'workspace-canvas', x, y, 1, 1);
+  return { red, green, blue, alpha };
 }
 
 async function readCanvasRegion(page: Page, testId: string, x: number, y: number, width: number, height: number) {
   return page.getByTestId(testId).evaluate(
-    (canvas, region) => {
-      const context = (canvas as HTMLCanvasElement).getContext('2d');
+    (node, region) => {
+      const canvas = node as HTMLCanvasElement;
+      const context = canvas.getContext('2d');
       if (!context) throw new Error('Canvas has no 2D context');
-      return Array.from(context.getImageData(region.x, region.y, region.width, region.height).data);
+      const ratioAttribute = canvas.getAttribute('data-hidpi-ratio');
+      let scaleX = ratioAttribute === null ? 1 : Number(ratioAttribute);
+      let scaleY = scaleX;
+      let logicalWidth = canvas.width;
+      let logicalHeight = canvas.height;
+      if (ratioAttribute !== null) {
+        logicalWidth = Math.round(canvas.width / scaleX);
+        logicalHeight = Math.round(canvas.height / scaleY);
+        if (
+          canvas.width !== Math.round(logicalWidth * scaleX) ||
+          canvas.height !== Math.round(logicalHeight * scaleY)
+        ) {
+          throw new Error(`Canvas backing size does not match its declared ${scaleX}x scale`);
+        }
+      }
+      if (ratioAttribute === null && canvas.dataset.testid === 'crop-retained-pixels-preview') {
+        const style = getComputedStyle(canvas);
+        const previewWidth = Number.parseFloat(style.width);
+        const previewHeight = Number.parseFloat(style.height);
+        if (
+          !Number.isFinite(previewWidth) ||
+          previewWidth <= 0 ||
+          !Number.isFinite(previewHeight) ||
+          previewHeight <= 0
+        ) {
+          throw new Error(`Canvas preview has invalid logical dimensions: ${style.width}x${style.height}`);
+        }
+        logicalWidth = previewWidth;
+        logicalHeight = previewHeight;
+        scaleX = canvas.width / logicalWidth;
+        scaleY = canvas.height / logicalHeight;
+      }
+      if (!Number.isFinite(scaleX) || scaleX <= 0 || !Number.isFinite(scaleY) || scaleY <= 0) {
+        throw new Error(`Canvas has an invalid backing scale: ${scaleX}x${scaleY}`);
+      }
+      if (
+        ![region.x, region.y, region.width, region.height].every(Number.isInteger) ||
+        region.x < 0 ||
+        region.y < 0 ||
+        region.width <= 0 ||
+        region.height <= 0 ||
+        region.x + region.width > logicalWidth ||
+        region.y + region.height > logicalHeight
+      ) {
+        throw new RangeError(
+          `Canvas region ${region.x},${region.y} ${region.width}x${region.height} is outside its ${logicalWidth}x${logicalHeight} logical pixels`
+        );
+      }
+
+      const result = new Uint8ClampedArray(region.width * region.height * 4);
+      const firstX = Math.floor((region.x + 0.5) * scaleX);
+      const lastX = Math.floor((region.x + region.width - 0.5) * scaleX);
+      const firstY = Math.floor((region.y + 0.5) * scaleY);
+      const lastY = Math.floor((region.y + region.height - 0.5) * scaleY);
+      const sourceLeft = Math.max(0, firstX);
+      const sourceTop = Math.max(0, firstY);
+      const sourceRight = Math.min(canvas.width - 1, lastX);
+      const sourceBottom = Math.min(canvas.height - 1, lastY);
+      if (sourceRight < sourceLeft || sourceBottom < sourceTop) return Array.from(result);
+
+      const source = context.getImageData(
+        sourceLeft,
+        sourceTop,
+        sourceRight - sourceLeft + 1,
+        sourceBottom - sourceTop + 1
+      );
+      for (let row = 0; row < region.height; row += 1) {
+        const sourceY = Math.min(canvas.height - 1, Math.floor((region.y + row + 0.5) * scaleY));
+        for (let column = 0; column < region.width; column += 1) {
+          const sourceX = Math.min(canvas.width - 1, Math.floor((region.x + column + 0.5) * scaleX));
+          const sourceOffset = ((sourceY - sourceTop) * source.width + (sourceX - sourceLeft)) * 4;
+          const targetOffset = (row * region.width + column) * 4;
+          result[targetOffset] = source.data[sourceOffset]!;
+          result[targetOffset + 1] = source.data[sourceOffset + 1]!;
+          result[targetOffset + 2] = source.data[sourceOffset + 2]!;
+          result[targetOffset + 3] = source.data[sourceOffset + 3]!;
+        }
+      }
+      return Array.from(result);
     },
     { x, y, width, height }
   );
@@ -746,7 +838,10 @@ async function setZoomMagnification(page: Page, magnification: number): Promise<
   await page.mouse.down();
   await page.mouse.move(target.targetX, target.y, { steps: 32 });
   await page.mouse.up();
-  await expect.poll(() => readEffectiveDocumentScale(page)).toBeCloseTo(magnification, 1);
+  const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio);
+  await expect
+    .poll(async () => (await readEffectiveDocumentScale(page)) * devicePixelRatio)
+    .toBeCloseTo(magnification, 1);
 }
 
 /** Set the Type bar's own color input, then verify the browser accepted it. */
@@ -763,13 +858,47 @@ async function setTextToolColor(page: Page, hex: string): Promise<void> {
   await expect(page.locator('#text-color')).toHaveValue(hex);
 }
 
-/** Decode the document canvas without repeated Canvas2D getImageData readbacks. */
+/** Read the document canvas on its logical pixel grid, independent of its HiDPI backing size. */
 async function readWorkspaceRaster(page: Page): Promise<Awaited<ReturnType<typeof loadImageData>>> {
   const pngBase64 = await getWorkspaceCanvas(page).evaluate((node) => {
     const canvas = node as HTMLCanvasElement;
-    const png = canvas.toDataURL('image/png');
+    const ratioAttribute = canvas.getAttribute('data-hidpi-ratio');
+    const backingScale = ratioAttribute === null ? 1 : Number(ratioAttribute);
+    if (!Number.isFinite(backingScale) || backingScale <= 0) {
+      throw new Error(`the workspace canvas has an invalid backing scale: ${ratioAttribute}`);
+    }
+    const width = Math.round(canvas.width / backingScale);
+    const height = Math.round(canvas.height / backingScale);
+    if (canvas.width !== Math.round(width * backingScale) || canvas.height !== Math.round(height * backingScale)) {
+      throw new Error(
+        `workspace canvas backing size ${canvas.width}x${canvas.height} does not encode an integer document frame at ${backingScale}x`
+      );
+    }
+    const sourceContext = canvas.getContext('2d');
+    if (!sourceContext) throw new Error('document canvas has no 2D context');
+    const source = sourceContext.getImageData(0, 0, canvas.width, canvas.height);
+    const logicalCanvas = document.createElement('canvas');
+    logicalCanvas.width = width;
+    logicalCanvas.height = height;
+    const logicalContext = logicalCanvas.getContext('2d');
+    if (!logicalContext) throw new Error('logical document canvas has no 2D context');
+    const logical = logicalContext.createImageData(width, height);
+    for (let y = 0; y < height; y += 1) {
+      const sourceY = Math.min(canvas.height - 1, Math.floor((y + 0.5) * backingScale));
+      for (let x = 0; x < width; x += 1) {
+        const sourceX = Math.min(canvas.width - 1, Math.floor((x + 0.5) * backingScale));
+        const sourceOffset = (sourceY * canvas.width + sourceX) * 4;
+        const targetOffset = (y * width + x) * 4;
+        logical.data[targetOffset] = source.data[sourceOffset]!;
+        logical.data[targetOffset + 1] = source.data[sourceOffset + 1]!;
+        logical.data[targetOffset + 2] = source.data[sourceOffset + 2]!;
+        logical.data[targetOffset + 3] = source.data[sourceOffset + 3]!;
+      }
+    }
+    logicalContext.putImageData(logical, 0, 0);
+    const png = logicalCanvas.toDataURL('image/png');
     const comma = png.indexOf(',');
-    if (comma < 0) throw new Error('document canvas did not produce a PNG data URL');
+    if (comma < 0) throw new Error('logical document canvas did not produce a PNG data URL');
     return png.slice(comma + 1);
   });
   return await loadImageData(Buffer.from(pngBase64, 'base64'));
@@ -2680,6 +2809,9 @@ test.describe('Crop history', () => {
     await expect
       .poll(() => readEffectiveScaleErrorForFrame(page, opening, openingEffectiveScale))
       .toBeLessThan(0.000001);
+    // Undo restores the crop selection guides over the document. Hide that overlay before the
+    // screenshot band assertion so guide lines cannot be mistaken for document ink.
+    await clickToolButton(page, 'draw');
     const restoredFit = await readFit(page);
     expect(
       { width: restoredFit.documentWidth, height: restoredFit.documentHeight },
