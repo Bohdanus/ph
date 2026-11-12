@@ -583,15 +583,50 @@ async function readCanvasRegion(page: Page, testId: string, x: number, y: number
       const ratioAttribute = canvas.getAttribute('data-hidpi-ratio');
       let scaleX = ratioAttribute === null ? 1 : Number(ratioAttribute);
       let scaleY = scaleX;
+      let logicalWidth = canvas.width;
+      let logicalHeight = canvas.height;
+      if (ratioAttribute !== null) {
+        logicalWidth = Math.round(canvas.width / scaleX);
+        logicalHeight = Math.round(canvas.height / scaleY);
+        if (
+          canvas.width !== Math.round(logicalWidth * scaleX) ||
+          canvas.height !== Math.round(logicalHeight * scaleY)
+        ) {
+          throw new Error(`Canvas backing size does not match its declared ${scaleX}x scale`);
+        }
+      }
       if (ratioAttribute === null && canvas.dataset.testid === 'crop-retained-pixels-preview') {
         const style = getComputedStyle(canvas);
-        const logicalWidth = Number.parseFloat(style.width);
-        const logicalHeight = Number.parseFloat(style.height);
+        const previewWidth = Number.parseFloat(style.width);
+        const previewHeight = Number.parseFloat(style.height);
+        if (
+          !Number.isFinite(previewWidth) ||
+          previewWidth <= 0 ||
+          !Number.isFinite(previewHeight) ||
+          previewHeight <= 0
+        ) {
+          throw new Error(`Canvas preview has invalid logical dimensions: ${style.width}x${style.height}`);
+        }
+        logicalWidth = previewWidth;
+        logicalHeight = previewHeight;
         scaleX = canvas.width / logicalWidth;
         scaleY = canvas.height / logicalHeight;
       }
       if (!Number.isFinite(scaleX) || scaleX <= 0 || !Number.isFinite(scaleY) || scaleY <= 0) {
         throw new Error(`Canvas has an invalid backing scale: ${scaleX}x${scaleY}`);
+      }
+      if (
+        ![region.x, region.y, region.width, region.height].every(Number.isInteger) ||
+        region.x < 0 ||
+        region.y < 0 ||
+        region.width <= 0 ||
+        region.height <= 0 ||
+        region.x + region.width > logicalWidth ||
+        region.y + region.height > logicalHeight
+      ) {
+        throw new RangeError(
+          `Canvas region ${region.x},${region.y} ${region.width}x${region.height} is outside its ${logicalWidth}x${logicalHeight} logical pixels`
+        );
       }
 
       const result = new Uint8ClampedArray(region.width * region.height * 4);
@@ -612,11 +647,9 @@ async function readCanvasRegion(page: Page, testId: string, x: number, y: number
         sourceBottom - sourceTop + 1
       );
       for (let row = 0; row < region.height; row += 1) {
-        const sourceY = Math.floor((region.y + row + 0.5) * scaleY);
-        if (sourceY < 0 || sourceY >= canvas.height) continue;
+        const sourceY = Math.min(canvas.height - 1, Math.floor((region.y + row + 0.5) * scaleY));
         for (let column = 0; column < region.width; column += 1) {
-          const sourceX = Math.floor((region.x + column + 0.5) * scaleX);
-          if (sourceX < 0 || sourceX >= canvas.width) continue;
+          const sourceX = Math.min(canvas.width - 1, Math.floor((region.x + column + 0.5) * scaleX));
           const sourceOffset = ((sourceY - sourceTop) * source.width + (sourceX - sourceLeft)) * 4;
           const targetOffset = (row * region.width + column) * 4;
           result[targetOffset] = source.data[sourceOffset]!;
