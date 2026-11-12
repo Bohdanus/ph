@@ -465,6 +465,29 @@ describe('useSelectionMarchingAnts', () => {
     );
   });
 
+  it('uses nearest-neighbor when drawing the binary raster outline and restores context state', () => {
+    const mask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, { x: 0, y: 0, width: 1, height: 1 })!;
+    const selection: Selection = {
+      ...polygon({ id: 'nearest-neighbor-raster-ants', pos: { x: 10, y: 20, width: 1, height: 1 }, points: [] }),
+      rasterMask: mask,
+    };
+    const { ctx } = setup({ selections: [selection] });
+    const smoothingStack: boolean[] = [];
+    const smoothingDuringDraw: boolean[] = [];
+    vi.mocked(ctx.save).mockImplementation(() => smoothingStack.push(ctx.imageSmoothingEnabled));
+    vi.mocked(ctx.restore).mockImplementation(() => {
+      const previous = smoothingStack.pop();
+      if (previous !== undefined) ctx.imageSmoothingEnabled = previous;
+    });
+    vi.mocked(ctx.drawImage).mockImplementation(() => smoothingDuringDraw.push(ctx.imageSmoothingEnabled));
+
+    frame();
+
+    expect(smoothingDuringDraw).toEqual([false]);
+    expect(ctx.imageSmoothingEnabled).toBe(true);
+    expect(smoothingStack).toEqual([]);
+  });
+
   it('reuses an outline for a new mask object with identical dimensions and packed contents', () => {
     const createElement = document.createElement.bind(document);
     const createdCanvases: HTMLCanvasElement[] = [];

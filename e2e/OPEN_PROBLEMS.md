@@ -332,10 +332,9 @@ The failed `erase-fill-eyedropper.spec.ts` case was caused by its click landing 
 the first qualifying screenshot pixel, which can map to an antialiased logical pixel at 2x. The
 test now moves half a document pixel inside that observed edge while keeping the 3x3 average across
 it. The focused case passes at 1x in run `2026-11-11T22-01-18-781Z-29579` and at 2x in run
-`2026-11-11T22-01-31-849Z-56101`. The full suite has not been rerun after the two localized oracle
-corrections; the measured 612/76/1 total is from the preceding tree, and 65 of those original
-failures remain unverified. The raster-backed Quick Selection and non-contiguous Magic Wand
-failures also appeared in the original diagnostic and reproduced in a focused 2x cross-callsite run.
+`2026-11-11T22-01-31-849Z-56101`. The full suite has not been rerun after scoped fixes; the measured
+612/76/1 total is from the preceding tree, and 63 of those original
+failures remain unverified.
 
 The eight `single-row-column-marquee.spec.ts` failures were another coordinate-space mismatch:
 `Main` scales the ants canvas backing store by the device-pixel ratio, while `readAntRuns` treated
