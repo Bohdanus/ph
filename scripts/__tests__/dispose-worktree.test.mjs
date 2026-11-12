@@ -1653,6 +1653,36 @@ describe('the anchor is the only recovery point, so it may not be overwritten', 
     expect(h.calls.some((c) => c[0] === 'update-ref' && c[1] === `${KEEP_REF_PREFIX}feat-marble`)).toBe(false);
   });
 
+  it('refuses disposal rather than overwriting a colliding fallback ref', () => {
+    const baseRef = `${KEEP_REF_PREFIX}feat-marble`;
+    let fallbackRef = null;
+    const calls = [];
+    const run = (cwd, args) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[3] === baseRef) return { stdout: '' };
+      if (args[0] === 'update-ref' && args[1] === baseRef) throw new Error('base ref appeared after the read');
+      if (args[0] === 'update-ref' && args[1] !== baseRef) {
+        fallbackRef = args[1];
+        throw new Error('fallback ref already exists');
+      }
+      if (args[0] === 'rev-parse' && args[3] === fallbackRef) return { stdout: 'different-tip' };
+      return { stdout: '' };
+    };
+
+    const result = dispose('/repo', greenState({ branch: 'feat/marble', tip: 'deadbeef' }), {
+      run,
+      fs: { mkdirSync() {}, writeFileSync() {} },
+    });
+
+    expect(fallbackRef).toMatch(new RegExp(`^${baseRef}-g[0-9a-f]{9}$`));
+    expect(calls.filter((c) => c[0] === 'update-ref')).toEqual([
+      ['update-ref', baseRef, 'deadbeef', ''],
+      ['update-ref', fallbackRef, 'deadbeef', ''],
+    ]);
+    expect(result).toMatchObject({ anchorRef: null, branchDeleted: false, worktreeRemoved: false });
+    expect(calls.some((c) => c[0] === 'worktree' && c[1] === 'remove')).toBe(false);
+  });
+
   it('re-anchors the SAME branch without a suffix, because there is nothing to protect', () => {
     const h = harness({ [`rev-parse --verify --quiet ${KEEP_REF_PREFIX}fix-task`]: 'abc1234' });
     dispose('/repo', greenState({ branch: 'fix/task', tip: 'abc1234' }), { run: h.run, fs: h.fs });
