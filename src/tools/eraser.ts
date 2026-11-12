@@ -21,8 +21,9 @@ import type { CreatorToolParams, ProcessorToolParams, ToolResult } from './toolP
  * `brush` is the soft tip and it is the seeded default, because Photoshop's is too — Adobe
  * describes it as erasing "with adjustable softness and opacity settings", and a first stroke
  * that comes out hard-edged is the opposite of what the tool is for. `pencil` and `block` are
- * the two hard modes and they keep the single-path `ctx.stroke()` / square-stamp renderers,
- * unchanged and still exact.
+ * the hard-tip mode and uses the flow-aware dab renderer for new actions that carry `flow`;
+ * historical Pencil actions without `flow` keep the legacy single-path renderer. `block` stays
+ * the square-stamp mode.
  */
 export type EraserMode = 'brush' | 'pencil' | 'block';
 
@@ -61,7 +62,7 @@ export type EraserToolArgs = {
   alpha: number;
   /** 0-100, the tip's falloff. `brush` mode only; the hard modes have no edge to soften. */
   hardness: number;
-  /** 1-100 percent of the tip diameter between dab centres. `brush` mode only. */
+  /** 1-100 percent of the tip diameter between dab centres in Brush and Flow-aware Pencil mode. */
   spacing: number;
   /** 1-100 percent; absent on historical strokes, which retain their legacy renderer. */
   flow?: number;
