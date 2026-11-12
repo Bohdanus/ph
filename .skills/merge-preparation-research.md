@@ -94,9 +94,9 @@ A single comprehensive dossier file at:
 
 ## Subagent Model & Provider
 
-- **Default**: a currently verified exact-zero model/provider pair from `MODELS.md`; Nemotron is disabled
-- **Fallback**: another verified free route only; stop when none is available
-- **Never**: Kilo subagents (they consume gateway quota) or paid fallback
+- **Default**: Nemotron 3 Ultra on OpenRouter when live pricing is exact zero and quota is positive; request 4,000 output tokens for reviews and research according to the provider-specific token-limit behavior in `MODELS.md`
+- **Fallback**: use Kilo only as an explicitly selected route after live catalog verification; the automatic completion pool falls back to other OpenRouter models, OpenCode, then opt-in Groq as documented in `MODELS.md`
+- **Never**: unverified model/provider pairs or paid fallback
 - **Pass `model` AND `provider` together** in every subagent launch
 
 ## Permissions for Subagents

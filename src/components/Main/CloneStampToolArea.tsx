@@ -161,10 +161,10 @@ const drawCloneSourceMarker = (
  * rebase `buildArgs` in `GradientToolArea.tsx` does and for the same reason, and both now
  * go through `src/util/layer-space.ts` rather than each spelling the subtraction out.
  *
- * Rebasing `source` and `points` by the SAME translation is what makes it safe: the processor
- * only ever uses their DIFFERENCE (`cloneOffset` in `src/tools/cloneStamp.ts`), and a common
- * translation cancels inside a difference, so a layer at any origin clones by exactly the
- * offset a layer at the origin does. What the rebase buys is the edge — `clampPointToSize`
+ * Rebasing `source` and `points` by the SAME translation preserves the source-to-destination
+ * translation used by historical actions. New actions store that translation as
+ * `samplingOffset`, which is also invariant under a common translation. What the rebase buys is
+ * the edge — `clampPointToSize`
  * runs against the layer's own extents, so a read that hangs off the layer's right edge is
  * clamped to the layer's right edge rather than to the document's.
  *
@@ -201,18 +201,26 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
 
   const args = toolArgs as CloneStampToolArgs;
   const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
+  const alignedSourceRef = useRef<Point | null>(args.alignedSource ?? args.source);
+
+  useEffect(() => {
+    alignedSourceRef.current = args.alignedSource ?? args.source;
+  }, [args.alignedSource, args.source]);
 
   /**
    * Bedrock is the document's own backing image and is not addressable by a raster tool:
-   * there is no layer to commit onto, so a stroke over it would have nowhere to go.
-   * `SmudgeToolArea` reads the same flag for the same reason.
+   * there is no layer to commit onto, so a stroke over it would have nowhere to go. A locked
+   * layer is also refused here, before a pointer gesture can move the aligned sampling point;
+   * `useLayer` still enforces the same lock at preview and commit time.
    *
-   * `source` is the third gate and it is the tool's own: with no source there is nothing to
+   * `source` is the final gate and it is the tool's own: with no source there is nothing to
    * copy FROM, so every stroke would be a no-op. Refusing the gesture is better than
    * accepting one and committing a `TOOL_ACTION` entry for an edit that changed no pixels,
    * which would make undo appear to do nothing either.
    */
-  const isEnabled = Boolean(activeLayerId && activeLayer && !activeLayer.isBedrock && args.source);
+  const isEnabled = Boolean(
+    activeLayerId && activeLayer && !activeLayer.isBedrock && !activeLayer.locked && args.source
+  );
 
   /**
    * The canvas-space pointer position under Alt, tracked in a ref rather than state: it is
@@ -298,25 +306,41 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
   /**
    * Layer-local args for the processor, from document-space inputs.
    *
-   * The rebase is one translation applied to BOTH the source and the stroke, so the
-   * `source - anchor` difference the processor works in is unchanged by it; what it fixes is
-   * that the frame the processor addresses is the layer's own raster rather than the
-   * document. `points` is mapped into a new array rather than mutated, because it is the
+   * The rebase makes the frame the processor addresses the layer's own raster rather than
+   * the document. Legacy history derives its offset from the rebased source and points;
+   * new history receives the translation computed before the rebase, which is invariant to
+   * that shift. `points` is mapped into a new array rather than mutated, because it is the
    * hook's LIVE array and history keeps whatever it is handed — `src/util/layer-space.ts`
    * states both spaces and the aliasing hazard in full.
    */
   const buildLayerArgs = (points: Point[]): CloneStampToolArgs | null => {
     const source = args.source;
-    if (!source || !activeLayer) return null;
+    const strokeStart = points[0];
+    if (!source || !activeLayer || !strokeStart) return null;
+
+    // Aligned continues from the last source point sampled by a committed stroke. With
+    // Aligned off, each new stroke starts at the original Alt/Option-clicked source.
+    const samplingSource = args.aligned ? (alignedSourceRef.current ?? args.alignedSource ?? source) : source;
 
     // The presented raster's origin, not `pos`: a layer carrying a transform is handed a
     // buffer staged at its evaluated extent, and a rebase against `pos` would address a
     // point in that buffer the layer is not drawn at.
     const origin = processorPresentationBounds(activeLayer);
 
+    const processorArgs = { ...args };
+    // `alignedSource` is interactive options state. Only the resolved per-stroke offset is
+    // needed by the pure processor and durable history item.
+    delete processorArgs.alignedSource;
+
     return {
-      ...args,
+      ...processorArgs,
       source: documentPointToLayerLocal(source, origin),
+      // Persist the exact offset for replay; older committed actions have no offset and
+      // continue through the processor's legacy compatibility path.
+      samplingOffset: {
+        x: samplingSource.x - strokeStart.x,
+        y: samplingSource.y - strokeStart.y,
+      },
       points: documentPointsToLayerLocal(points, origin),
       ...(selectionSnapshotRef.current
         ? {
@@ -374,6 +398,21 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
         selectionSnapshotRef.current = undefined;
         previewLayerIdRef.current = null;
 
+        if (args.aligned && args.source && points.length > 0) {
+          // Capture and publish the next source synchronously with pointer-up. The layer commit
+          // is awaited below; reading this ref after that await lets a later Alt-click race with
+          // the completed stroke and advance the newly selected source instead.
+          const samplingSource = alignedSourceRef.current ?? args.alignedSource ?? args.source;
+          const strokeStart = points[0]!;
+          const strokeEnd = points[points.length - 1]!;
+          const alignedSource = {
+            x: samplingSource.x + strokeEnd.x - strokeStart.x,
+            y: samplingSource.y + strokeEnd.y - strokeStart.y,
+          };
+          alignedSourceRef.current = alignedSource;
+          patchToolArgs('clone-stamp', { alignedSource });
+        }
+
         // A fresh copy from the hook, so the history item this reaches does not alias a ref
         // the hook is about to reset.
         await updateLayerByTool({ id: activeLayerId, toolArgs: layerArgs });
@@ -400,7 +439,9 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
       // The one write, in DOCUMENT space, matching exactly what `points` will be. The
       // canvas->document conversion is `canvasToDocumentPoint` — the same one
       // `usePaintStroke` applies to every stroke sample — and it is NOT duplicated here.
-      patchToolArgs('clone-stamp', { source: canvasToDocumentPoint(local, documentFrame) });
+      const source = canvasToDocumentPoint(local, documentFrame);
+      alignedSourceRef.current = source;
+      patchToolArgs('clone-stamp', { source, alignedSource: source });
       return;
     }
 

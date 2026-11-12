@@ -284,6 +284,10 @@ function drawRasterMaskOutline(
     ctx.fillStyle = pattern ?? ANT_STROKE_COLOR;
     ctx.fillRect(x, y, width, height);
     ctx.globalCompositeOperation = 'destination-in';
+    // The Canvas standard uses nearest-neighbor when scaling up with this false. This is a binary
+    // document-pixel stencil; smoothing it into a DPR-scaled backing store fills gaps between edges.
+    // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-imagesmoothingenabled-dev
+    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(outline.canvas, x, y, width, height);
   } finally {
     ctx.restore();

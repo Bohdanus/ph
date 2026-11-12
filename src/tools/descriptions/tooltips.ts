@@ -98,7 +98,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   'clone-stamp': {
     summary:
-      'Copies pixels from an Alt-clicked source point and paints them under the cursor, in Aligned or Independent mode, with a soft or hard tip.',
+      'Copies pixels from an Alt-clicked source point and paints them under the cursor, in Aligned or unaligned mode, with a soft or hard tip.',
     implementation: 'partial',
     shortcut: 'S',
   },

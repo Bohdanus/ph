@@ -38,7 +38,7 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * | Eraser                  | Opacity         | `<input type=range>`          | `eraser-opacity`                | `Opacity 100%`    | `Opacity 100%`  | 0..100, step 1; absent in Block    |
  * | Eraser                  | Hardness        | `<input type=range>`          | `eraser-hardness`               | `Hardness 50%`    | `Hardness 50%`  | 0..100; Brush mode only            |
  * | Eraser                  | Spacing         | `<input type=range>`          | `eraser-spacing`                | `Spacing 25%`     | `Spacing 25%`   | 1..100; Brush mode only            |
- * | Eraser                  | Flow            | `<input type=range>` DISABLED | `eraser-flow`                   | `Flow 100%`       | `Flow 100%`     | 1..100, always disabled            |
+ * | Eraser                  | Flow            | `<input type=range>`          | `eraser-flow`                   | `Flow 100%`       | `Flow 100%`     | 1..100; Brush/Pencil only          |
  * | Magic Eraser / Bucket   | Tolerance       | `<input type=range>`          | `<tool>-tolerance`              | `Tolerance 32`    | `Tolerance 32`  | 0..255, step 1 (Adobe, not 0..100) |
  * | Magic Eraser / Bucket   | Contiguous      | `<input type=checkbox>`       | `<tool>-contiguous`             | `Contiguous`      | `Contiguous`    | checked                             |
  * | Magic Eraser / Bucket   | Anti-aliased    | `<input type=checkbox>` DISABLED | `<tool>-anti-aliased`         | `Anti-aliased`    | `Anti-aliased`  | checked, always disabled            |
@@ -432,6 +432,81 @@ test.describe('Eraser, fill tools and eyedropper', () => {
       Math.min(erased!.red, erased!.green, erased!.blue),
       'the eraser must leave the background showing, not paint over the line'
     ).toBeGreaterThan(240);
+  });
+
+  test('Flow controls within-stroke build-up beneath the Opacity ceiling', async ({ page }, testInfo) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    await openWorkspace(page);
+    const lowFlowPoint = { x: LINE_CENTRE_X - 65, y: LINE_Y };
+    const cappedFlowPoint = { x: LINE_CENTRE_X + 65, y: LINE_Y };
+    const backgroundPoint = { x: LINE_CENTRE_X, y: LINE_Y + 40 };
+    const background = await waitForPixel(page, backgroundPoint, isBackground, 'the untouched base to be white');
+    expect(Math.min(background.red, background.green, background.blue)).toBeGreaterThan(240);
+
+    await drawSlab(page, BLACK, SLIM, hasDarkPixels);
+    for (const [point, label] of [
+      [lowFlowPoint, 'Flow 20 probe'],
+      [cappedFlowPoint, 'Flow 100 probe'],
+    ] as const) {
+      const initial = await waitForPixel(
+        page,
+        point,
+        (color) => Math.max(color.red, color.green, color.blue) < 10,
+        `${label} to be inside the opaque black slab before erasing`
+      );
+      expect(Math.max(initial.red, initial.green, initial.blue)).toBeLessThan(10);
+    }
+
+    await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
+    await page.getByRole('slider', { name: /^Size/ }).fill('21');
+    await page.getByRole('slider', { name: /^Hardness/ }).fill('100');
+    await page.getByRole('slider', { name: /^Opacity/ }).fill('40');
+    const flow = page.getByRole('slider', { name: /^Flow/ });
+    await expect(flow).toBeEnabled();
+    await flow.fill('20');
+    await clickAt(page, lowFlowPoint);
+    const lowFlow = await waitForPixel(
+      page,
+      lowFlowPoint,
+      (color) =>
+        color.red > 10 &&
+        color.red < 60 &&
+        Math.max(color.red, color.green, color.blue) - Math.min(color.red, color.green, color.blue) <= 2,
+      'a low-Flow click to erase partially'
+    );
+
+    await flow.fill('100');
+    await clickAt(page, cappedFlowPoint);
+    const cappedFlow = await waitForPixel(
+      page,
+      cappedFlowPoint,
+      (color) =>
+        color.red > 80 &&
+        color.red < 140 &&
+        Math.max(color.red, color.green, color.blue) - Math.min(color.red, color.green, color.blue) <= 2,
+      'a Flow 100 click to erase up to the 40% Opacity ceiling'
+    );
+
+    expect(lowFlow.red, 'Flow 20% deposits less erasure than Flow 100%').toBeLessThan(cappedFlow.red);
+
+    const undonePoint = { x: LINE_CENTRE_X + 65, y: LINE_Y };
+    await page.getByTestId('undo-button').click();
+    await waitForPixel(page, undonePoint, (color) => color.red < 10, 'undo to restore the Flow stroke');
+    await page.getByTestId('redo-button').click();
+    await waitForPixel(
+      page,
+      undonePoint,
+      (color) => color.red > 80 && color.red < 140,
+      'redo to replay the Flow stroke with its Opacity cap'
+    );
+    const flowScreenshot = await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath('eraser-flow-build-up.png'),
+    });
+    await testInfo.attach('eraser-flow-build-up.png', {
+      contentType: 'image/png',
+      body: flowScreenshot,
+    });
   });
 
   // eraser: one history state per stroke, not per pointer event

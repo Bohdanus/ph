@@ -6,19 +6,20 @@ point-in-time results, not a fresh availability check.
 
 ## Current model policy
 
-Nemotron models are disabled across Kilo, OpenRouter, OpenCode, and Groq. The runner filters model
-IDs and catalog names containing `Nemotron` before routing; Kilo and OpenCode adapters also reject
-direct IDs, and the validator refuses them before catalog checks or subagent launch. Do not bypass
-this policy with provider CLIs. Re-enable only after an explicit operator request, code and
-documentation review, and a verified exact-route smoke.
+The recommended free default is the exact Nemotron 3 Ultra route
+`nvidia/nemotron-3-ultra-550b-a55b:free` through OpenRouter. It ranks first when the live catalog
+confirms exact-zero pricing and the account quota is positive. The exact model is also approved for
+explicit Kilo Gateway CLI completions. Other Nemotron variants and unapproved provider/model pairs
+remain blocked. Use `--max-tokens 4000` for longer Nemotron research and code reviews. OpenRouter
+sends this as its API output limit; Kilo receives a response-length instruction because its CLI has
+no token-limit flag, and the model controls the actual output length. Catalog eligibility does not
+prove authentication or capacity; inspect non-empty result text, resolved model/provider,
+`finish_reason`, and reported usage/cost. HTTP 200 alone is not a completed response.
 
-There is no fixed free-model default. Refresh the live catalog before each run. Kilo and OpenRouter
-require exact-zero pricing, OpenCode requires provider-owned `-free` IDs, and Groq requires an
-explicit Free-plan opt-in and permits only `openai/gpt-oss-120b`. Catalog eligibility does not prove
-authentication or capacity. Inference is sequential and never falls back to paid models; for eligible
-routes, fallback order is OpenRouter, OpenCode, then Groq. Lower-ranked Kilo models are not fallback
-routes. Use bounded prompts and inspect non-empty result text, resolved model, `finish_reason`, and
-usage; HTTP 200 alone is not a completed response.
+Kilo and OpenRouter require exact-zero pricing, OpenCode requires provider-owned `-free` IDs, and
+Groq requires an explicit Free-plan opt-in and permits only `openai/gpt-oss-120b`. Inference is
+sequential and never falls back to paid models; automatic fallback order is OpenRouter, OpenCode,
+then Groq. Kilo remains an explicit route, not an automatic fallback.
 
 Groq's catalog omits pricing, so only `openai/gpt-oss-120b` is permitted after `GROQ_API_KEY` and an
 explicit Free-plan opt-in. A key alone does not establish free pricing.
@@ -40,22 +41,24 @@ positive quota permits one bounded retry, with at most three inference attempts 
 429s skip OpenRouter without blaming a model; only confirmed upstream/model failures can trigger
 bounded model quarantine. Kilo 401/402 stops Kilo for the run, and Kilo 429s use a separate one-hour
 source cooldown, not a model quarantine. Non-zero or invalid cost and content-policy rejections stop
-fallback across providers. Nemotron is disabled at the shared model-policy layer. The canonical
-Nemotron 3 Ultra route is also seeded into Kilo, OpenRouter, and OpenCode quarantine for 168 hours;
-the shared disable remains active after those entries expire.
+fallback across providers. The previous Nemotron outage hold was removed after exact-route free
+completions succeeded through Kilo and OpenRouter. Migration v4 clears only the obsolete
+`poor_performance` quarantine entries for those exact routes; other active reasons are preserved and
+continue to follow normal expiry and operator-review rules. New outages use the normal source/model
+quarantine rules.
 
 ## Observed results
 
 Each row records a historical or dated observation; none establishes current provider capacity.
 
-| Route                          | Evidence                                                                                                                                                                                                                                                                                                                                                                           |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Former preferred Kilo route    | Repeated use in Kilo history; a previous smoke returned an OK marker at $0. A follow-up returned 429 (quota/capacity). Published Kilo cap: up to 200 requests/hour/IP. [Limits](https://kilo.ai/docs/gateway/usage-and-billing)                                                                                                                                                    |
-| Kilo live catalog / completion | The 2026-10-25 zero-priced catalog listed the then-preferred Kilo model. A one-sentence smoke returned `finish_reason=length`; the next Kilo model returned 429, then OpenRouter's free route returned its daily 429. Catalog eligibility did not guarantee capacity or a usable completion. Stop after provider quota errors; do not retry or fall through to paid routes.        |
-| OpenRouter exact `:free` IDs   | On 2026-10-23, 17 catalog IDs had zero input/output prices. Nemotron 3 Ultra, Cohere North Mini Code, and Dots3-Note Preview returned short completions at $0. Nemotron results are historical; current policy disables the family. [Catalog](https://openrouter.ai/collections/free-models/)                                                                                      |
-| OpenRouter `openrouter/free`   | Selected Liquid LFM2.5-2.6B; spent 420 reasoning tokens over 51s and returned no final text (`finish_reason=length`). Use exact IDs when possible.                                                                                                                                                                                                                                 |
-| Other OpenRouter probes        | Earlier Kilo-family model probes, Gemma 4, and Xing returned 429; Inkling Small returned 403 (harness restricted). Outcomes may change.                                                                                                                                                                                                                                            |
-| Kilo pool failures             | Historical probes: `kilo-auto/free` and `recursive/flint-v1.0:free` returned empty output; `nvidia/nemotron-3.5-super-vl:free` returned HTTP 502. The quarantine migration seeded these routes for seven days. Migration v3 also records the canonical Nemotron 3 Ultra route on Kilo, OpenRouter, and OpenCode for 168 hours; the shared policy disables the family after expiry. |
+| Route                          | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Former preferred Kilo route    | Repeated use in Kilo history; a previous smoke returned an OK marker at $0. A follow-up returned 429 (quota/capacity). Published Kilo cap: up to 200 requests/hour/IP. [Limits](https://kilo.ai/docs/gateway/usage-and-billing)                                                                                                                                                                                                                     |
+| Kilo live catalog / completion | The 2026-10-25 zero-priced catalog listed the then-preferred Kilo model. A one-sentence smoke returned `finish_reason=length`; the next Kilo model returned 429, then OpenRouter's free route returned its daily 429. Catalog eligibility did not guarantee capacity or a usable completion. Stop after provider quota errors; do not retry or fall through to paid routes.                                                                         |
+| OpenRouter exact `:free` IDs   | On 2026-10-23, 17 catalog IDs had zero input/output prices. Nemotron 3 Ultra, Cohere North Mini Code, and Dots3-Note Preview returned short completions at $0. On 2026-11-11, Kilo history recorded a completed Nemotron 3 Ultra response routed through OpenRouter with 6,140 output tokens and $0 reported cost. Quota and capacity remain time-sensitive. [Catalog](https://openrouter.ai/collections/free-models/)                              |
+| OpenRouter `openrouter/free`   | Selected Liquid LFM2.5-2.6B; spent 420 reasoning tokens over 51s and returned no final text (`finish_reason=length`). Use exact IDs when possible.                                                                                                                                                                                                                                                                                                  |
+| Other OpenRouter probes        | Earlier Kilo-family model probes, Gemma 4, and Xing returned 429; Inkling Small returned 403 (harness restricted). Outcomes may change.                                                                                                                                                                                                                                                                                                             |
+| Kilo pool failures             | Historical probes: `kilo-auto/free` and `recursive/flint-v1.0:free` returned empty output; `nvidia/nemotron-3.5-super-vl:free` returned HTTP 502 and remains a separate variant. Migration v4 clears only the former Kilo and OpenRouter Nemotron 3 Ultra `poor_performance` holds after successful exact-route smokes; other active reasons are preserved. The older OpenCode hold remains irrelevant because that provider route is not approved. |
 
 ### Codex free-route check (2026-10-24)
 
@@ -127,7 +130,7 @@ a host task is configured to use that provider.
 - OpenRouter credentials are read from `OPENROUTER_API_KEY` in the environment. Never put keys in files, arguments, or logs, and never rotate accounts to bypass limits.
 - Batch large text sweeps into bounded independent chunks; ask for concise results with source links or paths.
 - OpenRouter's free-model daily tier is based on lifetime credits purchased, not current balance. **This account qualifies for the 1,000/day tier.** The runner does not hardcode that threshold; it uses the live `used`, `limit`, and `remaining` values from `GET /api/v1/key`. Additional API keys do not raise the account limit. The endpoint exposes only a point-in-time daily counter, not the 20-RPM limit or upstream capacity.
-- OpenCode free chat models reject generic HTTP clients; the runner invokes `opencode run` as the supported harness, denies tool use, and disables default plugins for the completion. The public model catalog currently exposes no prices, so it accepts only provider-owned IDs ending in `-free`. Nemotron IDs and catalog names are rejected by the shared policy. `provider.free-limit` skips OpenCode for the run without a long-lived cooldown or retry. [Models](https://dev.opencode.ai/v2/docs/console/models/) · [CLI](https://dev.opencode.ai/v2/docs/cli/commands/) · [Permissions](https://dev.opencode.ai/v2/docs/permissions/)
+- OpenCode free chat models reject generic HTTP clients; the runner invokes `opencode run` as the supported harness, denies tool use, and disables default plugins for the completion. The public model catalog currently exposes no prices, so it accepts only provider-owned IDs ending in `-free`. Nemotron is not an approved OpenCode route; only the exact Nemotron 3 Ultra route on OpenRouter and Kilo is enabled. `provider.free-limit` skips OpenCode for the run without a long-lived cooldown or retry. [Models](https://dev.opencode.ai/v2/docs/console/models/) · [CLI](https://dev.opencode.ai/v2/docs/cli/commands/) · [Permissions](https://dev.opencode.ai/v2/docs/permissions/)
 - Groq's model catalog exposes model IDs but no free-price field. The runner therefore requires an explicit Free-plan opt-in and uses only `openai/gpt-oss-120b`; published limits are organization-level and the live account dashboard remains authoritative. [Models](https://console.groq.com/docs/models) · [Limits](https://console.groq.com/docs/rate-limits)
 - OpenRouter reasoning tokens count against `max_tokens`. Routes default to 1,200 tokens unless `--max-tokens` is set. The runner accepts only non-empty completed text, records usage metadata, and never treats truncation alone as a provider failure. [Reasoning docs](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
 - Use batch/caching only when the selected provider documents it and the request has a verified $0 route.
