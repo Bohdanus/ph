@@ -7,6 +7,7 @@ import {
   hasDarkPixels,
   loadImageData,
   documentToCanvasOffset,
+  screenshotBoundsToCss,
   type BoundingBox,
   type ClipOptions,
   type SelectionBounds,
@@ -357,15 +358,16 @@ const overlayChromeAtRest = (box: BoundingBox, rect: Rect): ViewportClip => {
 };
 
 /**
- * `expectOutlineAround` adds a clip origin to the bounds it is given. A screenshot read is
- * clip-relative, so it passes the clip it captured; the ants read is already in page coordinates,
- * so it passes a zero origin. Saying that explicitly keeps the two coordinate spaces from being
- * mixed in a reader's head, which is the mistake the clip argument exists to prevent.
+ * `expectOutlineAround` converts screenshot bounds from IMAGE pixels to CSS page coordinates using
+ * the clip they came from. The ants read is already in CSS page coordinates, so its clip is unused.
+ * Both readings reach the assertion in one space, which keeps DPR from doubling screenshot bounds.
  */
 const ORIGIN_CLIP = viewportClip({ x: 0, y: 0, width: 0, height: 0 });
 
 /**
- * Asserts that the selection border found in `clip` outlines `expected`, both in page coordinates.
+ * Asserts that the selection border found in `clip` outlines `expected` in CSS page coordinates.
+ * Screenshot bounds are decoded IMAGE pixels and are converted through `clip`; committed ants are
+ * already CSS page coordinates.
  *
  * "Selection border" rather than "selection blue": every committed selection's border is the ants
  * on their own canvas, and those readings arrive by a different route than a screenshot of the
@@ -373,25 +375,25 @@ const ORIGIN_CLIP = viewportClip({ x: 0, y: 0, width: 0, height: 0 });
  * on the surface that carried it.
  */
 const expectOutlineAround = (
-  // Only the four edges are read here, so this asks for only the four edges: the ants read has no
-  // `imageWidth`/`centerX` to offer, and a parameter that required fields it never uses would be
-  // padding the read with values computed for a different purpose.
-  found: Pick<SelectionBounds, 'left' | 'top' | 'right' | 'bottom'> | null,
+  // Screenshot bounds need their image dimensions to map them to CSS; `centerX`/`centerY` are not
+  // part of the outline assertion. The ants read already returns CSS bounds and has no image size.
+  found: SelectionBounds | Awaited<ReturnType<typeof committedAntsOutline>>,
   clip: ViewportClip,
   expected: Required<ClipOptions>,
   slackPx = OUTLINE_SLACK_PX
 ) => {
+  const pageBounds = found && 'imageWidth' in found ? screenshotBoundsToCss(found, clip) : found;
   const report = {
     expected,
-    found: found && { ...found, left: found.left + clip.x, top: found.top + clip.y },
+    found: pageBounds,
   };
-  expect(found, `no selection border pixels found (${JSON.stringify(report)})`).not.toBeNull();
-  const outline = found!;
+  expect(pageBounds, `no selection border pixels found (${JSON.stringify(report)})`).not.toBeNull();
+  const outline = pageBounds!;
   const edges = {
-    left: outline.left + clip.x,
-    top: outline.top + clip.y,
-    right: outline.right + clip.x,
-    bottom: outline.bottom + clip.y,
+    left: outline.left,
+    top: outline.top,
+    right: outline.right,
+    bottom: outline.bottom,
   };
   expect(
     edges.left,
@@ -696,9 +698,12 @@ test.describe('Selection tools', () => {
       await documentOnlyPixelMask(page, barRegion)
     );
     if (!painted) throw new Error(`No dark pixels painted in the bar region ${JSON.stringify(barRegion)}`);
+    const paintedCss = screenshotBoundsToCss(painted, barRegion);
     // `PixelBounds` is inclusive on both edges, so a bar of odd width has its centre half a pixel
-    // out. One pixel of slack covers that quantisation and nothing else.
-    const barCentreOffset = Math.abs(painted.left + painted.width / 2 + barRegion.x - (box.x + barMidpoint.x));
+    // out. One pixel of slack covers that quantisation and nothing else. Scale comes from the
+    // decoded capture rather than devicePixelRatio, which is not the screenshot's size authority.
+    const paintedCentreX = (paintedCss.left + paintedCss.right) / 2;
+    const barCentreOffset = Math.abs(paintedCentreX - (box.x + barMidpoint.x));
     expect(barCentreOffset, 'painted bar centre vs the stroke midpoint').toBeLessThanOrEqual(1);
 
     await clickToolButton(page, 'magic-wand');
@@ -721,10 +726,10 @@ test.describe('Selection tools', () => {
     // instead would bake this file's viewport into the assertion.
     await waitForCommittedAnts(page, 'a committed selection border after the wand click');
     expectOutlineAround(await committedAntsOutline(page), ORIGIN_CLIP, {
-      x: barRegion.x + painted.left,
-      y: barRegion.y + painted.top,
-      width: painted.right - painted.left,
-      height: painted.bottom - painted.top,
+      x: paintedCss.left,
+      y: paintedCss.top,
+      width: paintedCss.right - paintedCss.left,
+      height: paintedCss.bottom - paintedCss.top,
     });
 
     // The flood fill's own count, reported by the tool, as a CROSS-CHECK against the outline
