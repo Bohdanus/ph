@@ -643,6 +643,13 @@ function responseErrorObjects(payload) {
   );
 }
 
+function openRouterLimitSources(payload) {
+  return responseErrorObjects(payload)
+    .map((error) => error?.metadata?.limit_source)
+    .filter((source) => typeof source === 'string')
+    .map((source) => source.trim().toLowerCase().replaceAll('-', '_'));
+}
+
 function normalizedOpenRouterErrorTypes(payload) {
   return responseErrorObjects(payload)
     .map((error) => error?.metadata?.error_type)
@@ -684,6 +691,7 @@ function hasUpstreamProviderMetadata(payload) {
 
 function isOpenRouterDailyQuotaError(payload) {
   const errors = responseErrorObjects(payload);
+  if (openRouterLimitSources(payload).some((source) => source === 'openrouter_free_tier_daily')) return true;
   const code = errors
     .map((error) => error.code ?? error.type ?? '')
     .join(' ')
@@ -701,6 +709,9 @@ function isModelAttributableOpenRouterFailure(response, payload) {
   if (status === 200 && hasTransientOpenRouterProviderError(payload)) return true;
   if (!Number.isInteger(status) || status < 400 || status > 599 || status === 401 || status === 402) return false;
   if (status === 429) {
+    const limitSources = openRouterLimitSources(payload);
+    if (limitSources.some((source) => source.startsWith('openrouter_'))) return false;
+    if (limitSources.includes('upstream_provider_shared_pool')) return true;
     const remaining = openRouterPlatformRemaining(response);
     if (remaining !== null) return remaining > 0;
     return hasUpstreamProviderMetadata(payload) || hasTransientOpenRouterProviderError(payload);
@@ -1474,13 +1485,26 @@ export async function completeWithFreeModel(prompt, options = {}) {
         );
       }
     }
-    if (status === 429 && openRouterPlatformRemaining(response) === 0) {
+    const limitSources = openRouterLimitSources(payload);
+    const isPlatformLimit =
+      limitSources.some((source) => source.startsWith('openrouter_')) || openRouterPlatformRemaining(response) === 0;
+    if (status === 429 && isPlatformLimit) {
       exhausted.add('openrouter');
-      stderr.write('OpenRouter platform rate limit is exhausted for this run; skipping its remaining routes.\n');
+      stderr.write('OpenRouter platform rate limit applies to this run; skipping its remaining routes.\n');
       return { retry: false };
     }
     const retryAfterMs = retryAfterDelayMs(response);
     if (retryAfterMs !== null && retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
+      if (status === 429 && attributed) {
+        const quotaRemains = await refreshOpenRouterQuotaAfterAttempt();
+        if (quotaRemains) {
+          stderr.write(
+            `OpenRouter model ${candidate.model} Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this model and checking the next route.\n`
+          );
+        }
+        // A zero or unknown refresh already marks OpenRouter exhausted, so the loop cannot rotate.
+        return { retry: false };
+      }
       exhausted.add('openrouter');
       stderr.write(
         `OpenRouter Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping its remaining routes for this run.\n`
