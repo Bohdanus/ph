@@ -38,6 +38,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -849,6 +850,53 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(out.join('')).toContain('landing scope BLOCKED');
     expect(err.join('')).toContain('unknown');
     expect(err.join('')).toContain('BLOCKS selected landing');
+  });
+
+  it('matches a registered main checkout reached through a filesystem alias', () => {
+    const root = scratch();
+    const mainPath = join(root, 'main');
+    const mainAlias = join(root, 'main-alias');
+    mkdirSync(mainPath);
+    symlinkSync(mainPath, mainAlias, process.platform === 'win32' ? 'junction' : 'dir');
+
+    const output = [];
+    const r = run({
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath,
+        mainGitDir: join(mainPath, '.git'),
+      },
+      scan: () => ({
+        ok: true,
+        reason: null,
+        roster: 2,
+        worktrees: [
+          {
+            name: 'registered-main',
+            path: mainAlias,
+            branch: 'main',
+            present: true,
+            gitDir: join(mainAlias, '.git'),
+            operations: [],
+            unmerged: [],
+          },
+          {
+            name: 'candidate',
+            path: join(root, 'candidate'),
+            branch: 'wt/candidate',
+            present: true,
+            gitDir: join(root, 'candidate', '.git'),
+            operations: [],
+            unmerged: [],
+          },
+        ],
+      }),
+      out: { write: (text) => output.push(text) },
+      err: { write: () => {} },
+    });
+
+    expect(r.code).toBe(0);
+    expect(output.join('')).toContain('landing scope clear for wt/candidate');
   });
 
   it('blocks a landing when its candidate branch has an operation in progress', () => {

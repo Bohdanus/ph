@@ -140,7 +140,7 @@ const REVIEWED = {
   },
   'repo-state-gate.test.mjs': {
     scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=4 filesystem-write:writeFileSync=19 filesystem-write:rmSync=7 filesystem-write:chmodSync=4`,
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=19 filesystem-write:rmSync=7 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
   },
   'session-db-snapshot.test.mjs': {
     scope: 'Snapshot fixtures use temporary databases; copies are explicitly opened read-only.',
