@@ -865,7 +865,7 @@ describe('provider rate-limit diagnostics', () => {
     expect(JSON.parse(completionCalls[1][1].body).model).toBe('r1:free');
   });
 
-  it('skips OpenRouter for the run when a subsequent Retry-After exceeds the bounded wait', async () => {
+  it('skips a model when its same-route retry gets a long Retry-After', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi
       .fn()
@@ -880,6 +880,15 @@ describe('provider rate-limit diagnostics', () => {
           status: 429,
           headers: { 'retry-after': '61', 'content-type': 'application/json' },
         })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            model: 'r2:free',
+            choices: [{ message: { content: 'next model completed' }, finish_reason: 'stop' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
       );
     const fetchImpl = catalogFetch({
       kilo: [],
@@ -891,13 +900,17 @@ describe('provider rate-limit diagnostics', () => {
       chat,
     });
 
-    await expect(completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })).rejects.toThrow(
-      /No free model completed/
-    );
+    const result = await completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter });
 
-    expect(chat).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'next model completed' });
+    expect(chat.mock.calls.map(([, options]) => JSON.parse(options.body).model)).toEqual([
+      'r1:free',
+      'r1:free',
+      'r2:free',
+    ]);
+    expect(chat).toHaveBeenCalledTimes(3);
     expect(waitForRetryAfter.mock.calls).toEqual([[30_000]]);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(3);
   });
 
   it('uses at most one OpenRouter retry even when more catalog candidates remain', async () => {
@@ -1477,10 +1490,25 @@ describe('provider rate-limit diagnostics', () => {
     async (status) => {
       const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
       const chat = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
-          status,
-          headers: { 'retry-after': '61', 'content-type': 'application/json' },
-        })
+        new Response(
+          JSON.stringify({
+            error:
+              status === 429
+                ? {
+                    message: 'Rate limit exceeded: free-models-per-minute',
+                    metadata: { limit_source: 'openrouter_free_tier_per_minute' },
+                  }
+                : { message: 'rate limited' },
+          }),
+          {
+            status,
+            headers: {
+              'retry-after': '61',
+              ...(status === 429 ? { 'x-ratelimit-remaining': '0' } : {}),
+              'content-type': 'application/json',
+            },
+          }
+        )
       );
       const fetchImpl = catalogFetch({
         kilo: [],
@@ -1501,6 +1529,140 @@ describe('provider rate-limit diagnostics', () => {
       expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
     }
   );
+
+  it('skips only an upstream 429 model with a long Retry-After when daily quota remains', async () => {
+    const providerError = {
+      error: {
+        code: 429,
+        message: 'upstream provider rate limited this model',
+        metadata: {
+          error_type: 'rate_limit_exceeded',
+          limit_source: 'upstream_provider_shared_pool',
+          provider_name: 'example-provider',
+        },
+      },
+    };
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(providerError), {
+          status: 429,
+          headers: { 'retry-after': '61', 'content-type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            model: 'r2:free',
+            choices: [{ message: { content: 'second model completed' }, finish_reason: 'stop' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      );
+    const keyInfo = vi.fn(() => ({
+      ok: true,
+      json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+    }));
+    const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo,
+      chat,
+    });
+
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'rk',
+      waitForRetryAfter,
+    });
+
+    expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'second model completed' });
+    expect(chat.mock.calls.map(([, options]) => JSON.parse(options.body).model)).toEqual(['r1:free', 'r2:free']);
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(keyInfo).toHaveBeenCalledTimes(2);
+    expect(waitForRetryAfter).not.toHaveBeenCalled();
+  });
+
+  it('stops OpenRouter on its shared free-tier per-minute 429 even when daily quota remains', async () => {
+    const chat = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: 429,
+            message: 'Rate limit exceeded: free-models-per-minute',
+            metadata: { limit_source: 'openrouter_free_tier_per_minute' },
+          },
+        }),
+        {
+          status: 429,
+          headers: {
+            'retry-after': '2',
+            'x-ratelimit-limit': '20',
+            'x-ratelimit-remaining': '5',
+            'content-type': 'application/json',
+          },
+        }
+      )
+    );
+    const keyInfo = vi.fn(() => ({
+      ok: true,
+      json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+    }));
+    const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo,
+      chat,
+    });
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })
+    ).rejects.toThrow(/No free model completed/);
+
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(keyInfo).toHaveBeenCalledTimes(1);
+    expect(waitForRetryAfter).not.toHaveBeenCalled();
+  });
+
+  it('stops after an upstream model 429 when the refreshed daily quota is exhausted', async () => {
+    const chat = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: 429,
+            message: 'upstream provider rate limited this model',
+            metadata: { limit_source: 'upstream_provider_shared_pool', provider_code: '429' },
+          },
+        }),
+        { status: 429, headers: { 'content-type': 'application/json' } }
+      )
+    );
+    const keyInfo = vi
+      .fn()
+      .mockReturnValueOnce({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+      })
+      .mockReturnValueOnce({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 50, limit: 50, remaining: 0 } } }),
+      });
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo,
+      chat,
+    });
+
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
+      /No free model completed/
+    );
+
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(keyInfo).toHaveBeenCalledTimes(2);
+  });
 
   it('parses Retry-After seconds and HTTP dates', () => {
     const now = Date.parse('2026-11-07T00:00:00.000Z');
@@ -2476,10 +2638,18 @@ describe('provider rate-limit diagnostics', () => {
     const chat = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: { message: 'upstream model quota' } }), {
-          status: 429,
-          headers: { 'content-type': 'application/json' },
-        })
+        new Response(
+          JSON.stringify({
+            error: {
+              message: 'upstream model rate limited',
+              metadata: { limit_source: 'upstream_provider_shared_pool', provider_code: '429' },
+            },
+          }),
+          {
+            status: 429,
+            headers: { 'content-type': 'application/json' },
+          }
+        )
       )
       .mockResolvedValueOnce(
         new Response(
