@@ -9,7 +9,7 @@ import { documentPointToLayerLocal, documentPointsToLayerLocal } from '../../uti
 import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } from '../../contexts/document-frame.ts';
 import type { DocumentFrame } from '../../contexts/document-frame.ts';
 import type { Point } from '../../contexts/general-types.ts';
-import type { CloneStampToolArgs } from '../../tools/cloneStamp.ts';
+import { normalizeCloneStampFlow, type CloneStampToolArgs } from '../../tools/cloneStamp.ts';
 import { getActiveSelection, getSelectionProcessorSnapshot } from '../../util/selection.ts';
 import { clearCanvasBackingStore } from '../../util/canvas.ts';
 
@@ -327,7 +327,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
     // point in that buffer the layer is not drawn at.
     const origin = processorPresentationBounds(activeLayer);
 
-    const processorArgs = { ...args };
+    const processorArgs = { ...args, flow: normalizeCloneStampFlow(args.flow) };
     // `alignedSource` is interactive options state. Only the resolved per-stroke offset is
     // needed by the pure processor and durable history item.
     delete processorArgs.alignedSource;
