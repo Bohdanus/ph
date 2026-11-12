@@ -5,10 +5,12 @@ Current operating instructions for the free-model runner. Historical measurement
 
 ## Model policy
 
-Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b:free`) is the recommended free default. The
-runner ranks the exact route first on OpenRouter after verifying exact-zero catalog pricing; the
-same exact model is approved for explicit Kilo Gateway CLI completions. Other Nemotron variants and
-unapproved provider/model pairs remain blocked. Availability and quota can change, so refresh with
+Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b:free`) is preferred only when its route is
+eligible. As of 2026-11-12, the exact OpenRouter pair is under a 168-hour `poor_performance`
+quarantine through `2026-11-19T02:03:21.539Z`; the exact Kilo route remains approved. Active
+quarantines are removed before route ordering. Check `npm run free:quarantine -- list` for the
+current expiry. Other Nemotron variants and unapproved provider/model pairs remain blocked.
+Availability and quota can change, so refresh with
 `npm run free:models -- --list` and check OpenRouter quota before a large run. Use
 `--max-tokens 4000` for longer Nemotron reviews or research. OpenRouter sends this as its API output
 limit; Kilo receives a response-length instruction because its CLI has no token-limit flag, and the
@@ -247,8 +249,9 @@ catalog and quota calls use 15 seconds.
 
 ### Catalog ordering
 
-The exact Nemotron 3 Ultra route is first in the OpenRouter catalog order; the same exact route is
-approved for explicit Kilo completions. Other Nemotron variants are removed before ordering.
+The exact Nemotron 3 Ultra route is first in the OpenRouter catalog order when eligible; active
+quarantine removes it before ordering. The same exact route remains approved for explicit Kilo
+completions. Other Nemotron variants are removed before ordering.
 Eligible automatic routes use OpenRouter, OpenCode, then Groq; lower-ranked Kilo models are not
 attempted. Refresh catalogs for each run rather than assuming a named alternative remains available.
 
