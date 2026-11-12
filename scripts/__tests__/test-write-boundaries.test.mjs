@@ -56,7 +56,7 @@ const REVIEWED = {
   },
   'free-model-kilo.test.mjs': {
     scope: 'Each fake Kilo CLI and configuration fixture uses a unique OS temp directory with finally cleanup.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=17 filesystem-write:rm=17`,
+    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=18 filesystem-write:rm=18`,
   },
   'free-model-pool-external.test.mjs': {
     scope:
@@ -75,7 +75,7 @@ const REVIEWED = {
   },
   'free-model-quarantine.test.mjs': {
     scope: 'Quarantine fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=9 filesystem-write:rm=9`,
+    patterns: `filesystem-write:mkdtemp=10 filesystem-write:rm=10`,
   },
   'free-model-sweep.test.mjs': {
     scope: 'Sweep and quarantine fixtures use unique OS temporary directories.',
@@ -129,8 +129,9 @@ const REVIEWED = {
     patterns: `subprocess:spawnSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=3 filesystem-write:rmSync=2`,
   },
   'recover-stale-auto-merge.test.mjs': {
-    scope: 'Git and filesystem fixtures use temporary repositories and directories.',
-    patterns: `subprocess:execFileSync=1 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=18 subprocess:spawnSync=3 filesystem-write:rmSync=6 filesystem-write:mkdirSync=3 filesystem-write:symlinkSync=1`,
+    scope:
+      'Git and filesystem fixtures use temporary repositories and directories, including symlinks, hostile merge/index markers, and a PATH shim that rewrites a fixture marker; child Git commands use the fixture repository.',
+    patterns: `subprocess:execFileSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=35 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=3 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=2`,
   },
   'repo-state-gate.test.mjs': {
     scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',
