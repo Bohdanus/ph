@@ -286,6 +286,7 @@ describe('CloneStamp toolbar', () => {
         hardness: 100,
         alpha: 1,
         source,
+        alignedSource: null,
         aligned: true,
         points: [],
       });

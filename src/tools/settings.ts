@@ -363,6 +363,7 @@ export const defaultSettings = {
     hardness: 100,
     alpha: 1,
     source: null,
+    alignedSource: null,
     aligned: true,
     points: [],
     toolName: 'clone-stamp',

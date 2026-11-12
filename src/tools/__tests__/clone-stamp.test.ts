@@ -401,7 +401,7 @@ describe('clone stamp processor', () => {
     });
   });
 
-  describe('aligned and free strokes read different places on the source', () => {
+  describe('legacy aligned and unaligned history retains its original renderer', () => {
     // The stroke [(6, 3), (8, 3)] with a 3px tip at 25% spacing is a 0.75px step, so
     // `brushDabCenters` emits (6, 3), (6.75, 3), (7.5, 3) and (8, 3). The LAST of those
     // covers every texel asserted below at weight 1, so what each mode leaves at (7, 2),
@@ -453,6 +453,30 @@ describe('clone stamp processor', () => {
       }
 
       expect(pixelsOf(free)).not.toEqual(pixelsOf(aligned));
+    });
+  });
+
+  describe('explicit stroke offsets used by new actions', () => {
+    const stroke: Point[] = [
+      { x: 6, y: 3 },
+      { x: 8, y: 3 },
+    ];
+
+    it.each([true, false])('uses the saved sampling offset for aligned=%s', (aligned) => {
+      // Both new modes sample forward from the first dab. `samplingOffset` is the exact
+      // source-to-destination translation stored on each history action, so replay does not
+      // depend on the current tool settings or the path's last point.
+      const canvas = run({ points: stroke, aligned, samplingOffset: { x: -5, y: -2 } });
+
+      expect(at(canvas, 7, 2)).toEqual(src(2, 0));
+      expect(at(canvas, 8, 3)).toEqual(src(3, 1));
+    });
+
+    it('fails closed for a malformed saved offset without changing source pixels', () => {
+      const canvas = run({ points: stroke, samplingOffset: { x: Number.NaN, y: -2 } });
+
+      expect(canvas.ctx.putImageData).not.toHaveBeenCalled();
+      expect(pixelsOf(canvas)).toEqual(Array.from(FIXTURE));
     });
   });
 
