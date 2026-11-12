@@ -59,6 +59,12 @@ const ALLOWED_UNLISTED = new Map([
       'index unbounded, and the set grows by exactly one line in HANDOFF.md at a time.',
   ],
   [
+    'docs/handoffs/nemotron-disablement-unproven-20261111.md',
+    'covered by the docs/handoffs/ directory row, which states the ' +
+      '<branch>-<topic>.md naming convention. The handoff is task-specific and is not a maintained ' +
+      'repository guide, so one index row per completed branch would duplicate that directory entry.',
+  ],
+  [
     'docs/handoffs/audit-free-subagent-hardening-review.md',
     'covered by the docs/handoffs/ directory row, which states the ' +
       '<branch>-<topic>.md naming convention. One row per merged branch would make the ' +

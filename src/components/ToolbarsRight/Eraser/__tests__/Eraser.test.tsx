@@ -13,6 +13,7 @@ import { BRUSH_SPACING_MAX, BRUSH_SPACING_MIN } from '../../../../util/brush-eng
 const toolArgs = vi.hoisted(() => ({
   alpha: 1,
   color: '#000000',
+  flow: 100,
   lineWidth: 40,
   mode: 'brush',
   hardness: 50,
@@ -39,6 +40,7 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
 const resetToolArgs = () => {
   toolArgs.alpha = 1;
   toolArgs.color = '#000000';
+  toolArgs.flow = 100;
   toolArgs.lineWidth = 40;
   toolArgs.mode = 'brush';
   toolArgs.hardness = 50;
@@ -180,11 +182,11 @@ describe('Eraser toolbar', () => {
     expect(screen.getByLabelText('Opacity 100%')).toBeInTheDocument();
   });
 
-  it('renders Flow disabled, with Photoshop label and range, and writes nothing', () => {
+  it('patches Flow as an editable percentage control', () => {
     render(<Eraser />);
     const flow = screen.getByLabelText(/Flow/) as HTMLInputElement;
 
-    expect(flow).toBeDisabled();
+    expect(flow).toBeEnabled();
     expect(flow).toHaveAttribute('min', '1');
     expect(flow).toHaveAttribute('max', '100');
     expect(flow).toHaveAttribute('step', '1');
@@ -192,7 +194,20 @@ describe('Eraser toolbar', () => {
 
     fireEvent.change(flow, { target: { value: '50' } });
 
-    expect(patchToolArgsMock).not.toHaveBeenCalled();
+    expect(patchToolArgsMock).toHaveBeenCalledWith('eraser', { flow: 50 });
+  });
+
+  it('shows Flow in Brush and Pencil modes, and hides it in Block mode', () => {
+    const { rerender } = render(<Eraser />);
+    expect(screen.getByLabelText(/Flow/)).toBeInTheDocument();
+
+    toolArgs.mode = 'pencil';
+    rerender(<Eraser />);
+    expect(screen.getByLabelText(/Flow/)).toBeInTheDocument();
+
+    toolArgs.mode = 'block';
+    rerender(<Eraser />);
+    expect(screen.queryByLabelText(/Flow/)).toBeNull();
   });
 
   it('does not render an Erase-to-History control, which has no history source here', () => {

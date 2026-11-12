@@ -14,8 +14,13 @@ export type CloneStampToolArgs = {
   size: number;
   hardness: number;
   alpha: number;
+  /** The Alt/Option-clicked sampling origin; stays fixed when Aligned is disabled. */
   source: Point | null;
+  /** Most recent aligned sample point; absent in older saved settings and history. */
+  alignedSource?: Point | null;
   aligned: boolean;
+  /** Per-stroke source-to-destination offset; absent only on pre-fix durable history. */
+  samplingOffset?: Point;
   points: Point[];
   toolName: 'clone-stamp';
   /** Selection snapshot in processor-raster coordinates. */
@@ -70,35 +75,22 @@ const dabSpan = (center: Point, radius: number, width: number, height: number): 
 };
 
 /**
- * THE OFFSET: where the copy is read from, relative to the destination.
+ * Legacy source offset for history written before Photoshop-style alignment was added.
  *
- * `source` is the Alt-clicked point, and the stroke's `points` are the destination. Every
- * dab reads `destination + offset`, so the whole arithmetic of the tool is this one
- * translation, and the only question is which pair of stroke points anchors it:
- *
- * - **Aligned** (`aligned: true`, Photoshop's default): the offset is measured from the
- *   stroke's OWN START, `source - points[0]`, and is therefore constant along the whole
- *   stroke. Each stroke re-derives it, so a second stroke begun somewhere else still lands
- *   its copy on the corresponding part of the same source — the same pattern continues,
- *   which is the entire point of the mode.
- * - **Not aligned**: the offset is measured from the stroke's END, `source - points[n-1]`,
- *   which makes the first dab's delta `source - points[0] + (points[n-1] - points[0])` …
- *   in other words it is the drag's own displacement laid on top of the source offset. Two
- *   consecutive strokes with different drag displacements therefore land their FIRST dab at
- *   different places, which is the drift `Aligned` exists to remove.
- *
- * Both arms are one subtraction, so there is no per-dab branching and no accumulated
- * position: every dab of a stroke reads the same relative place on the source, which is
- * what makes a self-overlapping stroke copy the same texel twice rather than drift.
- *
- * `points` must be non-empty, which the caller has already established; a stroke with no
- * points has no start to anchor to and is refused before it reaches here.
+ * New interactions store `samplingOffset` on the commit args: both modes sample from the
+ * source position under the first dab, while Aligned advances its source point across
+ * successive strokes in `CloneStampToolArea`. Older history has no such field and must
+ * retain the exact renderer it was committed with, including the former end-anchored
+ * unaligned behavior. `points` is non-empty here because `cloneStroke` checks it first.
  */
-const cloneOffset = (source: Point, points: Point[], aligned: boolean): Point => {
+const legacyCloneOffset = (source: Point, points: Point[], aligned: boolean): Point => {
   const anchor = aligned ? points[0] : points[points.length - 1];
 
   return { x: source.x - anchor.x, y: source.y - anchor.y };
 };
+
+const isFinitePoint = (point: Point | null | undefined): point is Point =>
+  Boolean(point && Number.isFinite(point.x) && Number.isFinite(point.y));
 
 /**
  * One dab of clone stamp: for every texel the tip covers at `center`, composite in the
@@ -126,8 +118,9 @@ const cloneOffset = (source: Point, points: Point[], aligned: boolean): Point =>
  * output instead would make each dab read the copy the previous dab just laid down, which
  * compounds: a stroke carries its own tail forward and a drag that overlaps its own source
  * degenerates into one colour smeared along the path. The offset is constant per stroke
- * (see `cloneOffset`), so the read set of a dab and the write set of the NEXT dab overlap
- * heavily and the bug is not a corner case — it is the common case.
+ * (saved as `samplingOffset` for new actions, derived by `legacyCloneOffset` for old ones),
+ * so the read set of a dab and the write set of the NEXT dab overlap heavily and the bug is
+ * not a corner case — it is the common case.
  *
  * **The offset is rounded ONCE per dab, not per texel.** A pointer coordinate is
  * fractional, so `offset` usually is, and `readRgba` reads TRANSPARENT for a fractional
@@ -198,6 +191,7 @@ const cloneStroke = (
   source: Point,
   points: Point[],
   aligned: boolean,
+  samplingOffset: Point | undefined,
   settings: BrushTipSettings,
   selectionMask: Uint8Array | null
 ): void => {
@@ -223,7 +217,16 @@ const cloneStroke = (
   const sourceData = new Uint8ClampedArray(image.data);
   const outputData = image.data;
 
-  const offset = cloneOffset(source, points, aligned);
+  // New commits carry their exact stroke offset so durable replay does not depend on
+  // transient tool settings. Missing means a historical action and uses its old algorithm.
+  const offset =
+    samplingOffset === undefined
+      ? legacyCloneOffset(source, points, aligned)
+      : isFinitePoint(samplingOffset)
+        ? samplingOffset
+        : null;
+  if (!offset) return;
+
   for (const center of centers) {
     cloneDab(sourceData, outputData, raster, center, offset, settings, selectionMask);
   }
@@ -232,8 +235,9 @@ const cloneStroke = (
 };
 
 /**
- * Photoshop's Clone Stamp Tool: `source + (pointer - stroke anchor)` is stamped under the
- * pointer along a soft-edged tip.
+ * Photoshop's Clone Stamp Tool: each dab copies the source raster at the committed sampling
+ * offset under a soft-edged tip. New gestures store that offset explicitly; historical actions
+ * without it continue through the legacy alignment calculation above.
  *
  * `Size` is the tip DIAMETER (not a stroke width), `Hardness` 0-100 is the tip's falloff,
  * and `alpha` is the per-dab copy strength. All three come from the shared tip engine —
@@ -265,7 +269,16 @@ const cloneStroke = (
  */
 export const cloneStamp =
   ({ bitmap, size }: ProcessorToolParams) =>
-  ({ size: tipSize, hardness, alpha, source, aligned, points, selection }: CloneStampToolArgs): ToolResult => {
+  ({
+    size: tipSize,
+    hardness,
+    alpha,
+    source,
+    aligned,
+    samplingOffset,
+    points,
+    selection,
+  }: CloneStampToolArgs): ToolResult => {
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
 
@@ -286,7 +299,7 @@ export const cloneStamp =
     });
 
     const selectionMask = selection ? createSelectionAlphaMask(selection, size, selection) : null;
-    cloneStroke(ctx, size, source, points, aligned, settings, selectionMask);
+    cloneStroke(ctx, size, source, points, aligned, samplingOffset, settings, selectionMask);
 
     return [canvas];
   };

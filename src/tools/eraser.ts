@@ -21,8 +21,9 @@ import type { CreatorToolParams, ProcessorToolParams, ToolResult } from './toolP
  * `brush` is the soft tip and it is the seeded default, because Photoshop's is too — Adobe
  * describes it as erasing "with adjustable softness and opacity settings", and a first stroke
  * that comes out hard-edged is the opposite of what the tool is for. `pencil` and `block` are
- * the two hard modes and they keep the single-path `ctx.stroke()` / square-stamp renderers,
- * unchanged and still exact.
+ * the hard-tip mode and uses the flow-aware dab renderer for new actions that carry `flow`;
+ * historical Pencil actions without `flow` keep the legacy single-path renderer. `block` stays
+ * the square-stamp mode.
  */
 export type EraserMode = 'brush' | 'pencil' | 'block';
 
@@ -44,6 +45,11 @@ export const ERASER_HARDNESS_MAX = BRUSH_HARDNESS_MAX;
  */
 export const ERASER_SPACING_PERCENT = BRUSH_SPACING_DEFAULT;
 
+/** Photoshop's Flow percentage for Brush and Pencil eraser strokes. */
+export const ERASER_FLOW_MIN = 1;
+export const ERASER_FLOW_MAX = 100;
+export const ERASER_FLOW_DEFAULT = 100;
+
 export type EraserToolArgs = {
   mode: EraserMode;
   /**
@@ -56,8 +62,10 @@ export type EraserToolArgs = {
   alpha: number;
   /** 0-100, the tip's falloff. `brush` mode only; the hard modes have no edge to soften. */
   hardness: number;
-  /** 1-100 percent of the tip diameter between dab centres. `brush` mode only. */
+  /** 1-100 percent of the tip diameter between dab centres in Brush and Flow-aware Pencil mode. */
   spacing: number;
+  /** 1-100 percent; absent on historical strokes, which retain their legacy renderer. */
+  flow?: number;
   /**
    * The store's foreground colour. An eraser subtracts alpha, so this never reaches the pixels; it
    * is carried so the Block stamp and the options-bar swatch agree on one value, and so a stroke
@@ -103,6 +111,13 @@ const buildTipSettings = (args: ToolArgs): BrushTipSettings => {
   const { alpha, hardness, lineWidth, spacing } = args as unknown as EraserToolArgs;
 
   return clampBrushTipSettings({ hardness, opacity: alpha, size: lineWidth, spacing });
+};
+
+/** The Pencil's hard tip through the same flow-aware dab path. */
+const buildPencilTipSettings = (args: ToolArgs): BrushTipSettings => {
+  const { alpha, lineWidth, spacing } = args as unknown as EraserToolArgs;
+
+  return clampBrushTipSettings({ hardness: BRUSH_HARDNESS_MAX, opacity: alpha, size: lineWidth, spacing });
 };
 
 /** A `Size` reduced to the integer extents a pixel buffer can address. */
@@ -188,6 +203,102 @@ const eraseWithTip = (ctx: OffscreenCanvasRenderingContext2D, size: Size, points
   ctx.putImageData(image, 0, 0);
 };
 
+const FLOW_TILE_SIZE = 64;
+const FLOW_TILE_AREA = FLOW_TILE_SIZE * FLOW_TILE_SIZE;
+
+type FlowCoverageTile = {
+  originalAlpha: Uint8Array;
+  coverage: Uint16Array;
+};
+
+const normalizeEraserFlow = (flow: number): number => {
+  const safe = Number.isFinite(flow) ? Math.min(ERASER_FLOW_MAX, Math.max(ERASER_FLOW_MIN, flow)) : ERASER_FLOW_DEFAULT;
+  return safe / ERASER_FLOW_MAX;
+};
+
+/**
+ * Apply a new Flow-aware stroke. Per-pixel coverage accumulates across dabs but is bounded by
+ * Opacity, so overlap builds toward the stroke ceiling instead of repeatedly erasing the
+ * remaining alpha past it. The extra state is allocated lazily in 64x64 tiles touched by the
+ * stroke rather than for the whole layer.
+ */
+const eraseWithFlow = (
+  ctx: OffscreenCanvasRenderingContext2D,
+  size: Size,
+  points: Point[],
+  tip: BrushTipSettings,
+  flow: number
+) => {
+  const flowRate = normalizeEraserFlow(flow);
+  if (points.length === 0 || !(tip.opacity > 0) || !(flowRate > 0)) return;
+
+  const raster: Size = { width: extent(size.width), height: extent(size.height) };
+  if (raster.width === 0 || raster.height === 0) return;
+
+  const image = ctx.getImageData(0, 0, raster.width, raster.height);
+  const tileColumns = Math.ceil(raster.width / FLOW_TILE_SIZE);
+  const tiles = new Map<number, FlowCoverageTile>();
+
+  for (const center of brushDabCenters(points, tip.size, tip.spacing)) {
+    const radius = tip.size / 2;
+    const span = dabSpan(center, radius, raster.width, raster.height);
+    if (!span) continue;
+
+    let currentTileRow = -1;
+    let currentTileColumn = -1;
+    let tile: FlowCoverageTile | undefined;
+    for (let y = span.top; y <= span.bottom; y++) {
+      const tileRow = Math.floor(y / FLOW_TILE_SIZE);
+      if (tileRow !== currentTileRow) {
+        currentTileRow = tileRow;
+        currentTileColumn = -1;
+        tile = undefined;
+      }
+
+      const distanceY = y - center.y;
+      for (let x = span.left; x <= span.right; x++) {
+        const distanceX = x - center.x;
+        const dabCoverage = tipAlphaAt(Math.sqrt(distanceX * distanceX + distanceY * distanceY), radius, tip.hardness);
+        const depositedCoverage = dabCoverage * flowRate;
+        if (!(depositedCoverage > 0)) continue;
+
+        const tileColumn = Math.floor(x / FLOW_TILE_SIZE);
+        if (tileColumn !== currentTileColumn) {
+          currentTileColumn = tileColumn;
+          tile = undefined;
+        }
+        if (!tile) {
+          const tileKey = tileRow * tileColumns + tileColumn;
+          tile = tiles.get(tileKey);
+          if (!tile) {
+            tile = { originalAlpha: new Uint8Array(FLOW_TILE_AREA), coverage: new Uint16Array(FLOW_TILE_AREA) };
+            tiles.set(tileKey, tile);
+          }
+        }
+
+        const localIndex = (y % FLOW_TILE_SIZE) * FLOW_TILE_SIZE + (x % FLOW_TILE_SIZE);
+        const offset = pixelIndex(x, y, raster.width);
+        if (offset < 0 || offset + 3 >= image.data.length) continue;
+
+        let originalAlpha = tile.originalAlpha[localIndex]!;
+        if (originalAlpha === 0) {
+          originalAlpha = image.data[offset + 3]!;
+          if (originalAlpha === 0) continue;
+          tile.originalAlpha[localIndex] = originalAlpha;
+        }
+
+        const previousCoverage = tile.coverage[localIndex]! / 0xffff;
+        const nextCoverage = Math.min(tip.opacity, previousCoverage + (1 - previousCoverage) * depositedCoverage);
+        const quantizedCoverage = Math.min(Math.round(nextCoverage * 0xffff), Math.floor(tip.opacity * 0xffff));
+        tile.coverage[localIndex] = quantizedCoverage;
+        image.data[offset + 3] = originalAlpha * (1 - quantizedCoverage / 0xffff);
+      }
+    }
+  }
+
+  ctx.putImageData(image, 0, 0);
+};
+
 /**
  * One eraser stroke, as a layer-sized raster. The source is drawn back in first whenever the caller
  * supplied one: `commit: 'raster'` replaces the layer's pixels with this canvas
@@ -204,19 +315,23 @@ export const eraser =
   (params: ProcessorToolParams | CreatorToolParams) =>
   (args: ToolArgs): ToolResult => {
     const { size } = params;
+    const eraserArgs = args as unknown as EraserToolArgs;
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
 
-    // Use previousCanvas for incremental eraser brush-mode, otherwise fall back to bitmap
+    // Only legacy Brush strokes can extend the previous preview. Flow-aware strokes need the
+    // original alpha for their per-stroke Opacity budget, so they always restart from the bitmap.
     const sourceBitmap =
-      'previousCanvas' in params && params.previousCanvas
+      'previousCanvas' in params &&
+      params.previousCanvas &&
+      eraserArgs.mode === 'brush' &&
+      typeof eraserArgs.flow !== 'number'
         ? params.previousCanvas
         : 'bitmap' in params
           ? params.bitmap
           : null;
     if (sourceBitmap) ctx.drawImage(sourceBitmap, 0, 0, size.width, size.height);
 
-    const eraserArgs = args as unknown as EraserToolArgs;
     const { mode } = eraserArgs;
     const selectionMask = eraserArgs.selection
       ? createSelectionAlphaMask(eraserArgs.selection, size, eraserArgs.selection)
@@ -233,11 +348,25 @@ export const eraser =
     ctx.save();
     try {
       if (mode === 'brush') {
-        eraseWithTip(
+        const brushArgs = args as unknown as EraserToolArgs;
+        if (typeof brushArgs.flow === 'number') {
+          eraseWithFlow(
+            ctx as OffscreenCanvasRenderingContext2D,
+            size,
+            brushArgs.points,
+            buildTipSettings(args),
+            brushArgs.flow
+          );
+        } else {
+          eraseWithTip(ctx as OffscreenCanvasRenderingContext2D, size, brushArgs.points, buildTipSettings(args));
+        }
+      } else if (mode === 'pencil' && typeof eraserArgs.flow === 'number') {
+        eraseWithFlow(
           ctx as OffscreenCanvasRenderingContext2D,
           size,
-          (args as unknown as EraserToolArgs).points,
-          buildTipSettings(args)
+          eraserArgs.points,
+          buildPencilTipSettings(args),
+          eraserArgs.flow
         );
       } else {
         const strokeArgs = buildEraseArgs(args);

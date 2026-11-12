@@ -161,6 +161,10 @@ describe('toolDescriptions', () => {
     const quickShortcutKeys = quick.shortcuts.map((shortcut) => shortcut.keys);
     expect(quickShortcutKeys).toContain('[');
     expect(quickShortcutKeys).toContain(']');
+    // The shortcut list records Photoshop behavior; appNotes records that this app does not yet
+    // implement bracket-key resizing. Keep those two claims separate instead of deleting the
+    // source behavior to make the app look more complete.
+    expect(quickShortcutKeys).toEqual(['W', 'Shift+W', '[', ']']);
     const decreaseBrushShortcut = quick.shortcuts.find((shortcut) => shortcut.keys === '[');
     const increaseBrushShortcut = quick.shortcuts.find((shortcut) => shortcut.keys === ']');
     expect(decreaseBrushShortcut?.action).toMatch(/decreases the Quick Selection brush size/i);
