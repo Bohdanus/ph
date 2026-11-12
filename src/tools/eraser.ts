@@ -11,6 +11,7 @@ import {
 } from '../util/brush-engine.ts';
 import { pixelIndex } from '../util/pixels.ts';
 import { createSelectionAlphaMask } from '../util/selection.ts';
+import { advanceFlowCoverage, FLOW_COVERAGE_SCALE } from '../util/flow-coverage.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
 import type { Point, PositionedRasterSelectionMask, SelectionPointPaths, Size } from '../contexts/general-types.ts';
 import type { CreatorToolParams, ProcessorToolParams, ToolResult } from './toolProcessors.ts';
@@ -287,11 +288,9 @@ const eraseWithFlow = (
           tile.originalAlpha[localIndex] = originalAlpha;
         }
 
-        const previousCoverage = tile.coverage[localIndex]! / 0xffff;
-        const nextCoverage = Math.min(tip.opacity, previousCoverage + (1 - previousCoverage) * depositedCoverage);
-        const quantizedCoverage = Math.min(Math.round(nextCoverage * 0xffff), Math.floor(tip.opacity * 0xffff));
-        tile.coverage[localIndex] = quantizedCoverage;
-        image.data[offset + 3] = originalAlpha * (1 - quantizedCoverage / 0xffff);
+        const coverage = advanceFlowCoverage(tile.coverage[localIndex]!, depositedCoverage, tip.opacity);
+        tile.coverage[localIndex] = coverage;
+        image.data[offset + 3] = originalAlpha * (1 - coverage / FLOW_COVERAGE_SCALE);
       }
     }
   }

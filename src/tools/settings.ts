@@ -37,7 +37,7 @@ import { PAINT_SMOOTHING_DEFAULT } from './brush.ts';
 import type { SmudgeToolArgs, SmudgeToolSettings } from './smudge.ts';
 import type { DodgeBurnToolArgs, DodgeBurnToolSettings } from './dodgeBurn.ts';
 import { SPONGE_FLOW_DEFAULT, SPONGE_MODE_DEFAULT, type SpongeToolArgs, type SpongeToolSettings } from './sponge.ts';
-import type { CloneStampToolArgs, CloneStampToolSettings } from './cloneStamp.ts';
+import { CLONE_STAMP_FLOW_DEFAULT, type CloneStampToolArgs, type CloneStampToolSettings } from './cloneStamp.ts';
 import {
   RED_EYE_DEFAULT_DARKEN_AMOUNT,
   RED_EYE_DEFAULT_PUPIL_SIZE,
@@ -362,6 +362,7 @@ export const defaultSettings = {
     size: 40,
     hardness: 100,
     alpha: 1,
+    flow: CLONE_STAMP_FLOW_DEFAULT,
     source: null,
     alignedSource: null,
     aligned: false,
