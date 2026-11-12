@@ -322,15 +322,15 @@ project was added. The full suite has not been rerun. The export visual-regressi
 tests at 1x in run `2026-11-12T08-35-28-156Z-8469` and at 2x in run
 `2026-11-12T08-36-06-558Z-9702`; its nine failures in the initial focused 2x run are the same nine
 counted among the 45 previously unverified failures; the other four tests were already passing.
-Focused runs also pass all 11 tests at both 1x and 2x for `single-row-column-marquee.spec.ts`
-(2x `2026-11-12T09-01-54-506Z-23574`, 1x `2026-11-12T09-05-55-575Z-43057`),
-`color-sampler.spec.ts` (2x `2026-11-12T09-27-29-092Z-14282`, 1x
-`2026-11-12T09-28-01-739Z-15071`), and `selection-gestures.spec.ts` (2x
-`2026-11-12T09-39-36-924Z-48563`, 1x `2026-11-12T09-40-03-370Z-49276`). The original
-diagnostic attributed eight, seven, and six failures to those three specs respectively; together
-with the nine export failures, these focused results clear 30 of the 45 previously unverified
-failures. The other 15 from that historical diagnostic remain unverified. This remainder is not a
-current full-suite result, and these scoped checks do not establish that the suite is 2x-clean.
+After syncing the candidate with `main` at `d41be428`, combined focused runs pass all 33 tests
+across `single-row-column-marquee.spec.ts`, `color-sampler.spec.ts`, and
+`selection-gestures.spec.ts` at 1x (`2026-11-12T10-40-12-370Z-17587`) and at 2x
+(`2026-11-12T10-41-16-277Z-19355`). Each spec contributes 11 passing tests at both scales. The
+original diagnostic attributed eight, seven, and six failures to those three specs respectively;
+together with the nine export failures, these focused results clear 30 of the 45 previously
+unverified failures. The other 15 from that historical diagnostic remain unverified. This remainder
+is not a current full-suite result, and these scoped checks do not establish that the suite is
+2x-clean.
 
 Some test-scoped touch/mobile cases exist, but there is no dedicated project and coverage remains
 sparse across controls and gestures. Adding a project multiplies every run's cost and is a coverage
