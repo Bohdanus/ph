@@ -1346,18 +1346,27 @@ function anchor(cwd, gitState, { run = defaultRun } = {}) {
   try {
     run(cwd, ['update-ref', ref, gitState.tip, '']);
   } catch {
-    // Lost the race, or the ref appeared between the read and here. Fall back to
-    // a name derived from this tip, which cannot be the one that just won, and
-    // write that unconditionally — there is nothing left to collide with,
-    // because a losing tip has never been an anchor.
+    // Lost the race, or the ref appeared between the read and here. The hash is a
+    // compact name, not proof of uniqueness, so the fallback must also be
+    // create-if-absent. If it already names this tip, reuse it; otherwise refuse
+    // rather than replacing another disposal's only recovery point.
     const fallback = `${ref}-g${createHash('sha256').update(`${source} ${gitState.tip}`).digest('hex').slice(0, 9)}`;
     try {
       run(cwd, ['check-ref-format', fallback]);
     } catch {
       return null;
     }
-    run(cwd, ['update-ref', fallback, gitState.tip]);
-    return fallback;
+    try {
+      run(cwd, ['update-ref', fallback, gitState.tip, '']);
+      return fallback;
+    } catch {
+      try {
+        const existingTip = (run(cwd, ['rev-parse', '--verify', '--quiet', fallback]).stdout ?? '').trim();
+        return existingTip === gitState.tip ? fallback : null;
+      } catch {
+        return null;
+      }
+    }
   }
   return ref;
 }
