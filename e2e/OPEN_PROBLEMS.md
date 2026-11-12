@@ -309,14 +309,6 @@ Separately, `check-dpr.spec.ts`
 has test-scoped coverage at device scale factors 1 and 2, but the full suite is not 2x-clean as
 described below.
 
-This was raised against the review with a precondition attached: enabling a 2x project
-before `getStrokeAnalysis` was DPI-relative "trades a coverage gain for three new failure
-modes". **That precondition is now met for the stroke classifier** — its thresholds are
-CSS-pixel counts, the captured region is a required argument, and no call site can be
-DPI-blind. Two point-sampling specs that were in exactly that class (`levels.spec.ts`,
-`adjustments.spec.ts`) were CSS-pixel samples over a device-scaled capture, and are fixed
-here.
-
 **The suite as a whole is still not 2x-clean, and an earlier version of this entry claimed it was.**
 A full diagnostic forced `projects[].use.deviceScaleFactor` to 2 (project-level `use` overrides the
 top-level setting) with a temporary config, on code commit
@@ -326,48 +318,22 @@ top-level setting) with a temporary config, on code commit
 `single-row-column-marquee.spec.ts` (8), `color-sampler.spec.ts` (7), and
 `selection-gestures.spec.ts` (6); the other 28 failures span 16 specs. This supersedes the old
 256-pass/6-fail/2-skip measurement. The temporary config was diagnostic only; no permanent 2x
-project was added.
-
-The failed `erase-fill-eyedropper.spec.ts` case was caused by its click landing on the outer edge of
-the first qualifying screenshot pixel, which can map to an antialiased logical pixel at 2x. The
-test now moves half a document pixel inside that observed edge while keeping the 3x3 average across
-it. The focused case passes at 1x in run `2026-11-11T22-01-18-781Z-29579` and at 2x in run
-`2026-11-11T22-01-31-849Z-56101`. The full suite has not been rerun after scoped fixes.
-`crop-history.spec.ts` now passes all 30 tests at both 1x and 2x (runs
-`2026-11-12T01-49-13-174Z-47058` and `2026-11-12T01-45-10-479Z-34298`). Its 18 earlier 2x
-failures came from treating DPR-scaled backing pixels as document pixels and from crop guides
-contaminating a screenshot ink check; the spec now reads the logical pixel grid and checks restored
-document ink with the guide overlay hidden. The 612/76/1 full-suite count is still from the
-preceding tree, so 45 of those original failures remain unverified.
-
-The eight `single-row-column-marquee.spec.ts` failures were another coordinate-space mismatch:
-`Main` scales the ants canvas backing store by the device-pixel ratio, while `readAntRuns` treated
-backing pixels as document pixels. The helper now uses the workspace's published document extent
-and maps backing pixels into document-pixel runs with exact ratio boundaries. The full marquee spec
-passed at 1x in run `2026-11-11T22-51-48-648Z-25018` and at 2x in run
-`2026-11-11T22-57-39-446Z-32045`; both run records report `passed` with no failed tests. Unit cases
-also cover 1.25x overlap, the 1.4x exact-boundary case, and a 0.5x canvas whose rounded backing
-extent cannot recover its logical size.
+project was added. Scoped reruns have since resolved documented failure groups, but the full suite
+has not been rerun. The export visual-regression spec passes all 13 tests at 1x in run
+`2026-11-12T08-04-02-394Z-96399` and at 2x in run `2026-11-12T08-03-18-332Z-95343`; its nine
+failures in the initial focused 2x run are the same nine counted among the 45 previously
+unverified failures; the other four tests were already passing. This clears those nine, leaving 36
+of the original failures unverified. That 36 is a remainder from the old diagnostic, not a current
+full-suite result.
 
 Some test-scoped touch/mobile cases exist, but there is no dedicated project and coverage remains
 sparse across controls and gestures. Adding a project multiplies every run's cost and is a coverage
 decision, not a one-line change to `playwright.config.ts`.
 
-`e2e/check-dpr.spec.ts` also asserts that the four presentation canvases' backing-store
-width and height equal the document dimensions multiplied by the expected device scale
-factor, at both 1x and 2x. Its `toleranceFor` assertion checks that a drawn line lands near
-the cursor using `imageBoundsToCss`, which is scale-agnostic by construction;
-the backing-store assertions, not the screenshot mapping, detect a mismatch at those two
-tested scale factors. The two export checks that read the store — `the export is independent
-of the shell layout` in
-`e2e/export/visual-regression.spec.ts`, and `setupExportTest()`'s backing-store read in
-`e2e/export/helpers.ts` — assert it is the DOCUMENT size, which is the correct invariant for
-export and says nothing about presentation. Broader high-DPI coverage remains open: these
-checks do not make the full suite 2x-clean, nor do they exercise mobile/touch input. The
-app side, and the app work that has to land first, is in
-`CANVAS-RESOLUTION-PLAN.md`. The display/export decoupling that used to gate raising the display
-resolution is done: export renders its own surface from `(layers, size, documentFrame)` in
-`src/contexts/export-canvas.ts` and no longer reads the visible canvas.
+`e2e/check-dpr.spec.ts` covers presentation-canvas backing dimensions at 1x and 2x, but broader
+HiDPI coverage remains open: those checks do not establish that the full suite is 2x-clean or
+exercise mobile/touch input. The focused export run IDs above verify the export-fixture mapping;
+they do not replace a full-suite rerun.
 
 ## P3 — re-verification: the tablet band's option-row floor is no longer the panel's measured width
 
