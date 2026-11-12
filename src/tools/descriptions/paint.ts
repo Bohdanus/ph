@@ -758,7 +758,7 @@ export const paintDescriptions: Record<
     summary:
       'Copies pixels from an Alt-clicked source point and paints them under the cursor, in Aligned or unaligned mode, with a soft or hard tip.',
     purpose:
-      'The Clone Stamp copies pixels from one part of an image and paints them into another. Alt-click (Option-click on macOS) sets the source point; release the modifier and drag to lay the copy down. Adobe’s current desktop guide describes Aligned behavior but does not state its default; a third-party guide reports that it is off. With it selected, the source sampling point continues from where the previous stroke left off; with it deselected, each stroke starts from the original Alt/Option-clicked point, which makes it useful for repeatedly stamping one patch of clean skin. Sample chooses whether the source is read from the active layer alone, from the active layer and those below it, or from all visible layers, and Ignore Adjustment Layers keeps adjustment layers out of a merged sample. The tool is a copy rather than a paint, so it carries the source’s own color and alpha and needs no foreground color at all. A stroke that overlaps the area it is copying from can read back what it has just laid down, which is why the documented technique when the source is close to the target is to clone a little, release, and start again.',
+      'The Clone Stamp copies pixels from one part of an image and paints them into another. Alt-click (Option-click on macOS) sets the source point; release the modifier and drag to lay the copy down. Adobe’s current desktop guide says Aligned continues from the most recent sampling point and clearing it restarts from the original source each time. The guide does not state the default; Adobe Photoshop presenter Julieanne Kost says the source returns to its original point by default, so Aligned starts off. With Aligned selected, the source-to-target relationship continues from the previous stroke; with it cleared, each stroke starts from the original Alt/Option-clicked point and follows the target during that stroke. Sample chooses whether the source is read from the active layer alone, from the active layer and those below it, or from all visible layers, and Ignore Adjustment Layers keeps adjustment layers out of a merged sample. The tool is a copy rather than a paint, so it carries the source’s own color and alpha and needs no foreground color at all. A stroke that overlaps the area it is copying from can read back what it has just laid down, which is why the documented technique when the source is close to the target is to clone a little, release, and start again.',
     options: [
       {
         control: 'Tool Preset Picker',
@@ -804,7 +804,7 @@ export const paintDescriptions: Record<
       {
         control: 'Aligned',
         detail:
-          'A checkbox. Adobe’s current desktop guide does not state a default; a third-party guide reports Off. When selected, sampling continues from the most recent source point; when cleared, each stroke restarts from the original Alt/Option-clicked point.',
+          'A checkbox, Off by default according to Adobe Photoshop presenter Julieanne Kost. Adobe’s current desktop guide says that selecting it continues from the most recent sampling point; clearing it restarts each stroke from the original Alt/Option-clicked point.',
         status: 'present',
         appRef: 'src/components/ToolbarsRight/CloneStamp/CloneStamp.tsx:175',
       },

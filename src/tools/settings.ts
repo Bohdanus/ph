@@ -364,7 +364,7 @@ export const defaultSettings = {
     alpha: 1,
     source: null,
     alignedSource: null,
-    aligned: true,
+    aligned: false,
     points: [],
     toolName: 'clone-stamp',
   } satisfies CloneStampToolArgs,

@@ -1192,7 +1192,7 @@ test.describe('Paint tools', () => {
       const sourceLevel = await rampLevelAt(page, geometry, SOURCE.x);
 
       const armed = await selectCloneStamp(page);
-      await setAligned(page, false);
+      await expect(page.getByRole('checkbox', { name: 'Aligned' })).not.toBeChecked();
       await altClickSource(page, armed);
       await strokeDocument(page, armed, DRAG_FROM, DRAG_TO, 8);
 

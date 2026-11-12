@@ -437,7 +437,25 @@ test.describe('Eraser, fill tools and eyedropper', () => {
   test('Flow controls within-stroke build-up beneath the Opacity ceiling', async ({ page }, testInfo) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
+    const lowFlowPoint = { x: LINE_CENTRE_X - 65, y: LINE_Y };
+    const cappedFlowPoint = { x: LINE_CENTRE_X + 65, y: LINE_Y };
+    const backgroundPoint = { x: LINE_CENTRE_X, y: LINE_Y + 40 };
+    const background = await waitForPixel(page, backgroundPoint, isBackground, 'the untouched base to be white');
+    expect(Math.min(background.red, background.green, background.blue)).toBeGreaterThan(240);
+
     await drawSlab(page, BLACK, SLIM, hasDarkPixels);
+    for (const [point, label] of [
+      [lowFlowPoint, 'Flow 20 probe'],
+      [cappedFlowPoint, 'Flow 100 probe'],
+    ] as const) {
+      const initial = await waitForPixel(
+        page,
+        point,
+        (color) => Math.max(color.red, color.green, color.blue) < 10,
+        `${label} to be inside the opaque black slab before erasing`
+      );
+      expect(Math.max(initial.red, initial.green, initial.blue)).toBeLessThan(10);
+    }
 
     await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
     await page.getByRole('slider', { name: /^Size/ }).fill('21');
@@ -446,10 +464,10 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     const flow = page.getByRole('slider', { name: /^Flow/ });
     await expect(flow).toBeEnabled();
     await flow.fill('20');
-    await clickAt(page, { x: LINE_CENTRE_X - 65, y: LINE_Y });
+    await clickAt(page, lowFlowPoint);
     const lowFlow = await waitForPixel(
       page,
-      { x: LINE_CENTRE_X - 65, y: LINE_Y },
+      lowFlowPoint,
       (color) =>
         color.red > 10 &&
         color.red < 60 &&
@@ -458,10 +476,10 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     );
 
     await flow.fill('100');
-    await clickAt(page, { x: LINE_CENTRE_X + 65, y: LINE_Y });
+    await clickAt(page, cappedFlowPoint);
     const cappedFlow = await waitForPixel(
       page,
-      { x: LINE_CENTRE_X + 65, y: LINE_Y },
+      cappedFlowPoint,
       (color) =>
         color.red > 80 &&
         color.red < 140 &&
