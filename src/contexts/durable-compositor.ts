@@ -191,7 +191,7 @@ export async function composeDurableDocument(
   const canvas = createCanvas(frame.width, frame.height);
   const context = context2d(canvas);
   let materialized: MaterializedDocument | undefined;
-  let bitmap: BitmapSource;
+  let bitmap: BitmapSource | undefined;
 
   try {
     materialized = await materializeDocument(
@@ -238,17 +238,20 @@ export async function composeDurableDocument(
       }
     }
     bitmap = await toOwnedBitmap(canvas);
+    assertCompositionCurrent(materializationRequest);
     if (bitmap !== canvas) {
       canvas.width = 1;
       canvas.height = 1;
     }
   } catch (error) {
+    if (bitmap && bitmap !== canvas) closeOwnedBitmap(bitmap);
     materialized?.release();
     canvas.width = 1;
     canvas.height = 1;
     throw error;
   }
   if (!materialized) throw new Error('Durable composition did not materialize visible layers');
+  if (!bitmap) throw new Error('Durable composition did not produce a bitmap');
 
   let released = false;
   let layersDetached = false;
