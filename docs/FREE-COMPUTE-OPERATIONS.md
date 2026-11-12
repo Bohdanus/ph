@@ -77,10 +77,13 @@ skips OpenRouter until the date changes; no scheduled reset is required. If the 
 unknown, only one inference request is permitted in that run; a positive post-attempt refresh does
 not unlock another attempt. Quota-present retries require a positive initial probe. A positive quota
 allows one bounded same-route retry for a transient OpenRouter response (maximum wait 60 seconds).
-If that retry also fails, the pool rotates to another eligible OpenRouter model when a fresh quota
-check is still positive and the per-source attempt ceiling permits it. HTTP 401/402 exhausts
-OpenRouter for the run. A zero `X-RateLimit-Remaining` on a 429 identifies a platform rate limit and
-skips the source for that run without blaming the model. A zero daily counter persists today's
+For an upstream/model-attributable HTTP 429 with a longer `Retry-After`, the pool refreshes daily
+quota and skips only that model when the refreshed quota remains positive; zero or unknown quota
+stops OpenRouter. Longer waits for other failures stop the source. If a bounded retry also fails,
+the pool rotates to another eligible OpenRouter model when a fresh quota check is still positive and
+the per-source attempt ceiling permits it. HTTP 401/402 exhausts
+OpenRouter for the run. An `openrouter_*` limit source or zero `X-RateLimit-Remaining` on a 429 identifies a platform
+rate limit and skips the source for that run without blaming the model. A zero daily counter persists today's
 exhaustion marker. Three confirmed upstream/model rate-limit failures (HTTP 429 or typed
 `rate_limit_exceeded`) for the same OpenRouter model in three hours create a two-hour quarantine; 250
 confirmed model-attributable failures in seven days create a
