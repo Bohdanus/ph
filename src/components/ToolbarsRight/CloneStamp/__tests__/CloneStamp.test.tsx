@@ -111,11 +111,11 @@ describe('CloneStamp toolbar', () => {
   it('renders the seeded default on every control', () => {
     render(<CloneStamp />);
 
-    // `defaultSettings['clone-stamp']` is size 40, hardness 100, alpha 1, aligned true.
+    // `defaultSettings['clone-stamp']` is size 40, hardness 100, alpha 1, aligned false.
     expect(getSize()).toHaveValue('40');
     expect(getHardness()).toHaveValue('100');
     expect(getOpacity()).toHaveValue('100');
-    expect(getAligned()).toBeChecked();
+    expect(getAligned()).not.toBeChecked();
     expect(caption(getSize())).toBe('Size40px');
     expect(caption(getHardness())).toBe('Hardness100%');
     expect(caption(getOpacity())).toBe('Opacity100%');
@@ -250,9 +250,9 @@ describe('CloneStamp toolbar', () => {
 
       // The checkbox deliberately does NOT go through the frame: it fires once per click, and
       // a checkbox whose tick lags a paint reads as broken.
-      expect(mockPatchToolArgs).toHaveBeenCalledExactlyOnceWith('clone-stamp', { aligned: false });
+      expect(mockPatchToolArgs).toHaveBeenCalledExactlyOnceWith('clone-stamp', { aligned: true });
       expect(rafCallbacks).toHaveLength(0);
-      expect(getAligned()).not.toBeChecked();
+      expect(getAligned()).toBeChecked();
     });
 
     it('clears aligned again on a second click', () => {
@@ -286,7 +286,8 @@ describe('CloneStamp toolbar', () => {
         hardness: 100,
         alpha: 1,
         source,
-        aligned: true,
+        alignedSource: null,
+        aligned: false,
         points: [],
       });
     });
@@ -325,7 +326,7 @@ describe('CloneStamp toolbar', () => {
 
       fireEvent.click(aligned);
 
-      expect(lastPatch()).toEqual({ aligned: false });
+      expect(lastPatch()).toEqual({ aligned: true });
     });
 
     it('keeps every control reachable in tab order', () => {
