@@ -130,8 +130,8 @@ const REVIEWED = {
   },
   'recover-stale-auto-merge.test.mjs': {
     scope:
-      'Git and filesystem fixtures use temporary repositories and directories, including symlinks and hostile merge/index marker fixtures; child Git commands use the fixture repository.',
-    patterns: `subprocess:execFileSync=1 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=34 subprocess:spawnSync=3 filesystem-write:rmSync=6 filesystem-write:mkdirSync=3 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=1`,
+      'Git and filesystem fixtures use temporary repositories and directories, including symlinks, hostile merge/index markers, and a PATH shim that rewrites a fixture marker; child Git commands use the fixture repository.',
+    patterns: `subprocess:execFileSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=35 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=3 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=2`,
   },
   'repo-state-gate.test.mjs': {
     scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',

@@ -380,6 +380,9 @@ export function run(argv = process.argv.slice(2), cwd = process.cwd(), write = c
       currentStat.ino !== proof.markerIno
     )
       throw new Error('AUTO_MERGE changed after preflight; refusing to remove it.');
+    const currentTree = readFileSync(proof.marker, 'utf8').trim().toLowerCase();
+    if (currentTree !== proof.autoMergeTree)
+      throw new Error('AUTO_MERGE changed after preflight; refusing to remove it.');
     unlinkSync(proof.marker);
     const headAfter = git(['rev-parse', '--verify', 'HEAD'], cwd).toLowerCase();
     const stagedAfter = gitBuffer(['diff', '--cached', '--name-only', '-z', 'HEAD', '--'], cwd);

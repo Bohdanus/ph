@@ -706,6 +706,10 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.err).toContain('npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"');
     expect(r.err).toContain('--preserve-matching-worktree preflight');
     expect(r.err).toContain('--preserve-divergent-worktree preflight');
+    expect(r.err).toContain(
+      '--preserve-divergent-worktree preflight only when at least one unstaged tracked path differs from both HEAD and AUTO_MERGE. Multiple qualifying paths are allowed'
+    );
+    expect(r.err).toContain('differences confined to separate paths and untracked-only changes do not qualify');
     expect(r.err).toContain('original --expected-head plus these three printed values');
     expect(r.err).toContain('--expected-worktree-content-sha256');
     expect(r.err).toContain('refs/recovery/auto-merge/<HEAD>/<TREE>');

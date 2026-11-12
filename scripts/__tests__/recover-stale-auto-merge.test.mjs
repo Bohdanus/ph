@@ -62,6 +62,45 @@ function invoke(root, args = []) {
   return spawnSync(process.execPath, [SCRIPT, ...args], { cwd: root, env, encoding: 'utf8' });
 }
 
+function invokeWithMarkerRewrite(root, args, { marker, replacementTree, rewriteOnCatFileCall = 4 }) {
+  const gitDir = git(root, 'rev-parse', '--absolute-git-dir');
+  const shimPath = join(gitDir, 'git');
+  const countPath = join(gitDir, 'recovery-test-cat-file-count');
+  const realGit = execFileSync('which', ['git'], { cwd: root, env, encoding: 'utf8' }).trim();
+  writeFileSync(
+    shimPath,
+    [
+      '#!/bin/sh',
+      `${JSON.stringify(realGit)} "$@"`,
+      'result=$?',
+      'if [ "$1" = "cat-file" ] && [ "$2" = "-t" ]; then',
+      '  count=0',
+      '  if [ -f "$AUTO_MERGE_TEST_COUNT" ]; then IFS= read -r count < "$AUTO_MERGE_TEST_COUNT"; fi',
+      '  count=$((count + 1))',
+      '  printf "%s\\n" "$count" > "$AUTO_MERGE_TEST_COUNT"',
+      '  if [ "$count" -eq "$AUTO_MERGE_TEST_REWRITE_ON" ]; then',
+      '    printf "%s\\n" "$AUTO_MERGE_TEST_TREE" > "$AUTO_MERGE_TEST_MARKER"',
+      '  fi',
+      'fi',
+      'exit "$result"',
+      '',
+    ].join('\n')
+  );
+  chmodSync(shimPath, 0o755);
+  return spawnSync(process.execPath, [SCRIPT, ...args], {
+    cwd: root,
+    env: {
+      ...env,
+      PATH: `${gitDir}:${env.PATH ?? ''}`,
+      AUTO_MERGE_TEST_COUNT: countPath,
+      AUTO_MERGE_TEST_MARKER: marker,
+      AUTO_MERGE_TEST_TREE: replacementTree,
+      AUTO_MERGE_TEST_REWRITE_ON: String(rewriteOnCatFileCall),
+    },
+    encoding: 'utf8',
+  });
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -269,6 +308,44 @@ describe('recover-stale-auto-merge', () => {
     expect(result.stdout).toContain('Worktree content changed');
     expect(existsSync(marker)).toBe(true);
     expect(readFileSync(trackedPath, 'utf8')).toBe('second divergent content\n');
+  });
+
+  it('refuses to unlink AUTO_MERGE if its contents change in place after the final inspection', () => {
+    const root = repo();
+    const { head, marker, autoMergeTree } = makeMatchingWorktree(root);
+    const replacementTree = git(root, 'rev-parse', 'HEAD^{tree}');
+    const preflight = invoke(root, ['--expected-head', head, '--preserve-matching-worktree']);
+    const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+    const contentPin = preflight.stdout.match(/worktree-content-sha256=([a-f\d]{64})/i)?.[1];
+    expect(preflight.status).toBe(0);
+    expect(statusPin).toBeTruthy();
+    expect(contentPin).toBeTruthy();
+
+    const result = invokeWithMarkerRewrite(
+      root,
+      [
+        '--expected-head',
+        head,
+        '--preserve-matching-worktree',
+        '--expected-auto-merge-tree',
+        autoMergeTree,
+        '--expected-worktree-status-sha256',
+        statusPin,
+        '--expected-worktree-content-sha256',
+        contentPin,
+        '--apply',
+        '--confirm-owner-stopped',
+      ],
+      { marker, replacementTree }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('AUTO_MERGE changed after preflight');
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(marker, 'utf8')).toBe(`${replacementTree}\n`);
+    expect(
+      git(root, 'for-each-ref', '--format=%(objectname)', `refs/recovery/auto-merge/${head}/${autoMergeTree}`)
+    ).toBe(autoMergeTree);
   });
 
   it.skipIf(process.platform === 'win32')(
