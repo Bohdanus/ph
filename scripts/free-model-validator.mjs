@@ -58,9 +58,11 @@ export async function validateSubagentConfigs(
   }
 
   const normalized = configs.map(normalizeConfig);
-  const disabled = normalized.find(({ model }) => isDisabledFreeModel(model));
+  const disabled = normalized.find(({ model, provider }) => isDisabledFreeModel(model, '', provider));
   if (disabled) {
-    throw new Error(`Nemotron models are disabled by free-model policy: ${disabled.model}`);
+    throw new Error(
+      `Nemotron model/provider pair is not approved by free-model policy: ${disabled.model} via ${disabled.provider}`
+    );
   }
   const needsOpenRouter = normalized.some(({ provider }) => provider === 'openrouter');
   const openRouterTaskCount = normalized.filter(({ provider }) => provider === 'openrouter').length;

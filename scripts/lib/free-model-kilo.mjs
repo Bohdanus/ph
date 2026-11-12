@@ -275,7 +275,9 @@ export async function runKiloCompletion({
   if (typeof model !== 'string' || !/^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/.test(model)) {
     return { error: 'Invalid model ID' };
   }
-  if (isDisabledFreeModel(model)) return { error: 'Nemotron models are disabled by free-model policy' };
+  if (isDisabledFreeModel(model, '', source)) {
+    return { error: 'Nemotron model/provider pair is not approved by free-model policy' };
+  }
   if (typeof prompt !== 'string' || !prompt) return { error: 'Prompt is empty' };
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 65536) return { error: 'Invalid token limit' };
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return { error: 'Invalid completion timeout' };

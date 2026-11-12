@@ -62,10 +62,12 @@ with coordinator-owned work that does not require paid inference.
   `schedule_wakeup`: it fires once and will not re-arm itself if the chat
   dies. If cron creation returns an actual error, report it and use the normal operator recovery
   path rather than silently switching to a one-shot wake.
-- Model routing (read `MODELS.md` first): Nemotron models are disabled across providers and must not
-  be selected directly or assigned to subagents. Refresh eligible routes with
-  `node scripts/free-model-pool.mjs --list`; use a currently verified free model/provider pair and
-  never switch silently to paid inference. For bounded single-model calls, use
+- Model routing (read `MODELS.md` first): prefer exact Nemotron 3 Ultra through OpenRouter when the
+  live catalog confirms zero price and quota is positive; request up to 4,000 output tokens for
+  reviews and research, following the provider-specific token-limit behavior in MODELS.md. Only the
+  exact model on OpenRouter or through an explicitly selected Kilo route is approved. Refresh
+  eligible routes with `node scripts/free-model-pool.mjs --list`; use the documented free fallback
+  if unavailable and never switch silently to paid inference. For bounded single-model calls, use
   `node scripts/free-model-pool.mjs --prompt-file PATH --output-file PATH --max-tokens N`. The runner
   uses the authenticated Kilo Code CLI with a tool-denied profile; do not replace it with direct
   Kilo Gateway HTTP inference. Completion routes have a five-minute timeout, separately from
@@ -169,9 +171,11 @@ initial template to the actual request, preserving its scope and constraints.
 
 > do rigorous overnight hardening of the project. Reconstruct and understand issues in great
 > detail using docs, code, chat transcripts. Fan out bounded free read-only subagents to do deep research:
-> scan large amounts of docs, code, transcripts, do websearch, etc. Nemotron models are disabled
-> across providers; use another exact-zero model/provider from the refreshed catalog or pause when
-> none is available. Take most complex and
+> scan large amounts of docs, code, transcripts, do websearch, etc. Prefer exact Nemotron 3 Ultra
+> through OpenRouter after verifying zero price and positive quota; set `--max-tokens 4000` for
+> reviews and research, following the provider-specific token-limit behavior in MODELS.md. Use
+> another verified free route from MODELS.md when it is unavailable.
+> Take most complex and
 > prioritised issues first. This must be long running
 > overnight autonomous session. Most likely points of failure: (1) llm decides task is done while
 > it should keep going; (2) free-model capacity might become temporarily unavailable; (3) other unknown

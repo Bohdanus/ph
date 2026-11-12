@@ -71,9 +71,22 @@ describe('free model validation', () => {
     ).rejects.toThrow('not currently verified free');
   });
 
-  it('blocks Nemotron IDs before catalog, quota, or subagent requests for every provider', async () => {
-    const requestedModels = [NEMOTRON, 'vendor/renamed-free Nemotron alias'];
-    for (const model of requestedModels) {
+  it('allows the exact free route on Kilo and OpenRouter while blocking aliases and unapproved providers', async () => {
+    const kilo = catalogFetch({ kilo: [kiloRow(NEMOTRON)] });
+    await expect(
+      validateFreeModel({ model: NEMOTRON, provider: 'kilo', ...validationOptions(kilo.fetchImpl) })
+    ).resolves.toEqual({ model: NEMOTRON, provider: 'kilo', validated: true });
+
+    const openrouter = catalogFetch({ openrouter: [openRouterRow(NEMOTRON)] });
+    await expect(
+      validateFreeModel({
+        model: NEMOTRON,
+        provider: 'openrouter',
+        ...validationOptions(openrouter.fetchImpl, { openRouterKey: 'test-key' }),
+      })
+    ).resolves.toEqual({ model: NEMOTRON, provider: 'openrouter', validated: true });
+
+    for (const model of ['nvidia/nemotron-3-ultra-550b-a55b-v2:free', 'vendor/renamed-free Nemotron alias']) {
       for (const provider of ['kilo', 'openrouter', 'opencode', 'groq']) {
         const { fetchImpl } = catalogFetch();
         await expect(
@@ -86,9 +99,17 @@ describe('free model validation', () => {
               groqFreePlan: true,
             }),
           })
-        ).rejects.toThrow('Nemotron models are disabled by free-model policy');
+        ).rejects.toThrow('Nemotron model/provider pair is not approved by free-model policy');
         expect(fetchImpl).not.toHaveBeenCalled();
       }
+    }
+
+    for (const provider of ['opencode', 'groq']) {
+      const { fetchImpl } = catalogFetch();
+      await expect(validateFreeModel({ model: NEMOTRON, provider, ...validationOptions(fetchImpl) })).rejects.toThrow(
+        'Nemotron model/provider pair is not approved by free-model policy'
+      );
+      expect(fetchImpl).not.toHaveBeenCalled();
     }
   });
 
