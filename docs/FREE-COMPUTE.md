@@ -41,11 +41,13 @@ positive quota permits one bounded retry, with at most three inference attempts 
 429s skip OpenRouter without blaming a model; only confirmed upstream/model failures can trigger
 bounded model quarantine. Kilo 401/402 stops Kilo for the run, and Kilo 429s use a separate one-hour
 source cooldown, not a model quarantine. Non-zero or invalid cost and content-policy rejections stop
-fallback across providers. The previous Nemotron outage hold was removed after exact-route free
-completions succeeded through Kilo and OpenRouter. Migration v4 clears only the obsolete
-`poor_performance` quarantine entries for those exact routes; other active reasons are preserved and
-continue to follow normal expiry and operator-review rules. New outages use the normal source/model
-quarantine rules.
+fallback across providers. Migration v4 cleared the obsolete `poor_performance` quarantine entries
+for those exact routes after the earlier successful smokes. On 2026-11-12, operator direction
+reinstated a source-specific 168-hour `poor_performance` quarantine for
+`openrouter:nvidia/nemotron-3-ultra-550b-a55b:free`, through `2026-11-19T02:03:21.539Z`. The exact
+Kilo route remains approved and is not covered by this hold. Check `npm run free:quarantine -- list`
+for the active local state. Other active reasons are preserved and continue to follow normal expiry
+and operator-review rules. New outages use the normal source/model quarantine rules.
 
 ## Observed results
 
