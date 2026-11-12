@@ -31,10 +31,9 @@ const MIGRATION_V2_QUARANTINES = [
   { source: 'kilo', model: 'nvidia/nemotron-3.5-super-vl:free', reason: 'poor_performance' },
   { source: 'kilo', model: 'recursive/flint-v1.0:free', reason: 'poor_performance' },
 ];
-const MIGRATION_V3_QUARANTINES = [
-  { source: 'kilo', model: 'nvidia/nemotron-3-ultra-550b-a55b:free', reason: 'poor_performance' },
-  { source: 'openrouter', model: 'nvidia/nemotron-3-ultra-550b-a55b:free', reason: 'poor_performance' },
-  { source: 'opencode', model: 'nvidia/nemotron-3-ultra-550b-a55b:free', reason: 'poor_performance' },
+const MIGRATION_V4_RELEASES = [
+  { source: 'kilo', model: 'nvidia/nemotron-3-ultra-550b-a55b:free' },
+  { source: 'openrouter', model: 'nvidia/nemotron-3-ultra-550b-a55b:free' },
 ];
 
 const KILO_NEMOTRON_3_ULTRA_ID = 'nvidia/nemotron-3-ultra-550b-a55b';
@@ -64,7 +63,8 @@ export function validateQuarantineState(state) {
   }
   if (
     (state.migration_v2 !== undefined && typeof state.migration_v2 !== 'boolean') ||
-    (state.migration_v3 !== undefined && typeof state.migration_v3 !== 'boolean')
+    (state.migration_v3 !== undefined && typeof state.migration_v3 !== 'boolean') ||
+    (state.migration_v4 !== undefined && typeof state.migration_v4 !== 'boolean')
   ) {
     throw new Error('Free-model quarantine migration markers must be boolean');
   }
@@ -117,7 +117,7 @@ export async function loadQuarantineState(filePath = DEFAULT_FILE, now = Date.no
   }
   return withQuarantineWriteLock(filePath, async (saveState) => {
     const state = await readQuarantineState(filePath);
-    if (state.migration_v2 === true && state.migration_v3 === true) return state;
+    if (state.migration_v2 === true && state.migration_v3 === true && state.migration_v4 === true) return state;
     migrateQuarantineState(state, now);
     await saveState(state);
     return state;
@@ -132,10 +132,16 @@ function migrateQuarantineState(state, now) {
     state.migration_v2 = true;
   }
   if (state.migration_v3 !== true) {
-    for (const { source, model, reason } of MIGRATION_V3_QUARANTINES) {
-      upsertQuarantine(state, { source, model, reason, hours: MAX_QUARANTINE_HOURS, now });
-    }
     state.migration_v3 = true;
+  }
+  if (state.migration_v4 !== true) {
+    // The former 168-hour entries were an outage hold. A confirmed free completion
+    // restored the exact Kilo and OpenRouter routes; remove only their poor-performance holds.
+    for (const { source, model } of MIGRATION_V4_RELEASES) {
+      const key = quarantineKey(source, model);
+      if (state.entries[key]?.reason === 'poor_performance') delete state.entries[key];
+    }
+    state.migration_v4 = true;
   }
   return state;
 }
@@ -160,7 +166,7 @@ async function writeQuarantineStateIfAbsent(state, filePath) {
 export async function loadQuarantineStateLocked(filePath = DEFAULT_FILE, now = Date.now()) {
   validateEpochMilliseconds(now);
   const state = await readQuarantineState(filePath);
-  if (state.migration_v2 === true && state.migration_v3 === true) return state;
+  if (state.migration_v2 === true && state.migration_v3 === true && state.migration_v4 === true) return state;
   migrateQuarantineState(state, now);
   await writeQuarantineStateUnlocked(state, filePath);
   return state;

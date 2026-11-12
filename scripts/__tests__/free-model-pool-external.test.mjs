@@ -107,32 +107,34 @@ describe('unverifiable free routers', () => {
     expect(catalogCandidates('kilo', [row]).map(({ model }) => model)).toEqual(['reflection/beam-free']);
   });
 
-  it('filters Nemotron and prefers XingChen in the OpenRouter catalog', () => {
+  it('prefers exact Nemotron 3 Ultra before XingChen in the OpenRouter catalog', () => {
     const rows = [
       openRouterRow('recursive/flint-v1.0'),
       openRouterRow('nvidia/nemotron-3-ultra-550b-a55b'),
       openRouterRow('xingchen-agi/xing4.0-29b-a4b'),
     ];
     expect(catalogCandidates('openrouter', { data: rows }).map(({ model }) => model)).toEqual([
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
       'xingchen-agi/xing4.0-29b-a4b:free',
       'recursive/flint-v1.0:free',
     ]);
   });
 
-  it('filters Nemotron and prefers XingChen in the Kilo catalog', () => {
+  it('prefers exact Nemotron 3 Ultra before XingChen in the Kilo catalog', () => {
     const rows = [
       kiloRow('recursive/flint-v1.0:free'),
       kiloRow('xingchen-agi/xing4.0-29b-a4b:free'),
       kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'),
     ];
     expect(catalogCandidates('kilo', rows).map(({ model }) => model)).toEqual([
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
       'xingchen-agi/xing4.0-29b-a4b:free',
       'recursive/flint-v1.0:free',
     ]);
   });
 
   it('excludes disabled model families from Kilo and OpenRouter catalogs', () => {
-    const nemotron = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const nemotron = 'nvidia/nemotron-3-ultra-550b-a55b-v2:free';
     const xingchen = 'xingchen-agi/xing4.0-29b-a4b:free';
     const retired = 'poolside/laguna-s-2.1:free';
     expect(
@@ -646,11 +648,11 @@ describe('Reasoning parameter is not sent to any provider', () => {
 });
 
 describe('disabled Nemotron routes', () => {
-  it('blocks Nemotron before Kilo, OpenRouter, or OpenCode inference', async () => {
+  it('blocks noncanonical Nemotron variants before inference', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-kilo-cost-'));
     const quarantineFile = join(directory, 'quarantine.json');
     const poolStateFile = join(directory, 'pool-state.json');
-    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b-v2:free';
     const chat = vi.fn();
     const fetchImpl = catalogFetch({ kilo: [kiloRow(model)], chat });
     const runKilo = vi.fn();
@@ -677,6 +679,49 @@ describe('disabled Nemotron routes', () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe('recommended Nemotron OpenRouter route', () => {
+  it('selects the exact free model first and sends the requested 4,000-token budget', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const keyInfo = vi.fn(() => ({
+      ok: true,
+      json: async () => ({ data: { free_model_daily_requests: { used: 2, limit: 1000, remaining: 998 } } }),
+    }));
+    const chat = vi.fn(async (_url, options) => {
+      const request = JSON.parse(options.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: request.model,
+          choices: [{ message: { content: 'Nemotron response' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 4, completion_tokens: 3, cost: 0 },
+        }),
+      };
+    });
+    const fetchImpl = catalogFetch({
+      openrouter: [openRouterRow('vendor/fallback'), openRouterRow('nvidia/nemotron-3-ultra-550b-a55b')],
+      keyInfo,
+      chat,
+    });
+
+    const result = await completeWithFreeModel('bounded smoke request', {
+      fetchImpl,
+      openRouterKey: 'test-key',
+      maxTokens: 4000,
+    });
+
+    expect(result).toMatchObject({
+      source: 'openrouter',
+      model,
+      content: 'Nemotron response',
+      finishReason: 'stop',
+    });
+    expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ model, max_tokens: 4000 });
+    expect(keyInfo).toHaveBeenCalledOnce();
+    expect(chat).toHaveBeenCalledOnce();
   });
 });
 
@@ -2295,8 +2340,8 @@ describe('provider rate-limit diagnostics', () => {
     expect(chat).toHaveBeenCalledTimes(1);
   });
 
-  it('does not request Nemotron inference or quota checks after the catalog is filtered', async () => {
-    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+  it('does not request Nemotron inference or quota checks after an unapproved variant is filtered', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b-v2:free';
     const keyInfo = vi.fn().mockReturnValue({
       ok: true,
       json: async () => ({ data: { free_model_daily_requests: { used: 999, limit: 1000, remaining: 1 } } }),

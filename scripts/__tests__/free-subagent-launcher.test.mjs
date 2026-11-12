@@ -146,18 +146,35 @@ describe('free subagent launcher', () => {
     expect(agentManager).toHaveBeenCalledOnce();
   });
 
-  it('rejects Nemotron from the live free catalog before launching a child', async () => {
-    const { fetchImpl } = kiloFetch([NEMOTRON]);
+  it('rejects noncanonical Nemotron from the live free catalog before launching a child', async () => {
+    const { fetchImpl } = kiloFetch(['nvidia/nemotron-3-ultra-550b-a55b-v2:free']);
     const agentManager = vi.fn();
     await expect(
       launchFreeSubagent({
         prompt: 'Inspect a failure',
-        model: NEMOTRON,
+        model: 'nvidia/nemotron-3-ultra-550b-a55b-v2:free',
         provider: 'kilo',
         agentManager,
         ...options(fetchImpl),
       })
-    ).rejects.toThrow('Nemotron models are disabled by free-model policy');
+    ).rejects.toThrow('Nemotron model/provider pair is not approved by free-model policy');
     expect(agentManager).not.toHaveBeenCalled();
+  });
+
+  it('allows the exact free Nemotron route with the read-only profile', async () => {
+    const { fetchImpl } = kiloFetch([NEMOTRON]);
+    const agentManager = vi.fn(async (request) => request);
+    const result = await launchFreeSubagent({
+      prompt: 'Review one bounded question',
+      model: NEMOTRON,
+      provider: 'kilo',
+      agentManager,
+      ...options(fetchImpl),
+    });
+
+    expect(result.tasks).toMatchObject([
+      { prompt: 'Review one bounded question', model: NEMOTRON, provider: 'kilo', agent: 'read-only-research' },
+    ]);
+    expect(agentManager).toHaveBeenCalledOnce();
   });
 });

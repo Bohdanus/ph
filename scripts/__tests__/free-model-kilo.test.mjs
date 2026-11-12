@@ -570,16 +570,44 @@ process.exitCode = 1;`
     }
   });
 
-  it('blocks Nemotron before starting the Kilo CLI', async () => {
+  it('blocks noncanonical Nemotron variants before starting the Kilo CLI', async () => {
     const spawnImpl = vi.fn();
     await expect(
       runKiloCompletion({
         command: '/fake-kilo',
-        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b-v2:free',
         prompt: 'private prompt',
         spawnImpl,
       })
-    ).resolves.toEqual({ error: 'Nemotron models are disabled by free-model policy' });
+    ).resolves.toEqual({ error: 'Nemotron model/provider pair is not approved by free-model policy' });
     expect(spawnImpl).not.toHaveBeenCalled();
   });
+
+  it('allows the exact approved Nemotron route and applies the requested output-token instruction', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-nemotron-'));
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+const valueAfter = (flag) => args[args.indexOf(flag) + 1];
+const message = fs.readFileSync(0, 'utf8');
+if (!args.includes('--pure') || valueAfter('--model') !== 'kilo/${model}') process.exit(4);
+if (valueAfter('--agent') !== 'free-completion') process.exit(5);
+if (!message.startsWith('Answer the provided request directly, in plain text, using at most 4000 output tokens.')) process.exit(6);
+console.log(JSON.stringify({ type: 'text', part: { text: 'approved response' } }));
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0, tokens: { input: 8, output: 2 } } }));`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model, prompt: 'bounded request', maxTokens: 4000 })).resolves.toEqual({
+        model,
+        content: 'approved response',
+        finishReason: 'stop',
+        usage: { input_tokens: 8, output_tokens: 2, cost: 0 },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
