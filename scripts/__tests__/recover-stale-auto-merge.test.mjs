@@ -30,6 +30,7 @@ function repo() {
   const root = mkdtempSync(join(tmpdir(), 'stale-auto-merge-'));
   roots.push(root);
   git(root, 'init', '-b', 'fix/recovery-test');
+  git(root, 'config', 'core.autocrlf', 'false');
   git(root, 'config', 'user.name', 'recovery test');
   git(root, 'config', 'user.email', 'recovery@example.invalid');
   writeFileSync(join(root, 'tracked.txt'), 'tracked\n');

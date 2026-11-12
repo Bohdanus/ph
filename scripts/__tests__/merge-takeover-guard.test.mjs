@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { samePath } from '../lib/path-identity.mjs';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -220,29 +221,29 @@ function commitReviewedLanding(message) {
 
 function commitThroughMainLanding() {
   registerMainWorktree(dir, { required: true });
-  execFileSync(
-    process.execPath,
-    [
-      LANDING_WRAPPER_PATH,
-      'land',
-      '--main-sha',
-      process.env.KILO_EXPECTED_MAIN_SHA ?? '',
-      '--incoming-sha',
-      process.env.KILO_EXPECTED_INCOMING_SHA ?? '',
-      '--tree-sha',
-      process.env.KILO_EXPECTED_TREE_SHA ?? '',
-      '--branch',
-      process.env.KILO_EXPECTED_BRANCH ?? '',
-      '--chat',
-      process.env.KILO_EXPECTED_CHAT_ID ?? '',
-    ],
-    {
-      cwd: dir,
-      encoding: 'utf8',
-      maxBuffer: 32 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }
-  );
+  const args = [
+    'land',
+    '--main-sha',
+    process.env.KILO_EXPECTED_MAIN_SHA ?? '',
+    '--incoming-sha',
+    process.env.KILO_EXPECTED_INCOMING_SHA ?? '',
+    '--tree-sha',
+    process.env.KILO_EXPECTED_TREE_SHA ?? '',
+    '--branch',
+    process.env.KILO_EXPECTED_BRANCH ?? '',
+    '--chat',
+    process.env.KILO_EXPECTED_CHAT_ID ?? '',
+  ];
+  const runner = [
+    `import { main } from ${JSON.stringify(pathToFileURL(LANDING_WRAPPER_PATH).href)};`,
+    `process.exitCode = await main(${JSON.stringify(args)}, { cwd: process.cwd(), watcherStarter: async () => {} });`,
+  ].join('\n');
+  execFileSync(process.execPath, ['--input-type=module', '--eval', runner], {
+    cwd: dir,
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   return git(['rev-parse', 'HEAD']);
 }
 

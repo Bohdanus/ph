@@ -314,7 +314,7 @@ describe('the guard tells a main worktree from a linked one on a real repository
           if (command !== 'git') {
             expect(command).toBe(process.execPath);
             expect(args[0]).toBe(join(REPO_ROOT, 'scripts/install-git-hooks.js'));
-            expect(options.env.KILO_MAIN_LANDING_RECOVERY_PATH).toBe(owner.autoMergeRecoveryPath);
+            expect(samePath(options.env.KILO_MAIN_LANDING_RECOVERY_PATH, owner.autoMergeRecoveryPath)).toBe(true);
           }
           const result = runCommand(command, args, { cwd: options.cwd, env: options.env, encoding: 'utf8' });
           if (command !== 'git' && result.status === 0) {
@@ -330,9 +330,9 @@ describe('the guard tells a main worktree from a linked one on a real repository
         },
       });
 
-      expect(replacement.mainPath).toBe(owner.autoMergeRecoveryPath);
-      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(
-        realpathSync(replacement.mainPath)
+      expect(samePath(replacement.mainPath, owner.autoMergeRecoveryPath)).toBe(true);
+      expect(samePath(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath']), replacement.mainPath)).toBe(
+        true
       );
       expect(readFileSync(autoMergePath, 'utf8')).toBe(mainTree + '\n');
       expect(readFileSync(wipPath, 'utf8')).toBe('preserve this old landing state\n');
@@ -421,9 +421,11 @@ describe('the guard tells a main worktree from a linked one on a real repository
       let resetHeartbeatAt = null;
       const result = await watch(paths, owner.leaseId, {
         sleep: async (milliseconds) => {
-          clock += milliseconds;
+          // Advance by one minute per poll while preserving the production continuity
+          // window, which allows three polling intervals to be missed.
+          clock += 2 * milliseconds;
           polls += 1;
-          if (polls > 130) throw new Error('watcher exceeded the two expected observation windows');
+          if (polls > 60) throw new Error('watcher exceeded the two expected observation windows');
         },
         now: () => clock,
         recoveryOptions: {
@@ -435,7 +437,7 @@ describe('the guard tells a main worktree from a linked one on a real repository
             }
           },
           runLanding: async (replacement, _activeOwner, pins) => {
-            expect(replacement.mainPath).toBe(replacementPath);
+            expect(samePath(replacement.mainPath, replacementPath)).toBe(true);
             landedPins = pins;
           },
           run: async (command, args, options) => {
@@ -452,7 +454,7 @@ describe('the guard tells a main worktree from a linked one on a real repository
             } else {
               expect(command).toBe(process.execPath);
               expect(args[0]).toBe(join(REPO_ROOT, 'scripts/install-git-hooks.js'));
-              expect(options.env.KILO_MAIN_LANDING_RECOVERY_PATH).toBe(replacementPath);
+              expect(samePath(options.env.KILO_MAIN_LANDING_RECOVERY_PATH, replacementPath)).toBe(true);
             }
 
             const child = spawnSync(command, args, {
@@ -468,6 +470,7 @@ describe('the guard tells a main worktree from a linked one on a real repository
 
       expect(result).toBe(0);
       expect(clock - observedSince).toBe(60 * 60_000);
+      expect(polls).toBe(60);
       expect(resetHeartbeatAt).toBe(new Date(observedSince + 30 * 60_000).toISOString());
       expect(worktreeCreationAttempts).toBe(2);
       expect(attemptedRecoveryPaths[0]).not.toBe(attemptedRecoveryPaths[1]);
@@ -1049,9 +1052,7 @@ describe('the guard is actually installed', () => {
         env: { ...process.env, CI: 'true' },
       });
       expect(reinstall.status, reinstall.stderr).toBe(0);
-      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(
-        movedMainPath.replace(/\\/g, '/')
-      );
+      expect(samePath(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath']), movedMainPath)).toBe(true);
       const movedMainWorktree = resolveWorktree(movedMainPath);
       expect(movedMainWorktree).toMatchObject({ isDesignatedMainWorktree: true, isProtectedWorktree: true });
       expect(decide({ worktree: movedMainWorktree }).action).toBe('refuse');
