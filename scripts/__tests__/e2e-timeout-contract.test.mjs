@@ -36,14 +36,15 @@ function compareVersions(left, right) {
   return 0;
 }
 
-function readCiE2EMatrix() {
-  const e2eJobStart = ciWorkflow.indexOf('\n  e2e:\n');
-  const e2eJobEnd = ciWorkflow.indexOf('\n  e2e-skip-baseline:\n', e2eJobStart);
+function readCiE2EMatrix(workflow = ciWorkflow) {
+  workflow = workflow.replace(/\r\n?/g, '\n');
+  const e2eJobStart = workflow.indexOf('\n  e2e:\n');
+  const e2eJobEnd = workflow.indexOf('\n  e2e-skip-baseline:\n', e2eJobStart);
   if (e2eJobStart < 0 || e2eJobEnd < 0) {
     throw new Error('Could not find the e2e matrix job in .github/workflows/ci.yml');
   }
 
-  const e2eJob = ciWorkflow.slice(e2eJobStart, e2eJobEnd);
+  const e2eJob = workflow.slice(e2eJobStart, e2eJobEnd);
   if (!e2eJob.includes('timeout-minutes: ${{ matrix.timeout }}')) {
     throw new Error('The e2e job must apply each matrix row timeout with timeout-minutes: ${{ matrix.timeout }}');
   }
@@ -186,6 +187,8 @@ describe('E2E timeout contract', () => {
     expect(job).toContain('ref: ${{ needs.validate-dispatch.outputs.source_sha }}');
     expect(job).toContain('persist-credentials: false');
     expect(runCommands).toEqual(['npm ci', 'npm run test -- scripts/__tests__', 'npm run test:e2e:unit']);
+    // The Nov 12 Windows run spent 14m04 in the script step without finishing; keep room for both suites and setup.
+    expect(readFixedJobTimeoutMinutes(job, 'Windows platform tests')).toBeGreaterThanOrEqual(30);
     const scriptTestRoot = ['scripts/__tests__'];
     const e2eUnitTestRoot = ['e2e'];
     const e2eUnitFilePattern = /\.unit\.test\.ts$/;
@@ -218,6 +221,12 @@ describe('E2E timeout contract', () => {
     expect(gate).toContain('windows-platform-tests');
     expect(gate).toContain('WINDOWS_PLATFORM_TESTS_RESULT: ${{ needs.windows-platform-tests.result }}');
     expect(gate).toContain('[[ "$WINDOWS_PLATFORM_TESTS_RESULT" == "success" ]]');
+  });
+
+  it('parses the CI shard matrix after CRLF checkout conversion', () => {
+    const lfWorkflow = ciWorkflow.replace(/\r\n?/g, '\n');
+    const crlfWorkflow = lfWorkflow.replace(/\n/g, '\r\n');
+    expect(readCiE2EMatrix(crlfWorkflow)).toEqual(readCiE2EMatrix(lfWorkflow));
   });
 
   it('keeps ten minutes of nominal job headroom for every CI shard', () => {
