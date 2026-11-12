@@ -1639,10 +1639,8 @@ describe('the anchor is the only recovery point, so it may not be overwritten', 
   });
 
   it('disambiguates when a DIFFERENT branch already owns that slug', () => {
-    // refSlug collapses '/', ' ' and every other run to one '-', and '-' is legal
-    // in a branch name, so feat/marble, 'feat marble' and feat-marble all slug
-    // to feat-marble. Two collisions overwrite the first disposal's only
-    // recovery point, and `git branch recover` then hands back the wrong commit.
+    // Different branch names can normalize to the same slug, so preserve the
+    // existing ref and disambiguate the new tip.
     const occupied = 'a1b2c3d4e5';
     const h = harness({ [`rev-parse --verify --quiet ${KEEP_REF_PREFIX}feat-marble`]: occupied });
     dispose('/repo', greenState({ branch: 'feat-marble', tip: 'deadbeef' }), { run: h.run, fs: h.fs });
@@ -1681,6 +1679,33 @@ describe('the anchor is the only recovery point, so it may not be overwritten', 
     ]);
     expect(result).toMatchObject({ anchorRef: null, branchDeleted: false, worktreeRemoved: false });
     expect(calls.some((c) => c[0] === 'worktree' && c[1] === 'remove')).toBe(false);
+  });
+
+  it('reuses a fallback ref that already points to the same tip', () => {
+    const baseRef = `${KEEP_REF_PREFIX}feat-marble`;
+    let fallbackRef = null;
+    const calls = [];
+    const run = (cwd, args) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[3] === baseRef) return { stdout: '' };
+      if (args[0] === 'update-ref' && args[1] === baseRef) throw new Error('base ref appeared after the read');
+      if (args[0] === 'update-ref' && args[1] !== baseRef) {
+        fallbackRef = args[1];
+        throw new Error('fallback ref already exists');
+      }
+      if (args[0] === 'rev-parse' && args[3] === fallbackRef) return { stdout: 'deadbeef' };
+      return { stdout: '' };
+    };
+
+    const result = dispose('/repo', greenState({ branch: 'feat/marble', tip: 'deadbeef' }), {
+      run,
+      fs: { mkdirSync() {}, writeFileSync() {} },
+    });
+
+    expect(fallbackRef).toMatch(new RegExp(`^${baseRef}-g[0-9a-f]{9}$`));
+    expect(result.anchorRef).toBe(fallbackRef);
+    expect(result.worktreeRemoved).toBe(true);
+    expect(calls.some((c) => c[0] === 'worktree' && c[1] === 'remove')).toBe(true);
   });
 
   it('re-anchors the SAME branch without a suffix, because there is nothing to protect', () => {
