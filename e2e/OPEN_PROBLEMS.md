@@ -317,30 +317,38 @@ DPI-blind. Two point-sampling specs that were in exactly that class (`levels.spe
 `adjustments.spec.ts`) were CSS-pixel samples over a device-scaled capture, and are fixed
 here.
 
-**The suite as a whole is still not 2x-clean, and an earlier version of this entry
-claimed it was.** A prior run with `projects[].use.deviceScaleFactor` forced to 2 (the
-project-level `use` overrides the top-level one, so setting it at the top does nothing)
-measured 256 pass, 6 fail, 2 skipped. Its reported failures were
+**The suite as a whole is still not 2x-clean, and an earlier version of this entry claimed it was.**
+A full diagnostic forced `projects[].use.deviceScaleFactor` to 2 (project-level `use` overrides the
+top-level setting) with a temporary config, on code commit
+`de7bab05ff69c309b0087ff0cfd0b90bfe96e475`, run `2026-11-11T21-30-35-667Z-12916`. Of 689 tests,
+612 passed, 76 failed, and 1 was skipped. The failures span 21 spec files: the largest groups are
+`crop-history.spec.ts` (18), `export/visual-regression.spec.ts` (9),
+`single-row-column-marquee.spec.ts` (8), `color-sampler.spec.ts` (7), and
+`selection-gestures.spec.ts` (6); the other 28 failures span 16 specs. This supersedes the old
+256-pass/6-fail/2-skip measurement. The temporary config was diagnostic only; no permanent 2x
+project was added.
 
-- `e2e/helpers/cdp-helpers.spec.ts` — the
-  `describe('captureCanvasScreenshot at an emulated deviceScaleFactor of 2')` block, which
-  exercises capture behavior under an emulated 2x device scale factor.
-- `e2e/erase-fill-eyedropper.spec.ts` — `the eyedropper sample size averages the clicked block`;
-  an eyedropper block average over a fixed-size sample, in image pixels.
-- `e2e/keyboard-shortcuts.spec.ts` and `e2e/responsive-shell.spec.ts` — one test each, which this
-  entry does not name.
+The failed `erase-fill-eyedropper.spec.ts` case was caused by its click landing on the outer edge of
+the first qualifying screenshot pixel, which can map to an antialiased logical pixel at 2x. The
+test now moves half a document pixel inside that observed edge while keeping the 3x3 average across
+it. The focused case passes at 1x in run `2026-11-11T22-01-18-781Z-29579` and at 2x in run
+`2026-11-11T22-01-31-849Z-56101`. The full suite has not been rerun after the two localized oracle
+corrections; the measured 612/76/1 total is from the preceding tree, and 65 of those original
+failures remain unverified. The raster-backed Quick Selection and non-contiguous Magic Wand
+failures also appeared in the original diagnostic and reproduced in a focused 2x cross-callsite run.
 
-The reported `color-helpers.spec.ts` failure was not reproduced in a focused run. That spec now
-sets `deviceScaleFactor: 2` and the swatch test asserts that `window.devicePixelRatio` is actually 2;
-`npm run test:e2e:verbose -- e2e/helpers/color-helpers.spec.ts` passed all seven tests in run
-`2026-11-02T08-51-16-969Z-95889` against code commit
-`6a1cbe6cf9a1f6e6fccc94eb9f8a148cef0b73e7`. This focused result removes that test from the
-unresolved list; it does not revalidate the other failures or the old whole-suite totals.
+The eight `single-row-column-marquee.spec.ts` failures were another coordinate-space mismatch:
+`Main` scales the ants canvas backing store by the device-pixel ratio, while `readAntRuns` treated
+backing pixels as document pixels. The helper now uses the workspace's published document extent
+and maps backing pixels into document-pixel runs with exact ratio boundaries. The full marquee spec
+passed at 1x in run `2026-11-11T22-51-48-648Z-25018` and at 2x in run
+`2026-11-11T22-57-39-446Z-32045`; both run records report `passed` with no failed tests. Unit cases
+also cover 1.25x overlap, the 1.4x exact-boundary case, and a 0.5x canvas whose rounded backing
+extent cannot recover its logical size.
 
-The full suite has not been remeasured at 2x since that run, so the current failure count is
-unknown. Some test-scoped touch/mobile cases exist, but there is no dedicated project and coverage
-remains sparse across controls and gestures. Adding a project multiplies every run's cost and is a
-coverage decision, not a one-line change to `playwright.config.ts`.
+Some test-scoped touch/mobile cases exist, but there is no dedicated project and coverage remains
+sparse across controls and gestures. Adding a project multiplies every run's cost and is a coverage
+decision, not a one-line change to `playwright.config.ts`.
 
 `e2e/check-dpr.spec.ts` also asserts that the four presentation canvases' backing-store
 width and height equal the document dimensions multiplied by the expected device scale

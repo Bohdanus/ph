@@ -5,11 +5,10 @@ import type { CssBox, ImageSize, Point } from './helpers/screenshot-scale';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
-// The three anchors of the polygon every test in this file commits, in the ants
-// canvas's own backing-store pixels. The canvas is sized to `totalSize`
-// (`Main.tsx` `resizeCanvas`), so these are document pixels for the 800x600 blank
-// image the app opens with, and the first two make the edge the band samples a
-// horizontal 160px line at y=180.
+// The three anchors of the polygon every test in this file commits, in logical
+// document pixels. `Main.tsx` scales the ants canvas backing store by DPR, and
+// `readAntRuns` maps these document coordinates onto that backing store. The first
+// two anchors make the edge the band samples a horizontal 160px line at y=180.
 const POLYGON_ANCHORS: Point[] = [
   { x: 260, y: 180 },
   { x: 420, y: 180 },
@@ -90,9 +89,9 @@ const STATIC_FRAME_COUNT = 1;
 type Band = { x: number; y: number; width: number; height: number };
 
 interface BandSample {
-  /** RGBA bytes of the band, row-major: the whole sample, not a digest of it. */
+  /** RGBA values after mapping the backing store into logical document pixels. */
   rgba: number[];
-  /** Pixels in the band with a non-zero alpha, i.e. pixels the border painted. */
+  /** Logical document pixels in the band with non-zero alpha. */
   opaqueCount: number;
 }
 
@@ -107,23 +106,36 @@ function getAntsCanvas(page: Page): Locator {
 }
 
 /**
- * Reads a rectangle of the ants canvas with the canvas's own 2d context.
- *
- * A screenshot cannot express this: it would need a clip in page coordinates, a
- * device-pixel-ratio correction and a decode, none of which belong on a canvas
- * whose backing store is already in document pixels. `getImageData` reads those
- * pixels directly, and the canvas is `pointer-events-none` so it can never be the
- * target of a click.
+ * Reads a band in logical document pixels by drawing the DPR-scaled canvas onto
+ * a document-sized scratch canvas before sampling its RGBA values.
  */
 async function readAntsBand(page: Page, band: Band): Promise<BandSample> {
   return getAntsCanvas(page).evaluate((element, { x, y, width, height }) => {
     if (!(element instanceof window.HTMLCanvasElement)) {
       throw new Error('readAntsBand: no HTMLCanvasElement matched [data-testid="selection-ants-canvas"]');
     }
-    const ctx = element.getContext('2d');
-    if (!ctx) throw new Error('Selection ants canvas has no 2d context');
+    const workspace = document.querySelector<HTMLElement>('[data-testid="workspace-container"]');
+    if (!workspace) throw new Error('readAntsBand: no [data-testid="workspace-container"] on the page');
+    const documentWidth = Number(workspace.getAttribute('data-fit-document-width'));
+    const documentHeight = Number(workspace.getAttribute('data-fit-document-height'));
+    if (
+      !Number.isSafeInteger(documentWidth) ||
+      documentWidth <= 0 ||
+      !Number.isSafeInteger(documentHeight) ||
+      documentHeight <= 0
+    ) {
+      throw new Error('readAntsBand: workspace has invalid logical document dimensions');
+    }
 
-    const { data } = ctx.getImageData(x, y, width, height);
+    const normalizedCanvas = document.createElement('canvas');
+    normalizedCanvas.width = documentWidth;
+    normalizedCanvas.height = documentHeight;
+    const normalizedContext = normalizedCanvas.getContext('2d');
+    if (!normalizedContext) throw new Error('readAntsBand: could not create a logical-pixel canvas');
+    normalizedContext.imageSmoothingEnabled = true;
+    normalizedContext.drawImage(element, 0, 0, documentWidth, documentHeight);
+
+    const { data } = normalizedContext.getImageData(x, y, width, height);
     let opaqueCount = 0;
     for (let index = 3; index < data.length; index += 4) {
       if (data[index] > 0) opaqueCount += 1;
@@ -197,17 +209,33 @@ interface DocumentGeometry {
  * callers, so both mappings stay.
  */
 async function readDocumentGeometry(page: Page): Promise<DocumentGeometry> {
+  const workspace = page.getByTestId('workspace-container');
+  await expect(workspace).toHaveAttribute('data-fit-document-width', /^\d+(?:\.\d+)?$/);
+  await expect(workspace).toHaveAttribute('data-fit-document-height', /^\d+(?:\.\d+)?$/);
+
   return getAntsCanvas(page).evaluate((element) => {
     if (!(element instanceof window.HTMLCanvasElement)) {
       throw new Error('readDocumentGeometry: no HTMLCanvasElement matched [data-testid="selection-ants-canvas"]');
     }
-    const container = element.closest('main');
-    if (!container) throw new Error('Selection ants canvas has no <main> container');
+    const container = element.closest<HTMLElement>('[data-testid="workspace-container"]');
+    if (!container) throw new Error('Selection ants canvas has no workspace container');
 
     const rect = container.getBoundingClientRect();
+    const documentWidth = Number(container.getAttribute('data-fit-document-width'));
+    const documentHeight = Number(container.getAttribute('data-fit-document-height'));
+    if (
+      !Number.isFinite(documentWidth) ||
+      documentWidth <= 0 ||
+      !Number.isFinite(documentHeight) ||
+      documentHeight <= 0
+    ) {
+      throw new Error('Workspace has no positive logical document extent published by usePointerPosition');
+    }
+
     return {
       container: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
-      image: { width: element.width, height: element.height },
+      // Canvas width/height are DPR-scaled backing pixels; input points use logical document pixels.
+      image: { width: documentWidth, height: documentHeight },
     };
   });
 }
