@@ -92,7 +92,7 @@ function assertUnrotatedWorkspaceView(rotationAttribute: string | null, caller: 
   }
 }
 
-async function readWorkspaceDocumentSize(page: Page, caller: string): Promise<DocumentSize> {
+export async function readWorkspaceDocumentSize(page: Page, caller: string): Promise<DocumentSize> {
   const workspace = page.getByTestId('workspace-container');
   const [rotationAttribute, widthAttribute, heightAttribute] = await Promise.all([
     workspace.getAttribute('data-view-rotation'),
