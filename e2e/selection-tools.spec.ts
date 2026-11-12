@@ -1123,7 +1123,9 @@ test.describe('Quick selection', () => {
     await dragOnCanvas(page, start, end, { steps: 4 });
     await waitForCommittedAnts(page, 'the committed raster-backed Quick Selection');
 
-    const interiorGridRows = [25, 27, 29, 31].map((offset) => ({
+    // Rows on a horizontal stroke expose the separated vertical boundaries; rows between those
+    // strokes are solid boundary runs across the whole crosshatch and cannot measure the gaps.
+    const interiorGridRows = [26, 28, 30, 32].map((offset) => ({
       x: pattern.x,
       y: pattern.y + offset,
       width: pattern.size,
