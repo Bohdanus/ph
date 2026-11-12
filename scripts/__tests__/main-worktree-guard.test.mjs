@@ -342,9 +342,12 @@ describe('the guard tells a main worktree from a linked one on a real repository
       expect(git(replacement.mainPath, ['status', '--porcelain'])).toBe('');
       expect(git(replacement.mainPath, ['branch', '--show-current'])).toBe('main');
       expect(git(replacement.mainPath, ['rev-parse', 'HEAD'])).toBe(mainSha);
-      expect(git(replacement.mainPath, ['config', '--local', '--get', 'core.hooksPath'])).toBe(
-        join(commonDir, 'hooks-gate')
-      );
+      expect(
+        samePath(
+          git(replacement.mainPath, ['config', '--local', '--get', 'core.hooksPath']),
+          join(commonDir, 'hooks-gate')
+        )
+      ).toBe(true);
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
