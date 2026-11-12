@@ -6,7 +6,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { COMPLETION_TIMEOUT_MS, resolveKiloCli, runKiloCompletion } from './lib/free-model-kilo.mjs';
-import { isDisabledFreeModel } from './lib/free-model-policy.mjs';
+import { isDisabledFreeModel, NEMOTRON_3_ULTRA_FREE_MODEL } from './lib/free-model-policy.mjs';
 import { resolveCommandShim } from './lib/windows-command-shim.mjs';
 import { sanitizeForLogging, sanitizeErrorMessage, sanitizeErrorStack } from './lib/secrets.mjs';
 import {
@@ -77,8 +77,8 @@ const ASCTIME_DATE_PATTERN = new RegExp(
     ') (?:([0-9]{2})| ([0-9])) (\\d{2}):(\\d{2}):(\\d{2}) (\\d{4})$'
 );
 const DISABLED_MODEL_PREFIXES = ['poolside/laguna'];
-const PREFERRED_KILO_MODELS = [XINGCHEN_XING4_MODEL];
-const PREFERRED_OPENROUTER_MODELS = [XINGCHEN_XING4_MODEL];
+const PREFERRED_KILO_MODELS = [NEMOTRON_3_ULTRA_FREE_MODEL, XINGCHEN_XING4_MODEL];
+const PREFERRED_OPENROUTER_MODELS = [NEMOTRON_3_ULTRA_FREE_MODEL, XINGCHEN_XING4_MODEL];
 const GROQ_FREE_MODEL = 'openai/gpt-oss-120b';
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
@@ -361,7 +361,7 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
   const candidates = rows
     .filter((row) => {
       if (typeof row?.id !== 'string' || row.id.length === 0) return false;
-      if (isDisabledFreeModel(row.id, row.name)) return false;
+      if (isDisabledFreeModel(row.id, row.name, source)) return false;
       if (DISABLED_MODEL_PREFIXES.some((prefix) => row.id.toLowerCase().startsWith(prefix))) return false;
       if (quarantinedKeys.has(quarantineKey(source, row.id))) return false;
       if (UNPINNABLE_ROUTER_MODELS.has(row.id)) return false;
@@ -388,7 +388,8 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
 
 export function orderFreeModelRoutes(candidates) {
   const fallback = candidates.filter(
-    (candidate) => !isDisabledFreeModel(candidate.model, candidate.name) && candidate.source !== 'kilo'
+    (candidate) =>
+      !isDisabledFreeModel(candidate.model, candidate.name, candidate.source) && candidate.source !== 'kilo'
   );
   return [
     ...fallback.filter((candidate) => candidate.source === 'openrouter'),
@@ -1028,7 +1029,9 @@ export async function runOpenCodeCompletion({
   maxTokens = 1200,
   timeoutMs = COMPLETION_TIMEOUT_MS,
 }) {
-  if (isDisabledFreeModel(model)) return { error: 'Nemotron models are disabled by free-model policy' };
+  if (isDisabledFreeModel(model, '', 'opencode')) {
+    return { error: 'Nemotron model/provider pair is not approved by free-model policy' };
+  }
   if (typeof model !== 'string' || !/^[A-Za-z0-9._/-]+-free$/.test(model)) {
     return { error: 'OpenCode model is not an eligible free catalog ID' };
   }
@@ -1944,7 +1947,7 @@ function usage() {
     '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
     '--list fetches public model catalogs; configured=null means local CLI credentials were not checked.\n' +
     'configured=false means provider credentials/opt-in are missing, not that a model is invalid.\n' +
-    'Nemotron models are disabled; other routes default to 1,200 tokens, while Groq keeps its 1,024-token reasoning floor.\n' +
+    'Nemotron 3 Ultra is the preferred free route on OpenRouter and Kilo; use exact-zero catalog pricing. Other routes default to 1,200 tokens, while Groq keeps its 1,024-token reasoning floor.\n' +
     'Kilo completions use the authenticated Kilo CLI; set KILO_CLI only when its automatic discovery fails.\n' +
     'Inference uses five minutes by default; catalog and quota checks use 15 seconds.\n' +
     'Groq routing requires GROQ_API_KEY and GROQ_FREE_PLAN=1 because its catalog does not expose free pricing.\n' +

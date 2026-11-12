@@ -2,21 +2,21 @@
 
 ## Current defaults
 
-| Model                         | Route policy                        | Use                                                           |
-| ----------------------------- | ----------------------------------- | ------------------------------------------------------------- |
-| Luna 6                        | `openai`                            | Paid; keep context under 272k tokens                          |
-| Verified free catalog entries | Selected by current provider policy | Bounded research, extraction, code search, and simple reviews |
+| Model                                                       | Route policy                                             | Use                                                                                                     |
+| ----------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b:free`) | Preferred `openrouter`; explicit `kilo` is also approved | Default free model for bounded research, extraction, and code review; request up to 4,000 output tokens |
+| Luna 6                                                      | `openai`                                                 | Paid; keep context under 272k tokens                                                                    |
+| Other verified free catalog entries                         | Fallback selected by current provider policy             | Bounded research, extraction, code search, and simple reviews                                           |
 
-There is no fixed free-model default. Catalogs and availability change; refresh them with
-`node scripts/free-model-pool.mjs --list` before use.
-
-**Nemotron models are disabled across all providers.** The shared policy filters IDs and catalog
-names containing `Nemotron` before listing, validation, or routing. Kilo and OpenCode adapters also
-reject direct matching model IDs before starting inference. Do not select them for direct provider
-or subagent requests. Re-enable only after an explicit operator request, code and documentation
-review, and a verified exact-route smoke.
-The canonical Nemotron 3 Ultra route is also seeded into Kilo, OpenRouter, and OpenCode quarantine
-for 168 hours; the shared disable remains in force after that quarantine expires.
+**Recommended free default:** use the exact Nemotron 3 Ultra `:free` route through OpenRouter. The
+runner ranks it first when the live catalog confirms exact-zero pricing and the account has quota.
+The exact route is also approved through Kilo's authenticated Gateway CLI. Other Nemotron variants
+and unapproved providers remain blocked. Refresh the live catalog with
+`node scripts/free-model-pool.mjs --list`; a catalog row does not prove current provider capacity.
+Use `--max-tokens 4000` for longer Nemotron research and reviews. OpenRouter sends this as its API
+output limit. Kilo has no CLI token-limit flag, so its adapter passes the value as a response-length
+instruction; the model controls the actual output length. Confirm non-empty text, the resolved
+model/provider, completion reason, and reported cost before relying on a result.
 
 The host-level `usageLimited` indicator can misreport GPT weekly usage and is not an authoritative
 capacity signal. At route selection, do not exclude a model/provider solely because of this flag.
@@ -29,7 +29,7 @@ Use live catalogs, not stale model lists. Prefer verified free models for bounde
 
 ## Routing
 
-- Catalog checks can run in parallel; inference is sequential and has a three-attempt ceiling per source. Nemotron is removed from every source before routing. Eligible fallback order is other OpenRouter models, other OpenCode models, then Groq; lower-ranked Kilo models are not fallback routes. A provider is skipped unless its route is configured and its catalog has a currently verified-free candidate.
+- Catalog checks can run in parallel; inference is sequential and has a three-attempt ceiling per source. The exact Nemotron 3 Ultra route ranks first on OpenRouter. Other Nemotron IDs and the exact model on unapproved providers are filtered before routing. Fallback order is other OpenRouter models, other OpenCode models, then Groq; Kilo remains an explicit route and is not an automatic fallback. A provider is skipped unless its route is configured and its catalog has a currently verified-free candidate.
 - Refresh candidates with `node scripts/free-model-pool.mjs --list`. Check the exact model/provider pair: Kilo and OpenRouter require exact-zero prices; OpenCode requires provider-owned `-free` IDs; Groq allows only `openai/gpt-oss-120b` after explicit Free-plan opt-in.
 - If Kilo is explicitly invoked, the adapter uses the installed Kilo Code CLI and its saved Gateway OAuth. It searches `PATH` and common editor extension directories; set `KILO_CLI` only when discovery misses the executable. The child receives runtime paths but not other provider credentials or `KILO_CONFIG_CONTENT`; the tool-free `free-completion` agent and `--pure` mode block agent tools and external plugins. The completion pool does not use lower-ranked Kilo catalog entries as fallback routes.
 - The Kilo CLI has no `--max-tokens` option. When the Kilo adapter is invoked, `--max-tokens` is a response-length instruction; the CLI/model controls the actual generation budget. Other model routes default to 1,200 tokens; Groq retains its 1,024-token reasoning floor. Catalog and quota requests use a separate 15-second timeout; completion routes use five minutes.

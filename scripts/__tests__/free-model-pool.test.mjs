@@ -141,10 +141,13 @@ describe('free model catalog filtering', () => {
     expect(catalogCandidates('kilo', data, quarantined).map((row) => row.model)).toEqual(['keep:free']);
   });
 
-  it('blocks Nemotron IDs and catalog names from every provider', () => {
+  it('allows only the exact Nemotron 3 Ultra free route on Kilo and OpenRouter', () => {
     const exactId = 'nvidia/nemotron-3-ultra-550b-a55b:free';
-    expect(catalogCandidates('kilo', [kiloRow(exactId)])).toEqual([]);
-    expect(catalogCandidates('openrouter', [openRouterRow('nvidia/nemotron-3-ultra-550b-a55b')])).toEqual([]);
+    expect(catalogCandidates('kilo', [kiloRow(exactId)]).map((row) => row.model)).toEqual([exactId]);
+    expect(
+      catalogCandidates('openrouter', [openRouterRow('nvidia/nemotron-3-ultra-550b-a55b')]).map((row) => row.model)
+    ).toEqual([exactId]);
+    expect(catalogCandidates('kilo', [kiloRow('nvidia/nemotron-3-ultra-550b-a55b-v2:free')])).toEqual([]);
     expect(
       catalogCandidates('opencode', [
         { id: 'nvidia/nemotron-alias-free', owned_by: 'opencode' },
@@ -160,7 +163,7 @@ describe('free model catalog filtering', () => {
         { source: 'openrouter', model: exactId },
         { source: 'opencode', model: 'vendor/renamed-free', name: 'Nemotron alias' },
       ])
-    ).toEqual([]);
+    ).toEqual([{ source: 'openrouter', model: exactId }]);
   });
 
   it('skips catalog rows whose model IDs are not strings', () => {
@@ -228,48 +231,57 @@ describe('free model catalog filtering', () => {
     }
   });
 
-  it('orders the preferred non-Nemotron Kilo model before other eligible candidates', () => {
-    const data = [kiloRow('unverified:free'), kiloRow('xingchen-agi/xing4.0-29b-a4b:free'), kiloRow('also-unverified')];
+  it('orders Nemotron 3 Ultra before other eligible Kilo candidates', () => {
+    const data = [
+      kiloRow('unverified:free'),
+      kiloRow('xingchen-agi/xing4.0-29b-a4b:free'),
+      kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'),
+      kiloRow('also-unverified'),
+    ];
     expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual([
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
       'xingchen-agi/xing4.0-29b-a4b:free',
       'unverified:free',
       'also-unverified',
     ]);
   });
 
-  it('orders the preferred non-Nemotron OpenRouter model first and preserves the remaining catalog order', () => {
+  it('orders Nemotron 3 Ultra first on OpenRouter and preserves the remaining catalog order', () => {
     const data = [
       openRouterRow('vendor/first'),
       openRouterRow('xingchen-agi/xing4.0-29b-a4b'),
+      openRouterRow('nvidia/nemotron-3-ultra-550b-a55b'),
       openRouterRow('vendor/last'),
     ];
     expect(catalogCandidates('openrouter', data).map((row) => row.model)).toEqual([
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
       'xingchen-agi/xing4.0-29b-a4b:free',
       'vendor/first:free',
       'vendor/last:free',
     ]);
   });
 
-  it('removes disabled Nemotron routes before ordering providers', () => {
+  it('ranks the approved Nemotron OpenRouter route first and excludes unapproved routes', () => {
     const nemotron = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     const routes = orderFreeModelRoutes([
       { source: 'groq', model: 'openai/gpt-oss-120b' },
       { source: 'kilo', model: 'kilo-lower:free' },
       { source: 'opencode', model: 'beam-free' },
+      { source: 'openrouter', model: nemotron },
       { source: 'openrouter', model: 'vendor/first:free' },
       { source: 'opencode', model: nemotron },
-      { source: 'openrouter', model: nemotron },
       { source: 'kilo', model: nemotron },
     ]);
 
     expect(routes.map(({ source, model }) => `${source}:${model}`)).toEqual([
+      `openrouter:${nemotron}`,
       'openrouter:vendor/first:free',
       'opencode:beam-free',
       'groq:openai/gpt-oss-120b',
     ]);
   });
 
-  it('blocks Nemotron matches by ID or display name, including fuzzy provider IDs', () => {
+  it('blocks Nemotron aliases by ID or display name while retaining the approved exact route', () => {
     const openCode = catalogCandidates('opencode', [
       {
         id: 'nvidia/nemotron-3-ultra-550b-a55b-free',
@@ -279,7 +291,7 @@ describe('free model catalog filtering', () => {
     ]);
     const openRouter = { source: 'openrouter', model: 'nvidia/nemotron-3-ultra-550b-a55b:free' };
 
-    expect(orderFreeModelRoutes([...openCode, openRouter])).toEqual([]);
+    expect(orderFreeModelRoutes([...openCode, openRouter])).toEqual([openRouter]);
   });
 
   it('rejects the exact Nemotron ID from the provider-owned OpenCode catalog', () => {
@@ -306,8 +318,8 @@ describe('free model catalog filtering', () => {
     expect(runOpenCode).not.toHaveBeenCalled();
   });
 
-  it('blocks Nemotron on every provider before any inference request', async () => {
-    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+  it('blocks noncanonical Nemotron variants before any inference request', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b-v2:free';
     const chat = vi.fn();
     const runKilo = vi.fn();
     const runOpenCode = vi.fn();
@@ -1031,7 +1043,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
   it('blocks Nemotron before starting the OpenCode CLI', async () => {
     const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     await expect(runOpenCodeCompletion({ command: '/missing-opencode', model, prompt: 'prompt' })).resolves.toEqual({
-      error: 'Nemotron models are disabled by free-model policy',
+      error: 'Nemotron model/provider pair is not approved by free-model policy',
     });
   });
 
@@ -1236,7 +1248,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     expect(chat.mock.calls[0][1].headers.Authorization).toBe('Bearer expired-key');
   });
 
-  it('never routes Nemotron or lower-ranked Kilo models through the completion pool', async () => {
+  it('keeps Kilo explicit instead of using it as a completion-pool fallback', async () => {
     const chat = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
