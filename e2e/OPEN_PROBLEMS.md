@@ -320,7 +320,7 @@ top-level setting) with a temporary config, on code commit
 256-pass/6-fail/2-skip measurement. The temporary config was diagnostic only; no permanent 2x
 project was added. Scoped reruns have since resolved documented failure groups, but the full suite
 has not been rerun. The export visual-regression spec passes all 13 tests at 1x in run
-`2026-11-12T08-04-02-394Z-96399` and at 2x in run `2026-11-12T08-03-18-332Z-95343`; its nine
+`2026-11-12T08-15-15-397Z-34319` and at 2x in run `2026-11-12T08-15-59-404Z-39450`; its nine
 failures in the initial focused 2x run are the same nine counted among the 45 previously
 unverified failures; the other four tests were already passing. This clears those nine, leaving 36
 of the original failures unverified. That 36 is a remainder from the old diagnostic, not a current
