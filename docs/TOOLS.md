@@ -518,8 +518,8 @@ The Quick Selection tool is a brush that paints a selection. Drag over an object
 
 - `W` — Selects the Quick Selection. The wand and the Quick Selection share W, so pressing it again re-selects this one rather than cycling; Shift+W is the cycling key. With no document open, W has no effect.
 - `Shift+W` — Switches between the Magic Wand and the Quick Selection tools. With no document open, Shift+W has no effect.
-- `[` — Decreases the brush size; with Shift, drops it to the minimum. With no document open, [ has no effect.
-- `]` — Increases the brush size; with Shift, raises it to the maximum. With no document open, ] has no effect.
+- `[` — Decreases the Quick Selection brush size. Adobe demonstrates this shortcut in its Quick Selection tutorial. With no document open, [ has no effect.
+- `]` — Increases the Quick Selection brush size. Adobe demonstrates this shortcut in its Quick Selection tutorial. With no document open, ] has no effect.
 
 **In this app:** `partial` — The app offers Size (1–500 px), Tolerance (0–100%), and Add or Subtract. Adobe Photoshop also provides New selection, brush Hardness, Spacing, Angle and Roundness, pen-pressure sensitivity, Sample All Layers, Enhance Edge and Select and Mask; those controls are not implemented here. Adobe’s current Quick Selection guide lists New, Add and Subtract, while its general Intersect guide says any selection tool can intersect and an Adobe tutorial explicitly includes Quick Selection; whether Photoshop Quick Selection offers Intersect is unresolved across these sources. The app reads the merged visible document canvas, so it always samples the composite rather than offering a layer-sampling choice. It samples the stroke at fixed 25% brush-diameter spacing and grows a 4-connected RGBA-tolerance flood fill from sparse points inside each round brush stamp. This is not Photoshop’s image-edge-following Quick Selection algorithm, and the app-only Tolerance control exposes that difference. Temporary Shift/Alt gestures and bracket-key resizing are not implemented in the app. Add and Subtract strokes begin from the active selection rasterized to binary pixel membership. Simple results are stored as compound contours; highly fragmented results use an authoritative packed one-bit mask. Fractional positioning and antialiased coverage are quantized when an existing selection is edited, because the app has no persistent 8-bit selection channel. Quick Selection commits its own `quick-selection` provenance, and preserves disconnected regions and holes in either representation.
 
@@ -553,6 +553,7 @@ Sources:
 - <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html>
 - <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html>
 - <https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html>
+- <https://www.adobe.com/learn/photoshop/web/use-quick-selection-tool>
 - <https://www.photoshopessentials.com/basics/selections/quick-selection-tool>
 - <https://cod.pressbooks.pub/photoshopmastery1250/chapter/selections>
 - <https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html>

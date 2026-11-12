@@ -114,8 +114,10 @@ function describeWorktree(finding) {
       '    If the owner has stopped and this is a stale marker, run the guarded recovery preflight from this worktree:',
       '      npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"',
       '    For dirty work, also try the read-only --preserve-matching-worktree preflight; it requires the index at HEAD and tracked files identical to AUTO_MERGE.',
-      '    Apply preserved work only with the exact marker-tree and worktree-status pins it prints, --apply, and --confirm-owner-stopped.',
-      '    Apply only after reviewing the proof and confirming the owner stopped.'
+      '    If tracked edits differ from AUTO_MERGE, use the read-only --preserve-divergent-worktree preflight; it still requires the index at HEAD and no other operation markers.',
+      '    Apply preserved work only with the original --expected-head plus these three printed values: --expected-auto-merge-tree, --expected-worktree-status-sha256, and --expected-worktree-content-sha256; include --apply --confirm-owner-stopped. It creates or verifies refs/recovery/auto-merge/<HEAD>/<TREE> before removing AUTO_MERGE and does not edit files or the index.',
+      '    Before any apply, manually verify the full root/descendant owner family is stopped, then check the live-session overlay, process tree/open files, and board for target writers or locks.',
+      '    --confirm-owner-stopped is a manual assertion; the recovery command does not verify owner liveness or board locks.'
     );
   }
 

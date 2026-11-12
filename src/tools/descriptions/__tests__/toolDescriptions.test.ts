@@ -159,11 +159,15 @@ describe('toolDescriptions', () => {
       /whether its Options bar also offers Intersect is unresolved across Adobe sources/i
     );
     const quickShortcutKeys = quick.shortcuts.map((shortcut) => shortcut.keys);
-    for (const key of ['[', ']', 'Shift+[', 'Shift+]']) {
-      expect(quickShortcutKeys).not.toContain(key);
-    }
+    expect(quickShortcutKeys).toContain('[');
+    expect(quickShortcutKeys).toContain(']');
+    const decreaseBrushShortcut = quick.shortcuts.find((shortcut) => shortcut.keys === '[');
+    const increaseBrushShortcut = quick.shortcuts.find((shortcut) => shortcut.keys === ']');
+    expect(decreaseBrushShortcut?.action).toMatch(/decreases the Quick Selection brush size/i);
+    expect(increaseBrushShortcut?.action).toMatch(/increases the Quick Selection brush size/i);
     expect(quick.sources).toEqual(
       expect.arrayContaining([
+        'https://www.adobe.com/learn/photoshop/web/use-quick-selection-tool',
         'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html',
         'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/select-area-intersected-by-other-selections.html',
         'https://helpx.adobe.com/lt/photoshop/how-to/add-to-subtract-from-selections.html',
