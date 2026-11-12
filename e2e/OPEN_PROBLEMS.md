@@ -334,7 +334,7 @@ test now moves half a document pixel inside that observed edge while keeping the
 it. The focused case passes at 1x in run `2026-11-11T22-01-18-781Z-29579` and at 2x in run
 `2026-11-11T22-01-31-849Z-56101`. The full suite has not been rerun after scoped fixes.
 `crop-history.spec.ts` now passes all 30 tests at both 1x and 2x (runs
-`2026-11-12T01-41-07-746Z-99385` and `2026-11-12T01-40-01-724Z-26759`). Its 18 earlier 2x
+`2026-11-12T01-49-13-174Z-47058` and `2026-11-12T01-45-10-479Z-34298`). Its 18 earlier 2x
 failures came from treating DPR-scaled backing pixels as document pixels and from crop guides
 contaminating a screenshot ink check; the spec now reads the logical pixel grid and checks restored
 document ink with the guide overlay hidden. The 612/76/1 full-suite count is still from the
