@@ -32,6 +32,7 @@ const eraserArgs = (overrides: Partial<EraserToolArgs> = {}): ToolArgs =>
     mode: 'block',
     lineWidth: 220,
     alpha: 0.35,
+    flow: 37,
     color: '#12ab34',
     points: [],
     ...overrides,
@@ -101,6 +102,7 @@ describe('saveLastSettings for the four new tools', () => {
       mode: 'block',
       lineWidth: 220,
       alpha: 0.35,
+      flow: 37,
       // The Brush tip's two fields. Persisting them is the point of the arm: a session that
       // reopens in Brush mode with the seeded hardness and spacing, whatever the user set.
       hardness: defaultSettings.eraser.hardness,
@@ -153,6 +155,7 @@ describe('saveLastSettings for the four new tools', () => {
     expect(restored.mode).toBe('block');
     expect(restored.lineWidth).toBe(220);
     expect(restored.alpha).toBe(0.35);
+    expect(restored.flow).toBe(37);
     expect(restored.color).toBe('#12ab34');
   });
 

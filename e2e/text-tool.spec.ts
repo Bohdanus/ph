@@ -1943,15 +1943,34 @@ test.describe('Text tool', () => {
     await expect(commitButton(page)).toBeEnabled();
     const editPreviewCapture = await captureCanvasScreenshot(page, box, testInfo, 'small-caps-affine-edit-preview');
     const editPreviewImage = await loadImageData(editPreviewCapture);
+    const editPreviewMask = inkMask(editPreviewImage, isRedInk);
+    const expectedEditedPixels = redInkPixels(editPreviewImage);
     await setOffscreenCanvasAvailable(page, true);
     await commitDraft(page);
     await expect(draftOverlay(page), 'the committed re-entry left a second draft overlay').toHaveCount(0);
     await expect(layerRows, 'editing transformed Type created a duplicate layer').toHaveCount(layerCountBeforeEdit);
-    await waitForCanvasPixels(page, canvasClip, hasRedPixels, { description: 'edited Type after affine re-entry' });
+    // The document view is intentionally still rotated here. `waitForCanvasPixels` derives a
+    // document-pixel mask and correctly rejects rotated views. Poll the visible screenshot
+    // until its red pixels exactly match the already-captured edit preview instead.
+    await expect
+      .poll(
+        async () => {
+          const visibleCanvas = await page.screenshot({ clip: canvasClip, scale: 'device', type: 'png' });
+          const image = await loadImageData(visibleCanvas);
+          const currentAgreement = inkMaskAgreement(editPreviewMask, inkMask(image, isRedInk));
+          return (
+            currentAgreement.score === 1 &&
+            currentAgreement.offsetX === 0 &&
+            currentAgreement.offsetY === 0 &&
+            countDifferentPixels(expectedEditedPixels, redInkPixels(image)) === 0
+          );
+        },
+        { timeout: TEXT_TOOL_TIMEOUT_MS, message: 'committed transformed Type did not match its edit preview' }
+      )
+      .toBe(true);
 
     const editedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-reentered-and-edited');
     const editedImage = await loadImageData(editedCapture);
-    const editPreviewMask = inkMask(editPreviewImage, isRedInk);
     const editedMask = inkMask(editedImage, isRedInk);
     const previewCommitAgreement = inkMaskAgreement(editPreviewMask, editedMask);
     expect(

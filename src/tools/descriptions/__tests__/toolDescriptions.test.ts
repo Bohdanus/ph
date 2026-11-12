@@ -158,10 +158,10 @@ describe('toolDescriptions', () => {
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
       /whether its Options bar also offers Intersect is unresolved across Adobe sources/i
     );
-    const quickShortcutKeys = quick.shortcuts.map((shortcut) => shortcut.keys);
-    for (const key of ['[', ']', 'Shift+[', 'Shift+]']) {
-      expect(quickShortcutKeys).not.toContain(key);
-    }
+    // The shortcut list records Photoshop behavior; appNotes records that this app does not yet
+    // implement bracket-key resizing. Keep those two claims separate instead of deleting the
+    // source behavior to make the app look more complete.
+    expect(quick.shortcuts.map((shortcut) => shortcut.keys)).toEqual(['W', 'Shift+W', '[', ']']);
     expect(quick.sources).toEqual(
       expect.arrayContaining([
         'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html',
