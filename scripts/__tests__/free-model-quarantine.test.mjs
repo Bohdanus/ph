@@ -502,6 +502,14 @@ describe('free-model quarantine lifecycle', () => {
       expect(await runQuarantineCli(['list'], output, { quarantineFile: filePath })).toBe(0);
       expect(JSON.parse(output.stdout.value).entries['openrouter:vendor/model:free'].reason).toBe('rate_limit');
 
+      output.stdout.value = '';
+      expect(await runQuarantineCli(['status'], output, { quarantineFile: filePath })).toBe(0);
+      expect(JSON.parse(output.stdout.value)).toMatchObject({
+        checkedAt: expect.any(String),
+        active: [expect.objectContaining({ key: 'openrouter:vendor/model:free', reason: 'rate_limit' })],
+      });
+      expect(JSON.parse(output.stdout.value).active[0].remainingMs).toBeGreaterThan(0);
+
       expect(
         await runQuarantineCli(['release', '--source', 'openrouter', '--model', 'vendor/model:free'], output, {
           quarantineFile: filePath,
@@ -549,6 +557,47 @@ describe('free-model quarantine lifecycle', () => {
       await writeQuarantineState(expiredState, filePath);
       expect(await runQuarantineCli(['prune'], output, { quarantineFile: filePath })).toBe(0);
       expect((await readQuarantineState(filePath)).entries).toEqual({});
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('reports only unexpired entries in dynamic quarantine status', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-status-'));
+    const filePath = join(directory, 'state.json');
+    const now = Date.parse('2026-11-12T12:00:00.000Z');
+    const state = { schemaVersion: 1, migration_v2: true, migration_v3: true, entries: {} };
+    upsertQuarantine(state, { source: 'kilo', model: 'active:free', reason: 'rate_limit', hours: 1, now });
+    upsertQuarantine(state, {
+      source: 'openrouter',
+      model: 'expired:free',
+      reason: 'provider_outage',
+      hours: 1,
+      now: now - 2 * 60 * 60 * 1000,
+    });
+    await writeQuarantineState(state, filePath);
+    const output = {
+      stdout: {
+        value: '',
+        write(text) {
+          this.value += text;
+        },
+      },
+      stderr: { write() {} },
+    };
+
+    try {
+      expect(await runQuarantineCli(['status'], output, { quarantineFile: filePath, now: () => now })).toBe(0);
+      expect(JSON.parse(output.stdout.value)).toEqual({
+        checkedAt: new Date(now).toISOString(),
+        active: [
+          expect.objectContaining({
+            key: 'kilo:active:free',
+            expiresAt: new Date(now + 60 * 60 * 1000).toISOString(),
+            remainingMs: 60 * 60 * 1000,
+          }),
+        ],
+      });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
