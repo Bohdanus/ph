@@ -13,10 +13,12 @@ const baselineCaptureWorkflow = readFileSync(
 const playwrightConfig = readFileSync(join(testDirectory, '../../playwright.config.ts'), 'utf8');
 const packageManifest = JSON.parse(readFileSync(join(testDirectory, '../../package.json'), 'utf8'));
 const packageLock = JSON.parse(readFileSync(join(testDirectory, '../../package-lock.json'), 'utf8'));
+const e2eVitestConfig = readFileSync(join(testDirectory, '../../vitest.e2e.config.ts'), 'utf8');
+// These source scans inventory direct test-registration forms; they are drift tripwires, not AST validation.
 const WINDOWS_ONLY_SKIP_PATTERN =
-  /\b(?:it|test|describe|suite)\s*\.\s*skipIf\s*\(\s*process\s*\.\s*platform\s*!==\s*(['"])win32\1\s*\)/g;
+  /\b(?:it|test|describe|suite)\s*\.\s*skipIf\s*\(\s*process\s*\.\s*platform\s*!==\s*(['"])win32\1\s*\)(?=\s*\()/g;
 const WINDOWS_EXCLUDED_SKIP_PATTERN =
-  /\b(?:it|test|describe|suite)\s*\.\s*skipIf\s*\(\s*process\s*\.\s*platform\s*===\s*['"]win32['"]\s*\)|\(\s*process\s*\.\s*platform\s*===\s*['"]win32['"]\s*\?\s*(?:it|test|describe|suite)\s*\.\s*skip\s*:\s*(?:it|test|describe|suite)\s*\)/g;
+  /(?:\b(?:it|test|describe|suite)\s*\.\s*skipIf\s*\(\s*process\s*\.\s*platform\s*===\s*(['"])win32\1\s*\)|\(\s*process\s*\.\s*platform\s*===\s*(['"])win32\2\s*\?\s*(?:it|test|describe|suite)\s*\.\s*skip\s*:\s*(?:it|test|describe|suite)\s*\))(?=\s*\()/g;
 // This is nominal job headroom: GitHub's clock includes setup while Playwright's starts at test launch.
 // The reserved budget must cover setup and report/upload work across each workflow.
 const minimumJobHeadroomMinutes = 10;
@@ -110,9 +112,8 @@ function readPlaywrightRunCommands(jobBlock) {
     .filter((command) => /(?:npx playwright test|scripts\/e2e-run\.mjs|test:e2e)/.test(command));
 }
 
-function readConditionalTestSkipCounts(testRoots, pattern) {
+function readConditionalTestSkipCounts(testRoots, pattern, testFilePattern = /\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/) {
   const repositoryRoot = join(testDirectory, '../..');
-  const testFilePattern = /\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/;
   const files = [];
 
   const visit = (directory) => {
@@ -147,10 +148,12 @@ describe('E2E timeout contract', () => {
     const condition = ['process.platform', '===', "'win32'"].join(' ');
     const directSkip = ['it.skipIf(', condition, ")('Windows-excluded test', () => {})"].join('');
     const ternarySkip = `(${condition} ? test.skip : test)('Windows-excluded test', () => {})`;
+    const uninvokedTernary = `(${condition} ? test.skip : test);`;
 
     expect(
       [directSkip, ternarySkip].map((source) => [...source.matchAll(WINDOWS_EXCLUDED_SKIP_PATTERN)].length)
     ).toEqual([1, 1]);
+    expect([...uninvokedTernary.matchAll(WINDOWS_EXCLUDED_SKIP_PATTERN)]).toHaveLength(0);
   });
 
   it('reads the CI timeout values when the expression is formatted across lines', () => {
@@ -178,17 +181,26 @@ describe('E2E timeout contract', () => {
     const job = readJobBlock(ciWorkflow, 'windows-platform-tests');
     const runCommands = [...job.matchAll(/^[ \t]+run:[ \t]+([^\r\n]*)$/gm)].map((match) => match[1]);
     expect(job).toContain('runs-on: windows-latest');
+    expect(job).toMatch(/^    needs: validate-dispatch$/m);
     expect(job).toContain('ref: ${{ needs.validate-dispatch.outputs.source_sha }}');
     expect(job).toContain('persist-credentials: false');
     expect(runCommands).toEqual(['npm ci', 'npm run test -- scripts/__tests__', 'npm run test:e2e:unit']);
-    const testRoots = ['src', 'scripts/__tests__', 'e2e'];
-    expect(readConditionalTestSkipCounts(testRoots, WINDOWS_ONLY_SKIP_PATTERN)).toEqual({
+    const scriptTestRoot = ['scripts/__tests__'];
+    const e2eUnitTestRoot = ['e2e'];
+    const e2eUnitFilePattern = /\.unit\.test\.ts$/;
+    expect(e2eVitestConfig).toContain("include: ['e2e/**/__tests__/**/*.unit.test.ts']");
+
+    for (const pattern of [WINDOWS_ONLY_SKIP_PATTERN, WINDOWS_EXCLUDED_SKIP_PATTERN]) {
+      expect(readConditionalTestSkipCounts(['src'], pattern)).toEqual({});
+      expect(readConditionalTestSkipCounts(e2eUnitTestRoot, pattern, e2eUnitFilePattern)).toEqual({});
+    }
+    expect(readConditionalTestSkipCounts(scriptTestRoot, WINDOWS_ONLY_SKIP_PATTERN)).toEqual({
       'scripts/__tests__/free-model-pool.test.mjs': 1,
       'scripts/__tests__/quiet-command.test.mjs': 2,
       'scripts/__tests__/windows-command-shim.test.mjs': 9,
       'scripts/__tests__/worktree-inventory.test.mjs': 1,
     });
-    expect(readConditionalTestSkipCounts(testRoots, WINDOWS_EXCLUDED_SKIP_PATTERN)).toEqual({
+    expect(readConditionalTestSkipCounts(scriptTestRoot, WINDOWS_EXCLUDED_SKIP_PATTERN)).toEqual({
       'scripts/__tests__/free-chat-search-agent.test.mjs': 1,
       'scripts/__tests__/merge-takeover-guard.test.mjs': 11,
       'scripts/__tests__/recover-stale-auto-merge.test.mjs': 1,
@@ -197,6 +209,8 @@ describe('E2E timeout contract', () => {
     });
 
     const gate = readJobBlock(ciWorkflow, 'ci');
+    expect(gate).toContain('if: ${{ always() }}');
+    expect(gate).toMatch(/^    needs:.*\bwindows-platform-tests\b/m);
     expect(gate).toContain('windows-platform-tests');
     expect(gate).toContain('WINDOWS_PLATFORM_TESTS_RESULT: ${{ needs.windows-platform-tests.result }}');
     expect(gate).toContain('[[ "$WINDOWS_PLATFORM_TESTS_RESULT" == "success" ]]');
