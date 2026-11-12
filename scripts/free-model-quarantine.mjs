@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import {
   DEFAULT_QUARANTINE_FILE,
+  AUTOMATIC_QUARANTINE_REASONS,
   loadQuarantineState,
   loadQuarantineStateLocked,
   MAX_QUARANTINE_HOURS,
-  QUARANTINE_REASONS,
   QUARANTINE_SOURCES,
+  quarantineKey,
   releaseQuarantine,
   removeExpiredQuarantines,
   upsertQuarantine,
@@ -76,7 +77,7 @@ export async function main(args = process.argv.slice(2), io = process, deps = {}
       !options.source ||
       !QUARANTINE_SOURCES.has(options.source) ||
       !options.model ||
-      !QUARANTINE_REASONS.has(options.reason) ||
+      !AUTOMATIC_QUARANTINE_REASONS.has(options.reason) ||
       !Number.isFinite(hours) ||
       hours <= 0 ||
       hours > MAX_QUARANTINE_HOURS
@@ -109,6 +110,13 @@ export async function main(args = process.argv.slice(2), io = process, deps = {}
           reason: options.reason,
           ...(hours === undefined ? {} : { hours }),
         });
+        if (key === null) {
+          const existing = state.entries[quarantineKey(options.source, options.model)];
+          return {
+            code: 0,
+            message: `Kept active operator ban ${existing.reason} for ${options.source}:${options.model} until ${existing.expiresAt}; no automatic quarantine added\n`,
+          };
+        }
         await saveState(state);
         return { code: 0, message: `Quarantined ${key} until ${state.entries[key].expiresAt}\n` };
       }
