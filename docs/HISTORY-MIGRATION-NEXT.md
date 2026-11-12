@@ -147,9 +147,13 @@ commits or alter logical history authority.
    The measured layer bounds agree. At the reported source/backdrop samples, raw source and backdrop
    values agree; tight-bitmap premultiplied pixels and the fresh-canvas Invert result are exact. The
    raw frame surfaces differ only at alpha-boundary pixels (101 bytes/91 pixels at the affine cursor,
-   94 bytes/82 pixels after the fractional frame), but this fixture does not yet compare those frame
-   surfaces in premultiplied space. That is the next comparison needed to tell straight-alpha
-   readback variation from a meaningful placement difference. Keep the gate closed and test the
+   94 bytes/82 pixels after the fractional frame). The current candidate adds diagnostic counts and
+   samples for these frame surfaces after premultiplication, for both HTMLCanvas and OffscreenCanvas
+   readbacks; those new values have not yet been collected in a mirror run. Use the attached
+   `framePremultipliedDifferingBytes` and `offscreenFramePremultipliedDifferingBytes` with their
+   samples to check whether the raw differences persist after premultiplication. A zero result would
+   support straight-alpha readback variation for these surfaces and inputs; nonzero differences need
+   coordinate and boundary analysis. Keep the gate closed and test the
    transparent-backdrop and direct frame-surface-copy versus tight-bitmap-placement controls.
    Check operation order and intermediate alpha/premultiplication around
    `drawEvaluatedPresentation()` and `renderExportCanvas()`; `durable-compositor.ts` explicitly
@@ -183,8 +187,8 @@ not impose a dependency between them.
    premultiplied pixels. The Invert check pins a fresh-canvas consumer readback, not raw OffscreenCanvas
    backing-store identity. Adapter measurements are intentionally diagnostic because the normal gate
    refuses retained operations.
-   Add or inspect a premultiplied comparison of the legacy and durable frame surfaces, then use the
-   fixture's document-coordinate pixel samples, source/backdrop RGBA, exact bounds, and
+   Run the mirror fixture with the new premultiplied frame diagnostics and use its
+   document-coordinate pixel samples, source/backdrop RGBA, exact bounds, and
    opacity-only/multiply-only controls at both cursors to identify the first meaningful divergence.
    Compare the direct original-source draw, materialized bitmap at matching frame-grid coordinates,
    and projected-record draw. Hold canvas type, transform, clipping, layer order, and destination

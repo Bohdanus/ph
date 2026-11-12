@@ -1058,6 +1058,15 @@ type CropParityFramePixelSample = Readonly<
   PixelDifference['differingSamples'][number] & { documentX: number; documentY: number }
 >;
 
+type CropParityPremultipliedFramePixelSample = Readonly<
+  CropParityFramePixelSample & {
+    legacyAlpha: number | null;
+    durableAlpha: number | null;
+    legacyPremultiplied: number | null;
+    durablePremultiplied: number | null;
+  }
+>;
+
 type CropParityTightPixelSample = Readonly<
   CropParityFramePixelSample & {
     legacyPremultiplied: number | null;
@@ -1092,7 +1101,13 @@ type CropParityLayerComparison = Readonly<{
   materializedBounds: CropParityFrame;
   bitmapSize: Readonly<{ width: number; height: number }>;
   frameDifferingBytes: number;
+  framePremultipliedDifferingBytes: number;
+  framePremultipliedDifferingPixels: number;
+  framePremultipliedDifferingSamples: readonly CropParityPremultipliedFramePixelSample[];
   offscreenFrameDifferingBytes: number;
+  offscreenFramePremultipliedDifferingBytes: number;
+  offscreenFramePremultipliedDifferingPixels: number;
+  offscreenFramePremultipliedDifferingSamples: readonly CropParityPremultipliedFramePixelSample[];
   frameDifferingPixels: number;
   frameNonEdgeDifferingPixels: number;
   offscreenFrameDifferingPixels: number;
@@ -1964,6 +1979,55 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             let offscreenFrameNonEdgeDifferingPixels = 0;
             let lastOffscreenFrameDifferingPixel = -1;
             const offscreenFrameDifferingSamples: CropParityFramePixelSample[] = [];
+            const comparePremultipliedFramePixels = (expected: Uint8ClampedArray, received: Uint8ClampedArray) => {
+              const expectedLength = frameSize.width * frameSize.height * 4;
+              if (expected.length !== expectedLength || received.length !== expectedLength) {
+                throw new Error(
+                  `Premultiplied frame comparison has ${expected.length}/${received.length} bytes; expected ${expectedLength} for ${frameSize.width}x${frameSize.height}`
+                );
+              }
+              let premultipliedDifferingBytes = 0;
+              let premultipliedDifferingPixels = 0;
+              let lastPremultipliedDifferingPixel = -1;
+              const premultipliedDifferingSamples: CropParityPremultipliedFramePixelSample[] = [];
+              for (let byte = 0; byte < expectedLength; byte += 1) {
+                const pixel = Math.floor(byte / 4);
+                const legacy = expected[byte]!;
+                const durable = received[byte]!;
+                const legacyAlpha = expected[pixel * 4 + 3]!;
+                const durableAlpha = received[pixel * 4 + 3]!;
+                const legacyPremultiplied = byte % 4 === 3 ? legacy : Math.round((legacy * legacyAlpha) / 255);
+                const durablePremultiplied = byte % 4 === 3 ? durable : Math.round((durable * durableAlpha) / 255);
+                if (legacyPremultiplied === durablePremultiplied) continue;
+                premultipliedDifferingBytes += 1;
+                if (pixel !== lastPremultipliedDifferingPixel) {
+                  premultipliedDifferingPixels += 1;
+                  lastPremultipliedDifferingPixel = pixel;
+                }
+                if (premultipliedDifferingSamples.length < 8) {
+                  const x = pixel % frameSize.width;
+                  const y = Math.floor(pixel / frameSize.width);
+                  premultipliedDifferingSamples.push({
+                    x,
+                    y,
+                    documentX: frame.x + x,
+                    documentY: frame.y + y,
+                    channel: frameChannels[byte % 4],
+                    legacy,
+                    durable,
+                    legacyAlpha,
+                    durableAlpha,
+                    legacyPremultiplied,
+                    durablePremultiplied,
+                  });
+                }
+              }
+              return {
+                differingBytes: premultipliedDifferingBytes,
+                differingPixels: premultipliedDifferingPixels,
+                differingSamples: premultipliedDifferingSamples,
+              };
+            };
             for (let byte = 0; byte < legacyFramePixels.length; byte += 1) {
               const legacy = legacyFramePixels[byte] ?? null;
               const durable = durableFramePixels[byte] ?? null;
@@ -2030,6 +2094,11 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 });
               }
             }
+            const framePremultipliedComparison = comparePremultipliedFramePixels(legacyFramePixels, durableFramePixels);
+            const offscreenFramePremultipliedComparison = comparePremultipliedFramePixels(
+              legacyOffscreenPixels,
+              durableOffscreenPixels
+            );
             return {
               layerId,
               stage,
@@ -2064,7 +2133,13 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 height: materializedLayer.bitmap.height,
               },
               frameDifferingBytes,
+              framePremultipliedDifferingBytes: framePremultipliedComparison.differingBytes,
+              framePremultipliedDifferingPixels: framePremultipliedComparison.differingPixels,
+              framePremultipliedDifferingSamples: framePremultipliedComparison.differingSamples,
               offscreenFrameDifferingBytes,
+              offscreenFramePremultipliedDifferingBytes: offscreenFramePremultipliedComparison.differingBytes,
+              offscreenFramePremultipliedDifferingPixels: offscreenFramePremultipliedComparison.differingPixels,
+              offscreenFramePremultipliedDifferingSamples: offscreenFramePremultipliedComparison.differingSamples,
               frameDifferingPixels,
               frameNonEdgeDifferingPixels,
               offscreenFrameDifferingPixels,
@@ -4632,10 +4707,16 @@ test.describe('Crop history', () => {
           materializedBounds: comparison.materializedBounds,
           bitmapSize: comparison.bitmapSize,
           frameDifferingBytes: comparison.frameDifferingBytes,
+          framePremultipliedDifferingBytes: comparison.framePremultipliedDifferingBytes,
+          framePremultipliedDifferingPixels: comparison.framePremultipliedDifferingPixels,
+          framePremultipliedDifferingSamples: comparison.framePremultipliedDifferingSamples,
           frameDifferingPixels: comparison.frameDifferingPixels,
           frameNonEdgeDifferingPixels: comparison.frameNonEdgeDifferingPixels,
           frameDifferingSamples: comparison.frameDifferingSamples,
           offscreenFrameDifferingBytes: comparison.offscreenFrameDifferingBytes,
+          offscreenFramePremultipliedDifferingBytes: comparison.offscreenFramePremultipliedDifferingBytes,
+          offscreenFramePremultipliedDifferingPixels: comparison.offscreenFramePremultipliedDifferingPixels,
+          offscreenFramePremultipliedDifferingSamples: comparison.offscreenFramePremultipliedDifferingSamples,
           offscreenFrameDifferingPixels: comparison.offscreenFrameDifferingPixels,
           offscreenFrameNonEdgeDifferingPixels: comparison.offscreenFrameNonEdgeDifferingPixels,
           offscreenFrameDifferingSamples: comparison.offscreenFrameDifferingSamples,
