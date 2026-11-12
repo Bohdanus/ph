@@ -4,7 +4,7 @@ import type { RefObject } from 'react';
 import { CloneStampToolArea } from '../CloneStampToolArea.tsx';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
 import type { Selection } from '../../../contexts/general-types.ts';
-import type { CloneStampToolArgs } from '../../../tools/cloneStamp.ts';
+import { CLONE_STAMP_FLOW_DEFAULT, type CloneStampToolArgs } from '../../../tools/cloneStamp.ts';
 import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
@@ -207,6 +207,7 @@ const cloneArgs = (overrides: Partial<CloneStampToolArgs> = {}): CloneStampToolA
   size: 33,
   hardness: 40,
   alpha: 0.75,
+  flow: 100,
   source: { x: 150, y: 90 },
   aligned: true,
   points: [],
@@ -590,20 +591,21 @@ describe('CloneStampToolArea', () => {
     });
 
     it('hands the processor the Clone Stamp settings unchanged', () => {
-      toolState.toolArgs = cloneArgs({ size: 47, hardness: 10, alpha: 0.4, aligned: false });
+      toolState.toolArgs = cloneArgs({ size: 47, hardness: 10, alpha: 0.4, flow: 37, aligned: false });
       const { toolArea } = renderArea();
 
       stroke(toolArea, [20, 20], [100, 60]);
 
       // The whole args object, not only `source` and `points`. `cloneStamp` reads `size` as the
-      // tip DIAMETER, `hardness` as the 0-100 falloff and `alpha` as the per-dab copy strength it
-      // maps onto the engine's `opacity`; a spread that dropped one, or spread the rebased points
-      // over them, would clone with the wrong tip and no assertion here would notice.
+      // tip DIAMETER, `hardness` as the 0-100 falloff, `alpha` as the Opacity ceiling and `flow`
+      // as the per-stroke deposition rate; a spread that dropped one, or spread the rebased
+      // points over them, would clone with the wrong tool behavior and no assertion here would notice.
       expect(commitCalls()[0].toolArgs).toEqual({
         toolName: 'clone-stamp',
         size: 47,
         hardness: 10,
         alpha: 0.4,
+        flow: 37,
         source: { x: 150, y: 90 },
         aligned: false,
         samplingOffset: { x: 130, y: 70 },
@@ -612,6 +614,15 @@ describe('CloneStampToolArea', () => {
           { x: 100, y: 60 },
         ],
       });
+    });
+
+    it('fills the app Flow default when settings predate the Flow field', () => {
+      toolState.toolArgs = cloneArgs({ flow: undefined });
+      const { toolArea } = renderArea();
+
+      stroke(toolArea, [20, 20], [100, 60]);
+
+      expect(commitCalls()[0].toolArgs.flow).toBe(CLONE_STAMP_FLOW_DEFAULT);
     });
 
     it('rebases onto the EVALUATED extent of a transformed layer rather than its raw pos', () => {

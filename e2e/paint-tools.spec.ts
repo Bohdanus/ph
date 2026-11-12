@@ -132,6 +132,7 @@ const CLONE_STAMP_CONTROLS: readonly OptionsControl[] = [
   'slider:Size',
   'slider:Hardness',
   'slider:Opacity',
+  'slider:Flow',
   'checkbox:Aligned',
 ];
 
@@ -1114,11 +1115,11 @@ test.describe('Paint tools', () => {
       return workspaceGeometry(page);
     }
 
-    async function altClickSource(page: Page, geometry: Geometry): Promise<void> {
+    async function altClickSource(page: Page, geometry: Geometry, source: DocPoint = SOURCE): Promise<void> {
       // `CloneStampToolArea.tsx:186-195` accepts EITHER the Alt modifier on the pointer event or
       // a tracked Alt keypress, so the real key is held and the app sees both.
       await page.keyboard.down('Alt');
-      const point = geometry.toCss(SOURCE);
+      const point = geometry.toCss(source);
       await page.mouse.click(point.x, point.y);
       await page.keyboard.up('Alt');
     }
@@ -1207,6 +1208,66 @@ test.describe('Paint tools', () => {
         2,
         'an unaligned stroke should begin at the original source and move with its destination'
       );
+    });
+
+    test('Flow builds to the Opacity ceiling within a stroke and starts building again on the next stroke', async ({
+      page,
+    }, testInfo) => {
+      const geometry = await paintRampBand(page, LAYER_RIGHT);
+      const source = { x: 380, y: BAND_Y };
+      const target = { x: 200, y: BAND_Y };
+      const probe = { x: 215, y: BAND_Y };
+      const initialLevel = await readLevel(page, geometry, probe);
+      const sampledLevel = await readLevel(page, geometry, { x: 395, y: BAND_Y });
+      expect(sampledLevel - initialLevel, 'the ramp must separate the sampled source from the target').toBeGreaterThan(
+        50
+      );
+
+      const armed = await selectCloneStamp(page);
+      await setSlider(page, 'Size', '40');
+      await setSlider(page, 'Opacity', '40');
+      await setSlider(page, 'Flow', '20');
+      await altClickSource(page, armed, source);
+      await strokeDocument(page, armed, target, { x: target.x + 30, y: target.y }, 12);
+
+      await expect
+        .poll(() => readLevel(page, armed, probe), {
+          message: 'overlapping Flow dabs should visibly build the clone',
+          timeout: PIXEL_POLL_TIMEOUT_MS,
+          intervals: [PIXEL_POLL_INTERVAL_MS],
+        })
+        .not.toBe(initialLevel);
+      const cappedLevel = await readLevel(page, armed, probe);
+      const firstCoverage = (cappedLevel - initialLevel) / (sampledLevel - initialLevel);
+      expect(
+        firstCoverage,
+        'one stroke must build near 40% and never cross its Opacity ceiling'
+      ).toBeGreaterThanOrEqual(0.36);
+      expect(firstCoverage, 'repeated dabs within one stroke must stop at the Opacity ceiling').toBeLessThanOrEqual(
+        0.45
+      );
+
+      await strokeDocument(page, armed, target, target, 1);
+      const secondStrokeLevel = await readLevel(page, armed, probe);
+      const totalCoverage = (secondStrokeLevel - initialLevel) / (sampledLevel - initialLevel);
+      expect(totalCoverage, 'a new stroke gets a fresh Flow budget above the previous stroke ceiling').toBeGreaterThan(
+        firstCoverage + 0.08
+      );
+      expect(totalCoverage, 'the new stroke still deposits less than a full opaque copy').toBeLessThan(0.65);
+
+      await assertUndoRestoresPixels(
+        page,
+        armed,
+        probe,
+        cappedLevel,
+        secondStrokeLevel,
+        'Clone Stamp Flow stroke-local ceiling'
+      );
+      const screenshot = await page.screenshot({
+        fullPage: true,
+        path: testInfo.outputPath('clone-stamp-flow-ceiling.png'),
+      });
+      await testInfo.attach('clone-stamp-flow-ceiling.png', { contentType: 'image/png', body: screenshot });
     });
 
     test('Aligned continues from the latest sample while unaligned restarts at the original source', async ({
