@@ -374,22 +374,31 @@ describe('free model catalog filtering', () => {
   });
 
   it('refuses an oversized catalog body', async () => {
-    const fetchImpl = readableFetch(() => new Response(Buffer.alloc(MAX_CATALOG_RESPONSE_BYTES + 1)));
-    const errors = [];
-    const candidates = await loadCatalogs({
-      fetchImpl,
-      openRouterKey: '',
-      onCatalogError: (_source, error) => errors.push(error.message),
-    });
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-catalog-oversized-'));
+    const quarantineFile = join(directory, 'quarantine.json');
 
-    expect(candidates).toEqual([]);
-    expect(errors).toHaveLength(2);
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(`${MAX_CATALOG_RESPONSE_BYTES}-byte limit`),
-        expect.stringContaining('opencode catalog exceeds'),
-      ])
-    );
+    try {
+      await writeFile(quarantineFile, JSON.stringify({ schemaVersion: 1, entries: {} }), 'utf8');
+      const fetchImpl = readableFetch(() => new Response(Buffer.alloc(MAX_CATALOG_RESPONSE_BYTES + 1)));
+      const errors = [];
+      const candidates = await loadCatalogs({
+        fetchImpl,
+        openRouterKey: '',
+        quarantineFile,
+        onCatalogError: (_source, error) => errors.push(error.message),
+      });
+
+      expect(candidates).toEqual([]);
+      expect(errors).toHaveLength(2);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(`${MAX_CATALOG_RESPONSE_BYTES}-byte limit`),
+          expect.stringContaining('opencode catalog exceeds'),
+        ])
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 

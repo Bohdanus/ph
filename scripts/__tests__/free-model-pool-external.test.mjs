@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -306,30 +306,39 @@ describe('OpenRouter quota probe', () => {
 
 describe('keyless free-model catalog CLI', () => {
   it('lists public catalogs and marks providers without credentials as unconfigured', async () => {
-    const fetchImpl = catalogFetch({
-      kilo: [kiloRow('kilo-free')],
-      openrouter: [openRouterRow('router-free')],
-      chat: vi.fn(),
-    });
-    const stdout = { write: vi.fn() };
-    const stderr = { write: vi.fn() };
-    const code = await main(['--list'], {
-      fetchImpl,
-      openRouterKey: '',
-      kiloCommand: 'kilo-test',
-      groqApiKey: '',
-      groqApiKeys: [],
-      groqFreePlan: false,
-      initializeLegacyQuarantine: false,
-      stdout,
-      stderr,
-    });
-    const rows = JSON.parse(stdout.write.mock.calls[0][0]);
-    expect(code).toBe(0);
-    expect(rows).toEqual([
-      { source: 'kilo', model: 'kilo-free', name: 'kilo-free', configured: null },
-      { source: 'openrouter', model: 'router-free:free', name: 'router-free:free', configured: false },
-    ]);
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-keyless-cli-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+
+    try {
+      await writeFile(quarantineFile, JSON.stringify({ schemaVersion: 1, entries: {} }), 'utf8');
+      const fetchImpl = catalogFetch({
+        kilo: [kiloRow('kilo-free')],
+        openrouter: [openRouterRow('router-free')],
+        chat: vi.fn(),
+      });
+      const stdout = { write: vi.fn() };
+      const stderr = { write: vi.fn() };
+      const code = await main(['--list'], {
+        fetchImpl,
+        openRouterKey: '',
+        kiloCommand: 'kilo-test',
+        groqApiKey: '',
+        groqApiKeys: [],
+        groqFreePlan: false,
+        initializeLegacyQuarantine: false,
+        quarantineFile,
+        stdout,
+        stderr,
+      });
+      const rows = JSON.parse(stdout.write.mock.calls[0][0]);
+      expect(code).toBe(0);
+      expect(rows).toEqual([
+        { source: 'kilo', model: 'kilo-free', name: 'kilo-free', configured: null },
+        { source: 'openrouter', model: 'router-free:free', name: 'router-free:free', configured: false },
+      ]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 
