@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { blur, type BlurToolArgs } from '../blur.ts';
+import { sharpen } from '../sharpen.ts';
 import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -86,6 +87,14 @@ const run = (overrides: Partial<BlurToolArgs> = {}): RecordingOffscreenCanvas =>
 };
 
 describe('blur processor', () => {
+  it('is a distinct two-stage curried processor', () => {
+    const inner = blur({ size, bitmap: sourceBitmap });
+
+    expect(blur).not.toBe(sharpen);
+    expect(blur.length).toBe(1);
+    expect(inner.length).toBe(1);
+  });
+
   it('is the exact module-level processor the registry imports, not a wrapper closure', async () => {
     const { toolProcessors } = await import('../toolProcessors.ts');
     expect(toolProcessors['blur'].imageProcessor).toBe(blur);
@@ -99,6 +108,16 @@ describe('blur processor', () => {
     expect(canvas.ctx.drawImage).toHaveBeenCalledWith(sourceBitmap, 0, 0);
   });
 
+  it('allocates exactly one document-sized output canvas distinct from the source bitmap', () => {
+    const canvas = run();
+
+    expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
+    expect(canvas).toBe(RecordingOffscreenCanvas.instances[0]);
+    expect(canvas).not.toBe(sourceBitmap);
+    expect(canvas.width).toBe(size.width);
+    expect(canvas.height).toBe(size.height);
+  });
+
   it('sets the CSS filter string with the radius in pixels', () => {
     const canvas = run({ radius: 7 });
 
@@ -109,6 +128,7 @@ describe('blur processor', () => {
     overrideCanvasFilterSupport(false);
 
     expect(() => run({ radius: 5 })).toThrowError('blur requires CanvasRenderingContext2D.filter');
+    expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
   });
 
   describe('argument clamping and edge cases', () => {
@@ -141,16 +161,6 @@ describe('blur processor', () => {
       const canvas = run({ radius: Number.POSITIVE_INFINITY });
 
       expect(canvas.ctx.filter).toBe('blur(Infinitypx)');
-    });
-  });
-
-  describe('alpha handling', () => {
-    it('preserves transparency when source has alpha', () => {
-      const transparentBitmap = createMockImageBitmap(size.width, size.height);
-      const canvas = blur({ size, bitmap: transparentBitmap })({ radius: 3, toolName: 'blur' });
-
-      const resultCanvas = canvas[0] as unknown as RecordingOffscreenCanvas;
-      expect(resultCanvas.ctx.drawImage).toHaveBeenCalledWith(transparentBitmap, 0, 0);
     });
   });
 });

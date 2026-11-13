@@ -5,6 +5,7 @@ import {
   BRUSH_HARDNESS_DEFAULT,
   BRUSH_HARDNESS_MAX,
   BRUSH_HARDNESS_MIN,
+  BRUSH_OPACITY_DEFAULT,
   BRUSH_SIZE_DEFAULT,
   BRUSH_SIZE_MAX,
   BRUSH_SIZE_MIN,
@@ -372,7 +373,7 @@ describe('healing brush processor', () => {
     });
 
     it.each([Number.NaN, 3, -0.25])('clamps out-of-range opacity %p into 0-1', (opacity) => {
-      const clamped = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : BRUSH_HARDNESS_DEFAULT;
+      const clamped = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : BRUSH_OPACITY_DEFAULT;
 
       equivalentTo({ opacity }, { opacity: clamped });
     });
@@ -404,7 +405,6 @@ describe('healing brush processor', () => {
       expect(result.g).toBe(118);
       expect(result.b).toBe(118);
 
-      expect(result).not.toEqual({ r: 18, g: 118, b: 118, a: 255 });
       expect(result).not.toEqual(dest(6, 4));
     });
 

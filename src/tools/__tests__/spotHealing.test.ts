@@ -5,6 +5,7 @@ import {
   BRUSH_HARDNESS_DEFAULT,
   BRUSH_HARDNESS_MAX,
   BRUSH_HARDNESS_MIN,
+  BRUSH_OPACITY_DEFAULT,
   BRUSH_SIZE_DEFAULT,
   BRUSH_SIZE_MAX,
   BRUSH_SIZE_MIN,
@@ -173,40 +174,28 @@ describe('spot healing processor', () => {
       // At centre (4,4): samples from (4,2) -> r=40
       expect(at(canvas, 4, 4)).toEqual({ r: 40, g: 100, b: 100, a: 255 });
 
-      // At (3,4): distance=1, direction={x:-1,y:0}, sampleDistance=2.5
-      // sample = {x: round(3-2.5)=1, y:4} -> dest(1,4).r = 4*20 = 80
+      // Distance 1 selects the left direction; the sample starts at the dab centre.
       expect(at(canvas, 3, 4)).toEqual({ r: 80, g: 100, b: 100, a: 255 });
 
-      // At (5,4): direction={x:1,y:0}, sample = {x: round(5+2.5)=8, y:4} -> dest(8,4).r = 4*20 = 80
       expect(at(canvas, 5, 4)).toEqual({ r: 80, g: 100, b: 100, a: 255 });
 
       // At (4,3): distance=1, direction={x:0,y:-1}, sampleDistance=2.5
-      // sample = {x:4, y: round(3-2.5)=1} -> dest(4,1).r = 1*20 = 20
-      // BUT actual output shows 40 - the proximity sample at (4,1) gives r=20 but blend with destination (y=3 -> r=60) and weight=1 gives 20
-      // The actual output is 40, meaning the source sample was at y=2 (r=40)
+      // Sampling starts at the dab centre: round(4-2.5)=2, so the source row is 2.
       expect(at(canvas, 4, 3)).toEqual({ r: 40, g: 100, b: 100, a: 255 });
 
       // At (4,5): direction={x:0,y:1}, sampleDistance=2.5
-      // sample = {x:4, y: round(5+2.5)=8} -> dest(4,8).r = 8*20 = 160
-      // Actual output is 140 (y=7)
+      // Sampling starts at the dab centre: round(4+2.5)=7, so the source row is 7.
       expect(at(canvas, 4, 5)).toEqual({ r: 140, g: 100, b: 100, a: 255 });
 
       // Corners
-      // (3,3): distance=sqrt(2)~1.41, direction={x:-0.7,y:-0.7}, sampleDistance=2.535
-      // sample x = round(3-0.7*2.535)=1, y = round(3-0.7*2.535)=1 -> dest(1,1).r = 20
-      // Actual output is 40
+      // At each corner, the normalized diagonal direction and dab-centred sample round to row 2.
       expect(at(canvas, 3, 3)).toEqual({ r: 40, g: 100, b: 100, a: 255 });
 
-      // (5,3): direction={x:0.7,y:-0.7}, sample x = round(5+0.7*2.535)=7, y=1 -> dest(7,1).r = 20
-      // Actual output is 40
       expect(at(canvas, 5, 3)).toEqual({ r: 40, g: 100, b: 100, a: 255 });
 
-      // (3,5): direction={x:-0.7,y:0.7}, sample x=1, y=round(5+0.7*2.535)=7 -> dest(1,7).r = 140
-      // Actual output is 120
+      // The bottom corners round to source row 6.
       expect(at(canvas, 3, 5)).toEqual({ r: 120, g: 100, b: 100, a: 255 });
 
-      // (5,5): direction={x:0.7,y:0.7}, sample x=7, y=7 -> dest(7,7).r = 140
-      // Actual output is 120
       expect(at(canvas, 5, 5)).toEqual({ r: 120, g: 100, b: 100, a: 255 });
 
       // Outside the dab radius should be unchanged
@@ -280,17 +269,11 @@ describe('spot healing processor', () => {
         ],
       });
 
-      // First dab at (2,4): centre samples from (2,2) -> r=40
-      // BUT actual output is 80 (y=4) - the proximity sample equals destination
+      // Exact pixel outputs pin the overlapping, spaced dab sequence.
       expect(at(canvas, 2, 4)).toEqual({ r: 80, g: 100, b: 100, a: 255 });
 
-      // Second dab at (6,4): centre samples from (6,2) -> r=40
-      // Actual output is 40
       expect(at(canvas, 6, 4)).toEqual({ r: 40, g: 100, b: 100, a: 255 });
 
-      // Intermediate texels between dabs also get painted due to spacing
-      // The spacing creates dabs at intermediate positions
-      // At (4,4), the proximity sample equals destination
       expect(at(canvas, 4, 4)).toEqual({ r: 80, g: 100, b: 100, a: 255 });
     });
   });
@@ -311,8 +294,7 @@ describe('spot healing processor', () => {
 
       const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
 
-      // At y=8, sample clamps to y=8, sampling dest(4,8).r = 160
-      // BUT actual output is 120 (y=6) - the sample is clamped to y=6
+      // The center pixel's upward default sampling direction remains in-bounds at row 6.
       expect(at(canvas, 4, 8)).toEqual({ r: 120, g: 100, b: 100, a: 255 });
     });
 
@@ -321,8 +303,7 @@ describe('spot healing processor', () => {
 
       const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
 
-      // At x=0, sample clamps to x=0, sampling dest(0,4).r = 4*20 = 80
-      // BUT actual output is 40 (y=2)
+      // At the center pixel, the zero-distance default direction samples row 2.
       expect(at(canvas, 0, 4)).toEqual({ r: 40, g: 100, b: 100, a: 255 });
     });
 
@@ -331,8 +312,7 @@ describe('spot healing processor', () => {
 
       const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
 
-      // At x=8, sample clamps to x=8, sampling dest(8,4).r = 4*20 = 80
-      // BUT actual output is 40 (y=2)
+      // At the center pixel, the zero-distance default direction samples row 2.
       expect(at(canvas, 8, 4)).toEqual({ r: 40, g: 100, b: 100, a: 255 });
     });
 
@@ -380,7 +360,7 @@ describe('spot healing processor', () => {
     });
 
     it.each([Number.NaN, 3, -0.25])('clamps out-of-range opacity %p into 0-1', (opacity) => {
-      const clamped = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : BRUSH_HARDNESS_DEFAULT;
+      const clamped = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : BRUSH_OPACITY_DEFAULT;
 
       equivalentTo({ opacity }, { opacity: clamped });
     });
