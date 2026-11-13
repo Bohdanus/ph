@@ -306,31 +306,35 @@ profile. Some specs do opt into touch per test: `layers.spec.ts` covers tablet l
 tablet touch case. The original phone-width flow in `mobile-shell.spec.ts` drives its bar with the
 mouse; a separate tablet-scoped case now checks horizontal touch reachability at 744×1133.
 Separately, `check-dpr.spec.ts`
-has test-scoped coverage at device scale factors 1 and 2, but the full suite is not 2x-clean as
-described below.
+has test-scoped coverage at device scale factors 1 and 2, but does not establish full-suite 2x status,
+which remains unresolved as described below.
 
-**The suite as a whole is still not 2x-clean, and an earlier version of this entry claimed it was.**
+**The full suite's 2x status is unresolved; an earlier version of this entry claimed it was clean.**
 A full diagnostic forced `projects[].use.deviceScaleFactor` to 2 (project-level `use` overrides the
 top-level setting) with a temporary config, on code commit
 `de7bab05ff69c309b0087ff0cfd0b90bfe96e475`, run `2026-11-11T21-30-35-667Z-12916`. Of 689 tests,
-612 passed, 76 failed, and 1 was skipped. The failures span 21 spec files: the largest groups are
-`crop-history.spec.ts` (18), `export/visual-regression.spec.ts` (9),
-`single-row-column-marquee.spec.ts` (8), `color-sampler.spec.ts` (7), and
-`selection-gestures.spec.ts` (6); the other 28 failures span 16 specs. This supersedes the old
-256-pass/6-fail/2-skip measurement. The temporary config was diagnostic only; no permanent 2x
-project was added. The full suite has not been rerun. The export visual-regression spec passes all 13
-tests at 1x in run `2026-11-12T08-35-28-156Z-8469` and at 2x in run
-`2026-11-12T08-36-06-558Z-9702`; its nine failures in the initial focused 2x run are the same nine
-counted among the 45 previously unverified failures; the other four tests were already passing.
-After syncing the candidate with `main` at `d41be428`, combined focused runs pass all 33 tests
-across `single-row-column-marquee.spec.ts`, `color-sampler.spec.ts`, and
-`selection-gestures.spec.ts` at 1x (`2026-11-12T10-40-12-370Z-17587`) and at 2x
-(`2026-11-12T10-41-16-277Z-19355`). Each spec contributes 11 passing tests at both scales. The
-original diagnostic attributed eight, seven, and six failures to those three specs respectively;
-together with the nine export failures, these focused results clear 30 of the 45 previously
-unverified failures. The other 15 from that historical diagnostic remain unverified. This remainder
-is not a current full-suite result, and these scoped checks do not establish that the suite is
-2x-clean.
+612 passed, 76 failed, and 1 was skipped. The failures span 21 spec files: `crop-history.spec.ts`
+(18), `export/visual-regression.spec.ts` (9), `single-row-column-marquee.spec.ts` (8),
+`color-sampler.spec.ts` (7), and `selection-gestures.spec.ts` (6); the other 28 failures span 16
+specs. This diagnostic was run only on the named commit; its temporary config did not add a
+permanent 2x project.
+
+Later focused runs cover only named specs and are not whole-suite reruns. `export/visual-regression.spec.ts`
+passed all 13 tests at 1x (run `2026-11-12T08-35-28-156Z-8469`) and at 2x (run
+`2026-11-12T08-36-06-558Z-9702`). On a candidate synced with `main` at `d41be428`, combined
+focused runs passed all 33 tests across `single-row-column-marquee.spec.ts`,
+`color-sampler.spec.ts`, and `selection-gestures.spec.ts` at 1x
+(`2026-11-12T10-40-12-370Z-17587`) and at 2x (`2026-11-12T10-41-16-277Z-19355`); each spec
+contributed 11 passing tests at both scales. After `main` advanced from `d41be428` to `1f89648`,
+`crop-history.spec.ts` passed all 30 tests at 2x (run `2026-11-12T12-45-00-138Z-13379`, command
+`E2E_QUIET=0 npm run test:e2e -- --config playwright.dpr2.temp.config.ts --reporter=dot
+e2e/crop-history.spec.ts`) and all 30 at 1x (run `2026-11-12T12-46-09-186Z-25799`, command
+`E2E_QUIET=0 npm run test:e2e -- --reporter=dot e2e/crop-history.spec.ts`).
+
+The 18 crop-history failures belong to the diagnostic on `de7bab05`; the later focused run passed
+the tests in the then-current spec on a newer tree. The 1x and 2x results are not a case-by-case
+reconciliation across those revisions. No full-suite rerun is recorded after the diagnostic, so
+the current full-suite 2x status remains unresolved.
 
 Some test-scoped touch/mobile cases exist, but there is no dedicated project and coverage remains
 sparse across controls and gestures. Adding a project multiplies every run's cost and is a coverage

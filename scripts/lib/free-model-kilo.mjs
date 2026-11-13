@@ -3,10 +3,16 @@ import { constants } from 'node:fs';
 import { access, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { isDisabledFreeModel } from './free-model-policy.mjs';
+import {
+  DEFAULT_FREE_COMPLETION_TIMEOUT_MS,
+  freeModelProfile,
+  isDisabledFreeModel,
+  MAX_FREE_COMPLETION_MAX_TOKENS,
+  MAX_FREE_COMPLETION_TIMEOUT_MS,
+} from './free-model-policy.mjs';
 import { resolveCommandShim } from './windows-command-shim.mjs';
 
-export const COMPLETION_TIMEOUT_MS = 300_000;
+export const COMPLETION_TIMEOUT_MS = DEFAULT_FREE_COMPLETION_TIMEOUT_MS;
 export const MAX_KILO_OUTPUT_BYTES = 1024 * 1024;
 const MAX_KILO_STDERR_BYTES = 64 * 1024;
 
@@ -263,8 +269,8 @@ export async function runKiloCompletion({
   source = 'kilo',
   model,
   prompt,
-  maxTokens = 1200,
-  timeoutMs = COMPLETION_TIMEOUT_MS,
+  maxTokens,
+  timeoutMs,
   projectRoot = PROJECT_ROOT,
   env = process.env,
   spawnImpl = spawn,
@@ -275,16 +281,39 @@ export async function runKiloCompletion({
   if (typeof model !== 'string' || !/^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/.test(model)) {
     return { error: 'Invalid model ID' };
   }
-  if (isDisabledFreeModel(model, '', source)) {
-    return { error: 'Nemotron model/provider pair is not approved by free-model policy' };
+  if (isDisabledFreeModel(model)) {
+    return { error: 'Nemotron model ID is not approved by free-model policy' };
   }
   if (typeof prompt !== 'string' || !prompt) return { error: 'Prompt is empty' };
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 65536) return { error: 'Invalid token limit' };
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return { error: 'Invalid completion timeout' };
+  if (
+    maxTokens !== undefined &&
+    (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_FREE_COMPLETION_MAX_TOKENS)
+  ) {
+    return { error: 'Invalid token limit' };
+  }
+  if (
+    timeoutMs !== undefined &&
+    (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_FREE_COMPLETION_TIMEOUT_MS)
+  ) {
+    return { error: 'Invalid completion timeout' };
+  }
+  const profile = freeModelProfile(model, maxTokens);
+  const effectiveTimeoutMs = timeoutMs ?? profile.timeoutMs;
+  if (
+    !Number.isSafeInteger(profile.maxTokens) ||
+    profile.maxTokens < 1 ||
+    profile.maxTokens > MAX_FREE_COMPLETION_MAX_TOKENS
+  ) {
+    return { error: 'Invalid token limit' };
+  }
+  if (!Number.isSafeInteger(effectiveTimeoutMs) || effectiveTimeoutMs < 1) {
+    return { error: 'Invalid completion timeout' };
+  }
 
-  const message = `Answer the provided request directly, in plain text, using at most ${maxTokens} output tokens.\n\n${prompt}`;
+  const message = `Answer the provided request directly, in plain text, using at most ${profile.maxTokens} output tokens.\n\n${prompt}`;
   try {
     const args = ['run', '--pure', '--format', 'json', '--model', `kilo/${model}`, '--agent', 'free-completion'];
+    if (profile.reasoningEffort) args.push('--variant', profile.reasoningEffort);
     const commandShim = resolveCommandShim(command, args);
 
     const { events, stderrText, code, signal, timedOut, outputOverflow, malformed, inputError } = await new Promise(
@@ -315,7 +344,7 @@ export async function runKiloCompletion({
           timedOut = true;
           child.kill('SIGTERM');
           killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
-        }, timeoutMs);
+        }, effectiveTimeoutMs);
         const cleanup = () => {
           clearTimeout(timer);
           clearTimeout(killTimer);
@@ -384,7 +413,7 @@ export async function runKiloCompletion({
     if (contentPolicyRejected(events, stderrText)) {
       return { error: 'Kilo provider content policy rejected or filtered this request', contentPolicyRejected: true };
     }
-    if (timedOut) return { error: `Kilo completion exceeded ${timeoutMs} ms` };
+    if (timedOut) return { error: `Kilo completion exceeded ${effectiveTimeoutMs} ms` };
     if (outputOverflow) return { error: `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes` };
     if (inputError) return { error: 'Kilo CLI did not accept the complete prompt' };
     if (malformed) return { error: 'Kilo CLI returned malformed JSONL output', exhaustSource: true };

@@ -19,60 +19,54 @@ const modeControl: ToolControl = {
   detail:
     'The first of the two controls Adobe names Mode, and the one at the left of the bar: the three-button drawing-mode group, where Shape creates a filled shape layer, Path creates a vector path with no pixels, and Pixels rasterizes the shape straight into the current layer. Shape is the default.',
   status: 'partial',
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:215',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:272',
 };
 
 const fillControl: ToolControl = {
   control: 'Fill',
   detail:
-    'The interior colour of the shape, as a swatch offering None, Solid Color, Gradient or Pattern. Fill and Stroke are independent: a shape can have a fill and no stroke, or the reverse.',
+    'The interior colour of the shape, as a swatch offering None, Solid Color, Gradient or Pattern. Fill and Stroke are independent: a shape can have a fill and no stroke, or the reverse. THIS APP DIVERGES: No separate Fill swatch with None/Solid/Gradient/Pattern menu. Only a single wired "Filled" checkbox over one shared app colour — the fill is whatever the global background colour currently is, and there is no way to choose None, Gradient, or Pattern fill independently.',
   status: 'partial',
-  // The bar's one `Filled` checkbox, which is this control's whole rendering here. The
-  // processor lines it used to cite (`setShapeCtx`) read `hasFill`; they are where the
-  // value is consumed, not where the control is drawn.
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:329',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:409',
 };
 
 const strokeControl: ToolControl = {
   control: 'Stroke',
   detail:
-    'The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline.',
+    'The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline. THIS APP DIVERGES: no separate Stroke swatch or stroke-off control. Its single "Filled" checkbox controls fill only; stroke is always drawn using the app stroke color and width. The app seeds a 5 px stroke where Photoshop seeds 1 px, so an untouched shape is drawn five times as heavy as Photoshop would draw it.',
   status: 'partial',
-  // The same checkbox as `Fill`, which is the point: one rendering backs both rows, and
-  // what it cannot express is either swatch's own menu.
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:329',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:290',
 };
 
 const strokeWidthControl: ToolControl = {
   control: 'Stroke width',
-  detail: 'Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default.',
+  detail:
+    'Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default. THIS APP DIVERGES: the app exposes a 0.5–500 px Thickness slider and seeds it at 5 px, so a new shape starts with a stroke five times as heavy.',
   status: 'partial',
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:239',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:290',
 };
 
 const strokeTypeControl: ToolControl = {
   control: 'Stroke type',
   detail:
-    'Opens the Stroke Options panel, which sets the line style (Solid, Dashed or Dotted, plus a custom dash array under More Options), the stroke Align (Inside, Center or Outside), the end Caps (Butt, Round, Square) and the corner joins (Miter, Round, Bevel), which Adobe qualifies as "not applicable to the Line tool" because a line has no corners. Centered alignment, a solid line and a Butt cap are the defaults.',
+    'Opens Photoshop’s Stroke Options panel, which sets line style (Solid, Dashed or Dotted, with a custom dash array under More Options), stroke alignment (Inside, Center or Outside), end Caps (Butt, Round, Square) and corner joins (Miter, Round, Bevel; not applicable to the Line tool). Centered alignment, solid style and Butt cap are defaults. THIS APP DIVERGES: no Stroke Options panel, alignment selector or corner-join selector. The app has its own Dashed checkbox and Dash/Gap sliders; a Cap dropdown is available for the Line figure only, rather than for any stroked path.',
   status: 'partial',
-  // The app's own line-style rendering, not a Stroke Options panel: the `Dashed`
-  // checkbox and the Dash and Gap sliders it reveals.
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:344',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:424',
 };
 
 const weightControl: ToolControl = {
   control: 'Weight',
   detail:
-    'Thickness of the path, and it means two different things by mode. In Path mode — and in Shape mode for every figure except the Line tool — Adobe documents it as "Set the width of the path in pixels (visual reference only)": a display aid for the on-screen outline, which never prints and never appears in a saved image. In Pixel mode it is the width that actually paints, "Set the width of the line or shape edge in pixels". The Line tool is the exception in Shape mode, where Adobe\'s own instruction is to "choose Shape mode in the Options bar and then set the Stroke and Weight": a line has no filled area, so there the weight is the stroke itself.',
+    'Thickness of the path, and it means two different things by mode. In Path mode — and in Shape mode for every figure except the Line tool — Adobe documents it as "Set the width of the path in pixels (visual reference only)": a display aid for the on-screen outline, which never prints and never appears in a saved image. In Pixel mode it is the width that actually paints, "Set the width of the line or shape edge in pixels". The Line tool is the exception in Shape mode, where Adobe\'s own instruction is to "choose Shape mode in the Options bar and then set the Stroke and Weight": a line has no filled area, so there the weight is the stroke itself. THIS APP DIVERGES: No Weight control at all. The app has a single stroke width slider shared across all modes, but no distinction between Path-mode visual weight and Pixel-mode paint width.',
   status: 'missing',
 };
 
 const opacityControl: ToolControl = {
   control: 'Opacity',
   detail:
-    'Pixel mode only: transparency of the rasterized shape, 1–100%. Shape and Path modes expose no Opacity slider, because a shape layer and a path have no opacity of their own.',
+    'Pixel mode only in Photoshop: opacity of the rasterized shape, 1–100%. Shape and Path modes expose no Opacity slider. THIS APP DIVERGES: Opacity is present in all three app modes; it affects fill and stroke in Shape/Pixels modes and stroke only in Path mode, where fill is suppressed. The app rasterizes this Path-mode stroke rather than producing a true vector path.',
   status: 'partial',
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:409',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:489',
 };
 
 /**
@@ -192,7 +186,7 @@ const radiusControl: ToolControl = {
   // this is the `figure === 'rectangle'` gate and the Radius slider it wraps. The
   // processor line `src/tools/shape.ts:240` is `const radius = args.cornerRadius ?? 0`,
   // which is where the value is consumed, not where the control is drawn.
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:253',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:317',
 };
 
 const missingRadiusControl: ToolControl = {
@@ -205,7 +199,7 @@ const starPointsControl: ToolControl = {
   control: 'Number of Points',
   detail: 'Number of outer points in the star. This app reuses the Polygon bounds of 3–100 points and defaults to 5.',
   status: 'present',
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:330',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:353',
 };
 
 const starRatioControl: ToolControl = {
@@ -213,7 +207,7 @@ const starRatioControl: ToolControl = {
   detail:
     'Percentage of the outer radius used by each inner vertex, controlling the depth of the star indents. Adobe documents Inner Radius and Outer Radius, but not an exact default; this app represents their ratio as 1–99% and chooses 50% as an app-side default.',
   status: 'present',
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:357',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:377',
 };
 
 const shiftSquareModifier: ToolModifier = {
@@ -291,7 +285,7 @@ export const shapeDescriptions: Record<
     purpose:
       'Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photoshop tool behind this one: the panel groups seven separate tools — Rectangle, Ellipse, Triangle, Polygon, Star, Line and Custom Shape — behind a single group icon, and the Star arrived as a tool of its own in 26.10. Whichever of the seven is active, the three-button Mode group at the left of the options bar decides what a drag commits — a filled shape layer with a vector mask, a work path with no pixels at all, or a rasterized region painted straight into the active layer. Fill and Stroke are set independently of each other and of the drawing mode, so the same rectangle can be a solid block, a hairline outline, or an outline over a gradient. The drawn shape stays a Live Shape, so its fill, stroke, corner radius and dimensions remain editable from the Properties panel long after the drag.',
     options: sharedFigureOptions,
-    modifiers: [shiftSquareModifier, altFromCenterModifier, spaceRepositionModifier],
+    modifiers: [],
     shortcuts: shapeToolShortcuts,
     implementation: 'partial',
     implementationRefs: [
@@ -387,9 +381,9 @@ export const shapeDescriptions: Record<
       {
         control: 'Caps',
         detail:
-          'Appearance of the two ends of the segment: Butt, Round or Square. Offered for any stroked path, and prominent for the Line tool.',
+          'Appearance of the two ends of a segment: Butt, Round or Square. Photoshop exposes these through Stroke Options for stroked paths. THIS APP DIVERGES: its Cap dropdown is restricted to the Line figure.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:314',
+        appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:392',
       },
       {
         control: 'Arrowheads',
@@ -405,7 +399,7 @@ export const shapeDescriptions: Record<
       'src/tools/toolProcessors.ts:373',
       'src/tools/shape.ts:237',
       'src/tools/shape.ts:117',
-      'src/components/ToolbarsRight/Figures/Shape.tsx:314',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:392',
       'src/tools/settings.ts:52',
     ],
     appNotes:
@@ -431,7 +425,8 @@ export const shapeDescriptions: Record<
     modifiers: [
       {
         keys: 'Shift',
-        action: 'Constrains the triangle to equilateral, forcing the height to √3⁄2 of the width.',
+        action:
+          'Constrains the triangle to equilateral, forcing the height to √3⁄2 of the width. THIS APP DIVERGES: Shift squares the drag box instead of forcing equilateral — for a 3-gon inscribed in a square box, that is not h = √3⁄2 · w.',
       },
       altFromCenterModifier,
       spaceRepositionModifier,
@@ -483,7 +478,7 @@ export const shapeDescriptions: Record<
       {
         keys: 'Shift',
         action:
-          'Constrains the drag to a box whose sides match, so the polygon comes out symmetrical; reported to be off by default in the gear menu, which is a third-party account rather than an Adobe sentence.',
+          "Constrains the drag to a box whose sides match, so the polygon comes out symmetrical; reported to be off by default in the gear menu, which is a third-party account rather than an Adobe sentence. THIS APP DIVERGES: Shift squares the drag box rather than constraining the polygon's own proportions.",
       },
       altFromCenterModifier,
       spaceRepositionModifier,
@@ -498,7 +493,7 @@ export const shapeDescriptions: Record<
       'src/tools/toolProcessors.ts:372',
       'src/tools/shape.ts:218',
       'src/tools/shape.ts:247',
-      'src/components/ToolbarsRight/Figures/Shape.tsx:295',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:353',
       'src/tools/settings.ts:52',
     ],
     appNotes:
@@ -519,16 +514,25 @@ export const shapeDescriptions: Record<
     photoshopName: 'Star Tool',
     summary: 'Drag-defined star with a configurable number of points and alternating outer and inner radii.',
     purpose:
-      'The Star tool draws a customizable star from the Shapes tool group. Adobe documents Number of Points, Outer Radius, Inner Radius and Corner Radius, plus Fill and Stroke; Shift constrains proportions and Alt/Option draws from the centre. The app exposes points through the existing 3–100 Polygon bounds and represents the two radii as a Star Ratio / Indent percentage.',
+      'The Star tool draws a customizable star from the Shapes tool group. Adobe documents Number of Points, Outer Radius, Inner Radius and Corner Radius, plus Fill and Stroke. Third-party reports say Shift constrains proportions, but the Adobe pages reviewed here do not specify this gesture. Alt/Option draws from the centre. The app exposes points through the existing 3–100 Polygon bounds and represents the two radii as a Star Ratio / Indent percentage.',
     options: [...sharedFigureOptions, starPointsControl, starRatioControl, missingRadiusControl],
-    modifiers: [shiftSquareModifier, altFromCenterModifier, spaceRepositionModifier],
+    modifiers: [
+      {
+        keys: 'Shift',
+        action:
+          'Third-party reports say Photoshop Shift constrains star proportions; the Adobe pages reviewed here do not specify this gesture. THIS APP DIVERGES: its shared shape handler squares the drag box and has no Star-specific proportion constraint.',
+      },
+      altFromCenterModifier,
+      spaceRepositionModifier,
+    ],
     shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/toolProcessors.ts:191',
       'src/tools/shape.ts:242',
       'src/tools/shape.ts:107',
-      'src/components/ToolbarsRight/Figures/Shape.tsx:330',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:353',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:377',
       'src/tools/settings.ts:67',
     ],
     appNotes:
