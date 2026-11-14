@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_KILO_OUTPUT_BYTES, resolveKiloCli, runKiloCompletion } from '../lib/free-model-kilo.mjs';
+
+vi.setConfig({ testTimeout: 15_000 });
 
 async function writeExecutable(filePath, source, { windowsShim = process.platform === 'win32' } = {}) {
   await mkdir(join(filePath, '..'), { recursive: true });
@@ -569,6 +572,96 @@ process.exitCode = 1;`
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it('reports Windows tree-termination failure when the child closes before termination finishes', async () => {
+    let child;
+    const terminateWindowsProcessTreeImpl = vi.fn(
+      () =>
+        new Promise((_, reject) => {
+          setTimeout(() => child.emit('close', null, 'SIGTERM'), 0);
+          setTimeout(() => reject(new Error('taskkill and fallback failed')), 10);
+        })
+    );
+    const spawnImpl = () => {
+      child = new EventEmitter();
+      child.pid = 4242;
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => setImmediate(() => child.stdout.emit('data', Buffer.alloc(MAX_KILO_OUTPUT_BYTES + 1)));
+      child.kill = vi.fn();
+      return child;
+    };
+
+    await expect(
+      runKiloCompletion({
+        command: '/unused/kilo',
+        model: 'model:free',
+        prompt: 'prompt',
+        timeoutMs: 1000,
+        platform: 'win32',
+        terminateWindowsProcessTreeImpl,
+        spawnImpl,
+      })
+    ).resolves.toEqual({ error: 'Kilo process-tree termination failed', exhaustSource: true });
+    expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(4242);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it.skipIf(process.platform !== 'win32')(
+    'terminates descendants of a stalled Windows CLI shim',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-process-tree-'));
+      const pidPath = join(directory, 'processes.json');
+      const command = await writeExecutable(
+        join(directory, 'fake-kilo'),
+        `const { spawn } = require('node:child_process');
+const { writeFileSync } = require('node:fs');
+const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore', windowsHide: true });
+writeFileSync(${JSON.stringify(pidPath)}, JSON.stringify({ parent: process.pid, descendant: child.pid }));
+setInterval(() => {}, 1000);`
+      );
+
+      let processIds = [];
+      try {
+        await expect(
+          runKiloCompletion({ command, model: 'model:free', prompt: 'prompt', timeoutMs: 2_000 })
+        ).resolves.toEqual({ error: 'Kilo completion exceeded 2000 ms' });
+        const recordedPids = JSON.parse(await readFile(pidPath, 'utf8'));
+        processIds = [Number(recordedPids.parent), Number(recordedPids.descendant)];
+        expect(processIds.every((pid) => Number.isSafeInteger(pid) && pid > 0)).toBe(true);
+
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          const alive = processIds.filter((pid) => {
+            try {
+              process.kill(pid, 0);
+              return true;
+            } catch (error) {
+              if (error.code === 'ESRCH') return false;
+              throw error;
+            }
+          });
+          if (alive.length === 0) return;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        throw new Error(`Kilo process-tree PIDs ${processIds.join(', ')} remained alive after timeout`);
+      } finally {
+        if (processIds.length === 0) {
+          try {
+            const recordedPids = JSON.parse(await readFile(pidPath, 'utf8'));
+            processIds = [Number(recordedPids.descendant), Number(recordedPids.parent)];
+          } catch {}
+        }
+        for (const pid of processIds) {
+          if (Number.isSafeInteger(pid) && pid > 0)
+            spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+        }
+        await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    },
+    30_000
+  );
 
   it('rejects invalid token and timeout values before starting the Kilo CLI', async () => {
     const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';

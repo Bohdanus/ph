@@ -61,6 +61,7 @@ import { realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { samePath } from './lib/path-identity.mjs';
 import { abortCommand, findings, scanRepository } from './lib/git-operation-state.mjs';
 
 const USAGE = `repo:state — report git operations in progress, in every worktree.
@@ -223,13 +224,6 @@ function registeredMain(cwd) {
     mainPath: readGitConfig(cwd, 'ph.mainWorktreePath'),
     mainGitDir: readGitConfig(cwd, 'ph.mainWorktreeGitDir'),
   };
-}
-
-function samePath(first, second) {
-  if (!first || !second) return false;
-  const left = resolve(first).replace(/\\/g, '/');
-  const right = resolve(second).replace(/\\/g, '/');
-  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
 function mainAutoMergeCanUseLandingRecovery(finding, mainPath) {

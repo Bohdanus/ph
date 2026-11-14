@@ -196,6 +196,7 @@ function parseArgs(argv) {
 
 function inspect(cwd, options) {
   const root = resolve(git(['rev-parse', '--show-toplevel'], cwd));
+  if (git(['rev-parse', '--show-prefix'], cwd) !== '') throw new Error(`Run from the worktree root: ${root}`);
   if (resolve(cwd) !== root) throw new Error(`Run from the worktree root: ${root}`);
   const branch = git(['branch', '--show-current'], root);
   if (!branch) throw new Error('Refusing recovery from a detached or unborn HEAD.');

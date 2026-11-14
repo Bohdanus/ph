@@ -36,14 +36,15 @@ function compareVersions(left, right) {
   return 0;
 }
 
-function readCiE2EMatrix() {
-  const e2eJobStart = ciWorkflow.indexOf('\n  e2e:\n');
-  const e2eJobEnd = ciWorkflow.indexOf('\n  e2e-skip-baseline:\n', e2eJobStart);
+function readCiE2EMatrix(workflow = ciWorkflow) {
+  workflow = workflow.replace(/\r\n?/g, '\n');
+  const e2eJobStart = workflow.indexOf('\n  e2e:\n');
+  const e2eJobEnd = workflow.indexOf('\n  e2e-skip-baseline:\n', e2eJobStart);
   if (e2eJobStart < 0 || e2eJobEnd < 0) {
     throw new Error('Could not find the e2e matrix job in .github/workflows/ci.yml');
   }
 
-  const e2eJob = ciWorkflow.slice(e2eJobStart, e2eJobEnd);
+  const e2eJob = workflow.slice(e2eJobStart, e2eJobEnd);
   if (!e2eJob.includes('timeout-minutes: ${{ matrix.timeout }}')) {
     throw new Error('The e2e job must apply each matrix row timeout with timeout-minutes: ${{ matrix.timeout }}');
   }
@@ -92,6 +93,7 @@ function readWorkflowScalar(jobBlock, fieldName) {
 }
 
 function readJobBlock(workflow, jobName) {
+  workflow = workflow.replace(/\r\n?/g, '\n');
   const jobStart = workflow.indexOf(`\n  ${jobName}:\n`);
   if (jobStart < 0) throw new Error(`Could not find the ${jobName} job`);
 
@@ -185,6 +187,8 @@ describe('E2E timeout contract', () => {
     expect(job).toContain('ref: ${{ needs.validate-dispatch.outputs.source_sha }}');
     expect(job).toContain('persist-credentials: false');
     expect(runCommands).toEqual(['npm ci', 'npm run test -- scripts/__tests__', 'npm run test:e2e:unit']);
+    // A synchronized Windows run completed script tests in 6m29s; another reached 14m04 without finishing.
+    expect(readFixedJobTimeoutMinutes(job, 'Windows platform tests')).toBe(30);
     const scriptTestRoot = ['scripts/__tests__'];
     const e2eUnitTestRoot = ['e2e'];
     const e2eUnitFilePattern = /\.unit\.test\.ts$/;
@@ -196,13 +200,17 @@ describe('E2E timeout contract', () => {
     }
     expect(readConditionalTestSkipCounts(scriptTestRoot, WINDOWS_ONLY_SKIP_PATTERN)).toEqual({
       'scripts/__tests__/free-model-pool.test.mjs': 1,
+      'scripts/__tests__/free-model-kilo.test.mjs': 1,
+      'scripts/__tests__/path-identity.test.mjs': 1,
       'scripts/__tests__/quiet-command.test.mjs': 2,
       'scripts/__tests__/windows-command-shim.test.mjs': 9,
       'scripts/__tests__/worktree-inventory.test.mjs': 1,
     });
     expect(readConditionalTestSkipCounts(scriptTestRoot, WINDOWS_EXCLUDED_SKIP_PATTERN)).toEqual({
+      'scripts/__tests__/agent-board.test.mjs': 2,
       'scripts/__tests__/free-chat-search-agent.test.mjs': 1,
       'scripts/__tests__/merge-takeover-guard.test.mjs': 11,
+      'scripts/__tests__/path-identity.test.mjs': 3,
       'scripts/__tests__/recover-stale-auto-merge.test.mjs': 1,
       'scripts/__tests__/repo-state-gate.test.mjs': 2,
       'scripts/__tests__/windows-command-shim.test.mjs': 1,
@@ -214,6 +222,12 @@ describe('E2E timeout contract', () => {
     expect(gate).toContain('windows-platform-tests');
     expect(gate).toContain('WINDOWS_PLATFORM_TESTS_RESULT: ${{ needs.windows-platform-tests.result }}');
     expect(gate).toContain('[[ "$WINDOWS_PLATFORM_TESTS_RESULT" == "success" ]]');
+  });
+
+  it('parses the CI shard matrix after CRLF checkout conversion', () => {
+    const lfWorkflow = ciWorkflow.replace(/\r\n?/g, '\n');
+    const crlfWorkflow = lfWorkflow.replace(/\n/g, '\r\n');
+    expect(readCiE2EMatrix(crlfWorkflow)).toEqual(readCiE2EMatrix(lfWorkflow));
   });
 
   it('keeps ten minutes of nominal job headroom for every CI shard', () => {

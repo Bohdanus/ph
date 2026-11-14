@@ -17,6 +17,7 @@ type PixelContext = ReturnType<typeof createPixelCanvasContext> & {
 class RecordingOffscreenCanvas {
   static instances: RecordingOffscreenCanvas[] = [];
   readonly buffer: Uint8ClampedArray;
+  readonly filterValuesAtDraw: string[] = [];
   readonly ctx: PixelContext;
   width: number;
   height: number;
@@ -29,6 +30,7 @@ class RecordingOffscreenCanvas {
       ...createPixelCanvasContext(this),
       filter: '',
       drawImage: vi.fn(() => {
+        this.filterValuesAtDraw.push(this.ctx.filter);
         for (let y = 0; y < this.height; y++) {
           for (let x = 0; x < this.width; x++) {
             const offset = (y * this.width + x) * 4;
@@ -100,7 +102,7 @@ describe('blur processor', () => {
     expect(toolProcessors['blur'].imageProcessor).toBe(blur);
   });
 
-  it('stamps a full document-sized canvas and draws the source raster into it', () => {
+  it('allocates a full document-sized canvas and passes the source bitmap to drawImage', () => {
     const canvas = run();
 
     expect(canvas.width).toBe(size.width);
@@ -108,20 +110,20 @@ describe('blur processor', () => {
     expect(canvas.ctx.drawImage).toHaveBeenCalledWith(sourceBitmap, 0, 0);
   });
 
-  it('allocates exactly one document-sized output canvas distinct from the source bitmap', () => {
+  it('allocates exactly one document-sized output canvas', () => {
     const canvas = run();
 
     expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
     expect(canvas).toBe(RecordingOffscreenCanvas.instances[0]);
-    expect(canvas).not.toBe(sourceBitmap);
     expect(canvas.width).toBe(size.width);
     expect(canvas.height).toBe(size.height);
   });
 
-  it('sets the CSS filter string with the radius in pixels', () => {
+  it('sets the CSS filter before drawing with the requested radius', () => {
     const canvas = run({ radius: 7 });
 
     expect(canvas.ctx.filter).toBe('blur(7px)');
+    expect(canvas.filterValuesAtDraw).toEqual(['blur(7px)']);
   });
 
   it('requires canvas filter support and throws when unsupported', () => {

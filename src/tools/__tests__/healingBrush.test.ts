@@ -123,7 +123,7 @@ describe('healing brush processor', () => {
     expect(toolProcessors['healing-brush'].imageProcessor).toBe(healingBrush);
   });
 
-  it('stamps a full document-sized canvas and draws the source raster into it', () => {
+  it('allocates a full document-sized canvas and passes the source bitmap to drawImage', () => {
     const canvas = run();
 
     expect(canvas.width).toBe(size.width);
@@ -131,16 +131,22 @@ describe('healing brush processor', () => {
     expect(canvas.ctx.drawImage).toHaveBeenCalledWith(sourceBitmap, 0, 0);
   });
 
-  it('spaces its dabs at the tool constant', () => {
+  it('defines dab spacing as 25 percent of the tip diameter', () => {
     expect(HEALING_BRUSH_SPACING_PERCENT).toBe(25);
   });
 
   describe('the no-source and no-stroke states', () => {
-    it('is an exact no-op for a null source, and does NOT fill anything', () => {
+    it('does not heal when the clone source point is unset', () => {
       const canvas = run({ source: null });
 
       expect(canvas.ctx.getImageData).not.toHaveBeenCalled();
       expect(canvas.ctx.putImageData).not.toHaveBeenCalled();
+
+      for (let y = 0; y < size.height; y++) {
+        for (let x = 0; x < size.width; x++) {
+          expect(at(canvas, x, y), `(${x}, ${y})`).toEqual(dest(x, y));
+        }
+      }
     });
 
     it('is an exact no-op for an empty point list', () => {
@@ -204,7 +210,7 @@ describe('healing brush processor', () => {
 
       expect(at(canvas, 4, 4)).toEqual({ r: 31, g: 111, b: 171, a: 255 });
 
-      // The soft tip weights: center=1, N/S/E/W at distance 1 = ~0.5, corners at distance ~1.41 = ~0.25
+      // The soft tip weights: center=1, N/S/E/W at distance 1 = 0.5, corners at distance ~1.41 = ~0.20
       // Expected values computed from the actual algorithm
       expect(at(canvas, 3, 4)).toEqual({ r: 39, g: 109, b: 109, a: 255 });
       expect(at(canvas, 5, 4)).toEqual({ r: 79, g: 109, b: 109, a: 255 });
@@ -236,7 +242,7 @@ describe('healing brush processor', () => {
 
       const center = at(canvas, 4, 4);
       // With opacity 0.5, the correction is halved
-      // dest(4,4).r = 80, full correction = 31, so halfway = 55.5 -> 56
+      // dest(4,4).r = 80, full healing result = 31, so halfway = 55.5 -> 56
       expect(center.r).toBe(56);
       expect(center.g).toBe(106);
       expect(center.b).toBe(136);
@@ -339,17 +345,21 @@ describe('healing brush processor', () => {
       expect(at(canvas, 5, 5)).not.toEqual(dest(5, 5));
     });
 
-    it('handles a huge tip that covers the entire canvas', () => {
+    it('stamps a very large tip into distant quadrants of the canvas', () => {
       expect(() => run({ size: 500 })).not.toThrow();
 
       const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
 
-      for (let y = 0; y < size.height; y++) {
-        for (let x = 0; x < size.width; x++) {
-          if (x === 4 && y === 4) {
-            expect(at(canvas, x, y)).not.toEqual(dest(x, y));
-          }
-        }
+      expect(canvas.ctx.getImageData).toHaveBeenCalledWith(0, 0, size.width, size.height);
+      expect(canvas.ctx.putImageData).toHaveBeenCalledTimes(1);
+
+      for (const [x, y] of [
+        [1, 1],
+        [7, 1],
+        [1, 7],
+        [7, 7],
+      ] as const) {
+        expect(at(canvas, x, y), `(${x}, ${y})`).not.toEqual(dest(x, y));
       }
     });
   });

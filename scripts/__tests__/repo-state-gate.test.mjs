@@ -38,10 +38,12 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative as relativePath } from 'node:path';
+import { relativePathInside, samePath } from '../lib/path-identity.mjs';
 
 import {
   OPERATION_MARKERS,
@@ -423,21 +425,28 @@ describe('scanRepository covers every registered worktree, not one', () => {
     const path = addWorktree(repo, 'linked');
 
     const found = scanRepository(repo).worktrees;
-    // `realpathSync` on this side of the comparison, because git reports worktree
-    // paths already resolved while `mkdtempSync` hands back the unresolved form.
-    // On macOS `TMPDIR` is under `/var`, which is a symlink to `/private/var`, so
-    // the two strings differ while the directories are the same — the identical trap
-    // `main-worktree-guard.mjs` documents and the reason it normalises both sides.
     const asPaths = (entries) => entries.map((w) => realpathSync(w.path)).sort();
     expect(asPaths(found)).toEqual([realpathSync(repo), realpathSync(path)].sort());
+    // Compare directory identity because Git and Node can spell the same Windows
+    // checkout through its long and 8.3 path forms.
+    expect(found).toHaveLength(2);
+    expect(found.some((worktree) => samePath(worktree.path, repo))).toBe(true);
+    expect(found.some((worktree) => samePath(worktree.path, path))).toBe(true);
 
     const primary = found.find((w) => realpathSync(w.path) === realpathSync(repo));
     const linked = found.find((w) => realpathSync(w.path) === realpathSync(path));
+    expect(found.find((worktree) => samePath(worktree.path, repo))).toBe(primary);
+    expect(found.find((worktree) => samePath(worktree.path, path))).toBe(linked);
     // The primary's git dir is the repository's own; a linked worktree's is a
     // directory INSIDE it. A reader that assumed the first form for both would read
     // every linked worktree's state out of the shared `.git`, which is the primary's.
     expect(primary.gitDir).not.toBe(linked.gitDir);
-    expect(linked.gitDir.startsWith(`${primary.gitDir}/worktrees/`)).toBe(true);
+    expect(relativePathInside(primary.gitDir, linked.gitDir)?.startsWith('worktrees/')).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(linked.gitDir.startsWith(`${primary.gitDir}/worktrees/`)).toBe(true);
+    }
+    const normalizedPrimaryGitDir = primary.gitDir.replace(/\\/g, '/');
+    expect(linked.gitDir.replace(/\\/g, '/').startsWith(`${normalizedPrimaryGitDir}/worktrees/`)).toBe(true);
     expect(linked.branch).toBe('wt/linked');
   });
 
@@ -758,6 +767,12 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.out).toContain('landing scope clear for wt/candidate');
     expect(r.out).toContain('1 unrelated finding(s) remain reported and untouched');
     expect(r.err).toContain(unrelated);
+    const reportedPaths = r.err
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('    '))
+      .map((line) => line.trim())
+      .filter((path) => samePath(path, unrelated));
+    expect(reportedPaths).toHaveLength(1);
     expect(r.err).toContain('unrelated worktree; preserved and non-blocking');
     expect(r.err).toContain('MERGE_HEAD');
   });
@@ -855,6 +870,53 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(out.join('')).toContain('landing scope BLOCKED');
     expect(err.join('')).toContain('unknown');
     expect(err.join('')).toContain('BLOCKS selected landing');
+  });
+
+  it('matches a registered main checkout reached through a filesystem alias', () => {
+    const root = scratch();
+    const mainPath = join(root, 'main');
+    const mainAlias = join(root, 'main-alias');
+    mkdirSync(mainPath);
+    symlinkSync(mainPath, mainAlias, process.platform === 'win32' ? 'junction' : 'dir');
+
+    const output = [];
+    const r = run({
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath,
+        mainGitDir: join(mainPath, '.git'),
+      },
+      scan: () => ({
+        ok: true,
+        reason: null,
+        roster: 2,
+        worktrees: [
+          {
+            name: 'registered-main',
+            path: mainAlias,
+            branch: 'main',
+            present: true,
+            gitDir: join(mainAlias, '.git'),
+            operations: [],
+            unmerged: [],
+          },
+          {
+            name: 'candidate',
+            path: join(root, 'candidate'),
+            branch: 'wt/candidate',
+            present: true,
+            gitDir: join(root, 'candidate', '.git'),
+            operations: [],
+            unmerged: [],
+          },
+        ],
+      }),
+      out: { write: (text) => output.push(text) },
+      err: { write: () => {} },
+    });
+
+    expect(r.code).toBe(0);
+    expect(output.join('')).toContain('landing scope clear for wt/candidate');
   });
 
   it('blocks a landing when its candidate branch has an operation in progress', () => {
@@ -999,6 +1061,7 @@ describe("the third review's findings, pinned", () => {
     const found = scanRepository(repo, { unmergedOf: boom }).worktrees.find(
       (w) => realpathSync(w.path) === realpathSync(path)
     );
+    expect(samePath(found.path, path)).toBe(true);
     // The operation is still known — that is the point of recording rather than throwing.
     expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
     expect(found.unmerged).toEqual([]);
@@ -1154,6 +1217,7 @@ describe('the roster cannot be trusted on its own', () => {
       const found = scanRepository(repo).worktrees.find((w) => w.path.includes('\n'));
       expect(found, 'the newline path must survive parsing').toBeDefined();
       expect(found.path).toBe(realpathSync(path));
+      expect(samePath(found.path, path)).toBe(true);
       expect(found.present).toBe(true);
       expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
       expect(found.unmerged).toEqual(['f.txt']);
@@ -1263,6 +1327,7 @@ describe('the cross-check must not invent worktrees either', () => {
 
     const resolved = resolveAdminDirFor(resolveCommonDir(repo), relative);
     expect(realpathSync(resolved)).toBe(realpathSync(adminDir));
+    expect(samePath(resolved, adminDir)).toBe(true);
     expect(readOperations(resolved).map((o) => o.operation)).toEqual(['merge']);
 
     if (hasRelativeWriter) {
@@ -1316,7 +1381,8 @@ describe('the cross-check must not invent worktrees either', () => {
     // A Set cannot see this: the second directory's state is then read by nothing at
     // all. Measured, a `gitdir` naming an already-claimed worktree produced no finding
     // and its `MERGE_HEAD` was never read — real merge state, in a directory git does
-    // not list, invisible.
+    // not list, invisible. The worktree's own `.git` link identifies the authoritative
+    // directory; a duplicate must be reported separately so its markers cannot be hidden.
     const repo = addConflictingBranch(makeRepo(), 'theirs');
     const path = addWorktree(repo, 'one');
     git(path, 'checkout', '-B', 'wt/one');
@@ -1329,8 +1395,18 @@ describe('the cross-check must not invent worktrees either', () => {
 
     const scanned = scanRepository(repo);
     const reported = findings(scanned.worktrees);
-    // The roster entry for the live worktree is still found on its own account; the twin
-    // is the extra fact, and it must be visible rather than absorbed.
+    const duplicate = scanned.worktrees.find((worktree) => samePath(worktree.gitDir, twin));
+    expect(duplicate).toMatchObject({
+      name: 'twin',
+      operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbeef' }],
+    });
+    expect(reported).toContainEqual(
+      expect.objectContaining({
+        name: 'twin',
+        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbeef' }],
+        readError: expect.stringContaining('administrative directories claim this worktree'),
+      })
+    );
     expect(reported.some((f) => f.operations.length > 0)).toBe(true);
   });
 

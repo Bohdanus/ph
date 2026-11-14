@@ -48,12 +48,12 @@ into logs. Report only the provider, path, and whether authentication is availab
 
 ## Kilo Code
 
-The shared completion pool selects eligible Kilo routes by model strength and invokes this adapter;
-Kilo is not a fallback-only route. `kilo run` uses the logged-in Kilo Gateway OAuth account used by
-the Kilo Code extension. The adapter discovers `kilo` on `PATH` and then checks common VS Code,
-Cursor, and Windsurf extension folders. If discovery misses the installed CLI, set `KILO_CLI` to its
-executable path. Check saved provider names with `kilo auth list`; never read or print the Kilo auth
-database or JSON file.
+The shared completion pool selects eligible, verified-free Kilo routes in model-first provider
+order and invokes this adapter; Kilo is not a fallback-only route. `kilo run` uses the logged-in Kilo
+Gateway OAuth account used by the Kilo Code extension. The adapter discovers `kilo` on `PATH` and
+then checks common VS Code, Cursor, and Windsurf extension folders. If discovery misses the installed
+CLI, set `KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never
+read or print the Kilo auth database or JSON file.
 
 `kilo run` starts with `--pure` and the tracked `free-completion` agent. That profile denies every
 tool name. The prompt is piped through stdin, keeping it out of process arguments and avoiding
