@@ -632,6 +632,7 @@ process.exitCode = 1;`
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-process-tree-'));
     const pidFile = join(directory, 'descendant.pid');
     const sentinel = join(directory, 'descendant-survived');
+    const timeoutMs = trigger === 'timeout' ? 2_000 : 10_000;
     const descendantScript = `process.on('SIGTERM', () => {}); setTimeout(() => { require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'); process.exit(0); }, 5000);`;
     const output = trigger === 'output overflow' ? "process.stdout.write('x'.repeat(1024 * 1024 + 1));" : '';
     const command = await writeExecutable(
@@ -644,12 +645,10 @@ ${output}
 setInterval(() => {}, 1000);`
     );
     try {
-      await expect(
-        runKiloCompletion({ command, model: 'model:free', prompt: 'prompt', timeoutMs: 2000 })
-      ).resolves.toEqual({
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt', timeoutMs })).resolves.toEqual({
         error:
           trigger === 'timeout'
-            ? 'Kilo completion exceeded 2000 ms'
+            ? `Kilo completion exceeded ${timeoutMs} ms`
             : `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes`,
       });
       expect(Number(await readFile(pidFile, 'utf8'))).toBeGreaterThan(0);
@@ -664,9 +663,10 @@ setInterval(() => {}, 1000);`
     await expectProcessTreeKilled('timeout');
   }, 15_000);
 
+  // Give the real child and its descendant time to start under parallel suite load; the short timeout path is covered above.
   it('kills the Kilo process tree when output overflows', async () => {
     await expectProcessTreeKilled('output overflow');
-  }, 15_000);
+  }, 20_000);
   it('reports Windows tree-termination failure when the child closes before termination finishes', async () => {
     let child;
     const terminateWindowsProcessTreeImpl = vi.fn(
