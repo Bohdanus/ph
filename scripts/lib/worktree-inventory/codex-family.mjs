@@ -63,11 +63,14 @@ export function resolveCodexStateDb({ env = process.env, home = homedir(), list 
  * Determine whether the newest task in one Codex rollout is terminal.
  * Task completion is only trusted if no later user turn, task start, turn
  * context, assistant response, or tool call followed it. Bookkeeping events do
- * not reopen a finished task.
+ * not reopen a finished task. Once terminal, only explicitly recognized
+ * bookkeeping may follow; a new or unknown event shape makes completion
+ * unproven until another recognized terminal marker appears.
  */
 export function codexRolloutState(text) {
   if (typeof text !== 'string' || text.length === 0) return { status: 'unproven', reason: 'empty rollout' };
   let latest = 'unproven';
+  let terminalInvalidated = false;
   let parsedLines = 0;
   try {
     for (const line of text.split(/\r?\n/)) {
@@ -79,9 +82,10 @@ export function codexRolloutState(text) {
         event?.type === 'task_complete' ||
         event?.type === 'turn_complete' ||
         (event?.type === 'event_msg' && (payload.type === 'task_complete' || payload.type === 'turn_complete'))
-      )
+      ) {
         latest = 'complete';
-      else if (event?.type === 'task_started' || event?.type === 'turn_context') latest = 'active';
+        terminalInvalidated = false;
+      } else if (event?.type === 'task_started' || event?.type === 'turn_context') latest = 'active';
       else if (event?.type === 'event_msg') {
         if (payload.type === 'task_started' || payload.type === 'turn_context') latest = 'active';
         else if (
@@ -96,6 +100,9 @@ export function codexRolloutState(text) {
           payload.item?.type === 'AgentMessage'
         ) {
           latest = 'active';
+        } else if (latest === 'complete' && !['token_count', 'thread_settings_applied'].includes(payload.type)) {
+          latest = 'unproven';
+          terminalInvalidated = true;
         }
       } else if (event?.type === 'response_item') {
         if (payload.role === 'user') latest = 'active';
@@ -105,6 +112,13 @@ export function codexRolloutState(text) {
           payload.type === 'custom_tool_call'
         )
           latest = 'active';
+        else if (latest === 'complete') {
+          latest = 'unproven';
+          terminalInvalidated = true;
+        }
+      } else if (latest === 'complete' && event?.type !== 'token_usage_record') {
+        latest = 'unproven';
+        terminalInvalidated = true;
       }
     }
   } catch (error) {
@@ -114,7 +128,12 @@ export function codexRolloutState(text) {
   if (latest === 'complete') return { status: 'complete', reason: null };
   if (latest === 'active')
     return { status: 'active', reason: 'a new task or user/tool event follows the last terminal marker' };
-  return { status: 'unproven', reason: 'no verified terminal task_complete event' };
+  return {
+    status: 'unproven',
+    reason: terminalInvalidated
+      ? 'an unrecognized event followed the last terminal marker'
+      : 'no verified terminal task_complete event',
+  };
 }
 
 function readTail(path, expectedSnapshot, fstat = fstatSync) {

@@ -316,4 +316,31 @@ describe('codexRolloutState', () => {
     expect(codexRolloutState(assistantResponse).status).toBe('active');
     expect(codexRolloutState(assistantResponseWithoutType).status).toBe('active');
   });
+
+  it('fails closed when an unrecognized event follows the terminal marker', () => {
+    const terminal = { type: 'event_msg', payload: { type: 'task_complete' } };
+    for (const unknown of [
+      { type: 'future_rollout_event', payload: {} },
+      { type: 'event_msg', payload: { type: 'future_event' } },
+      { type: 'response_item', payload: { type: 'future_item' } },
+    ]) {
+      const text = [terminal, unknown].map((event) => JSON.stringify(event)).join('\n');
+      expect(codexRolloutState(text)).toMatchObject({
+        status: 'unproven',
+        reason: 'an unrecognized event followed the last terminal marker',
+      });
+    }
+  });
+
+  it('keeps known Codex bookkeeping after completion from reopening the task', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+      { type: 'event_msg', payload: { type: 'token_count' } },
+      { type: 'event_msg', payload: { type: 'thread_settings_applied' } },
+      { type: 'token_usage_record', payload: {} },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+    expect(codexRolloutState(text).status).toBe('complete');
+  });
 });
