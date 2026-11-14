@@ -129,16 +129,47 @@ describe('releaseBlocker — the three facts a release requires', () => {
     expect(blocker.message).toMatch(/working tree is dirty/);
   });
 
-  it('accepts a merged, clean worktree', () => {
+  it('refuses a merged branch when working-tree status could not be read', () => {
+    const path = makeWorktree('unreadable-status', { commit: true });
+    git(['merge', '-q', '--no-ff', '-m', 'land unreadable status', 'feat/unreadable-status'], repo);
+    expect(releaseBlocker({ ...base, worktreePath: path, branch: 'feat/unreadable-status' })).toMatchObject({
+      code: 'status-unreadable',
+    });
+  });
+
+  it('accepts a newly merged, clean worktree when the previous base is known', () => {
     const path = makeWorktree('ok', { commit: true });
+    const previousBase = git(['rev-parse', 'main']);
     git(['merge', '-q', '--no-ff', '-m', 'land ok', 'feat/ok'], repo);
-    expect(releaseBlocker({ ...base, worktreePath: path, branch: 'feat/ok', dirtyOutput: '' })).toBeNull();
+    expect(
+      releaseBlocker({ ...base, worktreePath: path, branch: 'feat/ok', dirtyOutput: '', previousBase })
+    ).toBeNull();
+  });
+
+  it('fails closed when the previous base transition is not supplied', () => {
+    const path = makeWorktree('unknown-transition', { commit: true });
+    git(['merge', '-q', '--no-ff', '-m', 'land unknown transition', 'feat/unknown-transition'], repo);
+    expect(
+      releaseBlocker({ ...base, worktreePath: path, branch: 'feat/unknown-transition', dirtyOutput: '' })
+    ).toMatchObject({ code: 'base-transition-unproven' });
+  });
+
+  it('distinguishes unreadable ancestry from a branch that is simply not merged', () => {
+    expect(
+      releaseBlocker({
+        ...base,
+        branch: 'feat/does-not-exist',
+        dirtyOutput: '',
+        previousBase: git(['rev-parse', 'main']),
+      })
+    ).toMatchObject({ code: 'ancestry-unreadable' });
   });
 });
 
 describe('releaseWorktree — releases as the branch, and only the branch', () => {
   it('releases the merged branch’s own claim and its file lock', () => {
     const path = makeWorktree('mine', { commit: true });
+    const previousBase = git(['rev-parse', 'main']);
     const board = boardFor('feat/mine', path);
     // The board mints its own ids, so the claim is made against what it hands back rather
     // than against an id this test chose.
@@ -148,7 +179,7 @@ describe('releaseWorktree — releases as the branch, and only the branch', () =
 
     git(['merge', '-q', '--no-ff', '-m', 'land mine', 'feat/mine'], repo);
 
-    const result = releaseWorktree(board, { worktreePath: path, branch: 'feat/mine', base: 'main' });
+    const result = releaseWorktree(board, { worktreePath: path, branch: 'feat/mine', base: 'main', previousBase });
     expect(result.releasedClaims).toEqual([id]);
     expect(board.listIssues({ claimedBy: 'feat/mine' })).toEqual([]);
     // The lock goes with the claim, which is the board's own pairing rule
@@ -163,13 +194,19 @@ describe('releaseWorktree — releases as the branch, and only the branch', () =
     // that is still writing. `--force` would, because it skips the ownership check on
     // every row for the path.
     const path = makeWorktree('shared', { commit: true });
+    const previousBase = git(['rev-parse', 'main']);
     const theirs = boardFor('other/agent', path);
     theirs.holdFiles([join(path, 'src/contested.ts')], { leaseMs: 60_000 });
 
     git(['merge', '-q', '--no-ff', '-m', 'land shared', 'feat/shared'], repo);
 
     const mine = boardFor('feat/shared', path);
-    const result = releaseWorktree(mine, { worktreePath: path, branch: 'feat/shared', base: 'main' });
+    const result = releaseWorktree(mine, {
+      worktreePath: path,
+      branch: 'feat/shared',
+      base: 'main',
+      previousBase,
+    });
     expect(result.releasedLocks ?? []).toEqual([]);
     // Still held, by the agent that took it. This is the assertion that would break first
     // if anyone reached for `--force`, because force skips the ownership check entirely.
@@ -201,23 +238,32 @@ describe('releaseWorktree — releases as the branch, and only the branch', () =
 
   it('reports “nothing held” rather than inventing a release', () => {
     const path = makeWorktree('idle', { commit: true });
+    const previousBase = git(['rev-parse', 'main']);
     git(['merge', '-q', '--no-ff', '-m', 'land idle', 'feat/idle'], repo);
     const result = releaseWorktree(boardFor('feat/idle', path), {
       worktreePath: path,
       branch: 'feat/idle',
       base: 'main',
+      previousBase,
     });
     expect(result.skipped).toMatch(/nothing held/);
   });
 
   it('--dry-run reports what it would release and changes nothing', () => {
     const path = makeWorktree('dry', { commit: true });
+    const previousBase = git(['rev-parse', 'main']);
     const board = boardFor('feat/dry', path);
     const id = board.createIssue({ title: 'issue two' }).id;
     board.claimIssue(id, { leaseMs: 60_000 });
     git(['merge', '-q', '--no-ff', '-m', 'land dry', 'feat/dry'], repo);
 
-    const result = releaseWorktree(board, { worktreePath: path, branch: 'feat/dry', base: 'main', dryRun: true });
+    const result = releaseWorktree(board, {
+      worktreePath: path,
+      branch: 'feat/dry',
+      base: 'main',
+      previousBase,
+      dryRun: true,
+    });
     expect(result.wouldRelease.claims).toEqual([id]);
     expect(board.listIssues({ claimedBy: 'feat/dry' }).map((c) => c.id)).toEqual([id]);
   });
@@ -244,6 +290,20 @@ describe('releaseMerged — the whole sweep a merge triggers', () => {
     expect(board.listIssues({ claimedBy: 'feat/pending' }).map((c) => c.id)).toEqual([pendingId]);
   });
 
+  it('recognizes a fast-forward base transition from the reflog', () => {
+    const candidate = makeWorktree('fast-forward', { commit: true });
+    const owner = boardFor('feat/fast-forward', candidate);
+    const id = owner.createIssue({ title: 'fast-forward landing' }).id;
+    owner.claimIssue(id, { leaseMs: 60_000 });
+
+    git(['merge', '--ff-only', 'feat/fast-forward'], repo);
+    const results = releaseMerged({ repoRoot: repo, base: 'main', board: owner });
+    const row = results.find((result) => result.branch === 'feat/fast-forward');
+
+    expect(row.releasedClaims).toEqual([id]);
+    expect(owner.listIssues({ claimedBy: 'feat/fast-forward' })).toEqual([]);
+  });
+
   it('never releases the main worktree’s own claim', () => {
     const board = boardFor('main', repo);
     const id = board.createIssue({ title: 'main work' }).id;
@@ -252,6 +312,133 @@ describe('releaseMerged — the whole sweep a merge triggers', () => {
     const mainRow = results.find((r) => r.branch === 'main');
     expect(mainRow.skipped).toMatch(/base branch/);
     expect(board.listIssues({ claimedBy: 'main' }).map((c) => c.id)).toEqual([id]);
+  });
+
+  it('does not sweep from a task worktree that fast-forwarded from main', () => {
+    const landed = makeWorktree('older-landed', { commit: true });
+    const taskPath = join(repo, '..', 'wt-task-sync');
+    git(['worktree', 'add', '-q', '-b', 'task/sync', taskPath, 'main'], repo);
+
+    const owner = boardFor('feat/older-landed', landed);
+    const id = owner.createIssue({ title: 'older landed task' }).id;
+    owner.claimIssue(id, { leaseMs: 60_000 });
+    owner.holdFiles([join(landed, 'src/older.ts')], { issueId: id, leaseMs: 60_000 });
+
+    git(['merge', '-q', '--no-ff', '-m', 'land older branch', 'feat/older-landed'], repo);
+    git(['merge', '-q', 'main'], taskPath);
+
+    const results = releaseMerged({ repoRoot: taskPath, base: 'main', board: owner });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ skipCode: 'outside-base-branch' });
+    expect(owner.listIssues({ claimedBy: 'feat/older-landed' }).map((issue) => issue.id)).toEqual([id]);
+    expect(owner.locksHeldBy('feat/older-landed')).toHaveLength(1);
+  });
+
+  it('skips an older already-merged branch during a later main merge', () => {
+    const older = makeWorktree('older', { commit: true });
+    const olderOwner = boardFor('feat/older', older);
+    const olderId = olderOwner.createIssue({ title: 'already merged' }).id;
+    olderOwner.claimIssue(olderId, { leaseMs: 60_000 });
+    olderOwner.holdFiles([join(older, 'src/older.ts')], { issueId: olderId, leaseMs: 60_000 });
+    git(['merge', '-q', '--no-ff', '-m', 'land older branch', 'feat/older'], repo);
+
+    const newer = makeWorktree('newer', { commit: true });
+    const newerOwner = boardFor('feat/newer', newer);
+    const newerId = newerOwner.createIssue({ title: 'new merge' }).id;
+    newerOwner.claimIssue(newerId, { leaseMs: 60_000 });
+    git(['merge', '-q', '--no-ff', '-m', 'land newer branch', 'feat/newer'], repo);
+
+    const results = releaseMerged({ repoRoot: repo, base: 'main', board: newerOwner });
+    const byBranch = Object.fromEntries(results.map((result) => [result.branch, result]));
+
+    expect(byBranch['feat/older']).toMatchObject({ skipCode: 'already-on-base' });
+    expect(byBranch['feat/newer'].releasedClaims).toEqual([newerId]);
+    expect(olderOwner.listIssues({ claimedBy: 'feat/older' }).map((issue) => issue.id)).toEqual([olderId]);
+    expect(olderOwner.locksHeldBy('feat/older')).toHaveLength(1);
+    expect(newerOwner.listIssues({ claimedBy: 'feat/newer' })).toEqual([]);
+  });
+
+  it('fails closed when ORIG_HEAD disagrees with the base reflog', () => {
+    const candidate = makeWorktree('stale-orig-head', { commit: true });
+    const owner = boardFor('feat/stale-orig-head', candidate);
+    const id = owner.createIssue({ title: 'must stay held without a proven merge transition' }).id;
+    owner.claimIssue(id, { leaseMs: 60_000 });
+    git(['merge', '-q', '--no-ff', '-m', 'land stale ORIG_HEAD test', 'feat/stale-orig-head'], repo);
+
+    git(['update-ref', 'ORIG_HEAD', git(['rev-parse', 'feat/stale-orig-head'])]);
+    const results = releaseMerged({ repoRoot: repo, base: 'main', board: owner });
+    const row = results.find((result) => result.branch === 'feat/stale-orig-head');
+
+    expect(row).toMatchObject({ skipCode: 'base-transition-unproven' });
+    expect(owner.listIssues({ claimedBy: 'feat/stale-orig-head' }).map((issue) => issue.id)).toEqual([id]);
+  });
+
+  it('releases a pinned-style prepared merge only after its commit lands on the base', () => {
+    const candidate = makeWorktree('prepared', { commit: true });
+    const owner = boardFor('feat/prepared', candidate);
+    const id = owner.createIssue({ title: 'prepared landing' }).id;
+    owner.claimIssue(id, { leaseMs: 60_000 });
+
+    git(['merge', '--no-commit', '--no-ff', '--no-edit', 'feat/prepared'], repo);
+    const prepared = releaseMerged({ repoRoot: repo, base: 'main', board: owner });
+    const preparedRow = prepared.find((result) => result.branch === 'feat/prepared');
+    expect(preparedRow).toMatchObject({ skipCode: 'not-on-base' });
+    expect(owner.listIssues({ claimedBy: 'feat/prepared' }).map((issue) => issue.id)).toEqual([id]);
+
+    git(['commit', '-q', '-m', 'record prepared landing'], repo);
+    expect(git(['rev-parse', 'ORIG_HEAD'])).toBe(git(['rev-parse', 'main@{1}']));
+    const committed = releaseMerged({ repoRoot: repo, base: 'main', board: owner });
+    const committedRow = committed.find((result) => result.branch === 'feat/prepared');
+
+    expect(committedRow.releasedClaims).toEqual([id]);
+    expect(owner.listIssues({ claimedBy: 'feat/prepared' })).toEqual([]);
+  });
+
+  it('pins eligibility to the base tip captured before a concurrent later landing', () => {
+    const first = makeWorktree('snapshot-first', { commit: true });
+    const later = makeWorktree('snapshot-later', { commit: true });
+    const firstOwner = boardFor('feat/snapshot-first', first);
+    const laterOwner = boardFor('feat/snapshot-later', later);
+    const firstId = firstOwner.createIssue({ title: 'first snapshot landing' }).id;
+    const laterId = laterOwner.createIssue({ title: 'later concurrent landing' }).id;
+    firstOwner.claimIssue(firstId, { leaseMs: 60_000 });
+    laterOwner.claimIssue(laterId, { leaseMs: 60_000 });
+    git(['merge', '-q', '--no-ff', '-m', 'land first snapshot branch', 'feat/snapshot-first'], repo);
+
+    const originalListIssues = firstOwner.listIssues.bind(firstOwner);
+    let concurrentMergeStarted = false;
+    firstOwner.listIssues = (filters) => {
+      if (!concurrentMergeStarted) {
+        concurrentMergeStarted = true;
+        git(['merge', '-q', '--no-ff', '-m', 'land concurrent later branch', 'feat/snapshot-later'], repo);
+      }
+      return originalListIssues(filters);
+    };
+
+    const results = releaseMerged({ repoRoot: repo, base: 'main', board: firstOwner });
+    const byBranch = Object.fromEntries(results.map((result) => [result.branch, result]));
+
+    expect(byBranch['feat/snapshot-first'].releasedClaims).toEqual([firstId]);
+    expect(byBranch['feat/snapshot-later']).toMatchObject({ skipCode: 'not-on-base' });
+    expect(laterOwner.listIssues({ claimedBy: 'feat/snapshot-later' }).map((issue) => issue.id)).toEqual([laterId]);
+  });
+
+  it('refuses release when one branch is checked out in multiple worktrees', () => {
+    const candidate = makeWorktree('duplicated-branch', { commit: true });
+    const duplicate = join(repo, '..', 'wt-duplicated-branch-again');
+    git(['worktree', 'add', '-q', '--force', duplicate, 'feat/duplicated-branch'], repo);
+    const owner = boardFor('feat/duplicated-branch', candidate);
+    const id = owner.createIssue({ title: 'duplicate branch worktree claim' }).id;
+    owner.claimIssue(id, { leaseMs: 60_000 });
+    git(['merge', '-q', '--no-ff', '-m', 'land duplicated branch', 'feat/duplicated-branch'], repo);
+
+    const results = releaseMerged({ repoRoot: repo, base: 'main', board: owner });
+    const duplicateRows = results.filter((result) => result.branch === 'feat/duplicated-branch');
+
+    expect(duplicateRows).toHaveLength(2);
+    expect(duplicateRows.every((result) => result.skipCode === 'duplicate-branch-worktree')).toBe(true);
+    expect(owner.listIssues({ claimedBy: 'feat/duplicated-branch' }).map((issue) => issue.id)).toEqual([id]);
   });
 
   it('survives a repository with no board at all', () => {
