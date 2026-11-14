@@ -403,6 +403,40 @@ describe('claims are exclusive and leased', () => {
     b.close();
   });
 
+  it('keeps an unreadable claim lease live across claim and issue readers', () => {
+    const a = boardFor('a');
+    mkdirSync(a.identity.worktree, { recursive: true });
+    const { id } = a.createIssue({ title: 'unreadable lease', files: ['src/lease.ts'], holdFiles: false });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run('not-a-date', id);
+
+    const b = boardFor('b');
+    expect(b.liveClaimOrNull(id)?.agent_id).toBe('a');
+    expect(b.readyIssues().map((issue) => issue.id)).not.toContain(id);
+    expect(b.issuesForPath('src/lease.ts')[0]?.claimed_by).toBe('a');
+    expect(b.listIssues({ claimedBy: 'a' }).map((issue) => issue.id)).toContain(id);
+    expect(b.listIssues({ claimedBy: 'b' }).map((issue) => issue.id)).not.toContain(id);
+    expect(b.status().expiredClaims).toBe(0);
+    expect(b.health().claims.expired).toBe(0);
+    expect(b.doctor()).toEqual([]);
+    expect(() => b.claimIssue(id)).toThrow(/claimed by a/);
+    b.close();
+  });
+
+  it('uses JavaScript date parsing consistently when SQLite rejects a deadline string', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'different date parsers', files: ['src/parser.ts'], holdFiles: false });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run('0', id);
+
+    const b = boardFor('b');
+    expect(Number.isFinite(Date.parse('0'))).toBe(true);
+    expect(b.liveClaimOrNull(id)).toBeNull();
+    expect(b.issuesForPath('src/parser.ts')[0]?.claimed_by).toBeNull();
+    expect(b.listIssues({ claimedBy: 'a' }).map((issue) => issue.id)).not.toContain(id);
+    b.close();
+  });
+
   it('records the takeover in the log, with both agents named', () => {
     const a = boardFor('a');
     const { id } = a.createIssue({ title: 'stolen' });
@@ -502,6 +536,22 @@ describe('file locks make one-file-one-agent real', () => {
       expect(error.code).toBe(4);
       expect(error.message).toMatch(/src\/contexts\/StoreContext.tsx \(a\)/);
     }
+    b.close();
+  });
+
+  it('keeps a file lock with an unreadable expiry live instead of granting it twice', () => {
+    const a = boardFor('a');
+    mkdirSync(a.identity.worktree, { recursive: true });
+    a.holdFiles(['src/unreadable-lock.ts'], { leaseMs: 60_000 });
+    a.db
+      .prepare('UPDATE file_locks SET expires_at = ? WHERE path = ? AND agent_id = ?')
+      .run('not-a-date', 'src/unreadable-lock.ts', 'a');
+
+    const b = boardFor('b');
+    expect(b.liveLocks().map((lock) => lock.path)).toContain('src/unreadable-lock.ts');
+    expect(b.checkPath('src/unreadable-lock.ts').free).toBe(false);
+    expect(b.doctor()).toEqual([]);
+    expect(() => b.holdFiles(['src/unreadable-lock.ts'])).toThrow(/held by another agent/);
     b.close();
   });
 
@@ -1681,6 +1731,70 @@ describe('the schema this script writes', () => {
     const board = new Board({ dir, identity: identityFor('a') });
     expect(() => board.open()).toThrow();
     expect(board.db, 'a failed open left a live handle, so a retry short-circuits').toBeNull();
+  });
+
+  it('retries a busy journal-mode probe during first-open contention', () => {
+    const board = new Board({ dir, identity: identityFor('wal-retry') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 5 });
+    board.db = { exec: vi.fn() };
+    const currentJournalMode = vi
+      .spyOn(board, 'currentJournalMode')
+      .mockImplementationOnce(() => {
+        throw busy;
+      })
+      .mockReturnValueOnce('wal');
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBe('wal');
+    expect(currentJournalMode).toHaveBeenCalledTimes(2);
+    expect(board.db.exec).not.toHaveBeenCalled();
+  });
+
+  it('does not fail open when the final journal-mode probe stays busy', () => {
+    const board = new Board({ dir, identity: identityFor('wal-busy') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 5 });
+    board.db = { exec: vi.fn() };
+    const currentJournalMode = vi.spyOn(board, 'currentJournalMode').mockImplementation(() => {
+      throw busy;
+    });
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBeNull();
+    expect(currentJournalMode).toHaveBeenCalledTimes(3);
+    expect(board.db.exec).not.toHaveBeenCalled();
+  });
+
+  it('retries an extended busy error from WAL conversion', () => {
+    const board = new Board({ dir, identity: identityFor('wal-conversion-busy') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 517 });
+    const exec = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw busy;
+      })
+      .mockImplementationOnce(() => {});
+    board.db = { exec };
+    const currentJournalMode = vi
+      .spyOn(board, 'currentJournalMode')
+      .mockReturnValueOnce('delete')
+      .mockReturnValueOnce('delete')
+      .mockReturnValueOnce('wal');
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBe('wal');
+    expect(currentJournalMode).toHaveBeenCalledTimes(3);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not hide non-busy errors from the WAL conversion', () => {
+    const board = new Board({ dir, identity: identityFor('wal-error') });
+    const ioError = Object.assign(new Error('disk I/O error'), { errcode: 10 });
+    board.db = {
+      exec: vi.fn(() => {
+        throw ioError;
+      }),
+    };
+    vi.spyOn(board, 'currentJournalMode').mockReturnValue('delete');
+
+    expect(() => board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toThrow(ioError);
+    expect(board.db.exec).toHaveBeenCalledTimes(1);
   });
 
   it('refuses before it creates anything, not after', () => {

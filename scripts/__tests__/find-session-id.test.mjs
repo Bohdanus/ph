@@ -67,6 +67,19 @@ function addPart(db, id, messageId, sessionId, data, { at = NOW - 1 * DAY } = {}
   ).run(id, messageId, sessionId, at, at, JSON.stringify(data));
 }
 
+function withTransaction(db, insertFixtures) {
+  db.exec('BEGIN');
+  try {
+    insertFixtures();
+    db.exec('COMMIT');
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
+    throw error;
+  }
+}
+
 describe('find-session-id', () => {
   describe('openDb', () => {
     it('returns a read-only database for an existing path', () => {
@@ -107,15 +120,17 @@ describe('find-session-id', () => {
       const dbPath = join(dir, 'test.db');
       const db = createDb(dbPath);
 
-      addSession(db, 'ses_aaa', { at: NOW - 2 * DAY });
-      const msg = 'msg-aaa';
-      addMessage(db, msg, 'ses_aaa', { at: NOW - 2 * DAY });
-      addPart(db, 'part-aaa-1', msg, 'ses_aaa', { type: 'text', text: 'implement the review feature' });
+      withTransaction(db, () => {
+        addSession(db, 'ses_aaa', { at: NOW - 2 * DAY });
+        const msg = 'msg-aaa';
+        addMessage(db, msg, 'ses_aaa', { at: NOW - 2 * DAY });
+        addPart(db, 'part-aaa-1', msg, 'ses_aaa', { type: 'text', text: 'implement the review feature' });
 
-      addSession(db, 'ses_bbb', { at: NOW - 1 * DAY });
-      const msg2 = 'msg-bbb';
-      addMessage(db, msg2, 'ses_bbb', { at: NOW - 1 * DAY });
-      addPart(db, 'part-bbb-1', msg2, 'ses_bbb', { type: 'text', text: 'fix the LAND worktree bug' });
+        addSession(db, 'ses_bbb', { at: NOW - 1 * DAY });
+        const msg2 = 'msg-bbb';
+        addMessage(db, msg2, 'ses_bbb', { at: NOW - 1 * DAY });
+        addPart(db, 'part-bbb-1', msg2, 'ses_bbb', { type: 'text', text: 'fix the LAND worktree bug' });
+      });
 
       const opened = openDb(dbPath);
       expect(opened).not.toBeNull();
@@ -138,13 +153,15 @@ describe('find-session-id', () => {
       const dbPath = join(dir, 'test.db');
       const db = createDb(dbPath);
 
-      for (let i = 0; i < 7; i++) {
-        const id = `ses_${String(i).padStart(3, '0')}`;
-        addSession(db, id, { at: NOW - (7 - i) * DAY });
-        const msgId = `msg-${i}`;
-        addMessage(db, msgId, id, { at: NOW - (7 - i) * DAY });
-        addPart(db, `part-${i}`, msgId, id, { type: 'text', text: 'shared phrase here' });
-      }
+      withTransaction(db, () => {
+        for (let i = 0; i < 7; i++) {
+          const id = `ses_${String(i).padStart(3, '0')}`;
+          addSession(db, id, { at: NOW - (7 - i) * DAY });
+          const msgId = `msg-${i}`;
+          addMessage(db, msgId, id, { at: NOW - (7 - i) * DAY });
+          addPart(db, `part-${i}`, msgId, id, { type: 'text', text: 'shared phrase here' });
+        }
+      });
 
       const opened = openDb(dbPath);
       expect(opened).not.toBeNull();

@@ -7,6 +7,7 @@ import {
   completeWithFreeModel as completeWithFreeModelImplementation,
   loadCatalogs,
   main,
+  orderFreeModelRoutes,
   probeOpenRouterQuota,
   retryAfterDelayMs,
   zeroPriced,
@@ -113,10 +114,16 @@ describe('unverifiable free routers', () => {
       openRouterRow('nvidia/nemotron-3-ultra-550b-a55b'),
       openRouterRow('xingchen-agi/xing4.0-29b-a4b'),
     ];
-    expect(catalogCandidates('openrouter', { data: rows }).map(({ model }) => model)).toEqual([
+    const candidates = catalogCandidates('openrouter', { data: rows });
+    expect(candidates.map(({ model }) => model)).toEqual([
       'recursive/flint-v1.0:free',
       'nvidia/nemotron-3-ultra-550b-a55b:free',
       'xingchen-agi/xing4.0-29b-a4b:free',
+    ]);
+    expect(orderFreeModelRoutes(candidates).map(({ model }) => model)).toEqual([
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'xingchen-agi/xing4.0-29b-a4b:free',
+      'recursive/flint-v1.0:free',
     ]);
   });
 
@@ -126,10 +133,16 @@ describe('unverifiable free routers', () => {
       kiloRow('xingchen-agi/xing4.0-29b-a4b:free'),
       kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'),
     ];
-    expect(catalogCandidates('kilo', rows).map(({ model }) => model)).toEqual([
+    const candidates = catalogCandidates('kilo', rows);
+    expect(candidates.map(({ model }) => model)).toEqual([
       'recursive/flint-v1.0:free',
       'xingchen-agi/xing4.0-29b-a4b:free',
       'nvidia/nemotron-3-ultra-550b-a55b:free',
+    ]);
+    expect(orderFreeModelRoutes(candidates).map(({ model }) => model)).toEqual([
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'xingchen-agi/xing4.0-29b-a4b:free',
+      'recursive/flint-v1.0:free',
     ]);
   });
 
@@ -627,6 +640,84 @@ describe('lazy OpenRouter quota preflight', () => {
     ).rejects.toThrow(/content policy rejected or filtered this request/);
     expect(chat).toHaveBeenCalledTimes(1);
     expect(runOpenCode).not.toHaveBeenCalled();
+  });
+});
+
+describe('Kilo source-level rate limits', () => {
+  it.each([
+    ['returned', 401],
+    ['returned', 402],
+    ['returned', 429],
+    ['thrown', 401],
+    ['thrown', 402],
+    ['thrown', 429],
+  ])('rotates away from Kilo after a %s HTTP %i without generic backoff', async (shape, status) => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-kilo-source-limit-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const poolStateFile = join(directory, 'pool-state.json');
+    const waitForKiloBackoff = vi.fn().mockResolvedValue(undefined);
+    const rateLimitError = Object.assign(new Error(`Kilo HTTP ${status}`), { status });
+    const runKilo = vi.fn(async () => {
+      if (shape === 'thrown') throw rateLimitError;
+      return {
+        status,
+        error: `Kilo HTTP ${status}`,
+        ...(status === 429 ? { finishReason: 'length' } : {}),
+      };
+    });
+    const chat = vi.fn().mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: 'r1:free',
+            choices: [{ message: { content: 'OpenRouter result' }, finish_reason: 'stop' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+    );
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'), kiloRow('inclusionai/ling-3.2-flash:free')],
+      openrouter: [openRouterRow('r1')],
+      chat,
+    });
+
+    try {
+      const result = await completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'rk',
+        kiloCommand: '/fake-kilo',
+        runKilo,
+        waitForKiloBackoff,
+        quarantineFile,
+        poolStateFile,
+      });
+
+      expect(result).toMatchObject({ source: 'openrouter', model: 'r1:free', content: 'OpenRouter result' });
+      expect(runKilo).toHaveBeenCalledTimes(1);
+      expect(chat).toHaveBeenCalledTimes(1);
+      expect(waitForKiloBackoff).not.toHaveBeenCalled();
+      const poolState = await readFreeModelPoolState(poolStateFile);
+      if (status === 429) {
+        expect(poolState.kiloCooldownUntil).not.toBeNull();
+        const nextRun = await completeWithFreeModel('second prompt', {
+          fetchImpl,
+          openRouterKey: 'rk',
+          kiloCommand: '/fake-kilo',
+          runKilo,
+          waitForKiloBackoff,
+          quarantineFile,
+          poolStateFile,
+        });
+
+        expect(nextRun).toMatchObject({ source: 'openrouter', model: 'r1:free', content: 'OpenRouter result' });
+        expect(runKilo).toHaveBeenCalledTimes(1);
+        expect(chat).toHaveBeenCalledTimes(2);
+      } else {
+        expect(poolState.kiloCooldownUntil).toBeNull();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1156,36 +1247,163 @@ describe('provider rate-limit diagnostics', () => {
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
-  it('stops after one inference when OpenRouter platform rate-limit headers report zero remaining', async () => {
+  it('stops after one inference when a header-only OpenRouter 429 reports zero remaining', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-openrouter-platform-limit-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const poolStateFile = join(directory, 'pool-state.json');
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          error: {
-            message: 'platform rate limited',
-            metadata: { error_type: 'rate_limit_exceeded', provider_code: 'rate_limited' },
-          },
-        }),
-        {
-          status: 429,
-          headers: {
-            'retry-after': '30',
-            'x-ratelimit-remaining': '0',
-            'content-type': 'application/json',
-          },
-        }
-      )
+      new Response(JSON.stringify({ error: { message: 'platform rate limited' } }), {
+        status: 429,
+        headers: {
+          'retry-after': '30',
+          'x-ratelimit-remaining': '0',
+          'content-type': 'application/json',
+        },
+      })
     );
-    const fetchImpl = catalogFetch({ kilo: [], openrouter: [openRouterRow('r1'), openRouterRow('r2')], chat });
+    const keyInfo = vi.fn(() => ({
+      ok: true,
+      json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+    }));
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo,
+      chat,
+    });
 
-    await expect(completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })).rejects.toThrow(
-      /No free model completed/
-    );
+    try {
+      await expect(
+        completeWithFreeModel('test', {
+          fetchImpl,
+          openRouterKey: 'rk',
+          waitForRetryAfter,
+          quarantineFile,
+          poolStateFile,
+        })
+      ).rejects.toThrow(/No free model completed/);
 
-    expect(chat).toHaveBeenCalledTimes(1);
-    expect(waitForRetryAfter).not.toHaveBeenCalled();
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+      expect(chat).toHaveBeenCalledTimes(1);
+      expect(waitForRetryAfter).not.toHaveBeenCalled();
+      expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
+      expect((await readFreeModelPoolState(poolStateFile)).modelFailures).toEqual({});
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
+
+  it.each([
+    [
+      'top-level platform metadata',
+      {
+        error: {
+          code: 429,
+          message: 'Rate limit exceeded',
+          metadata: {
+            error_type: 'rate_limit_exceeded',
+            limit_source: 'openrouter_free_tier_per_minute',
+          },
+        },
+      },
+    ],
+    [
+      'choice-level platform metadata',
+      {
+        choices: [
+          {
+            error: {
+              code: 429,
+              message: 'Rate limit exceeded',
+              metadata: {
+                error_type: 'rate_limit_exceeded',
+                limit_source: 'openrouter_free_tier_per_minute',
+              },
+            },
+          },
+        ],
+      },
+    ],
+    [
+      'top-level platform source without an error type',
+      {
+        error: {
+          code: 429,
+          message: 'Rate limit exceeded',
+          metadata: { limit_source: 'openrouter_free_tier_per_minute' },
+        },
+      },
+    ],
+    [
+      'choice-level platform source without an error type',
+      {
+        choices: [
+          {
+            error: {
+              code: 429,
+              message: 'Rate limit exceeded',
+              metadata: { limit_source: 'openrouter_free_tier_per_minute' },
+            },
+          },
+        ],
+      },
+    ],
+    [
+      'zero remaining header with an embedded upstream error',
+      {
+        error: {
+          code: 503,
+          message: 'Upstream provider unavailable',
+          metadata: { error_type: 'provider_unavailable', provider_name: 'example-provider' },
+        },
+      },
+      { 'x-ratelimit-remaining': '0' },
+    ],
+    ['daily quota message without typed metadata', { error: { message: 'Free model quota exhausted for the day' } }],
+  ])(
+    'does not attribute an HTTP 200 OpenRouter platform quota error: %s',
+    async (_label, payload, extraHeaders = {}) => {
+      const directory = await mkdtemp(join(tmpdir(), 'free-model-openrouter-platform-200-'));
+      const quarantineFile = join(directory, 'quarantine.json');
+      const poolStateFile = join(directory, 'pool-state.json');
+      const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+      const chat = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'content-type': 'application/json', ...extraHeaders },
+        })
+      );
+      const keyInfo = vi.fn(() => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+      }));
+      const fetchImpl = catalogFetch({
+        kilo: [],
+        openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+        keyInfo,
+        chat,
+      });
+
+      try {
+        await expect(
+          completeWithFreeModel('prompt', {
+            fetchImpl,
+            openRouterKey: 'rk',
+            waitForRetryAfter,
+            quarantineFile,
+            poolStateFile,
+          })
+        ).rejects.toThrow(/No free model completed/);
+
+        expect(chat).toHaveBeenCalledTimes(1);
+        expect(keyInfo).toHaveBeenCalledTimes(2);
+        expect(waitForRetryAfter).not.toHaveBeenCalled();
+        expect((await readFreeModelPoolState(poolStateFile)).modelFailures).toEqual({});
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
 
   it('honors a 60-second Retry-After on OpenRouter 503 after the lazy quota probe', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
@@ -1537,7 +1755,9 @@ describe('provider rate-limit diagnostics', () => {
 
       expect(chat).toHaveBeenCalledTimes(1);
       expect(waitForRetryAfter).not.toHaveBeenCalled();
-      expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+      expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(
+        status === 429 ? 2 : 1
+      );
     }
   );
 
@@ -1633,7 +1853,7 @@ describe('provider rate-limit diagnostics', () => {
     ).rejects.toThrow(/No free model completed/);
 
     expect(chat).toHaveBeenCalledTimes(1);
-    expect(keyInfo).toHaveBeenCalledTimes(1);
+    expect(keyInfo).toHaveBeenCalledTimes(2);
     expect(waitForRetryAfter).not.toHaveBeenCalled();
   });
 
@@ -1916,7 +2136,10 @@ describe('provider rate-limit diagnostics', () => {
     expect(keyInfo).toHaveBeenCalledTimes(2);
   });
 
-  it('skips OpenRouter retry when the daily quota is exhausted after an upstream provider 429', async () => {
+  it('does not record an OpenRouter model failure when the daily quota is exhausted after a 429', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-openrouter-daily-quota-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const poolStateFile = join(directory, 'pool-state.json');
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const keyInfo = vi
       .fn()
@@ -1942,13 +2165,24 @@ describe('provider rate-limit diagnostics', () => {
       chat,
     });
 
-    await expect(
-      completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })
-    ).rejects.toThrow(/No free model completed/);
+    try {
+      await expect(
+        completeWithFreeModel('prompt', {
+          fetchImpl,
+          openRouterKey: 'rk',
+          waitForRetryAfter,
+          quarantineFile,
+          poolStateFile,
+        })
+      ).rejects.toThrow(/No free model completed/);
 
-    expect(keyInfo).toHaveBeenCalledTimes(2);
-    expect(chat).toHaveBeenCalledTimes(1);
-    expect(waitForRetryAfter).not.toHaveBeenCalled();
+      expect(keyInfo).toHaveBeenCalledTimes(2);
+      expect(chat).toHaveBeenCalledTimes(1);
+      expect(waitForRetryAfter).not.toHaveBeenCalled();
+      expect((await readFreeModelPoolState(poolStateFile)).modelFailures).toEqual({});
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it.each([
@@ -2349,7 +2583,7 @@ describe('provider rate-limit diagnostics', () => {
     });
 
     expect(result).toMatchObject({ source: 'opencode', model: 'beam-free', content: 'fallback completed' });
-    expect(keyInfo).toHaveBeenCalledTimes(1);
+    expect(keyInfo).toHaveBeenCalledTimes(2);
     expect(chat).toHaveBeenCalledTimes(1);
     expect(waitForRetryAfter).not.toHaveBeenCalled();
     expect(runOpenCode).toHaveBeenCalledTimes(1);

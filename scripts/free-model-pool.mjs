@@ -663,11 +663,11 @@ function isOpenRouterDailyQuotaError(payload) {
 function isModelAttributableOpenRouterFailure(response, payload) {
   const status = response?.status;
   if (isOpenRouterDailyQuotaError(payload)) return false;
+  if (openRouterLimitSources(payload).some((source) => source.startsWith('openrouter_'))) return false;
   if (status === 200 && hasTransientOpenRouterProviderError(payload)) return true;
   if (!Number.isInteger(status) || status < 400 || status > 599 || status === 401 || status === 402) return false;
   if (status === 429) {
     const limitSources = openRouterLimitSources(payload);
-    if (limitSources.some((source) => source.startsWith('openrouter_'))) return false;
     if (limitSources.includes('upstream_provider_shared_pool')) return true;
     const remaining = openRouterPlatformRemaining(response);
     if (remaining !== null) return remaining > 0;
@@ -997,6 +997,9 @@ export async function runOpenCodeCompletion({
   maxTokens,
   timeoutMs,
   providerOwned = false,
+  spawnImpl = spawn,
+  platform = process.platform,
+  terminateWindowsProcessTreeImpl = terminateWindowsProcessTree,
 }) {
   if (isDisabledFreeModel(model)) {
     return { error: 'Nemotron model ID is not approved by free-model policy' };
@@ -1057,12 +1060,12 @@ export async function runOpenCodeCompletion({
         `Answer the attached request concisely (about ${profile.maxTokens} tokens or fewer). Do not use tools.`,
       ];
       const commandShim = resolveCommandShim(command, args, { env, cwd: directory });
-      const child = spawn(commandShim.command, commandShim.args, {
+      const child = spawnImpl(commandShim.command, commandShim.args, {
         cwd: directory,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,
-        detached: process.platform !== 'win32',
+        detached: platform !== 'win32',
         windowsHide: true,
         ...commandShim.spawnOptions,
       });
@@ -1072,21 +1075,91 @@ export async function runOpenCodeCompletion({
       let timedOut = false;
       let outputExceeded = false;
       let terminationError = null;
+      let terminationKillError = null;
       let killTimer;
+      let terminationCloseTimer;
+      let timer;
+      let settled = false;
+      let childClosed = false;
       let killPromise = Promise.resolve();
+      const settle = (finish, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(killTimer);
+        clearTimeout(terminationCloseTimer);
+        finish(value);
+      };
+      const parseCapturedOutput = () => {
+        const parsed = [];
+        let malformedJsonl = false;
+        for (const line of Buffer.concat(chunks).toString('utf8').split(/\r?\n/).filter(Boolean)) {
+          try {
+            const event = JSON.parse(line);
+            if (event && typeof event === 'object' && !Array.isArray(event)) parsed.push(event);
+            else malformedJsonl = true;
+          } catch {
+            malformedJsonl = true;
+          }
+        }
+        return { parsed, malformedJsonl };
+      };
+      const processFailureError = (message, parsed, code) => {
+        const metadata = openCodeCompletionFailureMetadata(parsed);
+        const reportedCosts = openCodeReportedCosts(parsed);
+        if ((message || code !== 0) && reportedCosts.some((cost) => !isExactZeroCost(cost))) {
+          const error = new Error('OpenCode reported non-zero or invalid cost');
+          error.safetyStop = true;
+          error.reportedCost = true;
+          Object.assign(error, metadata);
+          if (message) error.processFailure = message;
+          return error;
+        }
+        if (message) {
+          const error = new Error(message);
+          Object.assign(error, metadata);
+          return error;
+        }
+        const type =
+          typeof metadata.errorType === 'string' && /^[a-z0-9._-]+$/i.test(metadata.errorType)
+            ? metadata.errorType
+            : '';
+        const status = metadata.status;
+        const statusText = Number.isInteger(status) && status >= 100 && status <= 599 ? ` (HTTP ${status})` : '';
+        const error = new Error(`OpenCode exited ${code ?? 'null'}${type ? `: ${type}${statusText}` : ''}`);
+        Object.assign(error, metadata);
+        return error;
+      };
+      const processTerminationFailureError = (parsed) => {
+        const reasons = [terminationError?.message ?? String(terminationError)];
+        if (terminationKillError) {
+          reasons.push(`direct child kill: ${terminationKillError.message ?? String(terminationKillError)}`);
+        }
+        const error = processFailureError(`OpenCode process termination failed: ${reasons.join('; ')}`, parsed, null);
+        error.safetyStop = true;
+        return error;
+      };
       const stopChild = () => {
         if (stopping) return killPromise;
         stopping = true;
         clearTimeout(timer);
-        if (process.platform === 'win32') {
-          killPromise = terminateWindowsProcessTree(child.pid).catch((error) => {
-            terminationError = error;
-            try {
-              child.kill('SIGKILL');
-            } catch {}
-            clearTimeout(timer);
-            reject(new Error(`OpenCode process termination failed: ${terminationError.message}`));
-          });
+        if (platform === 'win32') {
+          killPromise = Promise.resolve()
+            .then(() => terminateWindowsProcessTreeImpl(child.pid))
+            .catch((error) => {
+              terminationError = error;
+              try {
+                child.kill('SIGKILL');
+              } catch (killError) {
+                terminationKillError = killError;
+              }
+              if (!childClosed) {
+                terminationCloseTimer = setTimeout(() => {
+                  const { parsed } = parseCapturedOutput();
+                  settle(reject, processTerminationFailureError(parsed));
+                }, 5_000);
+              }
+            });
           return killPromise;
         }
         try {
@@ -1106,7 +1179,7 @@ export async function runOpenCodeCompletion({
         });
         return killPromise;
       };
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         timedOut = true;
         void stopChild();
       }, effectiveTimeoutMs);
@@ -1123,28 +1196,22 @@ export async function runOpenCodeCompletion({
       });
       child.stderr.on('data', () => {});
       child.once('error', (error) => {
-        clearTimeout(timer);
-        clearTimeout(killTimer);
-        reject(error);
+        if (stopping && terminationError) {
+          terminationKillError = error;
+          return;
+        }
+        settle(reject, error);
       });
       child.once('close', (code, signal) => {
+        childClosed = true;
         clearTimeout(timer);
+        clearTimeout(terminationCloseTimer);
         void (async () => {
           if (stopping) await killPromise;
+          if (settled) return;
           clearTimeout(killTimer);
-          const parsed = [];
-          let malformedJsonl = false;
-          for (const line of Buffer.concat(chunks).toString('utf8').split(/\r?\n/).filter(Boolean)) {
-            try {
-              const event = JSON.parse(line);
-              if (event && typeof event === 'object' && !Array.isArray(event)) parsed.push(event);
-              else malformedJsonl = true;
-            } catch {
-              malformedJsonl = true;
-            }
-          }
-          const metadata = openCodeCompletionFailureMetadata(parsed);
-          const reportedCosts = openCodeReportedCosts(parsed);
+          clearTimeout(terminationCloseTimer);
+          const { parsed, malformedJsonl } = parseCapturedOutput();
           const processFailure = terminationError
             ? `OpenCode process termination failed: ${terminationError.message}`
             : timedOut
@@ -1154,33 +1221,13 @@ export async function runOpenCodeCompletion({
                 : malformedJsonl
                   ? 'OpenCode returned malformed JSONL output'
                   : null;
-          if ((processFailure || code !== 0) && reportedCosts.some((cost) => !isExactZeroCost(cost))) {
-            const error = new Error('OpenCode reported non-zero or invalid cost');
-            error.safetyStop = true;
-            error.reportedCost = true;
-            throw error;
-          }
-          if (processFailure) {
-            if (Object.keys(metadata).length > 0) {
-              const error = new Error(processFailure);
-              Object.assign(error, metadata);
-              throw error;
-            }
-            throw new Error(processFailure);
-          }
-          if (code !== 0) {
-            const type =
-              typeof metadata.errorType === 'string' && /^[a-z0-9._-]+$/i.test(metadata.errorType)
-                ? metadata.errorType
-                : '';
-            const status = metadata.status;
-            const statusText = Number.isInteger(status) && status >= 100 && status <= 599 ? ` (HTTP ${status})` : '';
-            const error = new Error(`OpenCode exited ${code ?? signal}${type ? `: ${type}${statusText}` : ''}`);
-            Object.assign(error, metadata);
-            throw error;
-          }
+          if (terminationError) throw processTerminationFailureError(parsed);
+          if (processFailure || code !== 0) throw processFailureError(processFailure, parsed, code ?? signal);
           return parsed;
-        })().then(resolve, reject);
+        })().then(
+          (value) => settle(resolve, value),
+          (error) => settle(reject, error)
+        );
       });
     });
     const reportedCosts = openCodeReportedCosts(events);
@@ -1253,6 +1300,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
     opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
     runOpenCode = runOpenCodeCompletion,
     maxTokens,
+    waitForKiloBackoff = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     waitForRetryAfter = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     poolStateFile: requestedPoolStateFile,
@@ -1452,6 +1500,26 @@ export async function completeWithFreeModel(prompt, options = {}) {
       exhausted.add('openrouter');
       return { retry: false };
     }
+    const dailyQuotaFailure = isOpenRouterDailyQuotaError(payload);
+    const limitSources = openRouterLimitSources(payload);
+    const isPlatformLimit =
+      limitSources.some((source) => source.startsWith('openrouter_')) || openRouterPlatformRemaining(response) === 0;
+    const rateLimitFailure =
+      status === 429 || hasOpenRouterRateLimitError(payload) || dailyQuotaFailure || isPlatformLimit;
+    let quotaRefreshed = false;
+    let refreshedQuotaRemains = openRouterQuotaKnownPositive;
+    if (rateLimitFailure) {
+      refreshedQuotaRemains = await refreshOpenRouterQuotaAfterAttempt();
+      quotaRefreshed = true;
+      if (!refreshedQuotaRemains) return { retry: false };
+    }
+    if (isPlatformLimit || dailyQuotaFailure) {
+      exhausted.add('openrouter');
+      stderr.write(
+        'OpenRouter platform rate limit or daily quota applies to this run; skipping its remaining routes.\n'
+      );
+      return { retry: false };
+    }
     const attributed = isModelAttributableOpenRouterFailure(response, payload);
     let failureResult = null;
     if (attributed) {
@@ -1470,19 +1538,10 @@ export async function completeWithFreeModel(prompt, options = {}) {
         );
       }
     }
-    const limitSources = openRouterLimitSources(payload);
-    const isPlatformLimit =
-      limitSources.some((source) => source.startsWith('openrouter_')) || openRouterPlatformRemaining(response) === 0;
-    if (status === 429 && isPlatformLimit) {
-      exhausted.add('openrouter');
-      stderr.write('OpenRouter platform rate limit applies to this run; skipping its remaining routes.\n');
-      return { retry: false };
-    }
     const retryAfterMs = retryAfterDelayMs(response);
     if (retryAfterMs !== null && retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
       if (status === 429 && attributed) {
-        const quotaRemains = await refreshOpenRouterQuotaAfterAttempt();
-        if (quotaRemains) {
+        if (refreshedQuotaRemains) {
           stderr.write(
             `OpenRouter model ${candidate.model} Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this model and checking the next route.\n`
           );
@@ -1497,7 +1556,10 @@ export async function completeWithFreeModel(prompt, options = {}) {
       return { retry: false };
     }
     const clientError = Number.isInteger(status) && status >= 300 && status < 500;
-    if (status === 429 || transientTypedFailure || transientServerFailure || response?.ok === true || clientError) {
+    if (
+      !quotaRefreshed &&
+      (status === 429 || transientTypedFailure || transientServerFailure || response?.ok === true || clientError)
+    ) {
       await refreshOpenRouterQuotaAfterAttempt();
     }
     if (openRouterQuotaInitiallyUnknown) exhausted.add('openrouter');
@@ -1545,16 +1607,28 @@ export async function completeWithFreeModel(prompt, options = {}) {
           maxTokens: routeMaxTokens,
           timeoutMs: routeTimeoutMs,
         });
-        if (result?.safetyStop || hasReportedNonZeroCost(result?.usage)) {
+        if (result?.reportedCost === true || hasReportedNonZeroCost(result?.usage)) {
           await stopForReportedCost(candidate);
         }
+        if (result?.safetyStop) {
+          const error = new Error(result.error ?? 'Kilo completion safety stop');
+          error.safetyStop = true;
+          throw error;
+        }
         if (isContentPolicyError(result)) stopForContentPolicy(candidate);
-        if (result?.finishReason === 'length') {
-          errors.push(`kilo/${candidate.model}: incomplete completion (finish_reason=length)`);
+        if (result?.status === 401 || result?.status === 402) {
+          exhausted.add(candidate.source);
+          errors.push(`kilo/${candidate.model}: ${result.error ?? `HTTP ${result.status}`}`);
           continue;
         }
         if (result?.status === 429) {
           await persistKiloRateLimit();
+          errors.push(`kilo/${candidate.model}: ${result.error ?? 'HTTP 429'}`);
+          continue;
+        }
+        if (result?.finishReason === 'length') {
+          errors.push(`kilo/${candidate.model}: incomplete completion (finish_reason=length)`);
+          continue;
         }
         if (result?.content && result.finishReason === 'stop') {
           const resolvedModel = result.model ?? candidate.model;
@@ -1580,17 +1654,27 @@ export async function completeWithFreeModel(prompt, options = {}) {
           await stopForReportedCost(candidate);
         }
         if (error.safetyStop) throw error;
+        if (isContentPolicyError(error)) stopForContentPolicy(candidate);
+        if (error.status === 401 || error.status === 402) {
+          exhausted.add(candidate.source);
+          errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+          continue;
+        }
         if (error.status === 429) {
           await persistKiloRateLimit();
+          errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+          continue;
         }
-        if (isContentPolicyError(error)) stopForContentPolicy(candidate);
         await recordAttributableFailure(candidate, error);
         errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
-        if (error.code === 'ENOENT' || error.code === 'KILO_SPAWN') exhausted.add(candidate.source);
+        if (error.exhaustSource || error.code === 'ENOENT' || error.code === 'KILO_SPAWN') {
+          exhausted.add(candidate.source);
+        }
       }
+      if (exhausted.has(candidate.source)) continue;
       const attemptNumber = attempts.get(candidate.source) ?? 0;
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      await delay(backoffMs);
+      await waitForKiloBackoff(backoffMs);
       continue;
     }
     if (candidate.source === 'groq') {
