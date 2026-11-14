@@ -663,11 +663,11 @@ function isOpenRouterDailyQuotaError(payload) {
 function isModelAttributableOpenRouterFailure(response, payload) {
   const status = response?.status;
   if (isOpenRouterDailyQuotaError(payload)) return false;
+  if (openRouterLimitSources(payload).some((source) => source.startsWith('openrouter_'))) return false;
   if (status === 200 && hasTransientOpenRouterProviderError(payload)) return true;
   if (!Number.isInteger(status) || status < 400 || status > 599 || status === 401 || status === 402) return false;
   if (status === 429) {
     const limitSources = openRouterLimitSources(payload);
-    if (limitSources.some((source) => source.startsWith('openrouter_'))) return false;
     if (limitSources.includes('upstream_provider_shared_pool')) return true;
     const remaining = openRouterPlatformRemaining(response);
     if (remaining !== null) return remaining > 0;
@@ -1253,6 +1253,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
     opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
     runOpenCode = runOpenCodeCompletion,
     maxTokens,
+    waitForKiloBackoff = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     waitForRetryAfter = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     poolStateFile: requestedPoolStateFile,
@@ -1452,6 +1453,26 @@ export async function completeWithFreeModel(prompt, options = {}) {
       exhausted.add('openrouter');
       return { retry: false };
     }
+    const dailyQuotaFailure = isOpenRouterDailyQuotaError(payload);
+    const limitSources = openRouterLimitSources(payload);
+    const isPlatformLimit =
+      limitSources.some((source) => source.startsWith('openrouter_')) || openRouterPlatformRemaining(response) === 0;
+    const rateLimitFailure =
+      status === 429 || hasOpenRouterRateLimitError(payload) || dailyQuotaFailure || isPlatformLimit;
+    let quotaRefreshed = false;
+    let refreshedQuotaRemains = openRouterQuotaKnownPositive;
+    if (rateLimitFailure) {
+      refreshedQuotaRemains = await refreshOpenRouterQuotaAfterAttempt();
+      quotaRefreshed = true;
+      if (!refreshedQuotaRemains) return { retry: false };
+    }
+    if (isPlatformLimit || dailyQuotaFailure) {
+      exhausted.add('openrouter');
+      stderr.write(
+        'OpenRouter platform rate limit or daily quota applies to this run; skipping its remaining routes.\n'
+      );
+      return { retry: false };
+    }
     const attributed = isModelAttributableOpenRouterFailure(response, payload);
     let failureResult = null;
     if (attributed) {
@@ -1470,19 +1491,10 @@ export async function completeWithFreeModel(prompt, options = {}) {
         );
       }
     }
-    const limitSources = openRouterLimitSources(payload);
-    const isPlatformLimit =
-      limitSources.some((source) => source.startsWith('openrouter_')) || openRouterPlatformRemaining(response) === 0;
-    if (status === 429 && isPlatformLimit) {
-      exhausted.add('openrouter');
-      stderr.write('OpenRouter platform rate limit applies to this run; skipping its remaining routes.\n');
-      return { retry: false };
-    }
     const retryAfterMs = retryAfterDelayMs(response);
     if (retryAfterMs !== null && retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
       if (status === 429 && attributed) {
-        const quotaRemains = await refreshOpenRouterQuotaAfterAttempt();
-        if (quotaRemains) {
+        if (refreshedQuotaRemains) {
           stderr.write(
             `OpenRouter model ${candidate.model} Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this model and checking the next route.\n`
           );
@@ -1497,7 +1509,10 @@ export async function completeWithFreeModel(prompt, options = {}) {
       return { retry: false };
     }
     const clientError = Number.isInteger(status) && status >= 300 && status < 500;
-    if (status === 429 || transientTypedFailure || transientServerFailure || response?.ok === true || clientError) {
+    if (
+      !quotaRefreshed &&
+      (status === 429 || transientTypedFailure || transientServerFailure || response?.ok === true || clientError)
+    ) {
       await refreshOpenRouterQuotaAfterAttempt();
     }
     if (openRouterQuotaInitiallyUnknown) exhausted.add('openrouter');
@@ -1549,12 +1564,19 @@ export async function completeWithFreeModel(prompt, options = {}) {
           await stopForReportedCost(candidate);
         }
         if (isContentPolicyError(result)) stopForContentPolicy(candidate);
-        if (result?.finishReason === 'length') {
-          errors.push(`kilo/${candidate.model}: incomplete completion (finish_reason=length)`);
+        if (result?.status === 401 || result?.status === 402) {
+          exhausted.add(candidate.source);
+          errors.push(`kilo/${candidate.model}: ${result.error ?? `HTTP ${result.status}`}`);
           continue;
         }
         if (result?.status === 429) {
           await persistKiloRateLimit();
+          errors.push(`kilo/${candidate.model}: ${result.error ?? 'HTTP 429'}`);
+          continue;
+        }
+        if (result?.finishReason === 'length') {
+          errors.push(`kilo/${candidate.model}: incomplete completion (finish_reason=length)`);
+          continue;
         }
         if (result?.content && result.finishReason === 'stop') {
           const resolvedModel = result.model ?? candidate.model;
@@ -1580,17 +1602,27 @@ export async function completeWithFreeModel(prompt, options = {}) {
           await stopForReportedCost(candidate);
         }
         if (error.safetyStop) throw error;
+        if (isContentPolicyError(error)) stopForContentPolicy(candidate);
+        if (error.status === 401 || error.status === 402) {
+          exhausted.add(candidate.source);
+          errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+          continue;
+        }
         if (error.status === 429) {
           await persistKiloRateLimit();
+          errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+          continue;
         }
-        if (isContentPolicyError(error)) stopForContentPolicy(candidate);
         await recordAttributableFailure(candidate, error);
         errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
-        if (error.code === 'ENOENT' || error.code === 'KILO_SPAWN') exhausted.add(candidate.source);
+        if (error.exhaustSource || error.code === 'ENOENT' || error.code === 'KILO_SPAWN') {
+          exhausted.add(candidate.source);
+        }
       }
+      if (exhausted.has(candidate.source)) continue;
       const attemptNumber = attempts.get(candidate.source) ?? 0;
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      await delay(backoffMs);
+      await waitForKiloBackoff(backoffMs);
       continue;
     }
     if (candidate.source === 'groq') {
