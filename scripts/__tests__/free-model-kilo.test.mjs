@@ -431,6 +431,7 @@ process.exitCode = 1;`
   ])('fails closed for a Kilo content-filter terminal after %s', async (_scenario, options) => {
     const spawnImpl = () => {
       const child = new EventEmitter();
+      child.pid = 1234;
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.stdin = new EventEmitter();
@@ -454,6 +455,8 @@ process.exitCode = 1;`
         prompt: 'prompt',
         timeoutMs: options.hang ? 20 : 1000,
         spawnImpl,
+        platform: 'win32',
+        terminateWindowsProcessTreeImpl: async () => {},
       })
     ).resolves.toEqual({
       error: 'Kilo provider content policy rejected or filtered this request',

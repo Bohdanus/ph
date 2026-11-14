@@ -594,7 +594,7 @@ describe('useRect', () => {
         const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
         const svg = decodeURIComponent(encodedSvg!);
-        expect(svg).not.toMatch(/<svg\b|<\/svg>/);
+        expect(svg).toMatch(/^<svg\b[\s\S]*<\/svg>$/);
         expect(svg).toContain('width="64" height="64" viewBox="0 0 64 64"');
         expect(svg).toContain(`rotate(${cursorAngle}) scale(0.2) translate(-64 -64)`);
         expect(svg).toContain('stroke="#fff" stroke-width="23"');
