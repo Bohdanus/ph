@@ -1426,6 +1426,7 @@ describe('provider rate-limit diagnostics', () => {
       });
 
       const explicitDailyQuota = _label.includes('explicit daily quota metadata');
+      const messageOnlyDailyQuota = _label === 'daily quota message without typed metadata';
       let fakeTimers = false;
       try {
         if (explicitDailyQuota) {
@@ -1477,6 +1478,19 @@ describe('provider rate-limit diagnostics', () => {
           expect(keyInfo).toHaveBeenCalledTimes(3);
         } else {
           expect(poolState.openRouterExhaustedUtcDate).toBeNull();
+          if (messageOnlyDailyQuota) {
+            await expect(
+              completeWithFreeModel('prompt', {
+                fetchImpl,
+                openRouterKey: 'rk',
+                waitForRetryAfter,
+                quarantineFile,
+                poolStateFile,
+              })
+            ).resolves.toMatchObject({ source: 'openrouter', model: 'r1:free', content: 'quota recovered' });
+            expect(chat).toHaveBeenCalledTimes(2);
+            expect(keyInfo).toHaveBeenCalledTimes(3);
+          }
         }
       } finally {
         if (fakeTimers) vi.useRealTimers();
