@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import {
   catalogCandidates,
   completeWithFreeModel as completeWithFreeModelImplementation,
@@ -1099,21 +1100,79 @@ process.exit(1);`
     }
   });
 
-  it('preserves a content-policy event before OpenCode output exceeds its cap', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
-    const command = await writeFakeOpenCode(
-      directory,
-      `console.log(JSON.stringify({ type: 'error', error: { type: 'content_filter', message: 'Blocked by policy' } }));
-process.stdout.write('x'.repeat(2 * 1024 * 1024));`
-    );
+  it.each([
+    { label: 'without reported cost', includeCost: false },
+    { label: 'with reported non-zero cost', includeCost: true },
+  ])('preserves safety metadata and stops fallback when Windows cleanup fails $label', async ({ includeCost }) => {
+    let child;
+    let rejectTermination;
+    let resolveChildClose;
+    let completionSettled = false;
+    const termination = new Promise((_, reject) => {
+      rejectTermination = reject;
+    });
+    const childClosed = new Promise((resolve) => {
+      resolveChildClose = resolve;
+    });
+    const spawnImpl = vi.fn(() => {
+      child = new EventEmitter();
+      child.pid = 4242;
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = vi.fn(() => {
+        queueMicrotask(() => child.emit('error', new Error('simulated direct child kill failure')));
+        return false;
+      });
+      child.stdout.once('end', () => {
+        child.stderr.end();
+        child.emit('close', null, 'SIGTERM');
+        resolveChildClose();
+      });
+      return child;
+    });
+    const terminateWindowsProcessTreeImpl = vi.fn(() => termination);
+    const completion = runOpenCodeCompletion({
+      command: process.execPath,
+      model: 'beam-free',
+      prompt: 'prompt',
+      maxTokens: 8,
+      platform: 'win32',
+      spawnImpl,
+      terminateWindowsProcessTreeImpl,
+    }).finally(() => {
+      completionSettled = true;
+    });
 
-    try {
-      await expect(
-        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
-      ).rejects.toMatchObject({ errorType: 'content_filter', contentPolicyRejected: true });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    await vi.waitFor(() => expect(child).toBeDefined());
+    const output = [
+      JSON.stringify({ type: 'error', error: { type: 'content_filter', message: 'Blocked by policy' } }),
+      ...(includeCost ? [JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.01 } })] : []),
+      'x'.repeat(2 * 1024 * 1024),
+    ].join('\n');
+    child.stdout.write(Buffer.from(output));
+    await vi.waitFor(() => expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledOnce());
+    child.stdout.end();
+    await childClosed;
+    expect(completionSettled).toBe(false);
+
+    rejectTermination(new Error('simulated taskkill race'));
+    const expectedFailure = {
+      errorType: 'content_filter',
+      contentPolicyRejected: true,
+      safetyStop: true,
+      ...(includeCost
+        ? {
+            message: 'OpenCode reported non-zero or invalid cost',
+            reportedCost: true,
+            processFailure: expect.stringContaining('OpenCode process termination failed: simulated taskkill race'),
+          }
+        : {
+            message: expect.stringContaining('OpenCode process termination failed: simulated taskkill race'),
+          }),
+    };
+    await expect(completion).rejects.toMatchObject(expectedFailure);
+    expect(spawnImpl).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
   });
 
   it('fails closed on a reported OpenCode cost even when later output exceeds its cap', async () => {
@@ -1465,6 +1524,35 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     expect(result.requestCounts).toMatchObject({ kilo: 1, openrouter: 1 });
     expect(chat).toHaveBeenCalledTimes(1);
     expect(JSON.parse(chat.mock.calls[0][1].body).model).toBe('o1:free');
+  });
+
+  it('does not quarantine Kilo for a process-tree cleanup failure without cost evidence', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-kilo-cleanup-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const chat = vi.fn();
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')],
+      openrouter: [openRouterRow('o1')],
+      chat,
+    });
+    const runKilo = vi.fn().mockResolvedValue({
+      error: 'Kilo process-tree termination failed',
+      exhaustSource: true,
+      safetyStop: true,
+    });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', runKilo, quarantineFile })
+      ).rejects.toThrow(/Kilo process-tree termination failed/);
+      expect(runKilo).toHaveBeenCalledOnce();
+      expect(chat).not.toHaveBeenCalled();
+      expect((await readQuarantineState(quarantineFile)).entries['kilo:nvidia/nemotron-3-ultra-550b-a55b:free']).toBe(
+        undefined
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('stops with a clear error when every free source is exhausted', async () => {
