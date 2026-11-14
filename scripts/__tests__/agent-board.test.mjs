@@ -1733,6 +1733,70 @@ describe('the schema this script writes', () => {
     expect(board.db, 'a failed open left a live handle, so a retry short-circuits').toBeNull();
   });
 
+  it('retries a busy journal-mode probe during first-open contention', () => {
+    const board = new Board({ dir, identity: identityFor('wal-retry') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 5 });
+    board.db = { exec: vi.fn() };
+    const currentJournalMode = vi
+      .spyOn(board, 'currentJournalMode')
+      .mockImplementationOnce(() => {
+        throw busy;
+      })
+      .mockReturnValueOnce('wal');
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBe('wal');
+    expect(currentJournalMode).toHaveBeenCalledTimes(2);
+    expect(board.db.exec).not.toHaveBeenCalled();
+  });
+
+  it('does not fail open when the final journal-mode probe stays busy', () => {
+    const board = new Board({ dir, identity: identityFor('wal-busy') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 5 });
+    board.db = { exec: vi.fn() };
+    const currentJournalMode = vi.spyOn(board, 'currentJournalMode').mockImplementation(() => {
+      throw busy;
+    });
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBeNull();
+    expect(currentJournalMode).toHaveBeenCalledTimes(3);
+    expect(board.db.exec).not.toHaveBeenCalled();
+  });
+
+  it('retries an extended busy error from WAL conversion', () => {
+    const board = new Board({ dir, identity: identityFor('wal-conversion-busy') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 517 });
+    const exec = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw busy;
+      })
+      .mockImplementationOnce(() => {});
+    board.db = { exec };
+    const currentJournalMode = vi
+      .spyOn(board, 'currentJournalMode')
+      .mockReturnValueOnce('delete')
+      .mockReturnValueOnce('delete')
+      .mockReturnValueOnce('wal');
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBe('wal');
+    expect(currentJournalMode).toHaveBeenCalledTimes(3);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not hide non-busy errors from the WAL conversion', () => {
+    const board = new Board({ dir, identity: identityFor('wal-error') });
+    const ioError = Object.assign(new Error('disk I/O error'), { errcode: 10 });
+    board.db = {
+      exec: vi.fn(() => {
+        throw ioError;
+      }),
+    };
+    vi.spyOn(board, 'currentJournalMode').mockReturnValue('delete');
+
+    expect(() => board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toThrow(ioError);
+    expect(board.db.exec).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses before it creates anything, not after', () => {
     // The two refusals in `migrate()` have to agree: a newer board is refused
     // BEFORE `exec(SCHEMA)` precisely so it does not half-adopt a schema, and a

@@ -393,6 +393,11 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function isSqliteBusy(error) {
+  const code = error?.errcode;
+  return Number.isInteger(code) && (code & 0xff) === 5;
+}
+
 /**
  * Resolves the symlinks in a path that may not exist yet, by resolving its
  * deepest existing ancestor and re-attaching the rest. Returns null when even
@@ -563,24 +568,40 @@ export class Board {
   }
 
   /**
-   * Puts the database in WAL, once, and never fails the caller for it.
+   * Puts the database in WAL, once, and never fails the caller for transient
+   * lock contention.
    *
-   * The conversion is skipped when the database is already in WAL, which is
-   * every open after the first — so on a busy board the lock is not contended
-   * at all, and the retry is here for the one open that creates the file.
+   * Both reading and changing `journal_mode` can return SQLITE_BUSY while
+   * another process is converting the new database. The busy timeout does not
+   * cover every journal-mode lock, so each probe belongs inside the retry loop.
+   * If the mode remains locked after the bounded retries, skip the optimization:
+   * the board remains correct in whichever journal mode is already active.
    */
   enableWriteAheadLog({ attempts = 40, delayMs = 25 } = {}) {
-    if (this.currentJournalMode() === 'wal') return 'wal';
     for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        if (this.currentJournalMode() === 'wal') return 'wal';
+      } catch (error) {
+        if (!isSqliteBusy(error)) throw error;
+        sleepSync(delayMs);
+        continue;
+      }
+
       try {
         this.db.exec('PRAGMA journal_mode = WAL');
         if (this.currentJournalMode() === 'wal') return 'wal';
-      } catch {
+      } catch (error) {
+        if (!isSqliteBusy(error)) throw error;
         // Another process is converting it. Fall through and wait.
       }
       sleepSync(delayMs);
     }
-    return this.currentJournalMode();
+    try {
+      return this.currentJournalMode();
+    } catch (error) {
+      if (isSqliteBusy(error)) return null;
+      throw error;
+    }
   }
 
   currentJournalMode() {
