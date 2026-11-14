@@ -1070,3 +1070,58 @@ test.describe('Tablet touch layer reordering', () => {
     }
   });
 });
+
+test.describe('Layer locking state preservation across reorder', () => {
+  test('a locked layer remains locked after reorder', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    await page.goto('/');
+    const canvas = getWorkspaceCanvas(page);
+    await expect(canvas).toBeVisible();
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
+
+    const layerRows = page.getByTitle('Drag to reorder');
+    const layerRow = (name: string) => layerRows.filter({ hasText: name });
+
+    const draw = async (color: string, start: { x: number; y: number }, end: { x: number; y: number }) => {
+      await clickToolButton(page, 'draw');
+      await setForegroundColor(page, color, true);
+      await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 15 });
+    };
+
+    const moveToTop = async (sourceName: string, targetName: string) => {
+      const source = layerRow(sourceName);
+      const target = layerRow(targetName);
+      const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+      const targetBox = await target.boundingBox();
+      if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
+      await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
+      await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      await dispatchDragOverAndExpectPrevented(page, target, { dataTransfer, clientY: targetBox.y + 5 });
+      await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
+      await source.dispatchEvent('dragend', { dataTransfer });
+      await expect(layerRows.first()).toContainText(sourceName);
+    };
+
+    const lockButton = (name: string) => page.getByRole('button', { name: new RegExp(`^(Lock|Unlock) ${name}$`) });
+
+    // Two layers: black (bottom), green (top)
+    await draw('#000000', { x: box.x + 180, y: box.y + 180 }, { x: box.x + 420, y: box.y + 340 }); // draw 2
+    await draw('#00aa00', { x: box.x + 160, y: box.y + 260 }, { x: box.x + 440, y: box.y + 260 }); // draw 3, top
+
+    // Lock the top layer (draw 3)
+    await expect(lockButton('draw 3')).toHaveAccessibleName('Lock draw 3');
+    await lockButton('draw 3').click();
+    await expect(lockButton('draw 3')).toHaveAccessibleName('Unlock draw 3');
+
+    // Reorder: move black to top
+    await moveToTop('draw 2', 'draw 3');
+
+    // Lock state should persist
+    await expect(lockButton('draw 3'), 'lock state must survive reorder').toHaveAccessibleName('Unlock draw 3');
+  });
+});

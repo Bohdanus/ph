@@ -19,6 +19,7 @@ import { isTemporaryHandActive } from './temporary-hand.ts';
 import type { Layer } from '../contexts/layer-types.ts';
 import type { CropOverlayOrientation, CropOverlayType, CropOverlayVisibility } from '../tools/crop.ts';
 import { viewStateRef } from '../contexts/view-state.ts';
+import rotationCursorSvgSource from '../assets/curved-arrow-bold.svg?raw';
 
 export type UseRectProps = {
   aspectRatio?: number | null;
@@ -144,8 +145,10 @@ const ROTATE_OUTER_HOTZONE = 90;
 export const ROTATE_HANDLE_OFFSET = 36;
 const ROTATION_SNAP_INCREMENT = 15;
 
-const ROTATION_CURSOR_PATHS =
-  '<path d="M24 16a8 8 0 1 1-1.7-5.9"/><path d="M8 16a8 8 0 1 0 1.7 5.9"/><path d="M24 8l4-4-4-4"/><path d="M8 24l-4 4 4 4"/>';
+const ROTATION_CURSOR_BODY = rotationCursorSvgSource
+  .replace(/^\s*<svg\b[^>]*>/, '')
+  .replace(/<\/svg>\s*$/, '')
+  .trim();
 const ROTATION_CURSOR_FALLBACKS = [
   'ew-resize',
   'nwse-resize',
@@ -156,10 +159,14 @@ const ROTATION_CURSOR_FALLBACKS = [
   'ns-resize',
   'nesw-resize',
 ] as const;
+// The 128px artwork spans about 110px; this keeps its visible width near the 22px cursor it replaces.
+// Transform order: center the 128px source, scale it to about 22px, rotate it, then place it at the 64px cursor center; the CSS hotspot is 32,32.
+const ROTATION_CURSOR_ICON_SCALE = 0.2;
+
 const ROTATION_CURSORS = ROTATION_CURSOR_FALLBACKS.map((fallback, index) => {
   const angle = index * 45;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><g transform="translate(12 12) scale(.75)"><g transform="rotate(${angle} 16 16)"><g fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">${ROTATION_CURSOR_PATHS}</g><g fill="none" stroke="#111" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${ROTATION_CURSOR_PATHS}</g></g></g></svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 24 24, ${fallback}`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><g transform="translate(32 32) rotate(${angle}) scale(${ROTATION_CURSOR_ICON_SCALE}) translate(-64 -64)">${ROTATION_CURSOR_BODY}</g></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 32 32, ${fallback}`;
 });
 
 function shortestAngleDelta(degrees: number): number {
@@ -345,7 +352,7 @@ export function drawCropOverlay(
  * (`canvasRectToDocumentFrame()`), and making it is the consumer's job.
  */
 export function useRect({
-  aspectRatio = null,
+  aspectRatio: requestedAspectRatio = null,
   fixedSize = null,
   imageSize,
   initialRect,
@@ -382,6 +389,11 @@ export function useRect({
   onChange,
   onChangeEnd,
 }: UseRectProps) {
+  const effectiveAspectRatio =
+    requestedAspectRatio !== null && Number.isFinite(requestedAspectRatio) && requestedAspectRatio > 0
+      ? requestedAspectRatio
+      : null;
+
   const startRectRef = useRef<RectXYSorted | null>(null);
   const rectUnsortedRef = useRef<RectXY | null>(null); // might become unsorted while dragging
 
@@ -479,8 +491,8 @@ export function useRect({
   });
 
   useEffect(() => {
-    if (aspectRatio && initialRect) {
-      const patch = refitRectWidthToAspect(initialRect, aspectRatio);
+    if (effectiveAspectRatio && initialRect) {
+      const patch = refitRectWidthToAspect(initialRect, effectiveAspectRatio);
       startRectRef.current = { ...initialRect, ...patch };
     } else {
       startRectRef.current = initialRect ? { ...initialRect } : null;
@@ -490,7 +502,7 @@ export function useRect({
       rectUnsortedRef.current = startRectRef.current ? { ...startRectRef.current } : null;
       drawMaskRef.current?.();
     }
-  }, [aspectRatio, initialRect]);
+  }, [effectiveAspectRatio, initialRect]);
 
   useEffect(() => {
     rotationRef.current = rotation;
@@ -730,9 +742,12 @@ export function useRect({
     const edge = edgeAtPoint(point);
 
     // Detect modifier keys to lock aspect ratio, if not set already
-    if (edge && !aspectRatio && event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
+    if (edge && !effectiveAspectRatio && event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
       const { x1, y1, x2, y2 } = startRectRef.current!;
-      customAspectRatioRef.current = (x2 - x1) / (y2 - y1);
+      const width = Math.abs(x2 - x1);
+      const height = Math.abs(y2 - y1);
+      const ratio = height > 0 ? width / height : null;
+      customAspectRatioRef.current = ratio !== null && Number.isFinite(ratio) && ratio > 0 ? ratio : null;
     }
 
     return edge;
@@ -1092,7 +1107,7 @@ export function useRect({
     const startPoint = startPointRef.current!;
     const edge = currentEdgeRef.current;
 
-    const _aspectRatio = customAspectRatioRef.current ?? aspectRatio;
+    const _aspectRatio = customAspectRatioRef.current ?? effectiveAspectRatio;
     const localPoint =
       _initialRect && rotationEnabled
         ? rotatePointAround(point, rectCenter(_initialRect), -rotationRef.current)

@@ -73,7 +73,8 @@ required for cross-module, persistence, migration, or high-risk changes.
 - Stop only with a validated review-ready commit or an evidence-backed handoff. Crashed dirty work
   is preserved before releasing claims, merging, or removing anything.
 - Sync `main` into the branch, rerun gates, and land only from a clean current checkout. Recheck
-  diff, status, `repo:state`, liveness, and `git cherry` immediately before landing/disposal.
+  diff, status, scoped `repo:state --for-landing`, liveness, and `git cherry` immediately before
+  landing; use the full `repo:state` report when examining or disposing of worktrees.
 
 ### Tool limits
 
@@ -730,17 +731,28 @@ roster it could not read, or a worktree it could not describe, is reported as
 unreadable rather than as clean. `npm run dispose` refuses on exactly those inputs, and
 a report that answered them with exit 0 would be the surface a person trusts more.
 
-**Run it before you believe the repository is quiet.** It exits non-zero when
-anything is in progress, and it is the check to run before a sweep, before a landing,
-and before you conclude that a worktree is finished.
+**Run the full report before you believe the repository is quiet.** The default command exits
+non-zero when anything is in progress; use it before a sweep, cleanup, or when you need to inspect
+the whole fleet. Its exit status is not a main-landing gate. For a main landing, run
+`npm run repo:state -- --for-landing <source-branch>` as the operation-scope check, so an unrelated
+branch operation does not become a manual hard stop on an independent landing.
 
-**A non-zero report is repository-wide, not a command to stop all independent work.**
+**A non-zero default report is repository-wide, not a command to stop all independent work.**
 Read the exact worktree paths and operation markers it reports. Do not run
 `--abort`, clear markers, resolve conflicts, or otherwise alter another worktree
 without first establishing its owner and following that worktree's recovery
-procedure. A blocked landing remains blocked; unrelated research and implementation
-can continue in clean task worktrees. Re-run `repo:state` before each landing attempt,
-because resolving one operation does not prove that the rest of the fleet is clear.
+procedure. The `--for-landing` form still reports every finding, but exits non-zero only when
+the registered main checkout or selected candidate branch has operation state, or when a finding
+is unreadable or cannot be assigned to a known branch. An operation in another known branch remains
+visible and untouched; its index and operation markers are worktree-local. An unreadable finding,
+a finding without a known branch, or a missing/ambiguous main or candidate worktree remains a hard
+stop. A zero exit means only that the operation scope is clear; it does not certify a clean diff,
+passing gates, a reviewed candidate, or valid landing pins. The command also
+recognizes only the designated-main orphan `AUTO_MERGE` shape as eligible for the pinned
+`main:landing` recovery path; that wrapper revalidates the marker and all landing pins. Re-run the
+scoped report after the final candidate sync and immediately before each landing attempt. This is a
+point-in-time report, not a lease. `main:landing` checks its designated checkout under its exclusive
+landing lease and revalidates the reviewed parents, candidate, source branch, and tree.
 
 **It is advisory and is wired into no hook, on purpose.** It costs two git spawns per
 worktree, so it scales with the fleet — measured in seconds on a fleet of this
@@ -785,24 +797,80 @@ its remedy is nothing rather than a plausible-looking command that fatals.
 **An orphan `AUTO_MERGE` has guarded recovery paths, not a guessed abort.** When it is
 the only operation marker, the worktree is clean, the index has no unresolved paths,
 and the marker names exactly `HEAD^{tree}`, the remaining file can be a stale artifact from a completed
-rebase. `npm run repo:state:recover-auto-merge -- --expected-head <full-sha>` performs
-a read-only preflight from the target task worktree. Only after independently
-establishing that its owner has stopped may the operator repeat the command with
-`--apply --confirm-owner-stopped`; it rechecks every predicate and removes only that
-worktree's `AUTO_MERGE` file.
+rebase. First identify the current designated main checkout from `git worktree list
+--porcelain`; select the unique worktree block whose `branch` is `refs/heads/main`.
+Invoke that checkout's `scripts/recover-stale-auto-merge.mjs` by
+absolute path, while keeping the process working directory at the target task
+worktree root:
+
+```sh
+node "<absolute-main-worktree>/scripts/recover-stale-auto-merge.mjs" --expected-head "$(git rev-parse HEAD)"
+```
+
+This performs a read-only preflight using the current recovery implementation. Do not
+run `npm run repo:state:recover-auto-merge` (or a relative script path) from the target
+worktree: its checkout may be stale and execute older recovery code. Only after
+independently establishing that the target's owner has stopped may the operator repeat
+the absolute-path command with `--apply --confirm-owner-stopped`; it rechecks every
+predicate and removes only that worktree's `AUTO_MERGE` file. Use the same absolute
+script path and target working directory for matching and divergent preserve modes
+below.
+
+Before applying **any** recovery mode, manually verify that the owning root chat and
+every descendant have stopped, then recheck the current live-session overlay,
+relevant process tree and open files, and board claims/locks for the target worktree
+and paths. `--confirm-owner-stopped` is an operator assertion; the recovery command
+does not query chat liveness, the process tree, or the board.
+
+These checks are point-in-time checks, not a lock. Keep every editor, watcher, and
+other process that could write to the worktree stopped until apply returns. If the
+command reports that the worktree changed concurrently, `AUTO_MERGE` has already
+been removed and apply is not rolled back. Preserve modes leave the durable recovery
+ref in place. In clean mode, the marker tree matched `HEAD^{tree}` before removal;
+recheck `HEAD` and preserve the current files/index before taking any further recovery
+action.
 
 Dirty work may be preserved when the index still matches `HEAD`, there are no
 unresolved paths or other operation markers, and every tracked working file exactly
 matches the tree named by `AUTO_MERGE`. Run the read-only preflight with
-`--preserve-matching-worktree`; it prints the marker-tree and worktree-status pins.
-After confirming the owner stopped, apply only with those exact pins, `--apply`, and
-`--confirm-owner-stopped`. This path unlinks only `AUTO_MERGE`: it does not reset,
-stage, commit, or alter tracked or untracked files. Continue to review and preserve
-that work under the normal landing procedure. It refuses `main`, staged changes,
-conflicts, other operation markers, changed HEAD or status, malformed markers, and
-tracked content that differs from the marker. Do not use either path for a live or
-unresolved merge. Board file claims are separate: wait for their leases to expire or
-release them as their owner; Git recovery never overrides or clears board locks.
+`--preserve-matching-worktree`. It prints the exact HEAD, marker tree, worktree-status
+digest, worktree-content digest, and the recovery ref it will create or verify. The
+status digest covers Git's status records. The content digest covers changed tracked
+files and non-ignored untracked files identified by Git, including their paths, modes,
+file contents, and symlink targets; ignored files are not included. Preserve preflight
+fails closed if a path cannot be represented as UTF-8 or is neither a regular file nor
+a symlink (for example, a changed submodule directory); inspect and preserve that state
+manually. Preflight changes no files or refs. Apply only with the original
+`--expected-head` and all three printed worktree values: `--expected-auto-merge-tree`,
+`--expected-worktree-status-sha256`, and `--expected-worktree-content-sha256`, plus
+`--apply` and `--confirm-owner-stopped`. Before unlinking the marker,
+the command creates or verifies the durable tree ref
+`refs/recovery/auto-merge/<HEAD>/<TREE>` so the marker tree remains reachable after
+recovery. It then unlinks only `AUTO_MERGE`; it does not reset, stage, commit, or alter
+tracked or untracked files or the index. Keep the recovery ref as an audit anchor and
+review preserved work under the normal landing procedure. An apply that creates the
+anchor and then refuses a later recheck leaves that exact tree ref in place; retain it
+as an audit anchor. It refuses `main`, staged
+changes, conflicts, other operation markers, changed HEAD or pins, malformed markers,
+and tracked content that differs from the marker.
+
+If the owner family is proven stopped but tracked edits no longer match the marker
+tree, run the read-only preflight with `--preserve-divergent-worktree`. It still
+requires the index at `HEAD`, no unresolved paths, no other operation markers, and at
+least one unstaged tracked path whose working content differs from both `HEAD` and
+`AUTO_MERGE`. A difference on one path from `HEAD` and another from `AUTO_MERGE` is
+not enough; untracked-only work is not sufficient. It prints the same pins and records
+the count of tracked paths that differ from the marker. After the general owner,
+overlay, process, and board checks above, apply only with the original `--expected-head`,
+all three printed worktree values (`--expected-auto-merge-tree`,
+`--expected-worktree-status-sha256`, and `--expected-worktree-content-sha256`),
+`--apply`, and `--confirm-owner-stopped`. As in matching mode,
+the command creates or verifies the durable `refs/recovery/auto-merge/<HEAD>/<TREE>`
+anchor before removing `AUTO_MERGE`; it does not alter tracked files, untracked files,
+or the index. Re-review all preserved work under the normal landing procedure. Do not
+use either preserve mode for a live or unresolved merge. Board file claims are
+separate: wait for their leases to expire or release them as their owner; Git recovery
+never overrides or clears board locks.
 
 ## The list of worktrees: `WORKTREES.json`
 

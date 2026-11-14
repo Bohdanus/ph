@@ -72,18 +72,20 @@ host's permission boundary.
   substitute `schedule_wakeup`: it fires once and will not re-arm itself if the chat dies. If
   cron creation returns an actual error, report it and use the normal operator recovery path
   rather than silently switching to a one-shot wake.
-- Model routing (read MODELS.md first): prefer NVIDIA Nemotron 3 Ultra
-  (`nvidia/nemotron-3-ultra-550b-a55b:free`), provider `kilo`, variant `high`. Verify against the live catalog with
-  `node scripts/free-model-pool.mjs --list` and the 200 req/hour ceiling (MODELS.md). For
-  bounded single-model calls, use
+- Model routing (read MODELS.md first): prefer the exact Nemotron 3 Ultra OpenRouter route when its
+  live catalog price is zero and quota is positive; request up to 4,000 output tokens for review or
+  research, following the provider-specific token-limit behavior in MODELS.md. Only that exact model
+  on OpenRouter or through an explicitly selected Kilo route is approved. Refresh the live catalog
+  with `node scripts/free-model-pool.mjs --list` and use the documented free fallback if unavailable.
+  For bounded single-model calls, use
   `node scripts/free-model-pool.mjs --prompt-file PATH --output-file PATH --max-tokens N` to
   keep large responses out of context. Never launch GPT (Luna/Terra/Sol) subagents from a free
   session. Always pass `model` and `provider` together so a named paid model does not fall
   back to the zero-token gateway. Before and after a large OpenRouter-backed fan-out, run
   `node scripts/free-model-pool.mjs --openrouter-quota`; its server-side daily counter is
   authoritative for this account and is separate from the Kilo per-IP hourly ceiling.
-- **Quota-aware subagent protocol** (MODELS.md "Free Model Rotation" and "Token-Saving Research
-  Protocol"): the current `swarm` CLI does not expose `tokens --json`, so do not treat that
+- **Quota-aware subagent protocol** (`MODELS.md` §Routing and §Free-agent boundaries): the current
+  `swarm` CLI does not expose `tokens --json`, so do not treat that
   command or `swarm status` as budget telemetry. Refresh eligibility with
   `node scripts/free-model-pool.mjs --list`, use only exact zero-priced model/provider pairs,
   and never fall back silently to paid inference. If the host exposes separate budget data,
@@ -99,8 +101,8 @@ host's permission boundary.
 - Photoshop behavior, UX and non-trivial algorithms require Adobe or other primary-source
   research. Record source URLs, versions and unresolved claims in a research note or handoff.
 - Every non-trivial implementation requires a fresh read-only code review per
-  `docs/CODE-REVIEW.md` (verbatim brief, `file:line` finding
-  format); cross-module, persistence/migration, architecture-boundary and broad-regression
+  `docs/CODE-REVIEW.md` for the review brief; format findings with file paths and identifiers
+  per `AGENTS.md`, without line numbers; cross-module, persistence/migration, architecture-boundary and broad-regression
   changes require two reviewers split by concern. Fix and re-review blocking findings. See
   also `docs/ORCHESTRATION.md#the-task-lifecycle`.
 - Security vulnerability -> invoke the security-review process.
@@ -108,7 +110,9 @@ host's permission boundary.
   smallest necessary regression test only. No new E2E unless behavior is otherwise unvalidated.
   Never weaken gates or re-record baselines. See `docs/TESTING.md#gates` for commands and
   known failures.
-- Run `npm run repo:state` before landing. For cleanup, also run
+- Run `npm run repo:state -- --for-landing "$BRANCH"` after the final sync and immediately before
+  landing. This checks operation scope, not full landing readiness; nonzero (including unreadable
+  or unknown state) is a hold. For cleanup, also run
   `node scripts/worktree-inventory.mjs` and `npm run branches:orphan`; preview
   `npm run swarm -- doctor --dry-run` before any disposal (AGENTS.md). After landing, run
   `npm run tsc`, `npm run build`, and `npm run lint:check` in the designated main worktree to
@@ -195,10 +199,11 @@ initial template to the actual request, preserving its scope and constraints.
 > codebase. Fan out bounded **free read-only** subagents (`explore` role, writes/shell/git
 > denied) to do deep research: scan CI logs, read specs/helpers, audit coordinate handling,
 > survey chat transcripts. Keep the coordinator's own context lean by persisting wave results
-> to `.kilo/plans/` before each dispatch. Prefer NVIDIA Nemotron 3 Ultra
-> (`nvidia/nemotron-3-ultra-550b-a55b:free`, provider `kilo`, variant `high`) for broad investigations when it
-> appears in the refreshed free catalog; otherwise rotate to another verified zero-priced
-> model/provider or pause when none is available. Resume hourly via `cron_create` with
+> to `.kilo/plans/` before each dispatch. Prefer the exact Nemotron 3 Ultra OpenRouter route after
+> checking live exact-zero pricing and quota; request up to 4,000 output tokens according to the
+> provider-specific token-limit behavior in MODELS.md.
+> Use another verified free route from MODELS.md if unavailable; never use paid fallback.
+> Resume hourly via `cron_create` with
 > `cron: "0 * * * *"` and the resumer prompt below. Take most complex and prioritised issues
 > first. This must keep running and resume hourly until told to stop. The context-budget
 > discipline is critical: never read a full CI log or spec in the coordinator; always point a
@@ -330,7 +335,8 @@ Handoff, not to Solve.
      branch per `docs/E2E-MIRROR.md`.
 5. **Review.** `git diff main...HEAD` for unintended behavior, stale references, missing
    surfaces, out-of-scope changes. Complex task -> a fresh read-only review subagent per
-   `docs/CODE-REVIEW.md` (verbatim brief, `file:line` findings);
+   `docs/CODE-REVIEW.md` for the review brief; format findings with file paths and identifiers
+   per `AGENTS.md`, without line numbers;
    cross-module/architecture-boundary changes -> two reviewers split by concern. Fix and
    re-review blocking findings.
 
@@ -346,11 +352,13 @@ Handoff, not to Solve.
 
 ## Phase 4 — Land
 
-1. Run `npm run repo:state` and confirm the worktree and branch are clean and safe to land.
-2. Sync current `main` into the candidate branch **in the branch's own worktree**, resolve
+1. Sync current `main` into the candidate branch **in the branch's own worktree**, resolve
    conflicts there using the recovered requirement, rerun gates and review the final
-   composition. Then follow `docs/ORCHESTRATION.md` § "Landing" from the designated main
-   worktree only: require a clean checkout, prepare
+   composition.
+2. Run `npm run repo:state -- --for-landing "$BRANCH"`. A nonzero result, including unreadable
+   or unknown state, holds landing; inspect the findings and leave unrelated worktrees untouched.
+   Then follow `docs/ORCHESTRATION.md` § "Landing" from the designated main worktree only: require
+   a clean checkout, prepare
    `git merge --no-commit --no-ff <full-reviewed-sha>`, pin both parents, the prepared result
    tree, branch and chat, and invoke `node scripts/commit-reviewed-landing.mjs`.
 3. Resolve the host-native chat ID using `docs/CHAT-ID.md`; use `session:<id>` only for Kilo

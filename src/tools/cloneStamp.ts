@@ -5,8 +5,10 @@ import {
   tipAlphaAt,
   type BrushTipSettings,
 } from '../util/brush-engine.ts';
-import { blendPixel, clampPointToSize, forEachPixelInRect, readRgba } from '../util/pixels.ts';
+import { blendPixel, clampPointToSize, forEachPixelInRect, pixelIndex, readRgba } from '../util/pixels.ts';
 import { createSelectionAlphaMask } from '../util/selection.ts';
+import { advanceFlowCoverage, FLOW_COVERAGE_SCALE } from '../util/flow-coverage.ts';
+import { PAINT_FLOW_MAX, PAINT_FLOW_MIN } from '../util/brush-airbrush.ts';
 import type { Point, PositionedRasterSelectionMask, SelectionPointPaths, Size } from '../contexts/general-types.ts';
 import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
@@ -14,8 +16,15 @@ export type CloneStampToolArgs = {
   size: number;
   hardness: number;
   alpha: number;
+  /** The Alt/Option-clicked sampling origin; stays fixed when Aligned is disabled. */
   source: Point | null;
+  /** Most recent aligned sample point; absent in older saved settings and history. */
+  alignedSource?: Point | null;
   aligned: boolean;
+  /** Flow percentage; absent on historical actions that use the pre-Flow renderer. */
+  flow?: number;
+  /** Per-stroke source-to-destination offset; absent only on pre-fix durable history. */
+  samplingOffset?: Point;
   points: Point[];
   toolName: 'clone-stamp';
   /** Selection snapshot in processor-raster coordinates. */
@@ -42,6 +51,17 @@ export type CloneStampToolSettings = Omit<CloneStampToolArgs, 'points'>;
  * options bar rather than buried at the call site, exactly as `SMUDGE_SPACING_PERCENT` is.
  */
 export const CLONE_STAMP_SPACING_PERCENT = BRUSH_SPACING_DEFAULT;
+
+/** The Flow slider range chosen for this app; Adobe's current Clone Stamp page states no range. */
+export const CLONE_STAMP_FLOW_MIN = PAINT_FLOW_MIN;
+export const CLONE_STAMP_FLOW_MAX = PAINT_FLOW_MAX;
+export const CLONE_STAMP_FLOW_DEFAULT = 100;
+
+/** Clamp saved or live Flow values to the app's slider range. */
+export const normalizeCloneStampFlow = (flow: number | undefined): number => {
+  const value = Number.isFinite(flow) ? flow! : CLONE_STAMP_FLOW_DEFAULT;
+  return Math.round(Math.min(CLONE_STAMP_FLOW_MAX, Math.max(CLONE_STAMP_FLOW_MIN, value)));
+};
 
 /** `Size` reduced to the integer extents a pixel buffer can address. */
 const extent = (value: number): number => (Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
@@ -70,35 +90,22 @@ const dabSpan = (center: Point, radius: number, width: number, height: number): 
 };
 
 /**
- * THE OFFSET: where the copy is read from, relative to the destination.
+ * Legacy source offset for history written before Photoshop-style alignment was added.
  *
- * `source` is the Alt-clicked point, and the stroke's `points` are the destination. Every
- * dab reads `destination + offset`, so the whole arithmetic of the tool is this one
- * translation, and the only question is which pair of stroke points anchors it:
- *
- * - **Aligned** (`aligned: true`, Photoshop's default): the offset is measured from the
- *   stroke's OWN START, `source - points[0]`, and is therefore constant along the whole
- *   stroke. Each stroke re-derives it, so a second stroke begun somewhere else still lands
- *   its copy on the corresponding part of the same source — the same pattern continues,
- *   which is the entire point of the mode.
- * - **Not aligned**: the offset is measured from the stroke's END, `source - points[n-1]`,
- *   which makes the first dab's delta `source - points[0] + (points[n-1] - points[0])` …
- *   in other words it is the drag's own displacement laid on top of the source offset. Two
- *   consecutive strokes with different drag displacements therefore land their FIRST dab at
- *   different places, which is the drift `Aligned` exists to remove.
- *
- * Both arms are one subtraction, so there is no per-dab branching and no accumulated
- * position: every dab of a stroke reads the same relative place on the source, which is
- * what makes a self-overlapping stroke copy the same texel twice rather than drift.
- *
- * `points` must be non-empty, which the caller has already established; a stroke with no
- * points has no start to anchor to and is refused before it reaches here.
+ * New interactions store `samplingOffset` on the commit args: both modes sample from the
+ * source position under the first dab, while Aligned advances its source point across
+ * successive strokes in `CloneStampToolArea`. Older history has no such field and must
+ * retain the exact renderer it was committed with, including the former end-anchored
+ * unaligned behavior. `points` is non-empty here because `cloneStroke` checks it first.
  */
-const cloneOffset = (source: Point, points: Point[], aligned: boolean): Point => {
+const legacyCloneOffset = (source: Point, points: Point[], aligned: boolean): Point => {
   const anchor = aligned ? points[0] : points[points.length - 1];
 
   return { x: source.x - anchor.x, y: source.y - anchor.y };
 };
+
+const isFinitePoint = (point: Point | null | undefined): point is Point =>
+  Boolean(point && Number.isFinite(point.x) && Number.isFinite(point.y));
 
 /**
  * One dab of clone stamp: for every texel the tip covers at `center`, composite in the
@@ -126,8 +133,9 @@ const cloneOffset = (source: Point, points: Point[], aligned: boolean): Point =>
  * output instead would make each dab read the copy the previous dab just laid down, which
  * compounds: a stroke carries its own tail forward and a drag that overlaps its own source
  * degenerates into one colour smeared along the path. The offset is constant per stroke
- * (see `cloneOffset`), so the read set of a dab and the write set of the NEXT dab overlap
- * heavily and the bug is not a corner case — it is the common case.
+ * (saved as `samplingOffset` for new actions, derived by `legacyCloneOffset` for old ones),
+ * so the read set of a dab and the write set of the NEXT dab overlap heavily and the bug is
+ * not a corner case — it is the common case.
  *
  * **The offset is rounded ONCE per dab, not per texel.** A pointer coordinate is
  * fractional, so `offset` usually is, and `readRgba` reads TRANSPARENT for a fractional
@@ -176,6 +184,76 @@ const cloneDab = (
   });
 };
 
+const FLOW_TILE_SIZE = 64;
+const FLOW_TILE_AREA = FLOW_TILE_SIZE * FLOW_TILE_SIZE;
+
+type CloneCoverageTile = { coverage: Uint16Array };
+
+/**
+ * One Flow-aware dab. Coverage is retained per pixel for this stroke, not across preview frames
+ * or commits. Each updated pixel is recomposited from its original destination, avoiding color
+ * rounding from repeated incremental blends. The sampled alpha participates in source-over
+ * composition, while accumulated Flow coverage remains bounded by the tool's Opacity ceiling.
+ */
+const cloneDabWithFlow = (
+  sourceData: Uint8ClampedArray,
+  outputData: Uint8ClampedArray,
+  raster: Size,
+  center: Point,
+  offset: Point,
+  settings: BrushTipSettings,
+  flowRate: number,
+  selectionMask: Uint8Array | null,
+  coverageTiles: Map<number, CloneCoverageTile>
+): void => {
+  const radius = settings.size / 2;
+  const span = dabSpan(center, radius, raster.width, raster.height);
+  if (!span) return;
+
+  const deltaX = Math.round(offset.x);
+  const deltaY = Math.round(offset.y);
+  const tileColumns = Math.ceil(raster.width / FLOW_TILE_SIZE);
+
+  for (let y = span.top; y <= span.bottom; y++) {
+    const distanceY = y - center.y;
+    for (let x = span.left; x <= span.right; x++) {
+      const tipCoverage = tipAlphaAt(
+        Math.sqrt((x - center.x) * (x - center.x) + distanceY * distanceY),
+        radius,
+        settings.hardness
+      );
+      const selectionCoverage = selectionMask ? selectionMask[y * raster.width + x]! / 255 : 1;
+      if (!(selectionCoverage > 0)) continue;
+      const deposit = tipCoverage * flowRate;
+      if (!(deposit > 0)) continue;
+
+      const tileRow = Math.floor(y / FLOW_TILE_SIZE);
+      const tileColumn = Math.floor(x / FLOW_TILE_SIZE);
+      const tileKey = tileRow * tileColumns + tileColumn;
+      let tile = coverageTiles.get(tileKey);
+      if (!tile) {
+        tile = { coverage: new Uint16Array(FLOW_TILE_AREA) };
+        coverageTiles.set(tileKey, tile);
+      }
+
+      const localIndex = (y % FLOW_TILE_SIZE) * FLOW_TILE_SIZE + (x % FLOW_TILE_SIZE);
+      const previousUnits = tile.coverage[localIndex]!;
+      const nextUnits = advanceFlowCoverage(previousUnits, deposit, settings.opacity);
+      if (nextUnits === previousUnits) continue;
+      tile.coverage[localIndex] = nextUnits;
+
+      const offsetPoint = clampPointToSize({ x: x + deltaX, y: y + deltaY }, raster);
+      const source = readRgba(sourceData, offsetPoint.x, offsetPoint.y, raster.width);
+      const destinationIndex = pixelIndex(x, y, raster.width);
+      outputData[destinationIndex] = sourceData[destinationIndex]!;
+      outputData[destinationIndex + 1] = sourceData[destinationIndex + 1]!;
+      outputData[destinationIndex + 2] = sourceData[destinationIndex + 2]!;
+      outputData[destinationIndex + 3] = sourceData[destinationIndex + 3]!;
+      blendPixel(outputData, destinationIndex, source, (nextUnits / FLOW_COVERAGE_SCALE) * selectionCoverage);
+    }
+  }
+};
+
 /**
  * Clone a whole stroke onto a copy of the source raster.
  *
@@ -198,6 +276,8 @@ const cloneStroke = (
   source: Point,
   points: Point[],
   aligned: boolean,
+  samplingOffset: Point | undefined,
+  flow: number | undefined,
   settings: BrushTipSettings,
   selectionMask: Uint8Array | null
 ): void => {
@@ -223,17 +303,49 @@ const cloneStroke = (
   const sourceData = new Uint8ClampedArray(image.data);
   const outputData = image.data;
 
-  const offset = cloneOffset(source, points, aligned);
-  for (const center of centers) {
-    cloneDab(sourceData, outputData, raster, center, offset, settings, selectionMask);
+  // New commits carry their exact stroke offset so durable replay does not depend on
+  // transient tool settings. Missing means a historical action and uses its old algorithm.
+  const offset =
+    samplingOffset === undefined
+      ? legacyCloneOffset(source, points, aligned)
+      : isFinitePoint(samplingOffset)
+        ? samplingOffset
+        : null;
+  if (!offset) return;
+
+  if (flow === undefined) {
+    // Older saved actions, including actions created after Aligned was added but before Flow,
+    // retain their exact per-dab renderer.
+    for (const center of centers) {
+      cloneDab(sourceData, outputData, raster, center, offset, settings, selectionMask);
+    }
+  } else {
+    const flowRate = normalizeCloneStampFlow(flow) / CLONE_STAMP_FLOW_MAX;
+    if (!(flowRate > 0)) return;
+
+    const coverageTiles = new Map<number, CloneCoverageTile>();
+    for (const center of centers) {
+      cloneDabWithFlow(
+        sourceData,
+        outputData,
+        raster,
+        center,
+        offset,
+        settings,
+        flowRate,
+        selectionMask,
+        coverageTiles
+      );
+    }
   }
 
   ctx.putImageData(image, 0, 0);
 };
 
 /**
- * Photoshop's Clone Stamp Tool: `source + (pointer - stroke anchor)` is stamped under the
- * pointer along a soft-edged tip.
+ * Photoshop's Clone Stamp Tool: each dab copies the source raster at the committed sampling
+ * offset under a soft-edged tip. New gestures store that offset explicitly; historical actions
+ * without it continue through the legacy alignment calculation above.
  *
  * `Size` is the tip DIAMETER (not a stroke width), `Hardness` 0-100 is the tip's falloff,
  * and `alpha` is the per-dab copy strength. All three come from the shared tip engine —
@@ -265,7 +377,17 @@ const cloneStroke = (
  */
 export const cloneStamp =
   ({ bitmap, size }: ProcessorToolParams) =>
-  ({ size: tipSize, hardness, alpha, source, aligned, points, selection }: CloneStampToolArgs): ToolResult => {
+  ({
+    size: tipSize,
+    hardness,
+    alpha,
+    source,
+    aligned,
+    flow,
+    samplingOffset,
+    points,
+    selection,
+  }: CloneStampToolArgs): ToolResult => {
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
 
@@ -286,7 +408,7 @@ export const cloneStamp =
     });
 
     const selectionMask = selection ? createSelectionAlphaMask(selection, size, selection) : null;
-    cloneStroke(ctx, size, source, points, aligned, settings, selectionMask);
+    cloneStroke(ctx, size, source, points, aligned, samplingOffset, flow, settings, selectionMask);
 
     return [canvas];
   };

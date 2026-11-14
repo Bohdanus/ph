@@ -97,7 +97,8 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
+import { relativePathInside, samePath } from './lib/path-identity.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
@@ -815,7 +816,7 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     prunableReason: match.prunableReason ?? null,
     tip,
     mainHead,
-    isPrimary: commonDir !== '' && gitDir === commonDir,
+    isPrimary: commonDir !== '' && samePath(gitDir, commonDir),
     commonDir,
     modified,
     untracked,
@@ -910,11 +911,14 @@ export function resolveOrphanDirectory(
     return { found: false, reason: 'unreadable', path: candidate, error: firstLine(err) };
   }
 
-  const relativePath = relative(canonicalRoot, absolutePath);
-  if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+  const relativePath = relativePathInside(canonicalRoot, absolutePath);
+  if (relativePath === null) {
     return { found: false, reason: 'outside-worktrees', path: candidate, worktreesRoot: canonicalRoot };
   }
-  if (relativePath.split(sep).length !== 1) {
+  if (relativePath === '') {
+    return { found: false, reason: 'not-direct-child', path: candidate, worktreesRoot: canonicalRoot };
+  }
+  if (relativePath.split('/').length !== 1) {
     return { found: false, reason: 'not-direct-child', path: candidate, worktreesRoot: canonicalRoot };
   }
 
@@ -1346,18 +1350,27 @@ function anchor(cwd, gitState, { run = defaultRun } = {}) {
   try {
     run(cwd, ['update-ref', ref, gitState.tip, '']);
   } catch {
-    // Lost the race, or the ref appeared between the read and here. Fall back to
-    // a name derived from this tip, which cannot be the one that just won, and
-    // write that unconditionally — there is nothing left to collide with,
-    // because a losing tip has never been an anchor.
+    // Lost the race, or the ref appeared between the read and here. The hash is a
+    // compact name, not proof of uniqueness, so the fallback must also be
+    // create-if-absent. If it already names this tip, reuse it; otherwise refuse
+    // rather than replacing another disposal's only recovery point.
     const fallback = `${ref}-g${createHash('sha256').update(`${source} ${gitState.tip}`).digest('hex').slice(0, 9)}`;
     try {
       run(cwd, ['check-ref-format', fallback]);
     } catch {
       return null;
     }
-    run(cwd, ['update-ref', fallback, gitState.tip]);
-    return fallback;
+    try {
+      run(cwd, ['update-ref', fallback, gitState.tip, '']);
+      return fallback;
+    } catch {
+      try {
+        const existingTip = (run(cwd, ['rev-parse', '--verify', '--quiet', fallback]).stdout ?? '').trim();
+        return existingTip === gitState.tip ? fallback : null;
+      } catch {
+        return null;
+      }
+    }
   }
   return ref;
 }

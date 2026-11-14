@@ -134,12 +134,6 @@ export const CURATED = {
   'fix-clip-gate': {
     summary:
       'An e2e guard that fails loudly when the viewport truncates a capture clip, instead of silently accepting it.',
-    issues: [
-      {
-        ref: 'e2e/OPEN_PROBLEMS.md#P2-viewport-box-vs-page-relative-clip',
-        title: 'boundingBox() is viewport-relative; a CDP capture clip is page-relative',
-      },
-    ],
   },
   'fix-color-replacement': {
     summary:
@@ -156,12 +150,6 @@ export const CURATED = {
   },
   'fix-oracle': {
     summary: 'Layout-independent export oracle, including the helpers and the document-mapping unit test.',
-    issues: [
-      {
-        ref: 'e2e/OPEN_PROBLEMS.md#P2-export-line-is-document-space',
-        title: 'the export line is specified in document space',
-      },
-    ],
     note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'fix-oracle-axes': {
@@ -169,8 +157,8 @@ export const CURATED = {
       "Publishes the app's computed contain fit onto a DOM node and makes the export oracle layout-proof on both axes. Branched from integration/e2e-campaign-final, not from main.",
     issues: [
       {
-        ref: 'e2e/OPEN_PROBLEMS.md#P2-drawline-applies-no-contain-scale',
-        title: 'drawLine applies no contain scale, so its arguments are not document coordinates',
+        ref: 'e2e/OPEN_PROBLEMS.md#p2-document-space-gesture-audits-must',
+        title: 'document-space gesture audits must be specific to the oracle',
       },
     ],
     note: 'Overlaps fix/layout-independent-oracle, which holds the same work uncommitted. Resolve before landing either.',
@@ -196,12 +184,6 @@ export const CURATED = {
   'flake-paintbucket': {
     summary:
       'Names the two steps a paint-bucket e2e flake could not distinguish, turning an unnamed flake into a diagnosable one.',
-    issues: [
-      {
-        ref: 'e2e/OPEN_PROBLEMS.md#P2-cached-canvas-box',
-        title: 'a cached canvas box addresses a different pixel after a tool switch',
-      },
-    ],
   },
   'agents-doc-corrections': {
     summary:
@@ -381,12 +363,6 @@ export const CURATED = {
   },
   'e2e-2-draw-specs': {
     summary: 'Campaign shard 2 of 5, meant to write the drawing spec.',
-    issues: [
-      {
-        ref: 'e2e/OPEN_PROBLEMS.md#P2-buildclip-redraw-clip',
-        title: 'an explicit redraw clip is in page coordinates and a canvas-relative one passes for the wrong reason',
-      },
-    ],
     note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'e2e-3-layers-levels': {
@@ -401,12 +377,6 @@ export const CURATED = {
   },
   'e2e-5-history-undo': {
     summary: 'Campaign shard 5 of 5, meant to cover the history panel and undo/redo.',
-    issues: [
-      {
-        ref: 'e2e/OPEN_PROBLEMS.md#P2-cached-canvas-box',
-        title: 'a cached canvas box addresses a different pixel after a tool switch',
-      },
-    ],
     note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'e2e-campaign-int': {
@@ -427,12 +397,6 @@ export const CURATED = {
   'repair-undo-redo': {
     summary:
       'Single-commit repair of the rotted undo/redo spec premise, citations and two non-asserting assertions. The commit was cherry-picked onto the integration branch, so this branch itself is still unlanded.',
-    issues: [
-      {
-        ref: 'e2e/OPEN_PROBLEMS.md#P2-cached-canvas-box',
-        title: 'a cached canvas box addresses a different pixel after a tool switch',
-      },
-    ],
   },
 
   'e2ewt-adjustments': {
@@ -1088,6 +1052,13 @@ export const CURATED = {
     summary:
       'Untracking `WORKTREES.json` — the generated inventory is a machine-local snapshot of session ids, chat ids, absolute worktree paths and a timestamp, so it leaves the index along with the anchored ignore rule, the docs that told agents to commit a regeneration, and the tripwire that fails if it is re-added. The generator and this table stay tracked; only the output does not.',
     note: 'Two sessions curated this key independently and the merge kept both, where the second silently discarded the first — the `panel-docks` shape again, and the reason this key is one entry rather than two. An earlier version of this note claimed the work was held on no ref, which was true only while the change was uncommitted; it is committed on a branch ahead of main, so the branch is what protects it and no flag is owed.',
+  },
+  'opencode-free-limit-source-exhaustion-20261108': {
+    summary:
+      'The OpenCode free-limit quota fix from board issue ph-48. Current main recognizes typed and alias quota errors regardless of HTTP status, aggregates error events with content-policy precedence, and has regression tests for mixed errors, clean and nonzero exits, malformed JSONL, and provider fallback.',
+    note: 'Keep this branch only as audit evidence for ph-48; current main handles typed free-limit source exhaustion and the FreeUsageLimitError alias through error-event aggregation with content-policy precedence. The candidate exits before that aggregation, so a mixed policy/quota stream can fall through to another provider, and it misses the alias. Do not re-land it. Revisit only if upstream documents a distinct transient 429 using provider.free-limit, or if main changes this account-quota contract.',
+    legacy: true,
+    issues: [{ ref: 'ph-48', title: 'Exhaust OpenCode source on typed free-limit 429' }],
   },
 };
 

@@ -1,292 +1,119 @@
 ---
 name: copilot-subagent-launch
-description: Practical cookbook for launching read-only and task-scoped subagents in GitHub Copilot Chat for VS Code, including setup, constraints, and troubleshooting.
+description: Practical cookbook for launching read-only and task-scoped subagents in GitHub Copilot Chat for VS Code.
 ---
 
 # Launching Subagents in GitHub Copilot (VS Code)
 
-A practical cookbook for successfully delegating tasks to Copilot subagents in VS Code, based on real failures and official documentation.
+Use this guide for VS Code agent sessions. Copilot and Local harnesses have different delegation
+and tool behavior, so check which harness is selected before configuring or invoking a subagent.
+This guide supplements `AGENTS.md`, `MODELS.md`, and the repository's worktree rules.
 
----
+## Repository rules
 
-## The Core Problem You Hit
+Before launching any agent:
 
-**Subagents cannot use different models.** They always inherit the main session's model. Your attempts to launch "Kilo Nemotron" or "OpenRouter Nemotron" subagents failed with:
+1. Create and verify the task worktree.
+2. Give the agent its absolute worktree path and an explicit write set; read-only agents have an empty write set.
+3. Keep Git operations, commits, merges, pushes, and branch changes with the coordinator.
+4. Keep free-model research read-only. Use tool-level read-only permissions; prompt instructions
+   alone do not enforce a write boundary.
 
-- `502 User not found` (OpenRouter model)
-- `400 The requested model is not supported` (Kilo model)
+A free model name does not prove a request is free. For Kilo routes, follow `MODELS.md` and check
+`node scripts/free-model-pool.mjs --list` before launching work.
 
-This is **by design** — subagents share the parent's model and tool configuration.
+## Choose the harness
 
----
+| Harness        | Delegation and tools                                                                                                        | Model selection                                                                                                                                                                                                                                                                                                                     |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub Copilot | Current VS Code Copilot harness uses native `task` delegation. Follow its current Copilot controls and custom-agent schema. | GitHub's Copilot IDE subagent guide says delegated subagents use the main session's model and tools. VS Code's custom-agent schema has a `model` field, but its documentation does not establish whether that field overrides a delegated subagent's model. Verify in the active runtime; do not promise a provider-specific route. |
+| Local          | Select Local and Agent, then enable **Run Subagent** (`agent/runSubagent`) under **Configure Tools**.                       | Model selection is: explicit `runSubagent` model parameter, then the selected custom agent's `model` field, then Auto when `chat.subagents.defaultToAuto` applies, then the parent model. This selection does not prove that the route is free.                                                                                     |
 
-## Prerequisites
+The selected harness determines which tool names and frontmatter fields apply. Do not copy Local's
+`agent/runSubagent` tool name into Copilot-specific instructions. VS Code settings and controls can
+change; use the linked current documentation rather than old settings JSON examples.
 
-1. **VS Code** with GitHub Copilot Chat extension (latest)
-2. **Agent mode** selected in Copilot Chat (not Ask/Edit)
-3. **Custom agents** defined as `.agent.md` files (required for explicit invocation)
+## Define a read-only Copilot agent
 
----
-
-## Quick Start: Enable Subagents
-
-### Via UI (one-time)
-
-1. Open Copilot Chat → click **Tools** icon (wrench)
-2. Enable **Run Subagent** (`agent/runSubagent`)
-3. Select **Agent** mode from dropdown (bottom of chat)
-
-### Via Settings (persistent)
-
-```json
-// settings.json
-{
-  "github.copilot.chat.agent.enableSubagents": true,
-  "chat.agent.enabledTools": ["agent/runSubagent", "..."]
-}
-```
-
----
-
-## Defining Custom Agents (Required for Explicit Invocation)
-
-Create `.agent.md` files in **one of these locations**:
-
-- **Project**: `.github/agents/` (shared with team)
-- **User**: `~/.copilot/agents/` (personal)
-
-### Minimal Agent Template
+Workspace agents live in `.github/agents/`. This example uses current Copilot aliases and fields:
 
 ```markdown
 ---
-name: researcher
-displayName: Research Agent
-description: Explores codebases and answers questions using read-only tools
-tools: ['grep', 'glob', 'view', 'read']
-infer: true
+name: codebase-researcher
+description: Find code and explain existing behavior without editing files
+target: github-copilot
+tools: ['read', 'search']
+user-invocable: true
+disable-model-invocation: false
 ---
 
-You are a research assistant. Analyze code and answer questions. Do not modify any files.
-Return concise findings with file paths and line numbers.
+Research the assigned question without changing files. Return concise findings using file paths,
+symbols, test names, or headings. Do not include line numbers.
 ```
 
-### Agent with Model Override (Advanced)
+For Copilot custom agents, use supported tool aliases such as `read`, `search`, `edit`, and
+`execute`. Tool names differ by harness. `infer` is deprecated in current VS Code custom-agent
+files: `user-invocable` controls picker visibility and `disable-model-invocation` controls whether
+other agents may invoke the agent.
 
-```markdown
----
-name: coder
-displayName: Editor Agent
-description: Makes targeted code changes
-tools: ['view', 'edit', 'bash', 'grep']
-model: gpt-5.4
-infer: true
----
+## Assign a bounded task
 
-You are a code editor. Make minimal, surgical changes to files as requested.
-```
-
-> **Note**: The `model` field only works for the **main session**, not subagents. Subagents always use the parent's model.
-
----
-
-## Invoking Subagents
-
-### Method 1: Automatic Delegation (Inference)
-
-Just ask naturally — Copilot picks the best agent based on `description`:
-
-```
-Research how authentication works in this codebase.
-```
-
-### Method 2: Explicit Invocation
-
-Name the agent directly:
-
-```
-Use the researcher agent to find all API endpoints in /src/api.
-```
-
-### Method 3: Tool Invocation (Advanced)
+Give each agent a self-contained task because the harness may not provide the parent chat history.
+State the goal, relevant files, allowed actions, write set, and expected result. Example:
 
 ```text
-Evaluate #file:databaseSchema using #runSubagent and generate a migration plan.
+Use the codebase-researcher agent to inspect the text-tool selection flow in
+/absolute/path/to/task-worktree. Read files only. Report the relevant file paths, symbols, test
+names, any behavior mismatch, and confidence. Do not edit files, run commands, or use Git.
 ```
 
----
+For independent reviews, assign separate concerns such as correctness, test coverage, and security.
+The coordinator deduplicates and verifies findings before changing code.
 
-## Subagent Behavior & Limits
+## Write-capable test agent
 
-| Aspect        | Behavior                                          |
-| ------------- | ------------------------------------------------- |
-| **Model**     | Inherits parent session's model (cannot override) |
-| **Tools**     | Restricted to agent's `tools` list                |
-| **Context**   | Isolated — no access to parent chat history       |
-| **State**     | Stateless — each invocation is independent        |
-| **Nesting**   | Subagents cannot create other subagents           |
-| **Follow-up** | Requires new invocation with full context         |
-
----
-
-## Common Patterns for This Project
-
-### Pattern 1: Read-Only Research
-
-```markdown
----
-name: explore
-displayName: Explorer
-description: Read-only codebase exploration and search
-tools: ['grep', 'glob', 'view', 'read', 'semantic_search']
-infer: true
----
-
-You explore the codebase to answer questions. Never edit files.
-Return file paths, symbols, and concise explanations.
-```
-
-**Invoke**: `Use the explorer agent to find where the toolbar resize logic lives.`
-
-### Pattern 2: Test Hardening
+Use a write-capable agent only for an explicitly assigned test-file write set in the verified task
+worktree and when the current route and project policy permit writes. Never use a write-capable
+profile for free-model work; free children must remain read-only under `AGENTS.md` and `MODELS.md`.
+Never launch the write-capable profile from the main checkout.
 
 ```markdown
 ---
 name: test-hardener
-displayName: Test Hardener
-description: Fixes flaky/broken tests without touching source code
-tools: ['grep', 'glob', 'view', 'read', 'edit', 'bash']
-infer: false
+description: Fix assigned tests without editing application source
+target: github-copilot
+tools: ['read', 'search', 'edit', 'execute']
+user-invocable: true
+disable-model-invocation: false
 ---
 
-You fix broken unit tests and improve coverage. Only edit test files (*.test.ts, *.spec.ts).
-Run `npm run test` to verify. Never modify source files.
+Work only in the absolute task-worktree path supplied in the prompt. Edit only the assigned test
+files. Do not change source files, commit, merge, push, or change branches. The coordinator owns Git
+operations. Run only the focused tests assigned for this task; the coordinator remains responsible
+for the applicable `docs/TESTING.md` commit and push gates before landing.
 ```
 
-**Invoke**: `Use the test-hardener agent to fix failing tests in src/tools/__tests__/.`
+Provide the exact test paths and task-worktree path in the invocation. Follow `docs/TESTING.md` and
+`AGENTS.md` for the required runner; broad browser E2E uses the mirror workflow.
 
-### Pattern 3: Documentation Audit
+## Documentation audit agent
 
-```markdown
----
-name: doc-auditor
-displayName: Documentation Auditor
-description: Checks docs against code for drift and accuracy
-tools: ['grep', 'glob', 'view', 'read']
-infer: false
----
-
-You compare documentation to implementation. Report discrepancies with file:line references.
-Focus on AGENTS.md, HANDOFF.md, and docs/ARCHITECTURE.md.
-```
-
-**Invoke**: `Use the doc-auditor agent to verify AGENTS.md matches current tool implementations.`
-
----
+A documentation-only agent should have read and search tools, no edit or execute tools, and a
+bounded file list. Ask it to compare statements with implementation and primary sources. Request
+findings by file, heading, symbol, or test name, with evidence and confidence. Do not request or
+report line numbers.
 
 ## Troubleshooting
 
-| Error                      | Cause                                     | Fix                                                             |
-| -------------------------- | ----------------------------------------- | --------------------------------------------------------------- |
-| `502 User not found`       | Tried to use OpenRouter model in subagent | Use main session's model; don't specify model in subagent       |
-| `400 Model not supported`  | Tried to use Kilo model in subagent       | Same as above                                                   |
-| Subagent not invoked       | `infer: false` or no matching agent       | Use explicit invocation or set `infer: true`                    |
-| "Enable subagents" missing | Old Copilot extension                     | Update VS Code + Copilot Chat extension                         |
-| Subagent returns empty     | Task not self-contained                   | Include full context: goal, files, constraints, expected output |
+| Symptom                       | Check                                                                                                                                                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Subagent is not invoked       | Confirm the selected harness, available delegation tool, agent name, and current invocation settings. In VS Code custom agents, check `user-invocable` and `disable-model-invocation`; `infer` is deprecated. |
+| Model is unavailable          | Verify the exact model identifier in the selected harness and current catalog. Do not infer that a model picker selects a Kilo/OpenRouter route or proves zero cost.                                          |
+| Free route is required        | Use the repository free-model catalog and exact model/provider pair. Do not assume Copilot's model picker selects Kilo or OpenRouter, or that a model name proves zero cost.                                  |
+| Result is empty or incomplete | Make the task self-contained, bound the requested output, and verify that the completion is non-empty and complete before relying on it.                                                                      |
 
----
+## References
 
-## Project-Specific Agents (Add to `.github/agents/`)
-
-Create these files for this Photoshop clone project:
-
-### `.github/agents/explore.agent.md`
-
-```markdown
----
-name: explore
-displayName: Explorer
-description: Read-only codebase exploration for the ph photo editor
-tools: ['grep', 'glob', 'view', 'read', 'semantic_search', 'task']
-infer: true
----
-
-You explore the ph photo editor codebase. Key areas:
-
-- src/tools/ — tool implementations (brush, select, text, etc.)
-- src/components/ — React UI components
-- src/state/ — Zustand stores, history, replay
-- e2e/ — Playwright tests
-- .kilo/ — Kilo config, skills, agents
-
-Never edit files. Return findings with file paths and line numbers.
-```
-
-### `.github/agents/test-fixer.agent.md`
-
-```markdown
----
-name: test-fixer
-displayName: Test Fixer
-description: Fixes broken unit/E2E tests in ph project
-tools: ['grep', 'glob', 'view', 'read', 'edit', 'bash']
-infer: false
----
-
-You fix failing tests in the ph project. Rules:
-
-- ONLY edit test files (*.test.ts, *.spec.ts, e2e/**)
-- Run `npm run test` or `npm run test:e2e` to verify
-- Never modify source code in src/
-- Follow existing test patterns in the codebase
-```
-
-### `.github/agents/doc-auditor.agent.md`
-
-```markdown
----
-name: doc-auditor
-displayName: Documentation Auditor
-description: Audits ph project docs against implementation
-tools: ['grep', 'glob', 'view', 'read']
-infer: false
----
-
-You audit documentation accuracy for the ph photo editor.
-Check: AGENTS.md, HANDOFF.md, docs/ARCHITECTURE.md, docs/OVERRIDES.md
-Report drift with file:line references. Focus on:
-
-- Tool implementations vs. documented behavior
-- Model routing rules vs. actual usage
-- Worktree/agent procedures vs. reality
-```
-
----
-
-## Quick Reference Card
-
-```
-# In Copilot Chat (Agent mode):
-
-# Auto-delegate
-"Research how the text tool handles cursor positioning."
-
-# Explicit agent
-"Use the explore agent to find all Color Replacement tool files."
-
-# With context
-"Use the test-fixer agent on e2e/color.spec.ts — it's flaky on Linux CI.
- Context: uses Retina canvas, test waits for pixel diff. Expected: stable pass."
-
-# Tool-style
-"Analyze #file:src/tools/text.ts using #runSubagent and list all public exports."
-```
-
----
-
-## Key Takeaways
-
-1. **Don't fight the model inheritance** — subagents use the parent's model
-2. **Define custom agents** as `.agent.md` files for explicit control
-3. **Make tasks self-contained** — subagents have no chat history
-4. **Use `infer: true`** for automatic delegation, `infer: false` for explicit-only
-5. **Enable `agent/runSubagent`** tool in chat settings
+- [Use subagents in Visual Studio Code](https://code.visualstudio.com/docs/agents/run/subagents)
+- [Custom agent file reference](https://code.visualstudio.com/docs/agents/reference/custom-agent-file-reference)
+- [Using subagents in GitHub Copilot](https://docs.github.com/en/copilot/how-tos/copilot-in-your-ide/use-copilot-agents/use-subagents)

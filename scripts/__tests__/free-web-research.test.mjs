@@ -216,7 +216,7 @@ describe('CLI: integration with mocked deps', () => {
     const fetchUrlImpl = vi.fn().mockResolvedValue('Example domain content for testing');
     const completeImpl = vi.fn().mockResolvedValue({
       source: 'kilo',
-      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      model: 'xingchen-agi/xing4.0-29b-a4b:free',
       content: 'This is a test summary.',
       finishReason: 'stop',
       usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0 },
@@ -340,7 +340,7 @@ describe('CLI: integration with mocked deps', () => {
     const fetchUrlImpl = vi.fn().mockResolvedValue('Test content');
     const completeImpl = vi.fn().mockResolvedValue({
       source: 'kilo',
-      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      model: 'xingchen-agi/xing4.0-29b-a4b:free',
       content: 'Summary result',
       finishReason: 'stop',
       usage: null,
@@ -400,7 +400,7 @@ describe('CLI: integration with mocked deps', () => {
     const fetchUrlImpl = vi.fn().mockResolvedValue('Content');
     const completeImpl = vi.fn().mockResolvedValue({
       source: 'kilo',
-      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      model: 'xingchen-agi/xing4.0-29b-a4b:free',
       content: 'Answer',
       finishReason: 'stop',
       usage: null,

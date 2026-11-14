@@ -90,6 +90,52 @@ describe('durableToolArgsForNavigation', () => {
     expect(args).not.toHaveProperty('end');
   });
 
+  it('preserves vector style options while omitting committed geometry', () => {
+    const args = durableToolArgsForNavigation(
+      documentFor({
+        kind: 'vector',
+        toolName: 'shape',
+        args: {
+          toolName: 'shape',
+          figure: 'polygon',
+          alpha: 0.75,
+          color: '#123456',
+          backgroundColor: '#abcdef',
+          hasFill: true,
+          lineWidth: 7,
+          lineDash: [4, 2],
+          lineCap: 'round',
+          cornerRadius: 6,
+          sides: 6,
+          starRatio: 50,
+          start: { x: 1, y: 2 },
+          end: { x: 40, y: 50 },
+        },
+        size: { width: 100, height: 80 },
+        sourcePos: { x: 0, y: 0, width: 100, height: 80 },
+      }),
+      'layer-1',
+      'shape'
+    );
+
+    expect(args).toMatchObject({
+      toolName: 'shape',
+      figure: 'polygon',
+      alpha: 0.75,
+      color: '#123456',
+      backgroundColor: '#abcdef',
+      hasFill: true,
+      lineWidth: 7,
+      lineDash: [4, 2],
+      lineCap: 'round',
+      cornerRadius: 6,
+      sides: 6,
+      starRatio: 50,
+    });
+    expect(args).not.toHaveProperty('start');
+    expect(args).not.toHaveProperty('end');
+  });
+
   it.each([
     ['ellipse', 'shape'],
     ['draw', 'paint'],

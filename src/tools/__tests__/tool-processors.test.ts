@@ -726,7 +726,10 @@ const realBarControlIds: readonly (readonly [ToolName, readonly string[]])[] = [
   ['elliptical-selection', ['elliptical-selection-style']],
   ['quick-selection', ['quick-selection-mode', 'quick-selection-size', 'quick-selection-tolerance']],
   ['eraser', ['eraser-flow', 'eraser-hardness', 'eraser-mode', 'eraser-opacity', 'eraser-size', 'eraser-spacing']],
-  ['clone-stamp', ['clone-stamp-aligned', 'clone-stamp-hardness', 'clone-stamp-opacity', 'clone-stamp-size']],
+  [
+    'clone-stamp',
+    ['clone-stamp-aligned', 'clone-stamp-flow', 'clone-stamp-hardness', 'clone-stamp-opacity', 'clone-stamp-size'],
+  ],
   ['red-eye', ['red-eye-darken-amount', 'red-eye-pupil-size']],
   [
     'paint-bucket',

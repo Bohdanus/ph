@@ -31,8 +31,9 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { relativePathInside } from '../path-identity.mjs';
 
 /**
  * v3, and the number is the union of two meanings that were numbered apart:
@@ -414,6 +415,11 @@ function isMissingPath(error) {
   return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
 }
 
+function normalizeBoardPathSeparators(path) {
+  const value = String(path ?? '');
+  return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+}
+
 /**
  * True when a normalised path is NOT inside any worktree of this repository.
  *
@@ -424,9 +430,7 @@ function isMissingPath(error) {
  * matches.
  */
 function isOutsideRepoPath(path) {
-  const p = String(path ?? '')
-    .split('\\')
-    .join('/');
+  const p = normalizeBoardPathSeparators(path);
   return p.startsWith('/') || p === '..' || p.startsWith('../') || /^[a-z]:/i.test(p);
 }
 
@@ -1888,7 +1892,7 @@ export class Board {
       // No agents table yet, or no row.
     }
     this._pathRoots = [...roots]
-      .map((root) => `${String(root).split('\\').join('/').replace(/\/+$/, '')}/`)
+      .map((root) => `${normalizeBoardPathSeparators(root).replace(/\/+$/, '')}/`)
       .sort((a, b) => b.length - a.length);
     return this._pathRoots;
   }
@@ -1922,10 +1926,13 @@ export class Board {
     // it against the process's directory would turn the stored answer into an
     // absolute path that matches nothing.
     if (direct === undefined) return undefined;
-    const input = typed.split('\\').join('/');
-    const root = roots.find((candidate) => input.startsWith(candidate))?.slice(0, -1) ?? this.identity?.worktree;
+    const input = normalizeBoardPathSeparators(typed);
+    const root =
+      roots.find((candidate) => input.startsWith(candidate))?.replace(/\/$/, '') ??
+      roots.find((candidate) => relativePathInside(candidate, typed) !== null)?.replace(/\/$/, '') ??
+      this.identity?.worktree;
     const canonicalize = (candidate) => canonicalizeExistingPathCase(root, candidate);
-    if (!input.startsWith('/')) return canonicalize(direct);
+    if (!isAbsolute(typed)) return canonicalize(direct);
     if (direct !== input.replace(/^\.\//, '')) return canonicalize(direct);
     const resolved = resolveSymlinksBestEffort(path);
     if (resolved === null) return canonicalize(direct);
@@ -2790,19 +2797,32 @@ function collapseSegments(path) {
  */
 export function normalizePaths(paths, { worktree = null, roots = null } = {}) {
   const list = Array.isArray(paths) ? paths : [paths];
-  const prefixes = (roots ?? (worktree ? [worktree] : []))
-    .map((root) => `${String(root).split('\\').join('/').replace(/\/+$/, '')}/`)
+  const rootPaths = roots ?? (worktree ? [worktree] : []);
+  const prefixes = rootPaths
+    .map((root) => `${normalizeBoardPathSeparators(root).replace(/\/+$/, '')}/`)
     .sort((a, b) => b.length - a.length);
   const out = [];
   for (const raw of list) {
     if (typeof raw !== 'string') continue;
     const trimmed = raw.trim();
     if (!trimmed) continue;
-    let normalized = trimmed.split('\\').join('/').replace(/^\.\//, '');
+    let normalized = normalizeBoardPathSeparators(trimmed).replace(/^\.\//, '');
+    let matchedRoot = false;
     for (const prefix of prefixes) {
       if (normalized.startsWith(prefix)) {
         normalized = normalized.slice(prefix.length);
+        matchedRoot = true;
         break;
+      }
+    }
+    if (!matchedRoot && isAbsolute(trimmed)) {
+      for (const root of rootPaths) {
+        const relative = relativePathInside(root, trimmed);
+        if (relative !== null) {
+          normalized = relative;
+          matchedRoot = true;
+          break;
+        }
       }
     }
     // AFTER the prefix strip, so `a/b/../b/c` inside a worktree collapses too.

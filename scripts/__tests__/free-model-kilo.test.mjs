@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -62,9 +63,9 @@ const args = process.argv.slice(2);
 const message = fs.readFileSync(0, 'utf8');
 const valueAfter = (flag) => args[args.indexOf(flag) + 1];
 if (!args.includes('--pure') || valueAfter('--format') !== 'json') process.exit(4);
-if (valueAfter('--model') !== 'kilo/nvidia/nemotron-3-ultra-550b-a55b:free') process.exit(5);
+if (valueAfter('--model') !== 'kilo/xingchen-agi/xing4.0-29b-a4b:free') process.exit(5);
 if (valueAfter('--agent') !== 'free-completion') process.exit(6);
-if (!args.includes('--variant') || valueAfter('--variant') !== 'high') process.exit(7);
+if (args.includes('--variant')) process.exit(7);
 if (args.includes('--file')) process.exit(8);
 if (!message.startsWith('Answer the provided request directly, in plain text, using at most 65536 output tokens.')) process.exit(9);
 if (!message.includes('private prompt')) process.exit(10);
@@ -80,7 +81,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       await expect(
         runKiloCompletion({
           command,
-          model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+          model: 'xingchen-agi/xing4.0-29b-a4b:free',
           prompt: 'private prompt',
           maxTokens: 65536,
           env: {
@@ -99,7 +100,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           },
         })
       ).resolves.toEqual({
-        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        model: 'xingchen-agi/xing4.0-29b-a4b:free',
         content: 'safe response',
         finishReason: 'stop',
         usage: { input_tokens: 10, output_tokens: 3, reasoning_tokens: 1, cost: 0 },
@@ -164,6 +165,26 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'length', cost
     }
   });
 
+  it('rejects malformed JSONL stdout as a contained completion error', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const command = join(directory, 'fake-kilo');
+    await writeExecutable(
+      command,
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'partial response' } }));
+console.log('{"type":');
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0 } }));`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+        error: 'Kilo CLI returned malformed JSONL output',
+        exhaustSource: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('exhausts a Kilo source after an authentication or quota status and hides provider bodies', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
     const command = await writeExecutable(
@@ -204,6 +225,40 @@ process.exit(1);`
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it('preserves a Kilo quota response when the child closes stdin', async () => {
+    const spawnImpl = () => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => {
+        child.stdout.emit(
+          'data',
+          Buffer.from(
+            `${JSON.stringify({ type: 'error', error: { status: 429, message: 'private provider details' } })}\n`
+          )
+        );
+        child.stdin.emit('error', Object.assign(new Error('prompt pipe closed'), { code: 'EPIPE' }));
+        child.emit('close', 1, null);
+      };
+      return child;
+    };
+
+    const result = await runKiloCompletion({
+      command: '/unused/kilo',
+      model: 'model:free',
+      prompt: 'prompt',
+      spawnImpl,
+    });
+
+    expect(result).toEqual({
+      error: 'Kilo provider quota or rate limit returned HTTP 429',
+      exhaustSource: true,
+      status: 429,
+    });
+    expect(JSON.stringify(result)).not.toContain('private provider details');
   });
 
   it.each([
@@ -376,6 +431,7 @@ process.exitCode = 1;`
   ])('fails closed for a Kilo content-filter terminal after %s', async (_scenario, options) => {
     const spawnImpl = () => {
       const child = new EventEmitter();
+      child.pid = 1234;
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.stdin = new EventEmitter();
@@ -399,6 +455,8 @@ process.exitCode = 1;`
         prompt: 'prompt',
         timeoutMs: options.hang ? 20 : 1000,
         spawnImpl,
+        platform: 'win32',
+        terminateWindowsProcessTreeImpl: async () => {},
       })
     ).resolves.toEqual({
       error: 'Kilo provider content policy rejected or filtered this request',
@@ -489,6 +547,11 @@ process.exitCode = 1;`
       'cost reported on stderr',
       `console.error(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`,
     ],
+    [
+      'buffered invalid cost before timeout',
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: false } }));\nsetInterval(() => {}, 1000);`,
+      2000,
+    ],
   ])(
     'rejects every reported invalid Kilo cost before process failure handling: %s',
     async (_scenario, source, timeoutMs = 5000) => {
@@ -508,34 +571,6 @@ process.exitCode = 1;`
       }
     }
   );
-
-  it('rejects a buffered invalid cost before returning a timeout error', async () => {
-    const spawnImpl = () => {
-      const child = new EventEmitter();
-      child.stdout = new EventEmitter();
-      child.stderr = new EventEmitter();
-      child.stdin = new EventEmitter();
-      child.stdin.end = () => {
-        child.stdout.emit(
-          'data',
-          Buffer.from(`${JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: false } })}\n`)
-        );
-      };
-      child.kill = (signal) => {
-        queueMicrotask(() => child.emit('close', null, signal));
-        return true;
-      };
-      return child;
-    };
-
-    await expect(
-      runKiloCompletion({ command: process.execPath, model: 'model:free', prompt: 'prompt', timeoutMs: 25, spawnImpl })
-    ).resolves.toEqual({
-      error: 'Kilo reported non-zero or invalid completion cost',
-      exhaustSource: true,
-      safetyStop: true,
-    });
-  });
 
   it('aborts a stalled request at its configured inference timeout', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
@@ -588,5 +623,159 @@ setInterval(() => {}, 1000);`
 
   it('kills the Kilo process tree when output overflows', async () => {
     await expectProcessTreeKilled('output overflow');
+  }, 15_000);
+  it('reports Windows tree-termination failure when the child closes before termination finishes', async () => {
+    let child;
+    const terminateWindowsProcessTreeImpl = vi.fn(
+      () =>
+        new Promise((_, reject) => {
+          setTimeout(() => {
+            child.exitCode = null;
+            child.signalCode = 'SIGTERM';
+            child.emit('close', null, 'SIGTERM');
+          }, 0);
+          setTimeout(() => reject(new Error('taskkill failed')), 10);
+        })
+    );
+    const spawnImpl = () => {
+      child = new EventEmitter();
+      child.pid = 4242;
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => setImmediate(() => child.stdout.emit('data', Buffer.alloc(MAX_KILO_OUTPUT_BYTES + 1)));
+      child.kill = vi.fn();
+      return child;
+    };
+
+    await expect(
+      runKiloCompletion({
+        command: '/unused/kilo',
+        model: 'model:free',
+        prompt: 'prompt',
+        timeoutMs: 1000,
+        platform: 'win32',
+        terminateWindowsProcessTreeImpl,
+        spawnImpl,
+      })
+    ).resolves.toEqual({ error: 'Kilo process-tree termination failed', exhaustSource: true });
+    expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(4242);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform !== 'win32')(
+    'terminates descendants of a stalled Windows CLI shim',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-process-tree-'));
+      const pidPath = join(directory, 'processes.json');
+      const command = await writeExecutable(
+        join(directory, 'fake-kilo'),
+        `const { spawn } = require('node:child_process');
+const { writeFileSync } = require('node:fs');
+const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore', windowsHide: true });
+writeFileSync(${JSON.stringify(pidPath)}, JSON.stringify({ parent: process.pid, descendant: child.pid }));
+setInterval(() => {}, 1000);`
+      );
+
+      let processIds = [];
+      try {
+        await expect(
+          runKiloCompletion({ command, model: 'model:free', prompt: 'prompt', timeoutMs: 2_000 })
+        ).resolves.toEqual({ error: 'Kilo completion exceeded 2000 ms' });
+        const recordedPids = JSON.parse(await readFile(pidPath, 'utf8'));
+        processIds = [Number(recordedPids.parent), Number(recordedPids.descendant)];
+        expect(processIds.every((pid) => Number.isSafeInteger(pid) && pid > 0)).toBe(true);
+
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          const alive = processIds.filter((pid) => {
+            try {
+              process.kill(pid, 0);
+              return true;
+            } catch (error) {
+              if (error.code === 'ESRCH') return false;
+              throw error;
+            }
+          });
+          if (alive.length === 0) return;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        throw new Error(`Kilo process-tree PIDs ${processIds.join(', ')} remained alive after timeout`);
+      } finally {
+        if (processIds.length === 0) {
+          try {
+            const recordedPids = JSON.parse(await readFile(pidPath, 'utf8'));
+            processIds = [Number(recordedPids.descendant), Number(recordedPids.parent)];
+          } catch {}
+        }
+        for (const pid of processIds) {
+          if (Number.isSafeInteger(pid) && pid > 0)
+            spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+        }
+        await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    },
+    30_000
+  );
+
+  it('rejects invalid token and timeout values before starting the Kilo CLI', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    for (const maxTokens of [null, '4096', 1.5, 65_537]) {
+      const spawnImpl = vi.fn();
+      await expect(
+        runKiloCompletion({ command: '/fake-kilo', model, prompt: 'prompt', maxTokens, spawnImpl })
+      ).resolves.toEqual({ error: 'Invalid token limit' });
+      expect(spawnImpl).not.toHaveBeenCalled();
+    }
+
+    for (const timeoutMs of [null, '1000', 0, 12 * 60 * 1000 + 1]) {
+      const spawnImpl = vi.fn();
+      await expect(
+        runKiloCompletion({ command: '/fake-kilo', model, prompt: 'prompt', timeoutMs, spawnImpl })
+      ).resolves.toEqual({ error: 'Invalid completion timeout' });
+      expect(spawnImpl).not.toHaveBeenCalled();
+    }
+  });
+
+  it('blocks noncanonical Nemotron variants before starting the Kilo CLI', async () => {
+    const spawnImpl = vi.fn();
+    await expect(
+      runKiloCompletion({
+        command: '/fake-kilo',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b-v2:free',
+        prompt: 'private prompt',
+        spawnImpl,
+      })
+    ).resolves.toEqual({ error: 'Nemotron model ID is not approved by free-model policy' });
+    expect(spawnImpl).not.toHaveBeenCalled();
+  });
+
+  it('uses the Nemotron reasoning variant and enforces its minimum output-token instruction', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-nemotron-'));
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+const valueAfter = (flag) => args[args.indexOf(flag) + 1];
+const message = fs.readFileSync(0, 'utf8');
+if (!args.includes('--pure') || valueAfter('--model') !== 'kilo/${model}') process.exit(4);
+if (valueAfter('--agent') !== 'free-completion') process.exit(5);
+if (valueAfter('--variant') !== 'high') process.exit(6);
+if (!message.startsWith('Answer the provided request directly, in plain text, using at most 4096 output tokens.')) process.exit(7);
+console.log(JSON.stringify({ type: 'text', part: { text: 'approved response' } }));
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0, tokens: { input: 8, output: 2 } } }));`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model, prompt: 'bounded request', maxTokens: 1200 })).resolves.toEqual({
+        model,
+        content: 'approved response',
+        finishReason: 'stop',
+        usage: { input_tokens: 8, output_tokens: 2, cost: 0 },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }, 15_000);
 });

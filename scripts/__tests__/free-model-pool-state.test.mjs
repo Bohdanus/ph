@@ -60,7 +60,7 @@ describe('free-model pool persistent state', () => {
     });
   });
 
-  it('quarantines an OpenRouter model after three attributable 429s in a rolling three-hour window', async () => {
+  it('quarantines an OpenRouter model after three attributable rate-limit failures in a rolling three-hour window', async () => {
     await withStateFiles(async ({ quarantineFile, stateFile }) => {
       const now = Date.parse('2026-10-26T12:00:00.000Z');
       await recordModelFailure({

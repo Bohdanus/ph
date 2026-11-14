@@ -1028,6 +1028,7 @@ describe("maintained guidance's code claims resolve against the program", () => 
     expect(retired147[0]).toContain('retired');
     const retired148 = staleHandoffRefs('see §148', handoff);
     expect(retired148).toHaveLength(1);
+    expect(retired148[0]).toContain('§148');
     expect(retired148[0]).toContain('retired');
     const removed = staleHandoffRefs('see §140', handoff);
     expect(removed).toHaveLength(1);

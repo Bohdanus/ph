@@ -5,7 +5,15 @@ import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { COMPLETION_TIMEOUT_MS, resolveKiloCli, runKiloCompletion } from './lib/free-model-kilo.mjs';
+import { resolveKiloCli, runKiloCompletion } from './lib/free-model-kilo.mjs';
+import {
+  freeModelProfile,
+  isDisabledFreeModel,
+  MAX_FREE_COMPLETION_MAX_TOKENS as MAX_COMPLETION_TOKENS,
+  MAX_FREE_COMPLETION_TIMEOUT_MS,
+  modelStrengthRank,
+  NEMOTRON_3_ULTRA_FREE_MODEL,
+} from './lib/free-model-policy.mjs';
 import { resolveCommandShim } from './lib/windows-command-shim.mjs';
 import { terminateWindowsProcessTree } from './lib/windows-process-tree.mjs';
 import { sanitizeForLogging, sanitizeErrorMessage, sanitizeErrorStack } from './lib/secrets.mjs';
@@ -44,16 +52,9 @@ const MAX_OPENCODE_RETRY_AFTER_MS = 60_000;
 const MAX_PROMPT_CHARS = 120_000;
 const MAX_PROMPT_FILE_BYTES = 480 * 1024;
 const MAX_OPENCODE_OUTPUT_BYTES = 1024 * 1024;
-const MAX_OPENCODE_TIMEOUT_MS = 12 * 60 * 1000;
+const MAX_OPENCODE_TIMEOUT_MS = MAX_FREE_COMPLETION_TIMEOUT_MS;
 export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
-const NEMOTRON_3_ULTRA_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
-const NEMOTRON_TIMEOUT_MS = 12 * 60 * 1000;
-const MIN_NEMOTRON_MAX_TOKENS = 4096;
-const MAX_COMPLETION_TOKENS = 65536;
-const DEFAULT_MAX_TOKENS = 1200;
-const DEFAULT_NEMOTRON_MAX_TOKENS = MAX_COMPLETION_TOKENS;
-const XINGCHEN_XING4_MODEL = 'xingchen-agi/xing4.0-29b-a4b:free';
 const HTTP_DATE_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const HTTP_SHORT_DAY_PATTERN = 'Mon|Tue|Wed|Thu|Fri|Sat|Sun';
 const HTTP_LONG_DAY_PATTERN = 'Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday';
@@ -81,8 +82,6 @@ const ASCTIME_DATE_PATTERN = new RegExp(
     ') (?:([0-9]{2})| ([0-9])) (\\d{2}):(\\d{2}):(\\d{2}) (\\d{4})$'
 );
 const DISABLED_MODEL_PREFIXES = ['poolside/laguna'];
-const PREFERRED_KILO_MODELS = [NEMOTRON_3_ULTRA_MODEL, XINGCHEN_XING4_MODEL];
-const PREFERRED_OPENROUTER_MODELS = [NEMOTRON_3_ULTRA_MODEL, XINGCHEN_XING4_MODEL];
 const GROQ_FREE_MODEL = 'openai/gpt-oss-120b';
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
@@ -291,30 +290,18 @@ function isExactZero(value) {
   return typeof value === 'string' && /^0+(?:\.0+)?$/.test(value);
 }
 
-function isNemotron3UltraCandidate(candidate) {
-  return /\bnemotron[\s.-]+3(?![\d.])[\s.-]+ultra\b/i.test(`${candidate.model} ${candidate.name ?? ''}`);
-}
-
-function prioritizeCandidatesByModel(candidates) {
-  const nemotron3Ultra = [];
-  const remaining = [];
-  for (const candidate of candidates) {
-    (isNemotron3UltraCandidate(candidate) ? nemotron3Ultra : remaining).push(candidate);
-  }
-  return [...nemotron3Ultra, ...remaining];
-}
-
 export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
   const rows = Array.isArray(data) ? data : (data?.data ?? []);
   const candidates = rows
     .filter((row) => {
       if (typeof row?.id !== 'string' || row.id.length === 0) return false;
+      if (isDisabledFreeModel(row.id, row.name)) return false;
       if (DISABLED_MODEL_PREFIXES.some((prefix) => row.id.toLowerCase().startsWith(prefix))) return false;
       if (quarantinedKeys.has(quarantineKey(source, row.id))) return false;
       if (UNPINNABLE_ROUTER_MODELS.has(row.id)) return false;
-      // OpenCode's catalog has no price fields; only owned -free IDs and the exact Nemotron ID qualify.
+      // OpenCode's catalog has no price fields; only provider-owned -free IDs qualify.
       if (source === 'opencode') {
-        return row.owned_by === 'opencode' && (row.id.endsWith('-free') || row.id === NEMOTRON_3_ULTRA_MODEL);
+        return row.owned_by === 'opencode' && (row.id.endsWith('-free') || row.id === NEMOTRON_3_ULTRA_FREE_MODEL);
       }
       // Groq's model catalog does not expose pricing. Routing is additionally
       // gated by an explicit free-plan opt-in before this catalog is requested.
@@ -323,39 +310,49 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
       if (source === 'openrouter') return row.id.endsWith(':free');
       return source === 'kilo' && (row.isFree === true || row.id.endsWith(':free'));
     })
-    .map((row) => ({ source, model: row.id, name: row.name ?? row.id }));
-  if (source !== 'kilo' && source !== 'openrouter') return candidates;
-  const preferredModels = source === 'kilo' ? PREFERRED_KILO_MODELS : PREFERRED_OPENROUTER_MODELS;
-  const preference = new Map(preferredModels.map((model, index) => [model, index]));
-  return candidates.sort(
-    (left, right) =>
-      (preference.get(left.model) ?? Number.MAX_SAFE_INTEGER) - (preference.get(right.model) ?? Number.MAX_SAFE_INTEGER)
-  );
+    .map((row) => ({
+      source,
+      model: row.id,
+      name: row.name ?? row.id,
+      ...(source === 'opencode' && row.id === NEMOTRON_3_ULTRA_FREE_MODEL ? { providerOwned: true } : {}),
+    }));
+  return candidates;
 }
 
 export function orderFreeModelRoutes(candidates) {
-  const providerOrder = new Map([
-    ['kilo', 0],
-    ['openrouter', 1],
-    ['opencode', 2],
-    ['groq', 3],
-  ]);
-  const nemotron = candidates
-    .filter((candidate) => candidate.model === NEMOTRON_3_ULTRA_MODEL)
-    .sort(
-      (left, right) =>
-        (providerOrder.get(left.source) ?? Number.MAX_SAFE_INTEGER) -
-        (providerOrder.get(right.source) ?? Number.MAX_SAFE_INTEGER)
-    );
-  const fallback = candidates.filter(
-    (candidate) => candidate.model !== NEMOTRON_3_ULTRA_MODEL && candidate.source !== 'kilo'
-  );
-  return [
-    ...nemotron,
-    ...fallback.filter((candidate) => candidate.source === 'openrouter'),
-    ...fallback.filter((candidate) => candidate.source === 'opencode'),
-    ...fallback.filter((candidate) => candidate.source === 'groq'),
-  ];
+  const sourcePreference = ['kilo', 'openrouter', 'opencode', 'groq'];
+  const byStrength = new Map();
+  for (const candidate of candidates) {
+    if (isDisabledFreeModel(candidate.model, candidate.name)) continue;
+    const rank = modelStrengthRank(candidate.model);
+    const bySource = byStrength.get(rank) ?? new Map();
+    const sourceCandidates = bySource.get(candidate.source) ?? [];
+    sourceCandidates.push(candidate);
+    bySource.set(candidate.source, sourceCandidates);
+    byStrength.set(rank, bySource);
+  }
+
+  const ordered = [];
+  for (const rank of [...byStrength.keys()].sort((left, right) => left - right)) {
+    const bySource = byStrength.get(rank);
+    const sources = [
+      ...sourcePreference,
+      ...[...bySource.keys()].filter((source) => !sourcePreference.includes(source)),
+    ];
+    const positions = new Map(sources.map((source) => [source, 0]));
+    let remaining = [...bySource.values()].reduce((count, rows) => count + rows.length, 0);
+    while (remaining > 0) {
+      for (const source of sources) {
+        const rows = bySource.get(source);
+        const position = positions.get(source);
+        if (!rows || position >= rows.length) continue;
+        ordered.push(rows[position]);
+        positions.set(source, position + 1);
+        remaining -= 1;
+      }
+    }
+  }
+  return ordered;
 }
 
 export async function loadCatalogs({
@@ -443,7 +440,7 @@ export async function loadCatalogs({
     onCatalogError(sources[index].source, result.reason);
     return [];
   });
-  return prioritizeCandidatesByModel(candidates);
+  return candidates;
 }
 
 export async function probeOpenRouterQuota({
@@ -583,7 +580,8 @@ export function retryAfterDelayMs(response, now = Date.now()) {
 }
 
 function failureReason(response, payload) {
-  const message = payload?.error?.message ?? payload?.message ?? '';
+  const choiceError = Array.isArray(payload?.choices) ? payload.choices.find((choice) => choice?.error)?.error : null;
+  const message = payload?.error?.message ?? choiceError?.message ?? payload?.message ?? '';
   const retryAfter = retryAfterHint(response);
   return `${response.status}${message ? `: ${message}` : ''}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`;
 }
@@ -595,16 +593,67 @@ function openRouterPlatformRemaining(response) {
   return Number.isFinite(remaining) && remaining >= 0 ? remaining : null;
 }
 
+function responseErrorObjects(payload) {
+  const choiceErrors = Array.isArray(payload?.choices) ? payload.choices.map((choice) => choice?.error) : [];
+  return [payload?.error, ...choiceErrors].filter(
+    (error) => error && typeof error === 'object' && !Array.isArray(error)
+  );
+}
+
+function openRouterLimitSources(payload) {
+  return responseErrorObjects(payload)
+    .map((error) => error?.metadata?.limit_source)
+    .filter((source) => typeof source === 'string')
+    .map((source) => source.trim().toLowerCase().replaceAll('-', '_'));
+}
+
+function normalizedOpenRouterErrorTypes(payload) {
+  return responseErrorObjects(payload)
+    .map((error) => error?.metadata?.error_type)
+    .filter((errorType) => typeof errorType === 'string')
+    .map((errorType) => errorType.trim().toLowerCase().replaceAll('-', '_'));
+}
+
+const OPENROUTER_TRANSIENT_ERROR_TYPES = new Set([
+  'rate_limit_exceeded',
+  'provider_overloaded',
+  'provider_unavailable',
+  'timeout',
+]);
+const OPENROUTER_TYPED_UPSTREAM_ERROR_TYPES = new Set(['provider_overloaded', 'provider_unavailable', 'timeout']);
+
+function hasTransientOpenRouterProviderError(payload) {
+  return normalizedOpenRouterErrorTypes(payload).some((errorType) => OPENROUTER_TRANSIENT_ERROR_TYPES.has(errorType));
+}
+
+function hasOpenRouterRateLimitError(payload) {
+  return normalizedOpenRouterErrorTypes(payload).includes('rate_limit_exceeded');
+}
+
+function hasTypedOpenRouterUpstreamError(payload) {
+  return normalizedOpenRouterErrorTypes(payload).some((errorType) =>
+    OPENROUTER_TYPED_UPSTREAM_ERROR_TYPES.has(errorType)
+  );
+}
+
 function hasUpstreamProviderMetadata(payload) {
-  const metadata = payload?.error?.metadata ?? payload?.metadata;
-  if (!metadata || typeof metadata !== 'object') return false;
-  return Boolean(metadata.provider_name || metadata.provider || metadata.upstream_provider);
+  const metadata = responseErrorObjects(payload).map((error) => error.metadata);
+  return metadata.some(
+    (entry) =>
+      entry &&
+      typeof entry === 'object' &&
+      (entry.provider_name || entry.provider || entry.upstream_provider || entry.provider_code)
+  );
 }
 
 function isOpenRouterDailyQuotaError(payload) {
-  const error = payload?.error;
-  const code = String(error?.code ?? error?.type ?? '').toLowerCase();
-  const message = String(error?.message ?? payload?.message ?? '').toLowerCase();
+  const errors = responseErrorObjects(payload);
+  if (openRouterLimitSources(payload).some((source) => source === 'openrouter_free_tier_daily')) return true;
+  const code = errors
+    .map((error) => error.code ?? error.type ?? '')
+    .join(' ')
+    .toLowerCase();
+  const message = [...errors.map((error) => error.message), payload?.message].join(' ').toLowerCase();
   return (
     /free[-_ ]models[-_ ]per[-_ ]day|daily[-_ ]quota|daily.*limit/.test(code) ||
     /free model.*daily|daily.*free model|quota.*exhaust|daily.*limit/.test(message)
@@ -613,14 +662,18 @@ function isOpenRouterDailyQuotaError(payload) {
 
 function isModelAttributableOpenRouterFailure(response, payload) {
   const status = response?.status;
-  if (!Number.isInteger(status) || status < 400 || status > 599 || status === 401 || status === 402) return false;
   if (isOpenRouterDailyQuotaError(payload)) return false;
+  if (status === 200 && hasTransientOpenRouterProviderError(payload)) return true;
+  if (!Number.isInteger(status) || status < 400 || status > 599 || status === 401 || status === 402) return false;
   if (status === 429) {
+    const limitSources = openRouterLimitSources(payload);
+    if (limitSources.some((source) => source.startsWith('openrouter_'))) return false;
+    if (limitSources.includes('upstream_provider_shared_pool')) return true;
     const remaining = openRouterPlatformRemaining(response);
     if (remaining !== null) return remaining > 0;
-    return hasUpstreamProviderMetadata(payload);
+    return hasUpstreamProviderMetadata(payload) || hasTransientOpenRouterProviderError(payload);
   }
-  return status >= 500 && hasUpstreamProviderMetadata(payload);
+  return status >= 500 && (hasUpstreamProviderMetadata(payload) || hasTypedOpenRouterUpstreamError(payload));
 }
 
 function retryAfterValueDelayMs(value, now = Date.now()) {
@@ -781,6 +834,7 @@ const CONTENT_POLICY_ERROR_CODES = new Set([
   'moderation_blocked',
   'moderation_rejected',
   'prompt_injection_detected',
+  'refusal',
   'safety_filter',
   'safety_violation',
 ]);
@@ -820,8 +874,13 @@ export function isContentPolicyError(payload) {
     if (payload.prompt_filter_results.some((result) => hasFilteredContent(result?.content_filter_results))) return true;
   }
 
-  const error = payload.error;
-  const codes = [error?.code, error?.type, payload.code, payload.type, payload.errorType];
+  const errors = responseErrorObjects(payload);
+  const codes = [
+    ...errors.flatMap((error) => [error.code, error.type, error.metadata?.error_type]),
+    payload.code,
+    payload.type,
+    payload.errorType,
+  ];
   if (
     codes.some(
       (code) =>
@@ -831,8 +890,10 @@ export function isContentPolicyError(payload) {
     return true;
   }
 
-  const message = String(error?.message ?? payload.message ?? '');
-  return CONTENT_POLICY_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+  const messages = [...errors.map((error) => error.message), payload.message].filter(
+    (message) => typeof message === 'string'
+  );
+  return CONTENT_POLICY_ERROR_PATTERNS.some((pattern) => messages.some((message) => pattern.test(message)));
 }
 
 function hasReportedNonZeroCost(usage) {
@@ -933,20 +994,42 @@ export async function runOpenCodeCompletion({
   command = 'opencode',
   model,
   prompt,
-  maxTokens = 1200,
-  timeoutMs = COMPLETION_TIMEOUT_MS,
-  verifiedNemotron = false,
+  maxTokens,
+  timeoutMs,
+  providerOwned = false,
 }) {
+  if (isDisabledFreeModel(model)) {
+    return { error: 'Nemotron model ID is not approved by free-model policy' };
+  }
+  const exactNemotron = model === NEMOTRON_3_ULTRA_FREE_MODEL;
   if (
     typeof model !== 'string' ||
-    (!/^[A-Za-z0-9._/-]+-free$/.test(model) && !(verifiedNemotron && model === NEMOTRON_3_ULTRA_MODEL))
+    (!/^[A-Za-z0-9._/-]+-free$/.test(model) && !(exactNemotron && providerOwned === true))
   ) {
     return { error: 'OpenCode model is not an eligible free catalog ID' };
   }
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS) {
+  if (
+    maxTokens !== undefined &&
+    (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS)
+  ) {
     return { error: 'Invalid token limit' };
   }
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_OPENCODE_TIMEOUT_MS) {
+  if (
+    timeoutMs !== undefined &&
+    (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_OPENCODE_TIMEOUT_MS)
+  ) {
+    return { error: 'Invalid OpenCode timeout' };
+  }
+  const profile = freeModelProfile(model, maxTokens);
+  const effectiveTimeoutMs = timeoutMs ?? profile.timeoutMs;
+  if (!Number.isSafeInteger(profile.maxTokens) || profile.maxTokens < 1 || profile.maxTokens > MAX_COMPLETION_TOKENS) {
+    return { error: 'Invalid token limit' };
+  }
+  if (
+    !Number.isSafeInteger(effectiveTimeoutMs) ||
+    effectiveTimeoutMs < 1 ||
+    effectiveTimeoutMs > MAX_OPENCODE_TIMEOUT_MS
+  ) {
     return { error: 'Invalid OpenCode timeout' };
   }
   const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-'));
@@ -967,10 +1050,11 @@ export async function runOpenCodeCompletion({
         '--format',
         'json',
         '--model',
-        `opencode/${model}${verifiedNemotron ? '#high' : ''}`,
+        `opencode/${model}`,
+        ...(profile.reasoningEffort ? ['--variant', profile.reasoningEffort] : []),
         '--file',
         promptPath,
-        `Answer the attached request concisely (about ${maxTokens} tokens or fewer). Do not use tools.`,
+        `Answer the attached request concisely (about ${profile.maxTokens} tokens or fewer). Do not use tools.`,
       ];
       const commandShim = resolveCommandShim(command, args, { env, cwd: directory });
       const child = spawn(commandShim.command, commandShim.args, {
@@ -993,6 +1077,7 @@ export async function runOpenCodeCompletion({
       const stopChild = () => {
         if (stopping) return killPromise;
         stopping = true;
+        clearTimeout(timer);
         if (process.platform === 'win32') {
           killPromise = terminateWindowsProcessTree(child.pid).catch((error) => {
             terminationError = error;
@@ -1024,7 +1109,7 @@ export async function runOpenCodeCompletion({
       const timer = setTimeout(() => {
         timedOut = true;
         void stopChild();
-      }, timeoutMs);
+      }, effectiveTimeoutMs);
       child.stdout.on('data', (chunk) => {
         const capturedBytes = Math.max(0, MAX_OPENCODE_OUTPUT_BYTES - outputBytes);
         if (capturedBytes > 0) {
@@ -1063,7 +1148,7 @@ export async function runOpenCodeCompletion({
           const processFailure = terminationError
             ? `OpenCode process termination failed: ${terminationError.message}`
             : timedOut
-              ? `OpenCode timed out after ${timeoutMs}ms`
+              ? `OpenCode timed out after ${effectiveTimeoutMs}ms`
               : outputExceeded
                 ? `OpenCode output exceeded ${MAX_OPENCODE_OUTPUT_BYTES} bytes`
                 : malformedJsonl
@@ -1123,8 +1208,7 @@ export async function runOpenCodeCompletion({
     );
     // OpenCode V2 can exit cleanly after final text without emitting its final step_finish event.
     const cleanFreeTextExit =
-      (model.endsWith('-free') || (verifiedNemotron && model === NEMOTRON_3_ULTRA_MODEL)) &&
-      events.some((event) => event.type === 'text' && event.part?.text?.trim());
+      model.endsWith('-free') && events.some((event) => event.type === 'text' && event.part?.text?.trim());
     const terminal = explicitTerminal || cleanFreeTextExit;
     const content = events
       .filter((event) => event.type === 'text' && typeof event.part?.text === 'string')
@@ -1168,8 +1252,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
     runKilo = runKiloCompletion,
     opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
     runOpenCode = runOpenCodeCompletion,
-    maxTokens = DEFAULT_MAX_TOKENS,
-    maxTokensExplicit = Object.hasOwn(options, 'maxTokens'),
+    maxTokens,
     waitForRetryAfter = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     poolStateFile: requestedPoolStateFile,
@@ -1181,7 +1264,10 @@ export async function completeWithFreeModel(prompt, options = {}) {
   if (typeof prompt !== 'string' || prompt.length === 0 || prompt.length > MAX_PROMPT_CHARS) {
     throw new Error(`Prompt must contain 1 to ${MAX_PROMPT_CHARS} characters`);
   }
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS) {
+  if (
+    maxTokens !== undefined &&
+    (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS)
+  ) {
     throw new Error(`maxTokens must be an integer from 1 to ${MAX_COMPLETION_TOKENS}`);
   }
   const effectiveKiloCommand = kiloCommand === '' ? '' : (kiloCommand ?? (await resolveKiloCli()));
@@ -1330,8 +1416,38 @@ export async function completeWithFreeModel(prompt, options = {}) {
     }
     return !exhausted.has('openrouter');
   };
+  let openRouterQuotaCheckedAfterAttempt = 0;
+  const refreshOpenRouterQuotaAfterAttempt = async () => {
+    const openRouterAttempts = attempts.get('openrouter') ?? 0;
+    if (openRouterAttempts <= openRouterQuotaCheckedAfterAttempt) {
+      return openRouterQuotaKnownPositive && !exhausted.has('openrouter');
+    }
+    openRouterQuotaCheckedAfterAttempt = openRouterAttempts;
+    openRouterQuotaKnownPositive = false;
+    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+    if (quota.reason === 'ok') {
+      onOpenRouterQuota(quota);
+      if (quota.remaining <= 0 || quota.used >= quota.limit) {
+        await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile });
+        exhausted.add('openrouter');
+        stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter routes.\n');
+      } else {
+        openRouterQuotaKnownPositive = true;
+      }
+    } else if (quota.reason === 'http_401' || quota.reason === 'http_402') {
+      exhausted.add('openrouter');
+      stderr.write(`OpenRouter quota endpoint returned ${quota.reason} after an attempt; skipping remaining routes.\n`);
+    } else {
+      const detail = quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : '';
+      stderr.write(`OpenRouter quota refresh unknown (${quota.reason}${detail}); skipping remaining routes.\n`);
+    }
+    if (openRouterQuotaInitiallyUnknown || !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+    return openRouterQuotaKnownPositive && !exhausted.has('openrouter');
+  };
   const handleOpenRouterFailure = async ({ candidate, response, payload, quotaWasPositive, retryAttempt }) => {
     const status = response?.status;
+    const transientServerFailure = Number.isInteger(status) && status >= 500 && status <= 599;
+    const transientTypedFailure = status === 200 && hasTransientOpenRouterProviderError(payload);
     if (status === 401 || status === 402) {
       exhausted.add('openrouter');
       return { retry: false };
@@ -1343,7 +1459,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
         failureResult = await recordModelFailureSafely({
           source: 'openrouter',
           model: candidate.model,
-          rateLimit: status === 429,
+          rateLimit: status === 429 || hasOpenRouterRateLimitError(payload),
         });
       } catch (error) {
         throw error;
@@ -1354,69 +1470,57 @@ export async function completeWithFreeModel(prompt, options = {}) {
         );
       }
     }
-    if (status === 429) {
-      if (openRouterPlatformRemaining(response) === 0) {
-        exhausted.add('openrouter');
-        stderr.write('OpenRouter platform rate limit is exhausted for this run; skipping its remaining routes.\n');
-        return { retry: false };
-      }
-      const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
-      if (quota.reason === 'ok') {
-        onOpenRouterQuota(quota);
-        if (quota.remaining <= 0 || quota.used >= quota.limit) {
-          await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile });
-          exhausted.add('openrouter');
-          stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter routes.\n');
-          return { retry: false };
-        }
-        openRouterQuotaKnownPositive = true;
-      } else {
-        openRouterQuotaKnownPositive = false;
-        if (quota.reason === 'http_401' || quota.reason === 'http_402') exhausted.add('openrouter');
-      }
-    }
-    if (openRouterQuotaInitiallyUnknown) exhausted.add('openrouter');
-    if (!openRouterQuotaKnownPositive) exhausted.add('openrouter');
-    if (retryAttempt) {
-      if (status === 429 || (Number.isInteger(status) && status >= 500 && status <= 599)) exhausted.add('openrouter');
-      return { retry: false };
-    }
-    const transientServerFailure = Number.isInteger(status) && status >= 500 && status <= 599;
-    if (
-      !quotaWasPositive ||
-      !openRouterQuotaKnownPositive ||
-      openRouterRetryUsed ||
-      (!attributed && !transientServerFailure)
-    ) {
-      return { retry: false };
-    }
-    if (failureResult?.quarantineHours !== null && failureResult?.quarantineHours !== undefined) {
+    const limitSources = openRouterLimitSources(payload);
+    const isPlatformLimit =
+      limitSources.some((source) => source.startsWith('openrouter_')) || openRouterPlatformRemaining(response) === 0;
+    if (status === 429 && isPlatformLimit) {
+      exhausted.add('openrouter');
+      stderr.write('OpenRouter platform rate limit applies to this run; skipping its remaining routes.\n');
       return { retry: false };
     }
     const retryAfterMs = retryAfterDelayMs(response);
     if (retryAfterMs !== null && retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
+      if (status === 429 && attributed) {
+        const quotaRemains = await refreshOpenRouterQuotaAfterAttempt();
+        if (quotaRemains) {
+          stderr.write(
+            `OpenRouter model ${candidate.model} Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this model and checking the next route.\n`
+          );
+        }
+        // A zero or unknown refresh already marks OpenRouter exhausted, so the loop cannot rotate.
+        return { retry: false };
+      }
       exhausted.add('openrouter');
       stderr.write(
         `OpenRouter Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping its remaining routes for this run.\n`
       );
       return { retry: false };
     }
-    return { retry: true, delayMs: retryAfterMs ?? (status === 429 ? 1000 : 0) };
-  };
-  const queueNemotronLengthRetry = (candidate, candidateIndex, maxTokens) => {
-    if (
-      candidate.model !== NEMOTRON_3_ULTRA_MODEL ||
-      candidate.nemotronLengthRetry === true ||
-      maxTokens >= MAX_COMPLETION_TOKENS
-    ) {
-      return false;
+    const clientError = Number.isInteger(status) && status >= 300 && status < 500;
+    if (status === 429 || transientTypedFailure || transientServerFailure || response?.ok === true || clientError) {
+      await refreshOpenRouterQuotaAfterAttempt();
     }
-    available.splice(candidateIndex + 1, 0, {
-      ...candidate,
-      nemotronLengthRetry: true,
-      nemotronRetryMaxTokens: Math.min(maxTokens * 2, MAX_COMPLETION_TOKENS),
-    });
-    return true;
+    if (openRouterQuotaInitiallyUnknown) exhausted.add('openrouter');
+    if (!openRouterQuotaKnownPositive) exhausted.add('openrouter');
+    if (retryAttempt) {
+      // This route's retry is spent; only a fresh positive quota permits the next model below.
+      return { retry: false };
+    }
+    if (
+      !quotaWasPositive ||
+      !openRouterQuotaKnownPositive ||
+      openRouterRetryUsed ||
+      (!attributed && !transientServerFailure && !transientTypedFailure)
+    ) {
+      return { retry: false };
+    }
+    if (failureResult?.quarantineHours !== null && failureResult?.quarantineHours !== undefined) {
+      return { retry: false };
+    }
+    return {
+      retry: true,
+      delayMs: retryAfterMs ?? (status === 429 || hasOpenRouterRateLimitError(payload) ? 1000 : 0),
+    };
   };
   for (let candidateIndex = 0; candidateIndex < available.length; candidateIndex += 1) {
     const candidate = available[candidateIndex];
@@ -1428,14 +1532,9 @@ export async function completeWithFreeModel(prompt, options = {}) {
     if (candidate.source === 'groq' && (!groqKeys.length || !groqFreePlan)) continue;
     if (candidate.source === 'opencode' && !opencodeCommand) continue;
     attempts.set(candidate.source, sourceAttempts + 1);
-    const requestedMaxTokens =
-      candidate.nemotronRetryMaxTokens ??
-      (candidate.model === NEMOTRON_3_ULTRA_MODEL && !maxTokensExplicit ? DEFAULT_NEMOTRON_MAX_TOKENS : maxTokens);
-    const routeMaxTokens =
-      candidate.model === NEMOTRON_3_ULTRA_MODEL
-        ? Math.max(requestedMaxTokens, MIN_NEMOTRON_MAX_TOKENS)
-        : requestedMaxTokens;
-    const routeTimeoutMs = candidate.model === NEMOTRON_3_ULTRA_MODEL ? NEMOTRON_TIMEOUT_MS : COMPLETION_TIMEOUT_MS;
+    const routeProfile = freeModelProfile(candidate.model, maxTokens);
+    const routeMaxTokens = routeProfile.maxTokens;
+    const routeTimeoutMs = routeProfile.timeoutMs;
     if (candidate.source === 'kilo') {
       try {
         const result = await runKilo({
@@ -1450,9 +1549,6 @@ export async function completeWithFreeModel(prompt, options = {}) {
           await stopForReportedCost(candidate);
         }
         if (isContentPolicyError(result)) stopForContentPolicy(candidate);
-        if (result?.finishReason === 'length' && queueNemotronLengthRetry(candidate, candidateIndex, routeMaxTokens)) {
-          continue;
-        }
         if (result?.finishReason === 'length') {
           errors.push(`kilo/${candidate.model}: incomplete completion (finish_reason=length)`);
           continue;
@@ -1615,15 +1711,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
           prompt,
           maxTokens: routeMaxTokens,
           timeoutMs: routeTimeoutMs,
-          verifiedNemotron: candidate.model === NEMOTRON_3_ULTRA_MODEL,
+          ...(candidate.providerOwned === true ? { providerOwned: true } : {}),
         });
         if (result?.safetyStop || hasReportedNonZeroCost(result?.usage)) {
           await stopForReportedCost(candidate);
         }
         if (isContentPolicyError(result)) stopForContentPolicy(candidate);
-        if (result?.finishReason === 'length' && queueNemotronLengthRetry(candidate, candidateIndex, routeMaxTokens)) {
-          continue;
-        }
         if (result?.content && result.finishReason === 'stop') {
           const resolvedModel = result.model ?? candidate.model;
           if (!available.some((entry) => entry.source === 'opencode' && entry.model === resolvedModel)) {
@@ -1712,7 +1805,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
           model: candidate.model,
           messages: [{ role: 'user', content: prompt }],
           max_tokens: effectiveMaxTokens,
-          ...(candidate.model === NEMOTRON_3_ULTRA_MODEL ? { reasoning: { effort: 'high' } } : {}),
+          ...(routeProfile.reasoningEffort ? { reasoning: { effort: routeProfile.reasoningEffort } } : {}),
         }),
       });
     } catch (error) {
@@ -1720,7 +1813,8 @@ export async function completeWithFreeModel(prompt, options = {}) {
       errors.push(
         `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
-      if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+      if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
+      if (exhausted.has(candidate.source)) continue;
       const attemptNumber = attempts.get(candidate.source) ?? 0;
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
       await delay(backoffMs);
@@ -1766,15 +1860,27 @@ export async function completeWithFreeModel(prompt, options = {}) {
         `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
       );
     }
+    if (candidate.source === 'openrouter' && response.ok && hasTransientOpenRouterProviderError(payload)) {
+      errors.push(`${candidate.source}/${candidate.model}: ${failureReason(response, payload)}`);
+      const retryDecision = await handleOpenRouterFailure({
+        candidate,
+        response,
+        payload,
+        quotaWasPositive,
+        retryAttempt: candidate.retryAttempt === true,
+      });
+      if (retryDecision.retry) {
+        openRouterRetryUsed = true;
+        if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
+        available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+      }
+      continue;
+    }
     const choice = payload?.choices?.[0];
     const content = choice?.message?.content;
     const finishReason = choice?.finish_reason;
-    if (
-      response.ok &&
-      finishReason === 'length' &&
-      queueNemotronLengthRetry(candidate, candidateIndex, routeMaxTokens)
-    ) {
-      continue;
+    if (response.ok && finishReason === 'length' && candidate.source === 'openrouter') {
+      await refreshOpenRouterQuotaAfterAttempt();
     }
     if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
       const resolvedModel = payload.model;
@@ -1783,7 +1889,9 @@ export async function completeWithFreeModel(prompt, options = {}) {
         errors.push(
           `${candidate.source}/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
         );
+        if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
         if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+        if (exhausted.has(candidate.source)) continue;
         const attemptNumber = attempts.get(candidate.source) ?? 0;
         const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
         await delay(backoffMs);
@@ -1799,10 +1907,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
       };
     }
     if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
+      if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
       errors.push(
         `${candidate.source}/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`
       );
       if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+      if (exhausted.has(candidate.source)) continue;
       const attemptNumber = attempts.get(candidate.source) ?? 0;
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
       await delay(backoffMs);
@@ -1849,9 +1959,9 @@ function usage() {
     '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
     '--list fetches public model catalogs; configured=null means local CLI credentials were not checked.\n' +
     'configured=false means provider credentials/opt-in are missing, not that a model is invalid.\n' +
-    '--max-tokens requests up to 65,536 for Nemotron by default (floor 4,096) and 1,200 for other routes; provider allocation is not guaranteed.\n' +
+    'Model strength determines routing priority: exact Nemotron 3 Ultra routes are attempted across eligible providers before weaker models. Nemotron requests use high reasoning where supported, at least 4,096 output tokens, and a 12-minute timeout. Other routes default to 1,200 tokens; Groq keeps its 1,024-token reasoning floor.\n' +
     'Kilo completions use the authenticated Kilo CLI; set KILO_CLI only when its automatic discovery fails.\n' +
-    'Inference uses five minutes by default and twelve minutes for Nemotron 3 Ultra; catalog and quota checks use 15 seconds.\n' +
+    'Nemotron inference uses 12 minutes; other inference uses five minutes. Catalog and quota checks use 15 seconds.\n' +
     'Groq routing requires GROQ_API_KEY and GROQ_FREE_PLAN=1 because its catalog does not expose free pricing.\n' +
     'OpenCode free models run through the opencode CLI with tool permissions denied.\n' +
     '--openrouter-quota reports the server-side daily free-model request count without sending an inference request.\n' +
@@ -2010,7 +2120,9 @@ export async function main(
       if (source === 'opencode') return null;
       return source === 'groq' && groqConfigured;
     };
-    const listed = candidates.slice(0, limit).map((entry) => ({ ...entry, configured: configured(entry.source) }));
+    const listed = orderFreeModelRoutes(candidates)
+      .slice(0, limit)
+      .map((entry) => ({ ...entry, priority: modelStrengthRank(entry.model), configured: configured(entry.source) }));
     stdout.write(`${JSON.stringify(listed, null, 2)}\n`);
     return 0;
   }
@@ -2021,8 +2133,11 @@ export async function main(
     stderr.write(`${error.message}\n`);
     return 2;
   }
-  const maxTokens = tokenAt >= 0 ? Number(args[tokenAt + 1]) : DEFAULT_MAX_TOKENS;
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS) {
+  const maxTokens = tokenAt >= 0 ? Number(args[tokenAt + 1]) : undefined;
+  if (
+    maxTokens !== undefined &&
+    (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS)
+  ) {
     stderr.write(`--max-tokens must be an integer from 1 to ${MAX_COMPLETION_TOKENS}.\n`);
     return 2;
   }
@@ -2037,7 +2152,6 @@ export async function main(
     opencodeCommand,
     runOpenCode,
     maxTokens,
-    maxTokensExplicit: tokenAt >= 0,
     quarantineFile,
     poolStateFile,
     initializeLegacyQuarantine,

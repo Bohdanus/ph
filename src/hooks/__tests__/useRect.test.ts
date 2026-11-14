@@ -549,7 +549,7 @@ describe('useRect', () => {
           result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 25, target }))
         ).toBe(true);
       });
-      expect(target.style.cursor).toMatch(/url\(.*rotate.*\) 24 24, ew-resize/);
+      expect(target.style.cursor).toMatch(/url\(.*rotate.*\) 32 32, ew-resize/);
 
       act(() => {
         result.current.pointerHandlers.onPointerDown(
@@ -594,10 +594,13 @@ describe('useRect', () => {
         const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
         const svg = decodeURIComponent(encodedSvg!);
-        expect(svg).toContain(`rotate(${cursorAngle} 16 16)`);
-        expect(svg).toContain('stroke="#fff" stroke-width="6"');
-        expect(svg).toContain('stroke="#111" stroke-width="2.5"');
-        expect(target.style.cursor).toMatch(new RegExp(`\\) 24 24, ${fallback}$`));
+        expect(svg).toMatch(/^<svg\b[\s\S]*<\/svg>$/);
+        expect(svg).toContain('width="64" height="64" viewBox="0 0 64 64"');
+        expect(svg).toContain(`rotate(${cursorAngle}) scale(0.2) translate(-64 -64)`);
+        expect(svg).toContain('stroke="#fff" stroke-width="23"');
+        expect(svg).toContain('stroke="#000" stroke-width="13"');
+        expect(svg).toContain('fill="#000" stroke="none"');
+        expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
       }
     );
 
@@ -617,7 +620,7 @@ describe('useRect', () => {
 
         const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
-        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45 16 16)');
+        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45) scale(0.2)');
       } finally {
         viewStateRef.current.rotation = originalViewRotation;
       }
@@ -1235,6 +1238,13 @@ describe('useRect', () => {
       expect(onRepaint).toHaveBeenLastCalledWith({ ...initialRect, ...refitRectWidthToAspect(initialRect, 16 / 9) });
     });
 
+    it.each([-1, Number.NaN, Infinity, -Infinity])(
+      'treats invalid aspect ratio %s as an unconstrained drag',
+      (ratio) => {
+        const { committed } = dragWithRatio(ratio, { x: 10, y: 20 }, { x: 310, y: 120 });
+        expect(committed).toEqual({ x1: 10, y1: 20, x2: 310, y2: 120 });
+      }
+    );
     it('locks the aspect ratio from a modifier key pressed at drag start', () => {
       // Ctrl/Shift/Command on pointer down pins the ratio to the rect's own, so a free drag then
       // keeps that shape whatever the pointer does. Without a constraint the drag would reshape

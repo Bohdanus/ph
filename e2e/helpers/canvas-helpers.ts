@@ -70,6 +70,55 @@ export interface ScreenshotBounds {
   imageHeight: number;
 }
 
+/** The caller explicitly guarantees that the complete capture contains document pixels only. */
+export const WHOLE_CAPTURE = 'whole-capture' as const;
+
+/** CSS viewport geometry used to mask workspace pixels outside the fitted document. */
+export interface DocumentCaptureMask {
+  capture: ViewportClip;
+  document: ViewportClip;
+}
+
+export type PixelMask = typeof WHOLE_CAPTURE | DocumentCaptureMask | null;
+
+function assertUnrotatedWorkspaceView(rotationAttribute: string | null, caller: string): void {
+  if (rotationAttribute === null || rotationAttribute.trim() === '') {
+    throw new Error(`${caller}: workspace view rotation is not measurable`);
+  }
+  const viewRotation = Number(rotationAttribute);
+  const normalizedRotation = ((viewRotation % 360) + 360) % 360;
+  if (!Number.isFinite(viewRotation) || Math.min(normalizedRotation, 360 - normalizedRotation) > 1e-7) {
+    throw new Error(`${caller}: dark-pixel geometry requires an unrotated workspace view, got ${rotationAttribute}°`);
+  }
+}
+
+export async function readWorkspaceDocumentSize(page: Page, caller: string): Promise<DocumentSize> {
+  const workspace = page.getByTestId('workspace-container');
+  const [rotationAttribute, widthAttribute, heightAttribute] = await Promise.all([
+    workspace.getAttribute('data-view-rotation'),
+    workspace.getAttribute('data-fit-document-width'),
+    workspace.getAttribute('data-fit-document-height'),
+  ]);
+  assertUnrotatedWorkspaceView(rotationAttribute, caller);
+
+  if (
+    widthAttribute === null ||
+    widthAttribute.trim() === '' ||
+    heightAttribute === null ||
+    heightAttribute.trim() === ''
+  ) {
+    throw new Error(`${caller}: workspace document dimensions are not measurable`);
+  }
+  const width = Number(widthAttribute);
+  const height = Number(heightAttribute);
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+    throw new RangeError(
+      `${caller}: workspace document dimensions must be positive and finite, got ${widthAttribute}x${heightAttribute}`
+    );
+  }
+  return { width, height };
+}
+
 /**
  * Maps a region found in a capture back onto CSS pixels of the captured BOX. `[IMAGE]` in,
  * `[BOX]` out.
@@ -170,6 +219,77 @@ export function containFit(
     offsetX: (box.width - documentSize.width * scale) / 2,
     offsetY: (box.height - documentSize.height * scale) / 2,
   };
+}
+
+/**
+ * The document rectangle for a screenshot of the workspace canvas, in viewport CSS pixels.
+ * `capture` is the exact clip passed to the screenshot API; the returned mask keeps only image
+ * pixels fully inside the document, so checkerboard cells, gaps, and antialiased edges outside
+ * the document cannot satisfy pixel predicates. The pixel scale is derived later from the
+ * decoded image size and this clip, never from `devicePixelRatio`.
+ *
+ * The workspace is transformed by zoom, pan, and view rotation. Zoom and pan preserve an
+ * axis-aligned contain fit, but rotation turns the document into a quadrilateral while
+ * `boundingBox()` reports only its axis-aligned bounds. Document dimensions and fit inputs are
+ * read from the app's live `data-fit-document-*` attributes so cropping is reflected too. Until
+ * callers provide a polygon mask, this helper rejects a nonzero view rotation rather than letting
+ * checkerboard corners enter a pixel oracle.
+ */
+export async function workspaceDocumentPixelMask(
+  page: Page,
+  box: BoundingBox,
+  capture: ViewportClip
+): Promise<DocumentCaptureMask> {
+  const documentSize = await readWorkspaceDocumentSize(page, 'workspaceDocumentPixelMask');
+  const { scale, offsetX, offsetY } = containFit(box, documentSize);
+  const document = viewportClip({
+    x: box.x + offsetX,
+    y: box.y + offsetY,
+    width: documentSize.width * scale,
+    height: documentSize.height * scale,
+  });
+  return { capture, document };
+}
+
+/** A clip whose complete image is known to be inside the document in the unrotated view. */
+export async function documentOnlyPixelMask(page: Page, capture: ViewportClip): Promise<DocumentCaptureMask> {
+  await readWorkspaceDocumentSize(page, 'documentOnlyPixelMask');
+  return { capture, document: capture };
+}
+
+function imageBoundsForMask(image: ImageDataResult, mask: PixelMask): ScreenshotBounds | null {
+  const { width, height } = image;
+  if (width <= 0 || height <= 0 || mask === null) return null;
+  if (mask === WHOLE_CAPTURE) {
+    return { left: 0, top: 0, right: width - 1, bottom: height - 1, imageWidth: width, imageHeight: height };
+  }
+
+  const { capture, document } = mask;
+  if (
+    !Number.isFinite(capture.x) ||
+    !Number.isFinite(capture.y) ||
+    !Number.isFinite(capture.width) ||
+    !Number.isFinite(capture.height) ||
+    capture.width <= 0 ||
+    capture.height <= 0 ||
+    !Number.isFinite(document.x) ||
+    !Number.isFinite(document.y) ||
+    !Number.isFinite(document.width) ||
+    !Number.isFinite(document.height) ||
+    document.width <= 0 ||
+    document.height <= 0
+  ) {
+    throw new RangeError('pixel mask must contain finite positive capture and document rectangles');
+  }
+
+  const scaleX = width / capture.width;
+  const scaleY = height / capture.height;
+  const left = Math.max(0, Math.ceil((document.x - capture.x) * scaleX));
+  const top = Math.max(0, Math.ceil((document.y - capture.y) * scaleY));
+  const right = Math.min(width - 1, Math.floor((document.x + document.width - capture.x) * scaleX) - 1);
+  const bottom = Math.min(height - 1, Math.floor((document.y + document.height - capture.y) * scaleY) - 1);
+  if (left > right || top > bottom) return null;
+  return { left, top, right, bottom, imageWidth: width, imageHeight: height };
 }
 
 /**
@@ -375,7 +495,7 @@ export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
 /** `[ms]` — the shared default poll interval of every redraw wait below. */
 export const CANVAS_REDRAW_POLL_INTERVAL_MS = 100;
 
-/** A colour and its population, both read off a capture. `[IMAGE]`-derived, no coordinates. */
+/** A stored colour and its nonzero-alpha pixel population. `[IMAGE]`-derived, no coordinates. */
 export interface DominantColor {
   red: number;
   green: number;
@@ -436,29 +556,28 @@ export interface BoundsResult {
 /** The shared pixel scan. `[IMAGE]` in, `[IMAGE]` out; no other space appears here. */
 export async function scanPixelsForBounds(
   imageData: ImageDataResult,
-  predicate: PixelPredicate
+  predicate: PixelPredicate,
+  mask: PixelMask = WHOLE_CAPTURE
 ): Promise<BoundsResult> {
   const { width, height, data } = imageData;
+  const region = imageBoundsForMask(imageData, mask);
+  if (!region) return { left: width, top: height, right: -1, bottom: -1, found: false };
   let left = width;
   let top = height;
   let right = -1;
   let bottom = -1;
   let found = false;
 
-  for (let index = 0; index < data.length; index += 4) {
-    const red = data[index];
-    const green = data[index + 1];
-    const blue = data[index + 2];
-    const alpha = data[index + 3];
-    if (predicate(red, green, blue, alpha)) {
-      found = true;
-      const pixel = index / 4;
-      const x = pixel % width;
-      const y = Math.floor(pixel / width);
-      if (x < left) left = x;
-      if (x > right) right = x;
-      if (y < top) top = y;
-      if (y > bottom) bottom = y;
+  for (let y = region.top; y <= region.bottom; y++) {
+    for (let x = region.left; x <= region.right; x++) {
+      const index = (y * width + x) * 4;
+      if (predicate(data[index], data[index + 1], data[index + 2], data[index + 3])) {
+        found = true;
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
     }
   }
 
@@ -471,9 +590,8 @@ export async function scanPixelsForBounds(
 // no space at all) or `[CSS]` pixels (`SPRAY_VERTICAL_SPREAD_THRESHOLD` and the two gap
 // thresholds, which `getStrokeAnalysis` multiplies by the capture's own scale before it
 // compares). The colour thresholds describe the APP's palette and are named after what they
-// distinguish, not after a fixture: `NEAR_WHITE_THRESHOLD` is the paper of a capture, and
-// `LETTERBOX_LIGHT_CELL` / `LETTERBOX_DARK_CELL` are the workspace backdrop, which is a
-// different grey and had no name until `getStrokeAnalysis` started misreading it as ink.
+// distinguish, not after a fixture. Workspace pixels are excluded by capture geometry, never
+// by colour.
 export const STROKE_ANALYSIS = {
   // Color thresholds
   DARK_THRESHOLD: 50, // RGB < 50 = dark pixel
@@ -514,38 +632,8 @@ export const STROKE_ANALYSIS = {
   SPRAY_LUMINANCE_THRESHOLD: 200, // Luminance > 200 = bright spray
   SPRAY_SATURATION_THRESHOLD: 30, // Saturation < 30 = grayscale spray
 
-  // The app's OWN WORKSPACE BACKDROP, which `getStrokeAnalysis` must EXCLUDE rather than
-  // read as ink. The numbers are the app's literal palette, not thresholds fitted to a test:
-  // `.chessboard-light` is `#f3f3f3` cells over `#fff` and `.chessboard-dark` is `#121212`
-  // cells over `#000` (`src/index.scss:140-164`), and `Main.tsx:279` picks between them.
-  //
-  // WHY THEY ARE HERE AT ALL. `#f3f3f3` is 243, so it is NOT `> NEAR_WHITE_THRESHOLD` (250),
-  // and it IS above `SPRAY_LUMINANCE_THRESHOLD` (200) with a saturation of 0 — so without
-  // this exclusion the classifier called the app's own backdrop `spray`, and a single
-  // backdrop column produced `{ type: 'spray', segments: 1, verticalSpread: <the whole clip
-  // height> }` over a canvas with nothing drawn on it. `e2e/pen-types.spec.ts:37-40` polls
-  // for exactly that non-null shape, so its wait could be satisfied by the page's own
-  // background. The same backdrop under the dark theme (`#121212` = 18, below
-  // `DARK_THRESHOLD` = 50) is admitted by the `isDark` arm instead, which is why this is an
-  // exclusion of its own rather than a lighter near-white.
-  //
-  // WHY THEY MATCH EXACTLY, and not as a band. A band is the obvious shape and it is wrong
-  // twice over, both times against this suite's own ink fixtures rather than against a
-  // fixture I wrote. Raising the light exclusion to "anything at or above 243" swallows
-  // grey(250) — which `canvas-stroke-analysis.unit.test.ts` declares is a STROKE, one level
-  // below `NEAR_WHITE_THRESHOLD`, and which is what makes that threshold testable at all. And
-  // admitting the dark cell as a band down to 1 swallows `DARK_GRAY` (10,10,10), the ink of
-  // the dispatch table and of two of the gap-threshold fixtures, while the dark theme's `#000`
-  // gaps sit at 0 — and `#000000` is the app's own default pen colour
-  // (`src/contexts/StoreContext.tsx:324`), so nothing may claim black is not ink.
-  //
-  // THE RESIDUAL, stated rather than hidden. This excludes the two CELL colours and nothing
-  // else. The anti-aliased diagonal edge between a cell and its gap is a blend — 244..254 in
-  // the light theme, 1..17 in the dark — and those blends are still read as ink, as are the
-  // dark theme's `#000` gaps. Closing either would mean widening a band the fixtures above
-  // forbid, so it is a KNOWN limit rather than an oversight: a clip that straddles a
-  // letterbox edge is still misread, and no clip this suite takes does (see `canvasRedrawClip`,
-  // which keeps the standard clip out of the letterbox entirely).
+  // App palette values used to construct backdrop regression fixtures. Pixel helpers do not
+  // classify by these values; the fitted-document geometry mask excludes the backdrop.
   LETTERBOX_LIGHT_CELL: { red: 243, green: 243, blue: 243 }, // `#f3f3f3`
   LETTERBOX_DARK_CELL: { red: 18, green: 18, blue: 18 }, // `#121212`
 
@@ -618,8 +706,8 @@ function clamp(value: number, min: number, max: number): number {
  * The clip this takes and returns is VIEWPORT-relative (see `ViewportClip`); the scroll is
  * undone afterwards rather than left in place, because a caller's later `page.mouse`
  * coordinates are viewport-relative and were built against the window it expects to still
- * be in. A `Page.captureScreenshot` clip is document-relative and needs the opposite
- * treatment — see `cdp-helpers.ts`.
+ * be in. Playwright's `page.screenshot({ clip })` uses that same viewport space; raw CDP
+ * screenshot clips use document coordinates and need separate conversion.
  *
  * This is a SAFETY NET, not a workaround for a bug that is present. The rail now declares
  * `min-h-0 overflow-y-auto`, so the page no longer outgrows a 720px viewport and no region
@@ -702,6 +790,26 @@ export function getWorkspaceCanvas(page: Page): Locator {
   return page.getByTestId('workspace-canvas');
 }
 
+/** Exact viewport capture clip used by `takeLineScreenshot`, including caller overrides. */
+export function lineScreenshotClip(box: BoundingBox, clip?: ViewportClipOptions): ViewportClip {
+  const defaultClip = viewportClip({
+    x: box.x + DEFAULT_LINE_CLIP.x,
+    y: box.y + DEFAULT_LINE_CLIP.y,
+    width: DEFAULT_LINE_CLIP.width,
+    height: DEFAULT_LINE_CLIP.height,
+  });
+  return buildClip(clip, defaultClip);
+}
+
+/** Spatial document mask matching `takeLineScreenshot`'s exact clip. */
+export function lineScreenshotPixelMask(
+  page: Page,
+  box: BoundingBox,
+  clip?: ViewportClipOptions
+): Promise<DocumentCaptureMask> {
+  return workspaceDocumentPixelMask(page, box, lineScreenshotClip(box, clip));
+}
+
 /**
  * Screenshots the standard test line and attaches it to the test report. VIEWPORT output.
  *
@@ -722,13 +830,7 @@ export async function takeLineScreenshot(
   testInfo: TestInfo,
   clip?: ViewportClipOptions
 ): Promise<Buffer> {
-  const defaultClip = viewportClip({
-    x: box.x + DEFAULT_LINE_CLIP.x,
-    y: box.y + DEFAULT_LINE_CLIP.y,
-    width: DEFAULT_LINE_CLIP.width,
-    height: DEFAULT_LINE_CLIP.height,
-  });
-  const actualClip = buildClip(clip, defaultClip);
+  const actualClip = lineScreenshotClip(box, clip);
 
   const outputDir = testInfo.outputDir;
   if (typeof outputDir !== 'string' || outputDir === '') {
@@ -748,9 +850,10 @@ export async function takeLineScreenshot(
 }
 
 /**
- * The most frequent colour whose red dominates both other channels by `RED_DOMINANCE_FACTOR`.
- * `[IMAGE]` — the returned channels are 8-bit values off a decoded capture, and `count` is a
- * pixel count in the same capture, so it scales with the captured area and is not a proportion.
+ * The most frequent stored RGB whose red dominates both other channels by `RED_DOMINANCE_FACTOR`.
+ * Each qualifying nonzero-alpha pixel contributes one to `count`; RGB is not composited because
+ * this helper has no backdrop. `[IMAGE]` — `count` scales with the captured area and is not a
+ * proportion.
  */
 export async function dominantRed(screenshot: Buffer | ImageDataResult): Promise<DominantColor | null> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
@@ -778,33 +881,29 @@ export async function dominantRed(screenshot: Buffer | ImageDataResult): Promise
 }
 
 /**
- * True when any opaque pixel is below `DARK_PIXEL_THRESHOLD` in all three channels. `[IMAGE]`
- * — a predicate over a decoded capture, so it reports nothing about WHERE the dark pixel is;
- * `getDarkPixelBounds` is the export that also says where.
+ * True when any nontransparent pixel is below `DARK_PIXEL_THRESHOLD` in all three stored RGB
+ * channels. `[IMAGE]` — a predicate over a decoded capture, so it reports nothing about WHERE
+ * the dark pixel is; `getDarkPixelBounds` is the export that also says where.
  */
-export async function hasDarkPixels(screenshot: Buffer | ImageDataResult): Promise<boolean> {
+export async function hasDarkPixels(screenshot: Buffer | ImageDataResult, mask: PixelMask): Promise<boolean> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
-  const { data } = imageData;
-
-  for (let index = 0; index < data.length; index += 4) {
-    const red = data[index];
-    const green = data[index + 1];
-    const blue = data[index + 2];
-    const alpha = data[index + 3];
-    if (alpha === 0) continue;
-    if (
-      red < STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD &&
-      green < STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD &&
-      blue < STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD
+  return (
+    await scanPixelsForBounds(
+      imageData,
+      (red, green, blue, alpha) =>
+        alpha !== 0 &&
+        red < STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD &&
+        green < STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD &&
+        blue < STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD,
+      mask
     )
-      return true;
-  }
-  return false;
+  ).found;
 }
 
 /**
- * True when any opaque pixel is saturated enough to be the app's red foreground colour.
- * `[IMAGE]`; see `hasDarkPixels` for why this is a predicate and not a measurement.
+ * True when any nontransparent pixel's stored RGB is saturated enough to be the app's red
+ * foreground colour. `[IMAGE]`; see `hasDarkPixels` for why this is a predicate and not a
+ * measurement.
  */
 export async function hasRedPixels(screenshot: Buffer | ImageDataResult): Promise<boolean> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
@@ -1025,7 +1124,7 @@ export function canvasRedrawClip(box: BoundingBox): ViewportClip {
  * Reads one clipped screenshot and reports whether the pixels the caller cares about
  * are in it. Kept as a predicate so a single poll loop serves every read below.
  */
-export type CanvasPixelPredicate = (screenshot: Buffer) => Promise<boolean>;
+export type CanvasPixelPredicate = (screenshot: Buffer, mask: DocumentCaptureMask) => Promise<boolean>;
 
 export interface WaitForCanvasPixelsOptions {
   timeoutMs?: number;
@@ -1074,7 +1173,11 @@ export async function waitForCanvasPixels(
     // in view, which is every poll in the current layout.
     const onScreen = await onScreenClip(page, clip);
     try {
-      if (await predicate(await page.screenshot({ clip: onScreen.clip }))) return;
+      const screenshot = await page.screenshot({ clip: onScreen.clip });
+      const canvasBox = await getWorkspaceCanvas(page).boundingBox();
+      if (!canvasBox) throw new Error('waitForCanvasPixels: workspace canvas has no measurable bounding box');
+      const mask = await workspaceDocumentPixelMask(page, canvasBox, onScreen.clip);
+      if (await predicate(screenshot, mask)) return;
     } finally {
       await onScreen.restore();
     }
@@ -1118,7 +1221,10 @@ export async function waitForCanvasRedraw(
  * the second and a caller comparing two marks needs the first. `screenshotBoundsToCss` takes
  * the four edges plus the image size for exactly this.
  */
-export async function getDarkPixelBounds(screenshot: Buffer | ImageDataResult): Promise<{
+export async function getDarkPixelBounds(
+  screenshot: Buffer | ImageDataResult,
+  mask: PixelMask
+): Promise<{
   left: number;
   top: number;
   right: number;
@@ -1135,7 +1241,8 @@ export async function getDarkPixelBounds(screenshot: Buffer | ImageDataResult): 
       a !== 0 &&
       r < STROKE_ANALYSIS.DARK_THRESHOLD &&
       g < STROKE_ANALYSIS.DARK_THRESHOLD &&
-      b < STROKE_ANALYSIS.DARK_THRESHOLD
+      b < STROKE_ANALYSIS.DARK_THRESHOLD,
+    mask
   );
 
   if (!bounds.found) return null;
@@ -1236,10 +1343,12 @@ export async function getSelectionBounds(
 }
 
 /**
- * Averages the opaque pixels within `radius` of the point, ignoring near-white ones when
- * `ignoreNearWhite` is set. Returns null when the point is outside the image or every
- * sampled pixel was skipped. `[IMAGE]` throughout — the point, the radius and the returned
- * channels are all in the capture's own pixels, and `radius` is NOT in CSS.
+ * Averages the stored RGB of nontransparent pixels within `radius` of the point, ignoring
+ * near-white ones when `ignoreNearWhite` is set. Alpha zero means absent; other alpha values
+ * contribute one sample each, and RGB is not composited because this helper has no backdrop.
+ * Returns null when the point is outside the image or every sampled pixel was skipped.
+ * `[IMAGE]` throughout — the point, radius and returned channels are in capture pixels; `radius`
+ * is NOT in CSS.
  *
  * `radius` is a sampling window, so it is clamped to 0 rather than rejected: a negative
  * window used to select no pixels at all, which reads as "nothing at this point" — a
@@ -1319,20 +1428,21 @@ export async function getColorAtPoint(
  * The CSS-pixel size of the region a capture was asked for, which is what makes the
  * capture's scale derivable without assuming anything about the host.
  *
- * `page.screenshot({ clip })` defaults to `scale: 'device'` and a CDP
- * `Page.captureScreenshot` comes back at Chrome's surface scale, so a capture of a CSS
- * region is not a CSS-resolution image, and never was one host-independently either. The
- * caller knows the CSS size it asked for and the decoded image knows its own pixel size, so
- * `imageWidth / region.width` and `imageHeight / region.height` are the scales: measured
- * rather than declared. It is a required argument rather than an option, because the one
- * thing this classifier must never do is quietly classify a 2x capture against thresholds
- * authored for 1x.
+ * `captureCanvasScreenshot` explicitly requests `page.screenshot({ scale: 'device' })`.
+ * A CSS region therefore need not be a CSS-resolution image, and its scale can vary with
+ * the browser context. The caller knows the CSS size it asked for and the decoded image
+ * knows its own pixel size, so `imageWidth / region.width` and
+ * `imageHeight / region.height` are the scales: measured rather than declared. The region
+ * is required because the classifier must never quietly classify a 2x capture against
+ * thresholds authored for 1x.
  */
 export interface CaptureRegion {
   /** `[CSS]` — pixel width of the clip the caller passed to the capture API. */
   width: number;
   /** `[CSS]` — pixel height of the same clip. */
   height: number;
+  /** Spatial mask for the exact capture; backdrop colors can be identical to document ink. */
+  mask: PixelMask;
 }
 
 /**
@@ -1343,10 +1453,10 @@ export interface CaptureRegion {
  * different ones: `verticalSpread` counts ROWS and the gap between occupied columns counts
  * COLUMNS, so spending one scalar on both scales the row measurement by the column axis.
  *
- * On a faithful capture the axes are equal — `expectFaithfulCaptureOf` in `cdp-helpers.spec.ts`
- * pins that, and only for captures taken through `captureCanvasScreenshot`. It does NOT pin
- * the `page.screenshot({ clip })` path, whose two axes are equal only when the clip's CSS
- * size is a whole number of device pixels.
+ * On a faithful capture the axes are equal — `expectFaithfulCaptureOf` in
+ * `cdp-helpers.spec.ts` pins that for the helper, which calls Playwright with
+ * `scale: 'device'`. Fractional clip dimensions can still round each image axis
+ * independently, so both axes are measured separately.
  *
  * So "no current call site is affected" is a fact about the call sites, not a guarantee from
  * the helper, and the two have to be checked separately. `adjustments.spec.ts` passes a
@@ -1358,18 +1468,6 @@ export interface CaptureRegion {
  * `__tests__/canvas-stroke-analysis.unit.test.ts` carries the rule at a divergence no real
  * capture produces for exactly that reason.
  */
-/**
- * Whether a pixel IS one of the two letterbox cell colours, exactly. No tolerance, no band.
- * See `LETTERBOX_LIGHT_CELL` for why widening it collides with ink the suite declares.
- */
-function isLetterboxCell(red: number, green: number, blue: number): boolean {
-  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
-  return (
-    (red === LETTERBOX_LIGHT_CELL.red && green === LETTERBOX_LIGHT_CELL.green && blue === LETTERBOX_LIGHT_CELL.blue) ||
-    (red === LETTERBOX_DARK_CELL.red && green === LETTERBOX_DARK_CELL.green && blue === LETTERBOX_DARK_CELL.blue)
-  );
-}
-
 function captureScale(imageWidth: number, imageHeight: number, region: CaptureRegion): { x: number; y: number } {
   if (
     !(region.width > 0) ||
@@ -1388,14 +1486,11 @@ function captureScale(imageWidth: number, imageHeight: number, region: CaptureRe
  * Classifies a captured stroke as a solid line, a dashed one or a spray. `[IMAGE]` capture in,
  * `[CSS]` region alongside it; `null` when the capture carries no stroke.
  *
- * WHAT IS EXCLUDED, and the two ways a "no stroke" is decided. A pixel is not the paper and not
- * the app's backdrop if it is near-white (`NEAR_WHITE_THRESHOLD`) or is one of the two letterbox
- * cell colours, and the second of those is checked FIRST because the dark cell sits below
- * `DARK_THRESHOLD` and an exclusion that ran after `isDark` would never be reached for it.
- * What is left is ink: below `DARK_THRESHOLD` in every channel, or a low-saturation grey above
- * `SPRAY_LUMINANCE_THRESHOLD`. When the caller identifies the captured tool as Spray, any
- * non-background pixel is accepted; the tool's selected opacity and colour can make its ink
- * mid-tone or saturated. A capture carrying nothing else returns `null`.
+ * Pixels outside the fitted document are excluded using `region.mask` before color
+ * classification. Geometry handles the dark theme's `#000` gaps and antialiased checkerboard
+ * edges, whose pixel values can also be real document ink. Within the document, near-white
+ * pixels are ignored; dark pixels and low-saturation bright pixels classify as ink. When the
+ * caller identifies the captured tool as Spray, any non-background pixel is accepted.
  *
  * `region` is the CSS-pixel size of the clip the capture was taken over, and it is what
  * makes the classification independent of the host's pixel density. The thresholds in
@@ -1423,6 +1518,8 @@ export async function getStrokeAnalysis(
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { width, height, data } = imageData;
   const scale = captureScale(width, height, region);
+  const scanRegion = imageBoundsForMask(imageData, region.mask);
+  if (!scanRegion) return null;
 
   const occupiedColumns = new Set<number>();
   let top = height;
@@ -1432,48 +1529,41 @@ export async function getStrokeAnalysis(
   let darkCount = 0;
   let sprayCount = 0;
 
-  for (let index = 0; index < data.length; index += 4) {
-    const r = data[index];
-    const g = data[index + 1];
-    const b = data[index + 2];
-    const a = data[index + 3];
-    if (a === 0) continue;
+  for (let y = scanRegion.top; y <= scanRegion.bottom; y++) {
+    for (let x = scanRegion.left; x <= scanRegion.right; x++) {
+      const index = (y * width + x) * 4;
+      const r = data[index];
+      const g = data[index + 1];
+      const b = data[index + 2];
+      const a = data[index + 3];
+      if (a === 0) continue;
 
-    const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-    const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+      const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+      const saturation = Math.max(r, g, b) - Math.min(r, g, b);
 
-    // The app's own backdrop, in BOTH themes, and skipped BEFORE either arm below — the dark
-    // letterbox cell is below `DARK_THRESHOLD`, so an exclusion that ran after `isDark` would
-    // never be reached for it. See `LETTERBOX_LIGHT_CELL` for the palette, for why the match
-    // is exact, and for the residual this leaves.
-    const isLetterbox = isLetterboxCell(r, g, b);
+      const isDark =
+        r < STROKE_ANALYSIS.DARK_THRESHOLD && g < STROKE_ANALYSIS.DARK_THRESHOLD && b < STROKE_ANALYSIS.DARK_THRESHOLD;
+      // Exclude pure white background (255,255,255) and near-white
+      const isNearWhite =
+        r > STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD &&
+        g > STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD &&
+        b > STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD;
+      const isSpray =
+        !isDark &&
+        !isNearWhite &&
+        (options.tool === 'spray' ||
+          (luminance > STROKE_ANALYSIS.SPRAY_LUMINANCE_THRESHOLD &&
+            saturation < STROKE_ANALYSIS.SPRAY_SATURATION_THRESHOLD));
 
-    const isDark =
-      r < STROKE_ANALYSIS.DARK_THRESHOLD && g < STROKE_ANALYSIS.DARK_THRESHOLD && b < STROKE_ANALYSIS.DARK_THRESHOLD;
-    // Exclude pure white background (255,255,255) and near-white
-    const isNearWhite =
-      r > STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD &&
-      g > STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD &&
-      b > STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD;
-    const isSpray =
-      !isDark &&
-      !isNearWhite &&
-      (options.tool === 'spray' ||
-        (luminance > STROKE_ANALYSIS.SPRAY_LUMINANCE_THRESHOLD &&
-          saturation < STROKE_ANALYSIS.SPRAY_SATURATION_THRESHOLD));
-
-    if (isLetterbox) continue;
-
-    if (isDark || isSpray) {
-      const x = (index / 4) % width;
-      const y = Math.floor(index / 4 / width);
-      occupiedColumns.add(x);
-      if (y < top) top = y;
-      if (y > bottom) bottom = y;
-      if (x < left) left = x;
-      if (x > right) right = x;
-      if (isDark) darkCount++;
-      if (isSpray) sprayCount++;
+      if (isDark || isSpray) {
+        occupiedColumns.add(x);
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (isDark) darkCount++;
+        if (isSpray) sprayCount++;
+      }
     }
   }
 

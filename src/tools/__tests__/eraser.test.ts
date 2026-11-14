@@ -42,7 +42,13 @@ const stroke: Point[] = [
 ];
 
 const eraserArgs = (overrides: Partial<EraserToolArgs> = {}): ToolArgs =>
-  ({ ...defaultSettings.eraser, toolName: 'eraser', points: stroke, ...overrides }) as unknown as ToolArgs;
+  ({
+    ...defaultSettings.eraser,
+    flow: undefined,
+    toolName: 'eraser',
+    points: stroke,
+    ...overrides,
+  }) as unknown as ToolArgs;
 
 /** The committed canvas, recording its context so the raster ops are observable. */
 const renderCommit = (args: ToolArgs, size = { width: 24, height: 18 }): MockCtx => {

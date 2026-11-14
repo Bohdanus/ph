@@ -66,7 +66,8 @@ dossier file** — **NEVER** code edits, **NEVER** git mutations, **NEVER** merg
 4. **Test & Gate Impact**: Will this pass current gates? Which tests are affected? Any test erosion?
 5. **Architectural Fit**: Does this align with current project architecture (replay, durable, store, tools)? Any contract violations?
 
-**Each subagent returns**: Structured findings appended to the Wave 1 dossier file.
+**Each subagent returns**: Structured findings in its task response. The coordinator verifies
+and appends accepted findings to the Wave 1 dossier; free/read-only subagents never write it.
 
 **Coordinator updates**: Plan file with findings, conflict assessment, expectations about possible conflicts.
 
@@ -93,9 +94,9 @@ A single comprehensive dossier file at:
 
 ## Subagent Model & Provider
 
-- **Default**: OpenRouter Nemotron 3 Ultra (free quota)
-- **Fallback**: Groq if available
-- **Never**: Kilo subagents (they consume gateway quota)
+- **Default**: Nemotron 3 Ultra on OpenRouter when live pricing is exact zero and quota is positive; request 4,000 output tokens for reviews and research according to the provider-specific token-limit behavior in `MODELS.md`
+- **Fallback**: use Kilo only as an explicitly selected route after live catalog verification; the automatic completion pool falls back to other OpenRouter models, OpenCode, then opt-in Groq as documented in `MODELS.md`
+- **Never**: unverified model/provider pairs or paid fallback
 - **Pass `model` AND `provider` together** in every subagent launch
 
 ## Permissions for Subagents

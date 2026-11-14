@@ -41,6 +41,7 @@ describe('searchStream errors', () => {
 
 const cliPath = resolve('scripts/free-chat-search-agent.mjs');
 const agentModule = pathToFileURL(cliPath).href;
+const pathIdentityModule = pathToFileURL(resolve('scripts/lib/path-identity.mjs')).href;
 
 async function runWithFakeSqlite(fake, action = 'query') {
   const directory = await mkdtemp(join(tmpdir(), 'free-chat-search-agent-'));
@@ -71,6 +72,7 @@ async function runWithFakeSqlite(fake, action = 'query') {
     const source = `
       import { EventEmitter } from 'node:events';
       import { PassThrough } from 'node:stream';
+      import { samePath } from ${JSON.stringify(pathIdentityModule)};
       import { queryDb, search, searchAll } from ${JSON.stringify(agentModule)};
 
       const fake = ${JSON.stringify(fake)};
@@ -91,7 +93,7 @@ async function runWithFakeSqlite(fake, action = 'query') {
           args[0] !== '-readonly' ||
           args[1] !== '-json' ||
           args[2] !== '-bail' ||
-          args[3] !== expectedDbPaths[spawnCount] ||
+          !samePath(args[3], expectedDbPaths[spawnCount]) ||
           args.length !== 5 ||
           typeof args[4] !== 'string' ||
           (action === 'query' ? args[4] !== 'SELECT 1' : !args[4].includes("'needle'")) ||

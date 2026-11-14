@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readMergeHeadRefs, resolveWorktree } from './main-worktree-guard.mjs';
 import { readOperations } from './lib/git-operation-state.mjs';
+import { samePath } from './lib/path-identity.mjs';
 import { isProjectMainWorktree } from './merge-takeover-guard.mjs';
 
 const OWNER_FILE = 'owner.json';
@@ -94,13 +95,6 @@ function gitConfigValue(key, cwd) {
 function resolvePath(value, base) {
   if (!value) return null;
   return resolve(isAbsolute(value) ? value : join(base, value));
-}
-
-function samePath(left, right) {
-  if (!left || !right) return false;
-  const first = resolve(left).replace(/\\/g, '/');
-  const second = resolve(right).replace(/\\/g, '/');
-  return process.platform === 'win32' ? first.toLowerCase() === second.toLowerCase() : first === second;
 }
 
 function resolvePaths(cwd = process.cwd()) {
@@ -343,14 +337,52 @@ function alertMarker(paths, minutes) {
   return join(paths.lockDir, 'alert-' + minutes + 'm.json');
 }
 
+function isValidAlertMarker(alert) {
+  if (!alert || typeof alert !== 'object' || Array.isArray(alert)) return false;
+  const hasLeaseId = typeof alert.leaseId === 'string' && alert.leaseId.trim().length > 0;
+  if (!hasLeaseId) return false;
+
+  if (alert.status === 'pending') {
+    return (
+      typeof alert.host === 'string' &&
+      alert.host.trim().length > 0 &&
+      typeof alert.platform === 'string' &&
+      alert.platform.length > 0 &&
+      Number.isSafeInteger(alert.pid) &&
+      alert.pid > 0 &&
+      typeof alert.startedAt === 'string' &&
+      Number.isFinite(Date.parse(alert.startedAt))
+    );
+  }
+
+  if (alert.status === 'sent') {
+    return (
+      typeof alert.sentAt === 'string' &&
+      Number.isFinite(Date.parse(alert.sentAt)) &&
+      typeof alert.message === 'string' &&
+      alert.message.length > 0
+    );
+  }
+
+  return false;
+}
+
 function readAlert(paths, minutes) {
   const file = alertMarker(paths, minutes);
   if (!existsSync(file)) return null;
+  let contents;
   try {
-    return JSON.parse(readFileSync(file, 'utf8'));
+    contents = readFileSync(file, 'utf8');
   } catch {
     return { status: 'unreadable' };
   }
+  let alert;
+  try {
+    alert = JSON.parse(contents);
+  } catch {
+    return { status: 'corrupt' };
+  }
+  return isValidAlertMarker(alert) ? alert : { status: 'corrupt' };
 }
 
 export function claimAlert(paths, owner, minutes) {
@@ -377,6 +409,12 @@ export function claimAlert(paths, owner, minutes) {
         const pendingSince = Date.parse(existing.startedAt ?? '');
         if (!Number.isFinite(pendingSince) || Date.now() - pendingSince < 60_000) return false;
       }
+      try {
+        rmSync(file, { force: true });
+      } catch {
+        return false;
+      }
+    } else if (existing?.status === 'corrupt') {
       try {
         rmSync(file, { force: true });
       } catch {
@@ -1639,7 +1677,7 @@ export async function watch(
   }
 }
 
-async function main(argv = process.argv.slice(2), { cwd = process.cwd() } = {}) {
+export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), watcherStarter = startWatcher } = {}) {
   const [action, ...rest] = argv;
   if (!action || action === '--help' || action === '-h') {
     process.stdout.write(USAGE + '\n');
@@ -1657,7 +1695,7 @@ async function main(argv = process.argv.slice(2), { cwd = process.cwd() } = {}) 
   const options = parseOptions(rest);
   const paths = resolvePaths(cwd);
   if (action === 'status') return showStatus(paths, options.flags.has('json'));
-  if (action === 'land') return land(paths, options, cwd);
+  if (action === 'land') return land(paths, options, cwd, { watcherStarter });
   if (action === 'takeover') return takeover(paths, options);
   if (action === 'release-stale') return releaseStale(paths, options);
   if (action === 'release-incomplete') return releaseIncomplete(paths, options);

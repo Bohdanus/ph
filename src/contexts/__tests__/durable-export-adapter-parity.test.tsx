@@ -331,6 +331,44 @@ describe('FileProvider durable export adapter parity', () => {
   it.each([
     ['raster', 'image/png'],
     ['PSD', 'psd'],
+  ] as const)('keeps legacy export when replay contains an extra layer (%s)', async (_, format) => {
+    const { legacyLayers, replay, store } = durableFixture();
+    const existing = replay.layers['durable-layer']!;
+    const replayWithExtraLayer: DurableReplayResult = {
+      ...replay,
+      layers: {
+        ...replay.layers,
+        'durable-extra': {
+          ...existing,
+          snapshot: {
+            ...existing.snapshot,
+            id: 'durable-extra',
+            name: 'Durable extra',
+            order: 1,
+          },
+        },
+      },
+    };
+    vi.mocked(replayDurableAtCursor).mockReturnValue(replayWithExtraLayer);
+    vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
+    vi.mocked(savePsd).mockResolvedValue(new ArrayBuffer(8));
+    renderWithStore(store);
+
+    save(format);
+
+    if (format === 'psd') {
+      await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
+      expect(savePsd).toHaveBeenCalledWith(legacyLayers, size, frame);
+    } else {
+      await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
+      expect(renderExportCanvas).toHaveBeenCalledWith(legacyLayers, size, frame);
+    }
+    expect(composeDurableDocument).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['raster', 'image/png'],
+    ['PSD', 'psd'],
   ] as const)('keeps legacy export when materialized bounds differ from the legacy layer for %s', async (_, format) => {
     const { composite, legacyLayers, replay, release, store } = durableFixture();
     const layer = composite.layers['durable-layer']!;

@@ -4,7 +4,7 @@ import type { RefObject } from 'react';
 import { CloneStampToolArea } from '../CloneStampToolArea.tsx';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
 import type { Selection } from '../../../contexts/general-types.ts';
-import type { CloneStampToolArgs } from '../../../tools/cloneStamp.ts';
+import { CLONE_STAMP_FLOW_DEFAULT, type CloneStampToolArgs } from '../../../tools/cloneStamp.ts';
 import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
@@ -207,6 +207,7 @@ const cloneArgs = (overrides: Partial<CloneStampToolArgs> = {}): CloneStampToolA
   size: 33,
   hardness: 40,
   alpha: 0.75,
+  flow: 100,
   source: { x: 150, y: 90 },
   aligned: true,
   points: [],
@@ -413,6 +414,7 @@ describe('CloneStampToolArea', () => {
           toolArgs: {
             ...cloneArgs(),
             source: { x: 150, y: 90 },
+            samplingOffset: { x: 130, y: 70 },
             points: [
               { x: 20, y: 20 },
               { x: 100, y: 60 },
@@ -426,6 +428,7 @@ describe('CloneStampToolArea', () => {
           toolArgs: {
             ...cloneArgs(),
             source: { x: 150, y: 90 },
+            samplingOffset: { x: 130, y: 70 },
             points: [
               { x: 20, y: 20 },
               { x: 100, y: 60 },
@@ -434,6 +437,50 @@ describe('CloneStampToolArea', () => {
         },
       ]);
       expect(createLayerFromToolMock).not.toHaveBeenCalled();
+    });
+
+    it('continues the aligned source point across committed strokes', () => {
+      const { toolArea } = renderArea();
+
+      stroke(toolArea, [20, 20], [100, 60]);
+      stroke(toolArea, [120, 60], [130, 70]);
+
+      // The first stroke advances the sample point from (150, 90) by its (80, 40)
+      // displacement. The next stroke therefore stores (230, 130) - (120, 60).
+      expect(patchToolArgsMock.mock.calls).toContainEqual(['clone-stamp', { alignedSource: { x: 230, y: 130 } }]);
+      expect(commitCalls()[1]?.toolArgs.samplingOffset).toEqual({ x: 110, y: 70 });
+    });
+
+    it('keeps a newer Alt-click source when the previous commit is still pending', async () => {
+      let finishCommit: (() => void) | undefined;
+      updateLayerByToolMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            finishCommit = resolve;
+          })
+      );
+      const { toolArea } = renderArea();
+
+      stroke(toolArea, [20, 20], [100, 60]);
+      fireEvent.pointerDown(toolArea, {
+        button: 0,
+        pointerId: 1,
+        altKey: true,
+        clientX: 40,
+        clientY: 50,
+      });
+      finishCommit?.();
+      await Promise.resolve();
+      stroke(toolArea, [120, 60], [130, 70]);
+      finishCommit?.();
+      await Promise.resolve();
+      updateLayerByToolMock.mockImplementation(() => undefined);
+
+      expect(patchToolArgsMock.mock.calls).toContainEqual([
+        'clone-stamp',
+        { source: { x: 40, y: 50 }, alignedSource: { x: 40, y: 50 } },
+      ]);
+      expect(commitCalls()[1]?.toolArgs.samplingOffset).toEqual({ x: -80, y: -10 });
     });
 
     it('snapshots the active selection into both preview and committed clone args', () => {
@@ -510,15 +557,14 @@ describe('CloneStampToolArea', () => {
       // The SAME translation on both is the claim: a rebase that moved one and not the other would
       // leave the pair describing two different points of the document.
       expect(commit.toolArgs.source).toEqual({ x: 120, y: 70 });
+      expect(commit.toolArgs.samplingOffset).toEqual({ x: 110, y: 40 });
       expect(commit.toolArgs.points).toEqual([
         { x: 10, y: 30 },
         { x: 90, y: 60 },
         { x: 120, y: 90 },
       ]);
-      // Which point the processor anchors on is `cloneOffset`'s business in
-      // `src/tools/cloneStamp.ts`, not this component's: the component's part is that it neither
-      // reorders `points` nor measures anything itself, and `aligned` reaches the processor as it
-      // was stored. Both are pinned by the exact payload assertions above and in the settings test.
+      // The processor offset is measured in document coordinates before the shared layer rebase;
+      // the same (110, 40) translation therefore survives even though source and path are local.
     });
 
     it('carries aligned: false through the same rebase unchanged', () => {
@@ -533,10 +579,10 @@ describe('CloneStampToolArea', () => {
       const [commit] = commitCalls();
       // The flag is handed over as stored…
       expect(commit.toolArgs.aligned).toBe(false);
-      // …and it changes NOTHING about the translation: the payload is the aligned case's, minus
-      // the flag. A component that consumed the flag into a different anchor, a shifted stroke, or
-      // a dropped field would show one of these three numbers move.
+      // The mode selects its sampling source, while the translation remains invariant under the
+      // same layer rebase.
       expect(commit.toolArgs.source).toEqual({ x: 120, y: 70 });
+      expect(commit.toolArgs.samplingOffset).toEqual({ x: 110, y: 40 });
       expect(commit.toolArgs.points).toEqual([
         { x: 10, y: 30 },
         { x: 90, y: 60 },
@@ -545,27 +591,38 @@ describe('CloneStampToolArea', () => {
     });
 
     it('hands the processor the Clone Stamp settings unchanged', () => {
-      toolState.toolArgs = cloneArgs({ size: 47, hardness: 10, alpha: 0.4, aligned: false });
+      toolState.toolArgs = cloneArgs({ size: 47, hardness: 10, alpha: 0.4, flow: 37, aligned: false });
       const { toolArea } = renderArea();
 
       stroke(toolArea, [20, 20], [100, 60]);
 
       // The whole args object, not only `source` and `points`. `cloneStamp` reads `size` as the
-      // tip DIAMETER, `hardness` as the 0-100 falloff and `alpha` as the per-dab copy strength it
-      // maps onto the engine's `opacity`; a spread that dropped one, or spread the rebased points
-      // over them, would clone with the wrong tip and no assertion here would notice.
+      // tip DIAMETER, `hardness` as the 0-100 falloff, `alpha` as the Opacity ceiling and `flow`
+      // as the per-stroke deposition rate; a spread that dropped one, or spread the rebased
+      // points over them, would clone with the wrong tool behavior and no assertion here would notice.
       expect(commitCalls()[0].toolArgs).toEqual({
         toolName: 'clone-stamp',
         size: 47,
         hardness: 10,
         alpha: 0.4,
+        flow: 37,
         source: { x: 150, y: 90 },
         aligned: false,
+        samplingOffset: { x: 130, y: 70 },
         points: [
           { x: 20, y: 20 },
           { x: 100, y: 60 },
         ],
       });
+    });
+
+    it('fills the app Flow default when settings predate the Flow field', () => {
+      toolState.toolArgs = cloneArgs({ flow: undefined });
+      const { toolArea } = renderArea();
+
+      stroke(toolArea, [20, 20], [100, 60]);
+
+      expect(commitCalls()[0].toolArgs.flow).toBe(CLONE_STAMP_FLOW_DEFAULT);
     });
 
     it('rebases onto the EVALUATED extent of a transformed layer rather than its raw pos', () => {
@@ -578,6 +635,7 @@ describe('CloneStampToolArea', () => {
       // `processorPresentationBounds` is the origin: `pos` says (30, 20), the evaluated extent
       // says (50, 30), and the source is rebased with them.
       expect(commitCalls()[0].toolArgs.source).toEqual({ x: 100, y: 60 });
+      expect(commitCalls()[0].toolArgs.samplingOffset).toEqual({ x: 110, y: 40 });
       expect(commitCalls()[0].toolArgs.points).toEqual([
         { x: -10, y: 20 },
         { x: 70, y: 50 },
@@ -602,6 +660,7 @@ describe('CloneStampToolArea', () => {
       // The source is a DOCUMENT point, so it takes the crop origin on and the layer's off:
       // (150 + 10 − 10, 90 + 15 − 15).
       expect(commitCalls()[0].toolArgs.source).toEqual({ x: 140, y: 75 });
+      expect(commitCalls()[0].toolArgs.samplingOffset).toEqual({ x: 100, y: 25 });
     });
 
     it('gives each preview its own points array, so a later move cannot shift an earlier one', () => {
@@ -669,28 +728,39 @@ describe('CloneStampToolArea', () => {
       ]);
     });
 
-    it('clones a layer flagged locked, because only bedrock is gated', () => {
-      // `isEnabled` reads `isBedrock` and nothing else about the layer: no `bitmap`, no `locked`,
-      // no `visible`. Pinning the absence is the point — a future gate added here would be a
-      // behaviour change, and this test is the thing that would have to change with it.
+    it('does not advance the aligned source when a locked layer refuses painting', () => {
+      toolState.toolArgs = cloneArgs({ alignedSource: { x: 230, y: 130 } });
       storeState.layers = { base: makeLayer('base', { locked: true, visible: false, bitmap: null }) };
-      const { toolArea } = renderArea();
+      const { toolArea, view } = renderArea();
 
+      expect(toolArea).toHaveClass('cursor-not-allowed');
       stroke(toolArea, [20, 20], [100, 60]);
 
-      expect(commitCalls()).toEqual([
-        {
-          id: 'base',
-          toolArgs: {
-            ...cloneArgs(),
-            source: { x: 150, y: 90 },
-            points: [
-              { x: 20, y: 20 },
-              { x: 100, y: 60 },
-            ],
-          },
-        },
+      expect(tempUpdateLayerMock).not.toHaveBeenCalled();
+      expect(updateLayerByToolMock).not.toHaveBeenCalled();
+      expect(patchToolArgsMock).not.toHaveBeenCalled();
+      expect(pointerState.activePointer).toBeNull();
+
+      // Unlocking and starting a real stroke must still sample from the last committed source.
+      storeState.layers = { base: makeLayer('base') };
+      view.rerender(areaElement(NO_OVERLAY));
+      stroke(toolArea, [120, 60], [130, 70]);
+
+      expect(commitCalls()[0]?.toolArgs.samplingOffset).toEqual({ x: 110, y: 70 });
+    });
+
+    it('still allows Alt-click source sampling on a locked layer', () => {
+      storeState.layers = { base: makeLayer('base', { locked: true }) };
+      const { toolArea } = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, altKey: true, clientX: 40, clientY: 50 });
+
+      expect(patchToolArgsMock.mock.calls).toEqual([
+        ['clone-stamp', { source: { x: 40, y: 50 }, alignedSource: { x: 40, y: 50 } }],
       ]);
+      expect(pointerState.activePointer).toBeNull();
+      expect(tempUpdateLayerMock).not.toHaveBeenCalled();
+      expect(updateLayerByToolMock).not.toHaveBeenCalled();
     });
   });
 
@@ -717,6 +787,7 @@ describe('CloneStampToolArea', () => {
           toolArgs: {
             ...cloneArgs(),
             source: { x: 150, y: 90 },
+            samplingOffset: { x: 130, y: 70 },
             points: [
               { x: 20, y: 20 },
               { x: 100, y: 60 },
@@ -844,7 +915,9 @@ describe('CloneStampToolArea', () => {
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, altKey: true, clientX: 40, clientY: 50 });
 
-      expect(patchToolArgsMock.mock.calls).toEqual([['clone-stamp', { source: { x: 40, y: 50 } }]]);
+      expect(patchToolArgsMock.mock.calls).toEqual([
+        ['clone-stamp', { source: { x: 40, y: 50 }, alignedSource: { x: 40, y: 50 } }],
+      ]);
       expect(updateLayerByToolMock).not.toHaveBeenCalled();
       expect(tempUpdateLayerMock).not.toHaveBeenCalled();
     });
@@ -861,7 +934,9 @@ describe('CloneStampToolArea', () => {
 
       // The ONE write the Alt branch makes, in the same document space `points` will be in — which
       // is the only reason the offset arithmetic is readable at all.
-      expect(patchToolArgsMock.mock.calls).toEqual([['clone-stamp', { source: { x: 40, y: 50 } }]]);
+      expect(patchToolArgsMock.mock.calls).toEqual([
+        ['clone-stamp', { source: { x: 40, y: 50 }, alignedSource: { x: 40, y: 50 } }],
+      ]);
       // No stroke: the press never reached `usePaintStroke`, so nothing claimed the pointer and
       // every later event of that drag was refused by the hook's own validators.
       expect(pointerState.activePointer).toBeNull();
@@ -884,7 +959,9 @@ describe('CloneStampToolArea', () => {
       // `canvasToDocumentPoint` ADDS the crop origin here, exactly as `usePaintStroke` adds it to
       // every stroke sample. Storing the raw canvas coordinate instead would make the offset
       // against `points` wrong by the crop.
-      expect(patchToolArgsMock.mock.calls).toEqual([['clone-stamp', { source: { x: 50, y: 65 } }]]);
+      expect(patchToolArgsMock.mock.calls).toEqual([
+        ['clone-stamp', { source: { x: 50, y: 65 }, alignedSource: { x: 50, y: 65 } }],
+      ]);
     });
 
     it('prevents the browser default on the Alt-click press, so an Option-drag cannot start', () => {
@@ -913,7 +990,9 @@ describe('CloneStampToolArea', () => {
       fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 90, clientY: 70 });
       fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 90, clientY: 70 });
 
-      expect(patchToolArgsMock.mock.calls).toEqual([['clone-stamp', { source: { x: 40, y: 50 } }]]);
+      expect(patchToolArgsMock.mock.calls).toEqual([
+        ['clone-stamp', { source: { x: 40, y: 50 }, alignedSource: { x: 40, y: 50 } }],
+      ]);
       expect(pointerState.activePointer).toBeNull();
       expect(updateLayerByToolMock).not.toHaveBeenCalled();
     });
@@ -1167,11 +1246,14 @@ describe('CloneStampToolArea', () => {
       ]);
 
       pressAlt();
+      patchToolArgsMock.mockClear();
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, altKey: true, clientX: 40, clientY: 50 });
       fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, altKey: true, clientX: 90, clientY: 70 });
       flushFrames();
 
-      expect(patchToolArgsMock.mock.calls).toEqual([['clone-stamp', { source: { x: 40, y: 50 } }]]);
+      expect(patchToolArgsMock.mock.calls).toEqual([
+        ['clone-stamp', { source: { x: 40, y: 50 }, alignedSource: { x: 40, y: 50 } }],
+      ]);
       expect(rafMock).toHaveBeenCalledTimes(1);
       // The frame ran and drew nothing, rather than throwing or leaving the slot occupied.
       expect(frameState.pending.size).toBe(0);

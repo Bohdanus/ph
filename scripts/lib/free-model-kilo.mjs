@@ -3,10 +3,17 @@ import { constants } from 'node:fs';
 import { access, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import {
+  DEFAULT_FREE_COMPLETION_TIMEOUT_MS,
+  freeModelProfile,
+  isDisabledFreeModel,
+  MAX_FREE_COMPLETION_MAX_TOKENS,
+  MAX_FREE_COMPLETION_TIMEOUT_MS,
+} from './free-model-policy.mjs';
 import { resolveCommandShim } from './windows-command-shim.mjs';
 import { terminateWindowsProcessTree } from './windows-process-tree.mjs';
 
-export const COMPLETION_TIMEOUT_MS = 300_000;
+export const COMPLETION_TIMEOUT_MS = DEFAULT_FREE_COMPLETION_TIMEOUT_MS;
 export const MAX_KILO_OUTPUT_BYTES = 1024 * 1024;
 const MAX_KILO_STDERR_BYTES = 64 * 1024;
 
@@ -263,11 +270,13 @@ export async function runKiloCompletion({
   source = 'kilo',
   model,
   prompt,
-  maxTokens = 1200,
-  timeoutMs = COMPLETION_TIMEOUT_MS,
+  maxTokens,
+  timeoutMs,
   projectRoot = PROJECT_ROOT,
   env = process.env,
   spawnImpl = spawn,
+  platform = process.platform,
+  terminateWindowsProcessTreeImpl = terminateWindowsProcessTree,
 } = {}) {
   if (source !== 'kilo') return { error: 'Unsupported Kilo CLI provider' };
   if (typeof command !== 'string' || !command.trim())
@@ -275,16 +284,39 @@ export async function runKiloCompletion({
   if (typeof model !== 'string' || !/^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/.test(model)) {
     return { error: 'Invalid model ID' };
   }
+  if (isDisabledFreeModel(model)) {
+    return { error: 'Nemotron model ID is not approved by free-model policy' };
+  }
   if (typeof prompt !== 'string' || !prompt) return { error: 'Prompt is empty' };
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 65536) return { error: 'Invalid token limit' };
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return { error: 'Invalid completion timeout' };
+  if (
+    maxTokens !== undefined &&
+    (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_FREE_COMPLETION_MAX_TOKENS)
+  ) {
+    return { error: 'Invalid token limit' };
+  }
+  if (
+    timeoutMs !== undefined &&
+    (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_FREE_COMPLETION_TIMEOUT_MS)
+  ) {
+    return { error: 'Invalid completion timeout' };
+  }
+  const profile = freeModelProfile(model, maxTokens);
+  const effectiveTimeoutMs = timeoutMs ?? profile.timeoutMs;
+  if (
+    !Number.isSafeInteger(profile.maxTokens) ||
+    profile.maxTokens < 1 ||
+    profile.maxTokens > MAX_FREE_COMPLETION_MAX_TOKENS
+  ) {
+    return { error: 'Invalid token limit' };
+  }
+  if (!Number.isSafeInteger(effectiveTimeoutMs) || effectiveTimeoutMs < 1) {
+    return { error: 'Invalid completion timeout' };
+  }
 
-  const message = `Answer the provided request directly, in plain text, using at most ${maxTokens} output tokens.\n\n${prompt}`;
+  const message = `Answer the provided request directly, in plain text, using at most ${profile.maxTokens} output tokens.\n\n${prompt}`;
   try {
     const args = ['run', '--pure', '--format', 'json', '--model', `kilo/${model}`, '--agent', 'free-completion'];
-    if (model === 'nvidia/nemotron-3-ultra-550b-a55b:free') {
-      args.push('--variant', 'high');
-    }
+    if (profile.reasoningEffort) args.push('--variant', profile.reasoningEffort);
     const commandShim = resolveCommandShim(command, args);
 
     const { events, stderrText, code, signal, timedOut, outputOverflow, malformed, inputError, terminationError } =
@@ -296,7 +328,7 @@ export async function runKiloCompletion({
             env: kiloRuntimeEnvironment(env),
             stdio: ['pipe', 'pipe', 'pipe'],
             shell: false,
-            detached: process.platform !== 'win32',
+            detached: platform !== 'win32',
             ...commandShim.spawnOptions,
           });
         } catch {
@@ -311,21 +343,73 @@ export async function runKiloCompletion({
         let outputOverflow = false;
         let inputError = false;
         let settled = false;
-        let stopping = false;
-        let terminationError = null;
         let killTimer;
-        let killPromise = Promise.resolve();
+        let stopping = false;
+        let killPromise = null;
+        let timer;
+        let childClosed = false;
+        let terminationError = null;
+        const cleanup = () => {
+          clearTimeout(timer);
+          clearTimeout(killTimer);
+        };
+        const finishChild = (code, signal) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          let events = [];
+          let malformed = false;
+          try {
+            const parsed = parseEvents(Buffer.concat(chunks).toString('utf8'));
+            events = parsed.events;
+            malformed = parsed.malformed;
+          } catch {
+            malformed = true;
+          }
+          resolve({
+            events,
+            stderrText: stderrTail.toString('utf8'),
+            code,
+            signal,
+            timedOut,
+            outputOverflow,
+            inputError,
+            terminationError,
+            malformed,
+          });
+        };
         const stopChild = () => {
-          if (stopping) return killPromise;
+          if (stopping || settled) return;
           stopping = true;
-          if (process.platform === 'win32') {
-            killPromise = terminateWindowsProcessTree(child.pid).catch((error) => {
-              terminationError = error;
-              try {
-                child.kill('SIGKILL');
-              } catch {}
-            });
-            return killPromise;
+          clearTimeout(timer);
+          if (platform === 'win32') {
+            // Avoid sending a tree-kill command to a PID after its process has exited and may be reused.
+            if (childClosed || child.exitCode != null || child.signalCode != null) return;
+            if (!Number.isSafeInteger(child.pid) || child.pid < 1) {
+              settled = true;
+              cleanup();
+              reject(Object.assign(new Error('Kilo process-tree termination failed'), { code: 'KILO_PROCESS_TREE' }));
+              return;
+            }
+            killPromise = terminateWindowsProcessTreeImpl(child.pid).then(
+              () => finishChild(null, 'SIGKILL'),
+              (error) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                if (!childClosed && child.exitCode == null && child.signalCode == null) {
+                  try {
+                    child.kill('SIGKILL');
+                  } catch {}
+                }
+                reject(
+                  Object.assign(new Error('Kilo process-tree termination failed', { cause: error }), {
+                    code: 'KILO_PROCESS_TREE',
+                  })
+                );
+              }
+            );
+            return;
           }
           try {
             process.kill(-child.pid, 'SIGTERM');
@@ -342,26 +426,19 @@ export async function runKiloCompletion({
               resolveKill();
             }, 2_000);
           });
-          return killPromise;
         };
-        const timer = setTimeout(() => {
+        timer = setTimeout(() => {
           timedOut = true;
-          void stopChild();
-        }, timeoutMs);
-        const cleanup = () => {
-          clearTimeout(timer);
-          clearTimeout(killTimer);
-        };
+          stopChild();
+        }, effectiveTimeoutMs);
         child.stdout.on('data', (chunk) => {
           if (outputOverflow) return;
           const remainingBytes = MAX_KILO_OUTPUT_BYTES - outputBytes;
           outputBytes += chunk.byteLength;
           if (outputBytes > MAX_KILO_OUTPUT_BYTES) {
             if (remainingBytes > 0) chunks.push(Buffer.from(chunk.subarray(0, remainingBytes)));
-            if (!outputOverflow) {
-              outputOverflow = true;
-              void stopChild();
-            }
+            outputOverflow = true;
+            stopChild();
             return;
           }
           chunks.push(chunk);
@@ -380,32 +457,12 @@ export async function runKiloCompletion({
           reject(Object.assign(new Error('Kilo CLI could not be started'), { code: 'KILO_SPAWN' }));
         });
         child.once('close', (code, signal) => {
-          void (async () => {
-            if (stopping) await killPromise;
-            if (settled) return;
-            settled = true;
-            cleanup();
-            let events = [];
-            let malformed = false;
-            try {
-              const parsed = parseEvents(Buffer.concat(chunks).toString('utf8'));
-              events = parsed.events;
-              malformed = parsed.malformed;
-            } catch {
-              malformed = true;
-            }
-            resolve({
-              events,
-              stderrText: stderrTail.toString('utf8'),
-              code,
-              signal,
-              timedOut,
-              outputOverflow,
-              inputError,
-              terminationError,
-              malformed,
-            });
-          })().catch(reject);
+          childClosed = true;
+          if (killPromise) {
+            void killPromise.then(() => finishChild(code, signal));
+            return;
+          }
+          finishChild(code, signal);
         });
         child.stdin.end(message);
       });
@@ -420,15 +477,15 @@ export async function runKiloCompletion({
     if (contentPolicyRejected(events, stderrText)) {
       return { error: 'Kilo provider content policy rejected or filtered this request', contentPolicyRejected: true };
     }
-    if (terminationError) return { error: 'Kilo CLI process termination failed' };
-    if (timedOut) return { error: `Kilo completion exceeded ${timeoutMs} ms` };
+    if (terminationError) return { error: 'Kilo CLI process termination failed', exhaustSource: true };
+    if (timedOut) return { error: `Kilo completion exceeded ${effectiveTimeoutMs} ms` };
     if (outputOverflow) return { error: `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes` };
-    if (inputError) return { error: 'Kilo CLI did not accept the complete prompt' };
     if (malformed) return { error: 'Kilo CLI returned malformed JSONL output', exhaustSource: true };
     if (hasToolActivity(events))
       return { error: 'Kilo attempted a tool call; the completion was rejected', exhaustSource: true };
     if (events.some((event) => event?.type === 'error')) return sanitizedProcessError(events, stderrText, code, signal);
     if (code !== 0) return sanitizedProcessError(events, stderrText, code, signal);
+    if (inputError) return { error: 'Kilo CLI did not accept the complete prompt' };
 
     const terminal = events.filter((event) => event?.type === 'step_finish').at(-1);
     const content = events
@@ -458,6 +515,9 @@ export async function runKiloCompletion({
           : null,
     };
   } catch (error) {
+    if (error?.code === 'KILO_PROCESS_TREE') {
+      return { error: 'Kilo process-tree termination failed', exhaustSource: true };
+    }
     return {
       error: error?.code === 'KILO_SPAWN' ? 'Kilo CLI could not be started' : 'Kilo completion failed locally',
       exhaustSource: error?.code === 'KILO_SPAWN',

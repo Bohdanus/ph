@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type TestInfo } from './fixtures
 import {
   type BoundingBox,
   drawLine,
+  documentOnlyPixelMask,
   getColorAtPoint,
   getWorkspaceCanvas,
   hasDarkPixels,
@@ -77,7 +78,7 @@ const isRed = (color: Rgb | null): boolean =>
 const isGreen = (color: Rgb | null): boolean =>
   color !== null && color.green > 120 && color.red < 120 && color.blue < 120;
 
-const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot) => !(await hasDarkPixels(screenshot));
+const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask));
 
 async function canvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
@@ -215,21 +216,19 @@ test.describe('Layers panel', () => {
     if (!viewport) throw new Error('Page has no viewport size');
 
     /**
-     * Both captures are pinned to ONE rect, because the two capture paths disagree about any
-     * part of the canvas that leaves the viewport: `page.screenshot({clip})` comes back
-     * clipped to the viewport, while the CDP helper returns the whole clipped rect. A rect
-     * only one of them honours is a rect where the two samplers read different rows of the
-     * same stroke and every colour assertion misses, so the coordinates below are mapped
-     * onto the INTERSECTION of the canvas box and the viewport rather than onto the box.
+     * Both captures use Playwright screenshots, but `waitForCanvasPixels` can scroll a clip
+     * into view while `captureCanvasScreenshot` captures the supplied viewport clip directly.
+     * Pin both to the INTERSECTION of the canvas box and viewport so they read the same rows
+     * of each stroke instead of comparing different regions.
      *
      * That intersection is the canvas box itself, and the reason is worth recording because
      * the claim it replaced was wrong: `html`, `body` and `#root` are all `height: 100%`
-     * (`src/index.scss:58`), and `<main>` is a `1fr` grid item carrying `overflow-y-auto`
+     * (`src/index.scss`), and `<main>` is a `1fr` grid item carrying `overflow-y-auto`
      * whose only child with a document open is `absolute h-full w-full`
-     * (`src/components/Main/Main.tsx:230`). The document does not scroll, and the canvas
+     * (`src/components/Main/Main.tsx`). The document does not scroll, and the canvas
      * element cannot leave the viewport. The clamp stays because it is free while it is the
      * identity and the file still has to be right if that stops holding - `.zoom-container`
-     * carries a commented-out `transform: scale(zoom)` (`Main.tsx:236`) that would put the
+     * carries a commented-out `transform: scale(zoom)` that would put the
      * element box outside the viewport again.
      */
     const region = viewportClip({
@@ -239,7 +238,7 @@ test.describe('Layers panel', () => {
       height: Math.min(box.y + box.height, viewport.height) - Math.max(box.y, 0),
     });
 
-    /** Screenshot of `region`, captured and attached by the CDP helper. */
+    /** Screenshot of `region`, captured and attached by the shared helper. */
     const capture = (name: string, testInfo: TestInfo) => captureCanvasScreenshot(page, region, testInfo, name);
 
     const stroke = async (color: string, line: { from: Point; to: Point }) => {
@@ -604,9 +603,13 @@ test.describe('Layers panel', () => {
     // second erase is about to be aimed at is dark now, so "it went bare" afterwards is a
     // transition and not a state that already held.
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserSecond })), {
-        message: 'the second stroke is on its own layer, and it is still there before anything erases it',
-      })
+      .poll(
+        async () =>
+          hasDarkPixels(await page.screenshot({ clip: eraserSecond }), await documentOnlyPixelMask(page, eraserSecond)),
+        {
+          message: 'the second stroke is on its own layer, and it is still there before anything erases it',
+        }
+      )
       .toBe(true);
 
     await activateRow(layerRow(page, 'draw 2'), layerRow(page, 'draw 3'));
@@ -621,9 +624,13 @@ test.describe('Layers panel', () => {
       description: 'the first stroke, erased on the layer that was activated',
     });
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserSecond })), {
-        message: 'the second stroke is on the other layer, so erasing the active one must leave it alone',
-      })
+      .poll(
+        async () =>
+          hasDarkPixels(await page.screenshot({ clip: eraserSecond }), await documentOnlyPixelMask(page, eraserSecond)),
+        {
+          message: 'the second stroke is on the other layer, so erasing the active one must leave it alone',
+        }
+      )
       .toBe(true);
 
     // And the SAME GESTURE aimed at the OTHER band. Aimed at `LINE_START_Y` instead — which
@@ -642,9 +649,13 @@ test.describe('Layers panel', () => {
     // one. Checked once the transition above has landed, so it is read against the state the
     // second gesture produced rather than against the state before it.
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserFirst })), {
-        message: 'the second erase put the first stroke back — it edited the wrong layer',
-      })
+      .poll(
+        async () =>
+          hasDarkPixels(await page.screenshot({ clip: eraserFirst }), await documentOnlyPixelMask(page, eraserFirst)),
+        {
+          message: 'the second erase put the first stroke back — it edited the wrong layer',
+        }
+      )
       .toBe(false);
   });
 
