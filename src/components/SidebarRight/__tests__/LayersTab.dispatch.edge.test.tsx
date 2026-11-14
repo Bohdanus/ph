@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
 import { HIDE_LAYER_ACTION, REMOVE_ACTION } from '@/util/constants.ts';
 import { createMockStoreState, type MockStoreState } from '@/__tests__/fixtures/store.ts';
@@ -87,6 +87,10 @@ describe('LayersTab dispatch edge cases', () => {
     vi.clearAllMocks();
     PREVIEW_LAYERS_REF.current = {};
     seedStore();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('toggles visibility on a locked layer (no lock guard on the toggle)', () => {
