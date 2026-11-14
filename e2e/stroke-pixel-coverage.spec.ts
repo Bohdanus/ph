@@ -82,6 +82,16 @@ function describeLumaGrid(pixels: Pixel[]): string {
     .join('\n');
 }
 
+/** Preserve sampled RGBA and composited luma in passing reports for cross-platform oracle review. */
+function lumaGridMeasurements(pixels: readonly Pixel[]) {
+  return pixels.map(({ x, y, red, green, blue, alpha }) => ({
+    x,
+    y,
+    rgba: [red, green, blue, alpha],
+    compositedLuma: compositedLuma({ x, y, red, green, blue, alpha }),
+  }));
+}
+
 const hasInk = (pixel: Pixel): boolean => compositedLuma(pixel) < 245;
 // The recorded path samples were luma 140; leave 40 levels for rasterization variance without treating near-white as ink.
 const DIAGONAL_PATH_LUMA_LIMIT = 180;
@@ -209,7 +219,7 @@ test.describe('1px stroke pixel coverage', () => {
     expect(size).toEqual(DEFAULT_DOCUMENT_SIZE);
   });
 
-  test('Draw Pen records integer, half-integer, and diagonal coverage', async ({ page }) => {
+  test('Draw Pen records integer, half-integer, and diagonal coverage', async ({ page }, testInfo) => {
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, BLACK, true);
     const size = page.locator('#size-slider');
@@ -237,9 +247,23 @@ test.describe('1px stroke pixel coverage', () => {
       diagonalCenter
     );
     expectDiagonalCoverage(diagonalPixels, diagonalCenter, 'diagonal Draw Pen');
+    await testInfo.attach('diagonal-luma-grid.json', {
+      body: JSON.stringify(
+        {
+          platform: process.platform,
+          project: testInfo.project.name,
+          browserVersion: page.context().browser()?.version() ?? 'unknown',
+          center: diagonalCenter,
+          pixels: lumaGridMeasurements(diagonalPixels),
+        },
+        null,
+        2
+      ),
+      contentType: 'application/json',
+    });
   });
 
-  test('Shape Line records integer, half-integer, and diagonal coverage', async ({ page }) => {
+  test('Shape Line records integer, half-integer, and diagonal coverage', async ({ page }, testInfo) => {
     await openToolFlyout(page, 'shape');
     await selectFromFlyout(page, { toolName: 'shape', label: 'Line Tool' });
     await setForegroundColor(page, BLACK, true);
@@ -267,10 +291,22 @@ test.describe('1px stroke pixel coverage', () => {
 
     const diagonalFrom = { x: 150, y: 440 };
     const diagonalTo = { x: 350, y: 540 };
-    const diagonalPixels = await drawAndRead(page, diagonalFrom, diagonalTo, 'diagonal Shape Line', {
-      x: 250,
-      y: 490,
+    const diagonalCenter = { x: 250, y: 490 };
+    const diagonalPixels = await drawAndRead(page, diagonalFrom, diagonalTo, 'diagonal Shape Line', diagonalCenter);
+    expectDiagonalCoverage(diagonalPixels, diagonalCenter, 'diagonal Shape Line');
+    await testInfo.attach('diagonal-luma-grid.json', {
+      body: JSON.stringify(
+        {
+          platform: process.platform,
+          project: testInfo.project.name,
+          browserVersion: page.context().browser()?.version() ?? 'unknown',
+          center: diagonalCenter,
+          pixels: lumaGridMeasurements(diagonalPixels),
+        },
+        null,
+        2
+      ),
+      contentType: 'application/json',
     });
-    expectDiagonalCoverage(diagonalPixels, { x: 250, y: 490 }, 'diagonal Shape Line');
   });
 });
