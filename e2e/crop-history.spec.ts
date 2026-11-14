@@ -8947,7 +8947,8 @@ test.describe('Crop history', () => {
             throw new Error(`${stage} background did not produce PSD-bounds diagnostic controls`);
           }
           const comparedFramePixels = expectedSize.width * expectedSize.height;
-          // Keep exploratory clip measurements while gating product parity separately.
+          // These synthetic common-backing clips can rasterize differently across platforms.
+          // Keep their deltas diagnostic; actual composite and eligible output parity stays exact below.
           for (const source of ['legacy', 'durable'] as const) {
             const commonBacking = backgroundBoundsControl[source].commonBackingClipControls;
             const physicalBacking = backgroundBoundsControl[source].physicalBackingSizeMatrixControls;

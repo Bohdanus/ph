@@ -529,7 +529,7 @@ test.describe('Zoomed pointer tools', () => {
 
   test('Zoom Tool keeps its click anchor in the client viewport of a bordered, overflowing workspace', async ({
     page,
-  }) => {
+  }, testInfo) => {
     await openWorkspace(page);
     await clickToolButton(page, 'zoom');
 
@@ -575,15 +575,67 @@ test.describe('Zoomed pointer tools', () => {
     expect(anchor.y).toBeGreaterThan(zoomAreaBox.y);
     expect(anchor.y).toBeLessThan(zoomAreaBox.y + zoomAreaBox.height);
 
+    await zoomArea.evaluate((node) => {
+      node.addEventListener(
+        'pointerdown',
+        (event) => {
+          const pointer = event as PointerEvent;
+          node.setAttribute('data-e2e-pointerdown-client-x', String(pointer.clientX));
+          node.setAttribute('data-e2e-pointerdown-client-y', String(pointer.clientY));
+        },
+        { capture: true, once: true }
+      );
+    });
     await page.mouse.click(anchor.x, anchor.y);
+    const clickGeometry = await zoomArea.evaluate((node) => {
+      const clientX = node.getAttribute('data-e2e-pointerdown-client-x');
+      const clientY = node.getAttribute('data-e2e-pointerdown-client-y');
+      if (clientX === null || clientY === null) throw new Error('the Zoom Tool received no pointerdown event');
+      const workspaceElement = node.closest<HTMLElement>('[data-testid="workspace-container"]');
+      if (!workspaceElement) throw new Error('the Zoom Tool has no workspace container');
+      const areaRect = node.getBoundingClientRect();
+      const workspaceRect = workspaceElement.getBoundingClientRect();
+      return {
+        pointerDown: { x: Number(clientX), y: Number(clientY) },
+        zoomArea: { x: areaRect.x, y: areaRect.y, width: areaRect.width, height: areaRect.height },
+        workspace: {
+          rect: { x: workspaceRect.x, y: workspaceRect.y, width: workspaceRect.width, height: workspaceRect.height },
+          clientLeft: workspaceElement.clientLeft,
+          clientTop: workspaceElement.clientTop,
+          clientWidth: workspaceElement.clientWidth,
+          clientHeight: workspaceElement.clientHeight,
+          offsetWidth: workspaceElement.offsetWidth,
+          offsetHeight: workspaceElement.offsetHeight,
+          scrollLeft: workspaceElement.scrollLeft,
+          scrollTop: workspaceElement.scrollTop,
+        },
+      };
+    });
+    const clickAnchor = clickGeometry.pointerDown;
+    await testInfo.attach('zoom-click-anchor.json', {
+      body: JSON.stringify(
+        { requestedPoint: anchor, before: { box: zoomAreaBox, view: before }, ...clickGeometry },
+        null,
+        2
+      ),
+      contentType: 'application/json',
+    });
+    expect(clickAnchor.x).toBeGreaterThan(zoomAreaBox.x);
+    expect(clickAnchor.x).toBeLessThan(zoomAreaBox.x + zoomAreaBox.width);
+    expect(clickAnchor.y).toBeGreaterThan(zoomAreaBox.y);
+    expect(clickAnchor.y).toBeLessThan(zoomAreaBox.y + zoomAreaBox.height);
     await expect.poll(async () => (await readViewGeometry(page)).viewZoom).toBeGreaterThan(before.viewZoom);
 
     const { box: afterZoomAreaBox, view: after } = await readViewGeometryAtZoomArea(page);
     const anchoredPoint = documentToPagePoint(after, point);
     expect(afterZoomAreaBox.width).toBeGreaterThan(0);
     expect(afterZoomAreaBox.height).toBeGreaterThan(0);
-    expect(anchoredPoint.x, 'zoom preserves the clicked document point horizontally').toBeCloseTo(anchor.x, 1);
-    expect(anchoredPoint.y, 'zoom preserves the clicked document point vertically').toBeCloseTo(anchor.y, 1);
+    await testInfo.attach('zoom-anchor-result.json', {
+      body: JSON.stringify({ clickAnchor, after: { box: afterZoomAreaBox, view: after }, anchoredPoint }, null, 2),
+      contentType: 'application/json',
+    });
+    expect(anchoredPoint.x, 'zoom preserves the pointerdown document point horizontally').toBeCloseTo(clickAnchor.x, 1);
+    expect(anchoredPoint.y, 'zoom preserves the pointerdown document point vertically').toBeCloseTo(clickAnchor.y, 1);
   });
 
   test('eyedropper clicks and eraser strokes address the intended pixels after zoom and rotation', async ({ page }) => {
