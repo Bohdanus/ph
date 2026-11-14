@@ -106,6 +106,28 @@ afterEach(() => {
 });
 
 describe('recover-stale-auto-merge', () => {
+  it('runs the pinned script with the target worktree as cwd, independent of its local package script', () => {
+    const root = repo();
+    mkdirSync(join(root, 'scripts'));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ scripts: { 'repo:state:recover-auto-merge': 'node scripts/recover-stale-auto-merge.mjs' } })
+    );
+    writeFileSync(join(root, 'scripts', 'recover-stale-auto-merge.mjs'), 'process.stdout.write("stale target code")');
+    git(root, 'add', 'package.json', 'scripts/recover-stale-auto-merge.mjs');
+    git(root, 'commit', '-m', 'add stale target recovery command');
+    const { head, marker } = makeMarker(root);
+
+    // SCRIPT is resolved from the test checkout; invoke that absolute path while cwd
+    // points to a different, potentially stale target checkout.
+    const result = invoke(root, ['--expected-head', head]);
+
+    expect(result.status, result.stdout).toBe(0);
+    expect(result.stdout).toContain('SAFE PREFLIGHT ONLY');
+    expect(result.stdout).not.toContain('stale target code');
+    expect(existsSync(marker)).toBe(true);
+  });
+
   it('defaults to a read-only preflight and requires explicit owner acknowledgment to apply', () => {
     const root = repo();
     const { head, marker } = makeMarker(root);
