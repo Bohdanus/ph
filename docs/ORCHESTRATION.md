@@ -615,8 +615,8 @@ repo:state` is what reports an operation in progress, and it separates the two s
   (cd "$TASK_WORKTREE" && npm run branches:orphan)
   (cd "$TASK_WORKTREE" && npm run swarm -- status)
   (cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
-  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME" --dry-run)
-  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME")
+  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME" --codex-owner-audit-complete --dry-run)
+  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME" --codex-owner-audit-complete)
   ```
   This checks a recorded committed-main snapshot; if `main` moved during the run, repeat from its
   new SHA before calling the result current. The scratch branch and worktree are named and live
@@ -1039,6 +1039,11 @@ It refuses, and says which signal refused, unless all of these hold:
   worktree and checks out the base branch in a linked worktree;
 - **no board claim, no board file lock and no live board agent** names it;
 - **no Kilo session** has it as its `directory` inside the live window;
+- the coordinator has checked the four-hour Codex live overlay immediately before each dry-run and
+  again immediately before removal, and searched root/subagent transcripts for the exact worktree
+  path, branch, changed files and commit subject, then supplied `--codex-owner-audit-complete` to
+  both commands. This assertion does not replace the search; the current-tip UUID `Chat:` family
+  check is additional evidence;
 - its **working tree is clean** — re-read now, not taken from the inventory
   snapshot, because a verdict generated at 23:38 acted on at 00:44 is the case
   this exists for;
@@ -1420,13 +1425,22 @@ heartbeat` still exists and is still correct — it is the only thing that can
   claimed or not claimable · 4 file held by another agent · 5 self-verification
   refused.
 
-It is a command, not a gate, and no commit may be blocked on it. Exactly one thing
-calls it: `.husky/post-merge` runs `scripts/merge-release.mjs`, which releases the
-claims and locks of eligible worktrees the merge put on `main`, while reporting
-merged worktrees blocked by dirty state or other release conditions — non-blocking,
-because the merge is already recorded by the time a post-merge hook runs. Nothing else in
-`.husky/` reads the board, and nothing runs it on worktree creation or on a chat
-stopping.
+It is a command, not a gate, and no commit may be blocked on it. Two automatic paths run
+`scripts/merge-release.mjs`: `.husky/post-merge` after a completed Git merge, and
+`scripts/main-landing.mjs` after a pinned landing commit. The pinned landing prepares its
+merge with `--no-commit`, so Git does not invoke `post-merge` for that flow. The script acts
+only when the current checkout is on the base branch. It compares `ORIG_HEAD` with the
+previous entry in that branch's reflog; if they disagree or either is unavailable, it
+reports the transition as unproven and releases nothing. Otherwise it considers only clean
+branches newly reachable from the captured base-tip snapshot. It refuses duplicate branch
+checkouts because the board keys by branch, and a concurrent later landing cannot widen the
+captured snapshot. Board heartbeat age is not evidence that an editor stopped: a chat can
+remain open without running a swarm command. The script releases only the merged branch's
+own claims and locks, and the board refuses rows owned by another identity. A task checkout
+that fast-forwarded from `main`, or a later merge that sees an older landed branch, therefore
+cannot sweep unrelated claims. Both automatic callers are non-blocking after the merge is
+recorded. Nothing else in `.husky/` reads the board, and nothing runs this hook on worktree
+creation or on a chat stopping.
 
 ### Resource locking and releasing
 

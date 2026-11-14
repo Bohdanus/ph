@@ -592,13 +592,15 @@ coordinator's verified task worktree:
 (cd "$TASK_WORKTREE" && node scripts/worktree-inventory.mjs)
 (cd "$TASK_WORKTREE" && npm run branches:orphan)
 (cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
-(cd "$TASK_WORKTREE" && npm run dispose -- "<worktree-name>" --dry-run)
-(cd "$TASK_WORKTREE" && npm run dispose -- "<worktree-name>")
+(cd "$TASK_WORKTREE" && npm run dispose -- "<worktree-name>" --codex-owner-audit-complete --dry-run)
+(cd "$TASK_WORKTREE" && npm run dispose -- "<worktree-name>" --codex-owner-audit-complete)
 ```
 
 Before actual disposal, verify the exact target path and branch from the fresh inventory; read its
 curated entry; prove the owning root and every transitive child session are finished; and confirm
-the live board/session overlay has no owner or lock for the target. A repo-state operation in the
+the live board/session overlay has no owner or lock for the target. Complete the Codex path/branch/
+file/commit search and pass `--codex-owner-audit-complete` to both disposer runs; the flag asserts
+that manual evidence and does not replace it. A repo-state operation in the
 target, an unreadable signal, an unknown descendant, or a live overlay means leave it. Classify
 unrelated operations on their own worktrees and never touch them. `dispose --dry-run` must name the
 same target and allow removal before the non-dry-run command. The active harvester may itself make
