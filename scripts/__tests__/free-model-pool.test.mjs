@@ -1201,7 +1201,7 @@ process.stdout.write('x'.repeat(2 * 1024 * 1024));`
     [
       'content-policy rejection',
       { type: 'error', error: { type: 'content_filter', message: 'Blocked by policy' } },
-      { contentPolicyRejected: true },
+      { contentPolicyRejected: true, safetyStop: true },
     ],
   ])('preserves buffered OpenCode %s when Windows tree termination times out', async (_label, event, expected) => {
     let child;
@@ -1543,7 +1543,13 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
 
     try {
       await expect(
-        completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', runKilo, quarantineFile })
+        completeWithFreeModel('prompt', {
+          fetchImpl,
+          openRouterKey: 'rk',
+          kiloCommand: '/fake-kilo',
+          runKilo,
+          quarantineFile,
+        })
       ).rejects.toThrow(/Kilo process-tree termination failed/);
       expect(runKilo).toHaveBeenCalledOnce();
       expect(chat).not.toHaveBeenCalled();
