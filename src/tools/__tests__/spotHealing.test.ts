@@ -288,7 +288,7 @@ describe('spot healing processor', () => {
         ],
       });
 
-      // Earlier dabs heal source row 1 to 0; the final center still samples its original value, 20.
+      // Earlier dabs change output row 1 to 0; the source snapshot still supplies its original value, 20.
       expect(at(canvas, 4, 4)).toEqual({ r: 20, g: 100, b: 100, a: 255 });
     });
   });
