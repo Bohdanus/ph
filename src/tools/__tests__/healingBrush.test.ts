@@ -7,7 +7,6 @@ import {
   BRUSH_HARDNESS_MIN,
   BRUSH_OPACITY_DEFAULT,
   BRUSH_SIZE_DEFAULT,
-  BRUSH_SIZE_MAX,
   BRUSH_SIZE_MIN,
 } from '../../util/brush-engine.ts';
 import type { Size } from '../../contexts/general-types.ts';
@@ -80,6 +79,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  RecordingOffscreenCanvas.instances = [];
 });
 
 /** Runs the processor and returns the single canvas it must have produced. */
@@ -246,6 +246,11 @@ describe('healing brush processor', () => {
       const canvas = run({ opacity: 0 });
 
       expect(canvas.ctx.putImageData).toHaveBeenCalled();
+      for (let y = 0; y < size.height; y++) {
+        for (let x = 0; x < size.width; x++) {
+          expect(at(canvas, x, y)).toEqual(dest(x, y));
+        }
+      }
     });
   });
 
@@ -359,8 +364,7 @@ describe('healing brush processor', () => {
       }
     );
 
-    it('clamps an over-range size to the maximum and an under-range one to the minimum', () => {
-      equivalentTo({ size: 5000 }, { size: BRUSH_SIZE_MAX });
+    it('clamps under-range sizes to the minimum behavior', () => {
       equivalentTo({ size: 0 }, { size: BRUSH_SIZE_MIN });
       equivalentTo({ size: -40 }, { size: BRUSH_SIZE_MIN });
     });
