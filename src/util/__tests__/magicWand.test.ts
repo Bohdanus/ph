@@ -126,8 +126,8 @@ describe('getMagicWandColorDistance', () => {
   });
 
   it('reaches exactly the maximum channel distance for opaque black versus opaque white', () => {
-    // `MAX_COLOR_DISTANCE` in `src/util/magicWand.ts:4` is `sqrt(255 * 255 * 4)`, so a
-    // tolerance of 100 is by construction the largest distance that can ever match.
+    // Four channels can each differ by at most 255, so the maximum Euclidean distance is 510.
+    // A tolerance of 100 is therefore the largest distance that can ever match.
     expect(getMagicWandColorDistance({ r: 0, g: 0, b: 0, a: 0 }, { r: 255, g: 255, b: 255, a: 255 })).toBe(510);
   });
 

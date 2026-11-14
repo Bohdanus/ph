@@ -288,8 +288,9 @@ For each selected issue:
    `npm run lint:check` to confirm the merge did not regress the build.
 10. **Cleanup**: only after `repo:state`, status inspection, relevant handoff review, fresh
     inventory, `branches:orphan`, descendant/session liveness and live-overlay review, and
-    `npm run swarm -- doctor --dry-run`, run `npm run dispose -- <name> --dry-run`. Inspect its
-    result, then use `npm run dispose -- <name>` only if ownership is proven and no live writer or
+    `npm run swarm -- doctor --dry-run`, run `npm run dispose -- <name> --codex-owner-audit-complete --dry-run`. Inspect its
+    result, then repeat the four-hour Codex live-overlay audit immediately before using
+    `npm run dispose -- <name> --codex-owner-audit-complete` only if ownership is proven and no live writer or
     veto remains. If the current session is still a live writer, defer disposal; do not suppress
     or bypass the guard. Regenerate inventory after any worktree removal.
 

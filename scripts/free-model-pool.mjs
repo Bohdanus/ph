@@ -1607,8 +1607,13 @@ export async function completeWithFreeModel(prompt, options = {}) {
           maxTokens: routeMaxTokens,
           timeoutMs: routeTimeoutMs,
         });
-        if (result?.safetyStop || hasReportedNonZeroCost(result?.usage)) {
+        if (result?.reportedCost === true || hasReportedNonZeroCost(result?.usage)) {
           await stopForReportedCost(candidate);
+        }
+        if (result?.safetyStop) {
+          const error = new Error(result.error ?? 'Kilo completion safety stop');
+          error.safetyStop = true;
+          throw error;
         }
         if (isContentPolicyError(result)) stopForContentPolicy(candidate);
         if (result?.status === 401 || result?.status === 402) {

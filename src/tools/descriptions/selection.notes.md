@@ -540,8 +540,9 @@ edge detector, which is true. It is `partial` because the app renders a hard 1�
 "a pixel value" with no maximum — so the ceiling is the app's own, and an app-invented bound is a
 range divergence, which
 is precisely what the `'partial'` member of `ToolControlStatus` in
-`src/tools/descriptions/types.ts` names. Contrast has the same shape of defect for a smaller
-reason: it allows 0% where Adobe's documented range starts at 1%.
+`src/tools/descriptions/types.ts` names. Contrast now enforces Adobe's documented 1–100% range
+in the options-bar control and in the tool area's path options; comma and period adjustment keys
+remain unimplemented because they are documented only by Adobe evangelists, not Adobe Help.
 
 **`Feather` and `Anti-alias` are the same divergence, and are both `partial` for it.**
 `args.featherRadius` and `args.antiAlias` are both written into the selection's metadata at commit

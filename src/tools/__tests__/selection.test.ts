@@ -121,6 +121,18 @@ describe('selection processor', () => {
     vi.stubGlobal('OffscreenCanvas', PixelOffscreenCanvas as unknown as typeof OffscreenCanvas);
   });
 
+  it('returns a 1x1 canvas when the polygon has no points', () => {
+    const [result] = selection({ size, bitmap })({
+      points: [],
+      mode: 'fill',
+      toolName: 'selection',
+    } satisfies SelectionToolArgs);
+
+    const canvas = result as unknown as PixelOffscreenCanvas;
+    expect(canvas.width).toBe(1);
+    expect(canvas.height).toBe(1);
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });

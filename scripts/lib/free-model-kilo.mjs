@@ -319,8 +319,8 @@ export async function runKiloCompletion({
     if (profile.reasoningEffort) args.push('--variant', profile.reasoningEffort);
     const commandShim = resolveCommandShim(command, args);
 
-    const { events, stderrText, code, signal, timedOut, outputOverflow, malformed, inputError } = await new Promise(
-      (resolve, reject) => {
+    const { events, stderrText, code, signal, timedOut, outputOverflow, malformed, inputError, terminationError } =
+      await new Promise((resolve, reject) => {
         let child;
         try {
           child = spawnImpl(commandShim.command, commandShim.args, {
@@ -328,6 +328,7 @@ export async function runKiloCompletion({
             env: kiloRuntimeEnvironment(env),
             stdio: ['pipe', 'pipe', 'pipe'],
             shell: false,
+            detached: platform !== 'win32',
             ...commandShim.spawnOptions,
           });
         } catch {
@@ -346,6 +347,8 @@ export async function runKiloCompletion({
         let stopping = false;
         let killPromise = null;
         let timer;
+        let childClosed = false;
+        let terminationError = null;
         const cleanup = () => {
           clearTimeout(timer);
           clearTimeout(killTimer);
@@ -371,6 +374,7 @@ export async function runKiloCompletion({
             timedOut,
             outputOverflow,
             inputError,
+            terminationError,
             malformed,
           });
         };
@@ -379,6 +383,13 @@ export async function runKiloCompletion({
           stopping = true;
           clearTimeout(timer);
           if (platform === 'win32') {
+            // Avoid sending a tree-kill command to a PID after its process has exited and may be reused.
+            if (childClosed || child.exitCode != null || child.signalCode != null) {
+              terminationError = new Error(
+                'Windows process-tree termination could not be verified after the child exited'
+              );
+              return;
+            }
             if (!Number.isSafeInteger(child.pid) || child.pid < 1) {
               settled = true;
               cleanup();
@@ -389,28 +400,50 @@ export async function runKiloCompletion({
               () => finishChild(null, 'SIGKILL'),
               (error) => {
                 if (settled) return;
-                settled = true;
-                cleanup();
-                try {
-                  child.kill('SIGKILL');
-                } catch {}
-                reject(
-                  Object.assign(new Error('Kilo process-tree termination failed', { cause: error }), {
-                    code: 'KILO_PROCESS_TREE',
-                  })
-                );
+                terminationError = error;
+                if (!childClosed && child.exitCode == null && child.signalCode == null) {
+                  try {
+                    child.kill('SIGKILL');
+                  } catch {}
+                  killTimer = setTimeout(() => {
+                    if (settled) return;
+                    const bufferedEvents = parseEvents(Buffer.concat(chunks).toString('utf8')).events;
+                    const stderrText = stderrTail.toString('utf8');
+                    const costs = [...bufferedEvents, ...parseEvents(stderrText).events].flatMap((event) =>
+                      [event?.part?.cost, event?.cost, event?.error?.cost].filter((cost) => cost !== undefined)
+                    );
+                    const reportedCost = costs.some((cost) => !isExactZeroCost(cost));
+                    const reportedContentPolicy = contentPolicyRejected(bufferedEvents, stderrText);
+                    settled = true;
+                    cleanup();
+                    reject(
+                      Object.assign(new Error('Kilo process-tree termination failed', { cause: error }), {
+                        code: 'KILO_PROCESS_TREE',
+                        reportedCost,
+                        contentPolicyRejected: reportedContentPolicy,
+                      })
+                    );
+                  }, 2_000);
+                }
               }
             );
             return;
           }
           try {
-            child.kill('SIGTERM');
-          } catch {}
-          killTimer = setTimeout(() => {
-            try {
-              child.kill('SIGKILL');
-            } catch {}
-          }, 2_000);
+            process.kill(-child.pid, 'SIGTERM');
+          } catch (error) {
+            if (error?.code !== 'ESRCH') terminationError = error;
+          }
+          killPromise = new Promise((resolveKill) => {
+            killTimer = setTimeout(() => {
+              try {
+                process.kill(-child.pid, 'SIGKILL');
+              } catch (error) {
+                if (error?.code !== 'ESRCH') terminationError = error;
+              }
+              resolveKill();
+            }, 2_000);
+          });
         };
         timer = setTimeout(() => {
           timedOut = true;
@@ -442,6 +475,7 @@ export async function runKiloCompletion({
           reject(Object.assign(new Error('Kilo CLI could not be started'), { code: 'KILO_SPAWN' }));
         });
         child.once('close', (code, signal) => {
+          childClosed = true;
           if (killPromise) {
             void killPromise.then(() => finishChild(code, signal));
             return;
@@ -449,27 +483,34 @@ export async function runKiloCompletion({
           finishChild(code, signal);
         });
         child.stdin.end(message);
-      }
-    );
+      });
 
     const stderrEvents = parseEvents(stderrText).events;
     const costs = [...events, ...stderrEvents].flatMap((event) =>
       [event?.part?.cost, event?.cost, event?.error?.cost].filter((cost) => cost !== undefined)
     );
     if (costs.some((cost) => !isExactZeroCost(cost))) {
-      return { error: 'Kilo reported non-zero or invalid completion cost', exhaustSource: true, safetyStop: true };
+      return {
+        error: 'Kilo reported non-zero or invalid completion cost',
+        exhaustSource: true,
+        safetyStop: true,
+        reportedCost: true,
+      };
     }
     if (contentPolicyRejected(events, stderrText)) {
       return { error: 'Kilo provider content policy rejected or filtered this request', contentPolicyRejected: true };
     }
+    if (terminationError) {
+      return { error: 'Kilo process-tree termination failed', exhaustSource: true, safetyStop: true };
+    }
     if (timedOut) return { error: `Kilo completion exceeded ${effectiveTimeoutMs} ms` };
     if (outputOverflow) return { error: `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes` };
-    if (inputError) return { error: 'Kilo CLI did not accept the complete prompt' };
     if (malformed) return { error: 'Kilo CLI returned malformed JSONL output', exhaustSource: true };
     if (hasToolActivity(events))
       return { error: 'Kilo attempted a tool call; the completion was rejected', exhaustSource: true };
     if (events.some((event) => event?.type === 'error')) return sanitizedProcessError(events, stderrText, code, signal);
     if (code !== 0) return sanitizedProcessError(events, stderrText, code, signal);
+    if (inputError) return { error: 'Kilo CLI did not accept the complete prompt' };
 
     const terminal = events.filter((event) => event?.type === 'step_finish').at(-1);
     const content = events
@@ -500,7 +541,13 @@ export async function runKiloCompletion({
     };
   } catch (error) {
     if (error?.code === 'KILO_PROCESS_TREE') {
-      return { error: 'Kilo process-tree termination failed', exhaustSource: true };
+      return {
+        error: 'Kilo process-tree termination failed',
+        exhaustSource: true,
+        ...(error.reportedCost ? { reportedCost: true, safetyStop: true } : {}),
+        ...(error.contentPolicyRejected ? { contentPolicyRejected: true } : {}),
+        ...(!error.reportedCost && !error.contentPolicyRejected ? { safetyStop: true } : {}),
+      };
     }
     return {
       error: error?.code === 'KILO_SPAWN' ? 'Kilo CLI could not be started' : 'Kilo completion failed locally',

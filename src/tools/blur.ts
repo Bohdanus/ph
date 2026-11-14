@@ -6,6 +6,8 @@ export type BlurToolArgs = { radius: number; toolName: 'blur' };
 export const blur =
   ({ bitmap, size }: ProcessorToolParams) =>
   ({ radius }: BlurToolArgs) => {
+    if (!bitmap) throw new Error('Blur tool requires a source bitmap');
+
     requireCanvasFilter('blur');
 
     const canvas = new OffscreenCanvas(size.width, size.height);

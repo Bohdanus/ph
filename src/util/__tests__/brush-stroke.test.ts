@@ -577,15 +577,20 @@ describe('NaN/Infinity sanitisation', () => {
     }
   });
 
-  it('clamps a sampler that steps outside [0,1] into range without leaking non-finite values', () => {
+  it('clamps finite sampler values and rejects non-finite coverage', () => {
     for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1.5, -0.5]) {
       const buffer = createStrokeBuffer(RECT, WHITE);
       buffer.stampDab(3, 3, () => value, 0.5);
       expect(Array.from(buffer.data).every(Number.isFinite)).toBe(true);
       const result = buffer.flush(null, 1);
-      if (result) {
-        expect(Array.from(result.data).every(Number.isFinite)).toBe(true);
-        expect(Array.from(result.alpha).every(Number.isFinite)).toBe(true);
+      if (!Number.isFinite(value) || value <= 0) {
+        expect(buffer.dirtyRect()).toBeNull();
+        expect(result).toBeNull();
+      } else {
+        expect(buffer.dirtyRect()).not.toBeNull();
+        expect(result).not.toBeNull();
+        expect(Array.from(result!.data).every(Number.isFinite)).toBe(true);
+        expect(Array.from(result!.alpha).every(Number.isFinite)).toBe(true);
       }
     }
   });

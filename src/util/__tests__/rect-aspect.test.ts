@@ -15,6 +15,17 @@ describe('refitRectWidthToAspect', () => {
     expect(result).toEqual({ x1: 10, x2: 50 });
   });
 
+  it('treats a negative aspect ratio as no constraint', () => {
+    const rect: RectXY = { x1: 10, y1: 10, x2: 50, y2: 30 };
+    const result = refitRectWidthToAspect(rect, -1);
+    expect(result).toEqual({ x1: 10, x2: 50 });
+  });
+
+  it.each([Number.NaN, Infinity, -Infinity])('treats non-finite aspect ratio %s as no constraint', (aspectRatio) => {
+    const rect: RectXY = { x1: 10, y1: 10, x2: 50, y2: 30 };
+    expect(refitRectWidthToAspect(rect, aspectRatio)).toEqual({ x1: 10, x2: 50 });
+  });
+
   it('adjusts width to match aspect ratio when x1 < x2', () => {
     const rect: RectXY = { x1: 10, y1: 10, x2: 50, y2: 30 };
     // height = 20, aspectRatio = 2 => wantedWidth = 40, currentWidth = 40, diff = 0

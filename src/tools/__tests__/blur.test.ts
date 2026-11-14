@@ -5,7 +5,7 @@ import { sharpen } from '../sharpen.ts';
 import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
-import type { Size } from '../../contexts/general-types.ts';
+import type { BitmapSource, Size } from '../../contexts/general-types.ts';
 
 type PixelContext = ReturnType<typeof createPixelCanvasContext> & {
   getImageData: ReturnType<typeof vi.fn>;
@@ -119,6 +119,15 @@ describe('blur processor', () => {
     expect(canvas.height).toBe(size.height);
   });
 
+  it('throws when the source bitmap is missing', () => {
+    expect(() =>
+      blur({ size, bitmap: undefined as unknown as BitmapSource })({
+        radius: 5,
+        toolName: 'blur',
+      })
+    ).toThrow('Blur tool requires a source bitmap');
+  });
+
   it('sets the CSS filter before drawing with the requested radius', () => {
     const canvas = run({ radius: 7 });
 
@@ -146,5 +155,13 @@ describe('blur processor', () => {
 
       expect(canvas.ctx.filter).toBe('blur(1000px)');
     });
+  });
+});
+
+describe('BlurToolArgs type', () => {
+  it('requires radius and toolName', () => {
+    const args: BlurToolArgs = { radius: 5, toolName: 'blur' };
+    expect(args.radius).toBe(5);
+    expect(args.toolName).toBe('blur');
   });
 });

@@ -1193,6 +1193,54 @@ process.stdout.write('x'.repeat(2 * 1024 * 1024));`
   });
 
   it.each([
+    [
+      'reported cost',
+      { type: 'step_finish', part: { reason: 'stop', cost: 0.01 } },
+      { reportedCost: true, safetyStop: true },
+    ],
+    [
+      'content-policy rejection',
+      { type: 'error', error: { type: 'content_filter', message: 'Blocked by policy' } },
+      { contentPolicyRejected: true, safetyStop: true },
+    ],
+  ])('preserves buffered OpenCode %s when Windows tree termination times out', async (_label, event, expected) => {
+    let child;
+    const spawnImpl = () => {
+      child = new EventEmitter();
+      child.pid = 4242;
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from(JSON.stringify(event) + '\n'));
+        child.stdout.emit('data', Buffer.alloc(2 * 1024 * 1024));
+      });
+      return child;
+    };
+    const terminateWindowsProcessTreeImpl = vi.fn(() => Promise.reject(new Error('taskkill failed')));
+
+    const error = await runOpenCodeCompletion({
+      command: '/unused/opencode',
+      model: 'beam-free',
+      prompt: 'prompt',
+      maxTokens: 8,
+      timeoutMs: 10_000,
+      platform: 'win32',
+      spawnImpl,
+      terminateWindowsProcessTreeImpl,
+    }).then(
+      () => null,
+      (failure) => failure
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject(expected);
+    if (!expected.safetyStop) expect(error.safetyStop).toBeUndefined();
+    expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(4242);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it.each([
     ['number zero', 0, false, true],
     ['string zero', '0', false, true],
     ['boolean false', false, false, false],
@@ -1476,6 +1524,41 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     expect(result.requestCounts).toMatchObject({ kilo: 1, openrouter: 1 });
     expect(chat).toHaveBeenCalledTimes(1);
     expect(JSON.parse(chat.mock.calls[0][1].body).model).toBe('o1:free');
+  });
+
+  it('does not quarantine Kilo for a process-tree cleanup failure without cost evidence', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-kilo-cleanup-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const chat = vi.fn();
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')],
+      openrouter: [openRouterRow('o1')],
+      chat,
+    });
+    const runKilo = vi.fn().mockResolvedValue({
+      error: 'Kilo process-tree termination failed',
+      exhaustSource: true,
+      safetyStop: true,
+    });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', {
+          fetchImpl,
+          openRouterKey: 'rk',
+          kiloCommand: '/fake-kilo',
+          runKilo,
+          quarantineFile,
+        })
+      ).rejects.toThrow(/Kilo process-tree termination failed/);
+      expect(runKilo).toHaveBeenCalledOnce();
+      expect(chat).not.toHaveBeenCalled();
+      expect((await readQuarantineState(quarantineFile)).entries['kilo:nvidia/nemotron-3-ultra-550b-a55b:free']).toBe(
+        undefined
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('stops with a clear error when every free source is exhausted', async () => {

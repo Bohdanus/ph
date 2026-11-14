@@ -56,8 +56,8 @@ const triangle = (offset = 0): Point[] => [
  * `copyFeatheredPolygonSelectionToCanvas` builds two canvases (the destination, then
  * the mask), so seeding `['all-opaque', 'throw']` leaves the destination read-back
  * working while the mask read-back fails. That is the only ordering that survives the
- * unguarded `ctx.getImageData` at `src/util/selection.ts:549` and still reaches the
- * CPU rasterization fallback at `src/util/selection.ts:405`.
+ * `getImageData` call in `rasterizePolygonMask` throwing after destination read-back succeeds,
+ * allowing the CPU rasterization fallback to run.
  */
 type MaskReadBack = 'all-opaque' | 'left-half-opaque' | 'partial-alpha' | 'throw';
 
@@ -534,7 +534,7 @@ type OverlayState = {
  * Installs a REAL state stack on a `makeMockCtx()` context.
  *
  * `makeMockCtx`'s `save` and `restore` are bare `vi.fn()` spies that neither push nor pop
- * anything (`src/__tests__/canvas-mock.ts:22-23`), so a context built from it cannot state
+ * context state, so a context built from it cannot state
  * what `CanvasRenderingContext2D` states: that the `restore()` closing `drawSelectionAnchors`
  * gives the caller back the `globalAlpha` it had. Every method stays a `vi.fn()`, so call counts
  * and `invocationCallOrder` still read off it. The stack covers all five members the anchors
@@ -667,9 +667,8 @@ describe('drawSelectionAnchors', () => {
   });
 
   it('resets globalAlpha to 1 before it strokes, inside a bracket that hands the caller its own back', () => {
-    // The reset is `resetOverlayAlpha` inside `drawSelectionAnchors` — `ctx.globalAlpha = 1` and
-    // nothing else (`src/util/canvas.ts:8-10`). The PRECONDITION is the load-bearing half of this
-    // test: `makeMockCtx` initialises `globalAlpha` to 1 (`src/__tests__/canvas-mock.ts:52`), so
+    // `drawSelectionAnchors` calls `resetOverlayAlpha`, which only sets `globalAlpha` to 1. The
+    // PRECONDITION is the load-bearing half of this test: `makeMockCtx` starts `globalAlpha` at 1, so
     // asserting 1 on a fresh context would pass whether or not the reset existed.
     const ctx = withStateStack(makeMockCtx());
     ctx.globalAlpha = 0.25;
@@ -784,8 +783,8 @@ describe('isPointInPolygon', () => {
   });
 
   it('applies the same half-open rule on the vertical axis: top edge inside, bottom edge outside', () => {
-    // `pi.y > point.y !== pj.y > point.y` (`src/util/selection.ts:256`) is the vertical straddle
-    // term, a separate branch of the same predicate from the horizontal comparison above. The
+    // The vertical straddle term in `isPointInPolygon` is a separate branch of the same predicate
+    // from the horizontal comparison above. The
     // horizontal half-open rule was pinned without it, so nothing asserted this half at all.
     expect(isPointInPolygon({ x: 5, y: 0 }, square)).toBe(true);
     expect(isPointInPolygon({ x: 5, y: 10 }, square)).toBe(false);
@@ -1010,10 +1009,8 @@ describe('moveSelectionAnchor', () => {
     expect(original).toEqual(before);
   });
   it('mirrors a rectangle anchor dragged past the opposite corner instead of rejecting the drag', () => {
-    // The polygon arm bails out of a degenerate drag at `src/util/selection.ts:306`
-    // (`if (!normalized) return selection;`); the rectangle arm at `:286-303` has no counterpart,
-    // so the drag is accepted and the box is re-derived from min/max by `pointsBoundingPos`
-    // (`src/util/draw.ts`, called with `lineWidth: 0`).
+    // `moveSelectionAnchor` rejects degenerate polygon contours after normalization, but its
+    // rectangle branch re-derives bounds with `pointsBoundingPos`, so the crossed anchor is accepted.
     //
     // The consequence is that the anchor is NOT where it was dropped. The box grows to contain
     // the drop point, but index 0 is rebuilt as its top-left, so the corner the user is holding
@@ -1058,7 +1055,7 @@ describe('moveSelectionAnchor', () => {
     // The starting selection is already collapsed, and that is the only reachable way in: three
     // corners of a non-degenerate rectangle are never collinear and never share a coordinate, so
     // moving the fourth can neither flatten the box nor collapse it. `normalizeRectangleSelectionRect`
-    // refuses to build a collapsed rectangle in the first place (`src/util/selection.ts:57`), which
+    // refuses to build a collapsed rectangle in the first place, which
     // is what makes this state a pin on `moveSelectionAnchor` rather than on construction.
     const collapsed = selection({
       geometry: 'rectangle',
