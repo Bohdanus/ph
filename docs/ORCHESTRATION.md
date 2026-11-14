@@ -1420,13 +1420,22 @@ heartbeat` still exists and is still correct — it is the only thing that can
   claimed or not claimable · 4 file held by another agent · 5 self-verification
   refused.
 
-It is a command, not a gate, and no commit may be blocked on it. Exactly one thing
-calls it: `.husky/post-merge` runs `scripts/merge-release.mjs`, which releases the
-claims and locks of eligible worktrees the merge put on `main`, while reporting
-merged worktrees blocked by dirty state or other release conditions — non-blocking,
-because the merge is already recorded by the time a post-merge hook runs. Nothing else in
-`.husky/` reads the board, and nothing runs it on worktree creation or on a chat
-stopping.
+It is a command, not a gate, and no commit may be blocked on it. Two automatic paths run
+`scripts/merge-release.mjs`: `.husky/post-merge` after a completed Git merge, and
+`scripts/main-landing.mjs` after a pinned landing commit. The pinned landing prepares its
+merge with `--no-commit`, so Git does not invoke `post-merge` for that flow. The script acts
+only when the current checkout is on the base branch. It compares `ORIG_HEAD` with the
+previous entry in that branch's reflog; if they disagree or either is unavailable, it
+reports the transition as unproven and releases nothing. Otherwise it considers only clean
+branches newly reachable from the captured base-tip snapshot. It refuses duplicate branch
+checkouts because the board keys by branch, and a concurrent later landing cannot widen the
+captured snapshot. Board heartbeat age is not evidence that an editor stopped: a chat can
+remain open without running a swarm command. The script releases only the merged branch's
+own claims and locks, and the board refuses rows owned by another identity. A task checkout
+that fast-forwarded from `main`, or a later merge that sees an older landed branch, therefore
+cannot sweep unrelated claims. Both automatic callers are non-blocking after the merge is
+recorded. Nothing else in `.husky/` reads the board, and nothing runs this hook on worktree
+creation or on a chat stopping.
 
 ### Resource locking and releasing
 
