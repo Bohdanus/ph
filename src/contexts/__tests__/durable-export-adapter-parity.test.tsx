@@ -332,7 +332,8 @@ describe('FileProvider durable export adapter parity', () => {
     ['raster', 'image/png'],
     ['PSD', 'psd'],
   ] as const)('keeps legacy export when replay contains an extra layer (%s)', async (_, format) => {
-    const { legacyLayers, replay, store } = durableFixture();
+    const { composite, legacyLayers, replay, store } = durableFixture();
+    expect(legacyLayers).not.toHaveProperty('durable-extra');
     const existing = replay.layers['durable-layer']!;
     const replayWithExtraLayer: DurableReplayResult = {
       ...replay,
@@ -350,6 +351,7 @@ describe('FileProvider durable export adapter parity', () => {
       },
     };
     vi.mocked(replayDurableAtCursor).mockReturnValue(replayWithExtraLayer);
+    vi.mocked(composeDurableDocument).mockResolvedValue(composite);
     vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
     vi.mocked(savePsd).mockResolvedValue(new ArrayBuffer(8));
     renderWithStore(store);
@@ -359,11 +361,16 @@ describe('FileProvider durable export adapter parity', () => {
     if (format === 'psd') {
       await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
       expect(savePsd).toHaveBeenCalledWith(legacyLayers, size, frame);
+      expect(renderExportCanvas).not.toHaveBeenCalled();
+      expect(saveImageToDisk).not.toHaveBeenCalled();
     } else {
       await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
       expect(renderExportCanvas).toHaveBeenCalledWith(legacyLayers, size, frame);
+      await waitFor(() => expect(saveImageToDisk).toHaveBeenCalledTimes(1));
+      expect(savePsd).not.toHaveBeenCalled();
     }
     expect(composeDurableDocument).not.toHaveBeenCalled();
+    expect(composite.release).not.toHaveBeenCalled();
   });
 
   it.each([
