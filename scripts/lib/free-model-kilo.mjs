@@ -384,7 +384,12 @@ export async function runKiloCompletion({
           clearTimeout(timer);
           if (platform === 'win32') {
             // Avoid sending a tree-kill command to a PID after its process has exited and may be reused.
-            if (childClosed || child.exitCode != null || child.signalCode != null) return;
+            if (childClosed || child.exitCode != null || child.signalCode != null) {
+              terminationError = new Error(
+                'Windows process-tree termination could not be verified after the child exited'
+              );
+              return;
+            }
             if (!Number.isSafeInteger(child.pid) || child.pid < 1) {
               settled = true;
               cleanup();
@@ -395,18 +400,31 @@ export async function runKiloCompletion({
               () => finishChild(null, 'SIGKILL'),
               (error) => {
                 if (settled) return;
-                settled = true;
-                cleanup();
+                terminationError = error;
                 if (!childClosed && child.exitCode == null && child.signalCode == null) {
                   try {
                     child.kill('SIGKILL');
                   } catch {}
+                  killTimer = setTimeout(() => {
+                    if (settled) return;
+                    const bufferedEvents = parseEvents(Buffer.concat(chunks).toString('utf8')).events;
+                    const stderrText = stderrTail.toString('utf8');
+                    const costs = [...bufferedEvents, ...parseEvents(stderrText).events].flatMap((event) =>
+                      [event?.part?.cost, event?.cost, event?.error?.cost].filter((cost) => cost !== undefined)
+                    );
+                    const reportedCost = costs.some((cost) => !isExactZeroCost(cost));
+                    const reportedContentPolicy = contentPolicyRejected(bufferedEvents, stderrText);
+                    settled = true;
+                    cleanup();
+                    reject(
+                      Object.assign(new Error('Kilo process-tree termination failed', { cause: error }), {
+                        code: 'KILO_PROCESS_TREE',
+                        reportedCost,
+                        contentPolicyRejected: reportedContentPolicy,
+                      })
+                    );
+                  }, 2_000);
                 }
-                reject(
-                  Object.assign(new Error('Kilo process-tree termination failed', { cause: error }), {
-                    code: 'KILO_PROCESS_TREE',
-                  })
-                );
               }
             );
             return;
@@ -472,12 +490,19 @@ export async function runKiloCompletion({
       [event?.part?.cost, event?.cost, event?.error?.cost].filter((cost) => cost !== undefined)
     );
     if (costs.some((cost) => !isExactZeroCost(cost))) {
-      return { error: 'Kilo reported non-zero or invalid completion cost', exhaustSource: true, safetyStop: true };
+      return {
+        error: 'Kilo reported non-zero or invalid completion cost',
+        exhaustSource: true,
+        safetyStop: true,
+        reportedCost: true,
+      };
     }
     if (contentPolicyRejected(events, stderrText)) {
       return { error: 'Kilo provider content policy rejected or filtered this request', contentPolicyRejected: true };
     }
-    if (terminationError) return { error: 'Kilo CLI process termination failed', exhaustSource: true };
+    if (terminationError) {
+      return { error: 'Kilo process-tree termination failed', exhaustSource: true, safetyStop: true };
+    }
     if (timedOut) return { error: `Kilo completion exceeded ${effectiveTimeoutMs} ms` };
     if (outputOverflow) return { error: `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes` };
     if (malformed) return { error: 'Kilo CLI returned malformed JSONL output', exhaustSource: true };
@@ -516,7 +541,13 @@ export async function runKiloCompletion({
     };
   } catch (error) {
     if (error?.code === 'KILO_PROCESS_TREE') {
-      return { error: 'Kilo process-tree termination failed', exhaustSource: true };
+      return {
+        error: 'Kilo process-tree termination failed',
+        exhaustSource: true,
+        ...(error.reportedCost ? { reportedCost: true, safetyStop: true } : {}),
+        ...(error.contentPolicyRejected ? { contentPolicyRejected: true } : {}),
+        ...(!error.reportedCost && !error.contentPolicyRejected ? { safetyStop: true } : {}),
+      };
     }
     return {
       error: error?.code === 'KILO_SPAWN' ? 'Kilo CLI could not be started' : 'Kilo completion failed locally',

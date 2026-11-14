@@ -353,6 +353,7 @@ describe('the guard tells a main worktree from a linked one on a real repository
     }
   });
 
+  // This exercises 60 real ownership polls; on Windows the full-suite run can exceed the file budget.
   it('retries replacement creation after a fresh 30-minute orphan AUTO_MERGE observation', async () => {
     const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-landing-watch-retry-')));
     try {
@@ -491,7 +492,7 @@ describe('the guard tells a main worktree from a linked one on a real repository
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
-  });
+  }, 240_000);
 
   it('keeps the designated checkout protected if its branch changes from main', () => {
     const original = resolveWorktree(mainLinked);

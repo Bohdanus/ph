@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1130,6 +1131,54 @@ process.stdout.write('x'.repeat(2 * 1024 * 1024));`
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    [
+      'reported cost',
+      { type: 'step_finish', part: { reason: 'stop', cost: 0.01 } },
+      { reportedCost: true, safetyStop: true },
+    ],
+    [
+      'content-policy rejection',
+      { type: 'error', error: { type: 'content_filter', message: 'Blocked by policy' } },
+      { contentPolicyRejected: true },
+    ],
+  ])('preserves buffered OpenCode %s when Windows tree termination times out', async (_label, event, expected) => {
+    let child;
+    const spawnImpl = () => {
+      child = new EventEmitter();
+      child.pid = 4242;
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from(JSON.stringify(event) + '\n'));
+        child.stdout.emit('data', Buffer.alloc(2 * 1024 * 1024));
+      });
+      return child;
+    };
+    const terminateWindowsProcessTreeImpl = vi.fn(() => Promise.reject(new Error('taskkill failed')));
+
+    const error = await runOpenCodeCompletion({
+      command: '/unused/opencode',
+      model: 'beam-free',
+      prompt: 'prompt',
+      maxTokens: 8,
+      timeoutMs: 10_000,
+      platform: 'win32',
+      spawnImpl,
+      terminateWindowsProcessTreeImpl,
+    }).then(
+      () => null,
+      (failure) => failure
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject(expected);
+    if (!expected.safetyStop) expect(error.safetyStop).toBeUndefined();
+    expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(4242);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
   });
 
   it.each([
