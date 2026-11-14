@@ -159,9 +159,9 @@ const ROTATION_CURSOR_FALLBACKS = [
   'ns-resize',
   'nesw-resize',
 ] as const;
-// The 128px artwork spans about 110px; this keeps its visible width near the 22px cursor it replaces.
-// Transform order: center the 128px source, scale it to about 22px, rotate it, then place it at the 64px cursor center; the CSS hotspot is 32,32.
-const ROTATION_CURSOR_ICON_SCALE = 0.2;
+// The 128px artwork spans about 110px; this renders it at about 5.5px, one quarter of its previous width.
+// Transform order: center the 128px source, scale it to about 5.5px, rotate it, then place it at the 64px cursor center; the CSS hotspot is 32,32.
+const ROTATION_CURSOR_ICON_SCALE = 0.05;
 
 const ROTATION_CURSORS = ROTATION_CURSOR_FALLBACKS.map((fallback, index) => {
   const angle = index * 45;

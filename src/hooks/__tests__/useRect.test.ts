@@ -596,7 +596,7 @@ describe('useRect', () => {
         const svg = decodeURIComponent(encodedSvg!);
         expect(svg).toMatch(/^<svg\b[\s\S]*<\/svg>$/);
         expect(svg).toContain('width="64" height="64" viewBox="0 0 64 64"');
-        expect(svg).toContain(`rotate(${cursorAngle}) scale(0.2) translate(-64 -64)`);
+        expect(svg).toContain(`rotate(${cursorAngle}) scale(0.05) translate(-64 -64)`);
         expect(svg).toContain('stroke="#fff" stroke-width="23"');
         expect(svg).toContain('stroke="#000" stroke-width="13"');
         expect(svg).toContain('fill="#000" stroke="none"');
@@ -620,7 +620,7 @@ describe('useRect', () => {
 
         const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
-        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45) scale(0.2)');
+        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45) scale(0.05)');
       } finally {
         viewStateRef.current.rotation = originalViewRotation;
       }
