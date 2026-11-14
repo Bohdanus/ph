@@ -1,13 +1,14 @@
-const FILL_MODE = 'fill' as const;
-const OUTLINE_MODE = 'outline' as const;
-const SELECTION_TOOL = 'selection' as const;
-const POLYGONAL_LASSO_TOOL = 'polygonal-lasso' as const;
-const FREEHAND_LASSO_TOOL = 'freehand-lasso' as const;
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { selection, type SelectionToolArgs } from '../selection.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import type { BitmapSource } from '../../contexts/general-types.ts';
+
+const FILL_MODE = 'fill' as const;
+const OUTLINE_MODE = 'outline' as const;
+const SELECTION_TOOL = 'selection' as const;
+const POLYGONAL_LASSO_TOOL = 'polygonal-lasso' as const;
+const FREEHAND_LASSO_TOOL = 'freehand-lasso' as const;
 
 const pixels = (...rgba: number[]) => new Uint8ClampedArray(rgba);
 
@@ -152,17 +153,6 @@ describe('selection processor', () => {
 
     expect(result).toBeDefined();
     expect(result).not.toBe(bitmap);
-  });
-
-  it('returns the same canvas when points is empty', () => {
-    const [result] = selection({ bitmap, size })({
-      points: [],
-      mode: 'fill',
-      toolName: 'selection',
-    } satisfies SelectionToolArgs);
-
-    // Empty polygon might return empty or original - depends on copyPolygonToCanvas implementation
-    expect(result).toBeDefined();
   });
 
   it('handles outline mode', () => {

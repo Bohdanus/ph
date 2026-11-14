@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 
-import { type BlurToolArgs } from '../../../tools/blur.ts';
+import { BLUR_RADIUS_SLIDER_RANGE, type BlurToolArgs } from '../../../tools/blur.ts';
 import { defaultSettings } from '../../../tools/settings.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
@@ -104,8 +104,8 @@ const Blur: React.FC<{}> = () => {
         <input
           id="blur-slider"
           type="range"
-          min="0"
-          max="100"
+          min={BLUR_RADIUS_SLIDER_RANGE.min}
+          max={BLUR_RADIUS_SLIDER_RANGE.max}
           value={radius}
           onChange={handleChange}
           className="h-1.5 w-48 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"

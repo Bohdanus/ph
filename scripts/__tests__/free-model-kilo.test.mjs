@@ -750,6 +750,102 @@ setInterval(() => {}, 1000);`
     expect(child.kill).toHaveBeenCalledWith('SIGKILL');
   });
 
+  it.each([
+    [
+      'reported cost',
+      { type: 'step_finish', part: { reason: 'stop', cost: 0.01 } },
+      { reportedCost: true, safetyStop: true },
+    ],
+    [
+      'content-policy rejection',
+      { type: 'error', error: { type: 'content_filter', message: 'Blocked by policy' } },
+      { contentPolicyRejected: true },
+    ],
+  ])('preserves buffered Kilo %s when direct child termination emits error', async (_label, event, expected) => {
+    let child;
+    const spawnImpl = () => {
+      child = new EventEmitter();
+      child.pid = 4242;
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => {
+        child.stdout.emit('data', Buffer.from(JSON.stringify(event) + '\n'));
+        child.stdout.emit('data', Buffer.alloc(2 * MAX_KILO_OUTPUT_BYTES));
+      };
+      child.kill = vi.fn(() => {
+        queueMicrotask(() => child.emit('error', new Error('simulated direct child kill failure')));
+        return false;
+      });
+      return child;
+    };
+    const terminateWindowsProcessTreeImpl = vi.fn(() => Promise.reject(new Error('taskkill failed')));
+
+    const result = await runKiloCompletion({
+      command: '/unused/kilo',
+      model: 'model:free',
+      prompt: 'prompt',
+      timeoutMs: 10_000,
+      platform: 'win32',
+      terminateWindowsProcessTreeImpl,
+      spawnImpl,
+    });
+
+    expect(result).toMatchObject({ error: 'Kilo process-tree termination failed', ...expected });
+    if (!expected.safetyStop) expect(result.safetyStop).toBeUndefined();
+    expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(4242);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it.each([
+    [
+      'reported cost',
+      { type: 'step_finish', part: { reason: 'stop', cost: 0.01 } },
+      { error: 'Kilo reported non-zero or invalid completion cost', reportedCost: true, safetyStop: true },
+    ],
+    [
+      'content-policy rejection',
+      { type: 'error', error: { type: 'content_filter', message: 'Blocked by policy' } },
+      { error: 'Kilo provider content policy rejected or filtered this request', contentPolicyRejected: true },
+    ],
+  ])('preserves buffered Kilo %s when direct child error is followed by close', async (_label, event, expected) => {
+    let child;
+    const spawnImpl = () => {
+      child = new EventEmitter();
+      child.pid = 4242;
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => {
+        child.stdout.emit('data', Buffer.from(JSON.stringify(event) + '\n'));
+        child.stdout.emit('data', Buffer.alloc(2 * MAX_KILO_OUTPUT_BYTES));
+      };
+      child.kill = vi.fn(() => {
+        queueMicrotask(() => {
+          child.emit('error', new Error('simulated direct child kill failure'));
+          child.emit('close', null, 'SIGKILL');
+        });
+        return false;
+      });
+      return child;
+    };
+    const terminateWindowsProcessTreeImpl = vi.fn(() => Promise.reject(new Error('taskkill failed')));
+
+    const result = await runKiloCompletion({
+      command: '/unused/kilo',
+      model: 'model:free',
+      prompt: 'prompt',
+      timeoutMs: 10_000,
+      platform: 'win32',
+      terminateWindowsProcessTreeImpl,
+      spawnImpl,
+    });
+
+    expect(result).toMatchObject(expected);
+    expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(4242);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
   it.skipIf(process.platform !== 'win32')(
     'terminates descendants of a stalled Windows CLI shim',
     async () => {

@@ -156,6 +156,8 @@ describe('levels processor', () => {
       ['positive-infinite contrast', 30, Number.POSITIVE_INFINITY, 'brightness(120%) contrast(100%)'],
       ['negative-infinite brightness', Number.NEGATIVE_INFINITY, 40, 'brightness(100%) contrast(140%)'],
       ['both infinite values', Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 'brightness(100%) contrast(100%)'],
+      ['values below slider travel', -200, -200, 'brightness(0%) contrast(50%)'],
+      ['values above slider travel', 200, 200, 'brightness(200%) contrast(200%)'],
     ] as const)('normalizes %s to neutral before assigning the CSS filter', (_case, brightness, contrast, expected) => {
       const [result] = levels(params)({ brightness, contrast, toolName: 'levels' });
 
