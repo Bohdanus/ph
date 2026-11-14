@@ -20,6 +20,10 @@ const REVIEWED = {
       'Search fixtures use per-test temporary directories and test-owned databases, including Codex rollout symlink guards.',
     patterns: `database-open:DatabaseSync:write-capable=8 filesystem-write:mkdtempSync=18 filesystem-write:mkdirSync=5 filesystem-write:rmSync=18 filesystem-write:symlinkSync=2 filesystem-write:writeFileSync=4`,
   },
+  'codex-family.test.mjs': {
+    scope: 'Codex state databases, rollout fixtures, and cleanup are isolated to unique OS temporary directories.',
+    patterns: `filesystem-write:mkdtempSync=1 database-open:DatabaseSync:write-capable=1 filesystem-write:writeFileSync=5 filesystem-write:appendFileSync=1 filesystem-write:rmSync=1 filesystem-write:mkdirSync=1 filesystem-write:symlinkSync=1`,
+  },
   'dispose-worktree.test.mjs': {
     scope:
       'Filesystem fixtures are created under unique OS temporary directories and cleaned up; child Git is test-controlled.',

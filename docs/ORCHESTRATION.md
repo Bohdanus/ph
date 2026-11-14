@@ -615,8 +615,8 @@ repo:state` is what reports an operation in progress, and it separates the two s
   (cd "$TASK_WORKTREE" && npm run branches:orphan)
   (cd "$TASK_WORKTREE" && npm run swarm -- status)
   (cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
-  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME" --dry-run)
-  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME")
+  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME" --codex-owner-audit-complete --dry-run)
+  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME" --codex-owner-audit-complete)
   ```
   This checks a recorded committed-main snapshot; if `main` moved during the run, repeat from its
   new SHA before calling the result current. The scratch branch and worktree are named and live
@@ -1039,6 +1039,11 @@ It refuses, and says which signal refused, unless all of these hold:
   worktree and checks out the base branch in a linked worktree;
 - **no board claim, no board file lock and no live board agent** names it;
 - **no Kilo session** has it as its `directory` inside the live window;
+- the coordinator has checked the four-hour Codex live overlay immediately before each dry-run and
+  again immediately before removal, and searched root/subagent transcripts for the exact worktree
+  path, branch, changed files and commit subject, then supplied `--codex-owner-audit-complete` to
+  both commands. This assertion does not replace the search; the current-tip UUID `Chat:` family
+  check is additional evidence;
 - its **working tree is clean** — re-read now, not taken from the inventory
   snapshot, because a verdict generated at 23:38 acted on at 00:44 is the case
   this exists for;
