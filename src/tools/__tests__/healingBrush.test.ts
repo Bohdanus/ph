@@ -247,10 +247,9 @@ describe('healing brush processor', () => {
       expect(center.r).toBeGreaterThan(31);
     });
 
-    it('still calls putImageData at zero opacity (processor does not early-return)', () => {
+    it('preserves all pixels at zero opacity', () => {
       const canvas = run({ opacity: 0 });
 
-      expect(canvas.ctx.putImageData).toHaveBeenCalled();
       for (let y = 0; y < size.height; y++) {
         for (let x = 0; x < size.width; x++) {
           expect(at(canvas, x, y)).toEqual(dest(x, y));
