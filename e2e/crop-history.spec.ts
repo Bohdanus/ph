@@ -8959,9 +8959,10 @@ test.describe('Crop history', () => {
             for (const [clipName, comparison] of Object.entries(commonBacking.commonBackingClipVsBaseline)) {
               expect(comparison.measurementStatus, `${source} ${clipName} clip measurement`).toBe('measured');
               expect(comparison.comparedPixels, `${source} ${clipName} clip coverage`).toBe(comparedFramePixels);
+              const pixelComparison = comparison.pixelComparison;
               expect(
-                comparison.pixelComparison?.differingBytes,
-                `${source} ${clipName} common-backing clip differs from baseline`
+                pixelComparison?.differingBytes,
+                `${source} ${clipName} common-backing clip differs from baseline: ${JSON.stringify(pixelComparison)}`
               ).toBe(0);
             }
             expect(commonBacking.widthHeightInteraction.comparedPixels, `${source} clip interaction coverage`).toBe(
