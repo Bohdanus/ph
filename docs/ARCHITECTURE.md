@@ -67,10 +67,12 @@ legacy-compatible presentation path for other runtime updates. The awaitable
 publication returns a durable outcome or a complete legacy fallback; any replay
 carrying a `'legacy-tool'` source selects the latter.
 
-The source-backed create exception currently has no proven default UI entry point: the app's
-initial blank document is a `NEW_LAYER_ACTION`, which the active-prefix ownership gate refuses,
-as it does an imported raster baseline. Paste and Background conversion therefore stay on the
-legacy presentation until the baseline ownership gate is resolved explicitly.
+The bounded image/blank create exception is reachable through one verified UI route: disable the
+default blank History row, then paste a raster or create a transparent blank layer from the tablet
+Layers drawer. `e2e/source-backed-history.spec.ts` pins exact canvas and export pixels for that
+disabled-root prefix. This does not open the default active-root, imported-raster baseline, later
+source-backed edit, or frame-changing gates; those paths remain on the complete legacy presentation
+until their ownership and parity proofs are explicit.
 
 The requirements and staged cutover sequence are owned by
 [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md). This page records the current
