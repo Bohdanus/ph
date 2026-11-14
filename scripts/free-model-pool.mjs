@@ -1496,12 +1496,15 @@ export async function completeWithFreeModel(prompt, options = {}) {
     const status = response?.status;
     const transientServerFailure = Number.isInteger(status) && status >= 500 && status <= 599;
     const transientTypedFailure = status === 200 && hasTransientOpenRouterProviderError(payload);
+    const dailyQuotaFailure = isOpenRouterDailyQuotaError(payload);
+    const limitSources = openRouterLimitSources(payload);
+    if (limitSources.includes('openrouter_free_tier_daily')) {
+      await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile });
+    }
     if (status === 401 || status === 402) {
       exhausted.add('openrouter');
       return { retry: false };
     }
-    const dailyQuotaFailure = isOpenRouterDailyQuotaError(payload);
-    const limitSources = openRouterLimitSources(payload);
     const isPlatformLimit =
       limitSources.some((source) => source.startsWith('openrouter_')) || openRouterPlatformRemaining(response) === 0;
     const rateLimitFailure =
