@@ -1712,6 +1712,20 @@ describe('the schema this script writes', () => {
     expect(board.db.exec).not.toHaveBeenCalled();
   });
 
+  it('does not hide non-busy errors from the WAL conversion', () => {
+    const board = new Board({ dir, identity: identityFor('wal-error') });
+    const ioError = Object.assign(new Error('disk I/O error'), { errcode: 10 });
+    board.db = {
+      exec: vi.fn(() => {
+        throw ioError;
+      }),
+    };
+    vi.spyOn(board, 'currentJournalMode').mockReturnValue('delete');
+
+    expect(() => board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toThrow(ioError);
+    expect(board.db.exec).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses before it creates anything, not after', () => {
     // The two refusals in `migrate()` have to agree: a newer board is refused
     // BEFORE `exec(SCHEMA)` precisely so it does not half-adopt a schema, and a

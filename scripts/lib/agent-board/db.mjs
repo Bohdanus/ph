@@ -584,7 +584,8 @@ export class Board {
       try {
         this.db.exec('PRAGMA journal_mode = WAL');
         if (this.currentJournalMode() === 'wal') return 'wal';
-      } catch {
+      } catch (error) {
+        if (!isSqliteBusy(error)) throw error;
         // Another process is converting it. Fall through and wait.
       }
       sleepSync(delayMs);
