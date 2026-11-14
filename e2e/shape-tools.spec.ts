@@ -307,12 +307,17 @@ async function rotationCursorInfo(page: Page): Promise<{ angle: number; whiteOut
     if (!encodedSvg) return null;
 
     const svg = decodeURIComponent(encodedSvg);
-    const angle = svg.match(/rotate\((\d+) 16 16\)/)?.[1];
-    if (!angle) return null;
+    // The cursor artwork is centered by nested translate/scale transforms; the rotation may be
+    // centerless or carry an explicit center, so assert the angle rather than one SVG layout.
+    const angle = svg.match(/rotate\(\s*(-?\d+(?:\.\d+)?)(?:\s+[\d.-]+\s+[\d.-]+)?\s*\)/)?.[1];
+    if (angle === undefined) return null;
+
+    const whiteOutline = svg.indexOf('stroke="#fff" stroke-width="23"');
+    const darkStroke = svg.indexOf('stroke="#000" stroke-width="13"');
 
     return {
       angle: Number(angle),
-      whiteOutline: svg.includes('stroke="#fff" stroke-width="6"'),
+      whiteOutline: whiteOutline >= 0 && darkStroke > whiteOutline,
     };
   });
 }
