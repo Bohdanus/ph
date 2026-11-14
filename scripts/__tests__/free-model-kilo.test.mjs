@@ -429,9 +429,11 @@ process.exitCode = 1;`
     ['output overflow after the terminal event', { inputError: false, hang: false, overflow: true }],
     ['an underscore content-filter terminal', { inputError: false, hang: false, reason: 'content_filter' }],
   ])('fails closed for a Kilo content-filter terminal after %s', async (_scenario, options) => {
+    const childPid = 4242;
+    const terminateWindowsProcessTreeImpl = vi.fn().mockResolvedValue(undefined);
     const spawnImpl = () => {
       const child = new EventEmitter();
-      child.pid = 1234;
+      child.pid = childPid;
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.stdin = new EventEmitter();
@@ -454,14 +456,18 @@ process.exitCode = 1;`
         model: 'model:free',
         prompt: 'prompt',
         timeoutMs: options.hang ? 20 : 1000,
-        spawnImpl,
         platform: 'win32',
-        terminateWindowsProcessTreeImpl: async () => {},
+        terminateWindowsProcessTreeImpl,
+        spawnImpl,
       })
     ).resolves.toEqual({
       error: 'Kilo provider content policy rejected or filtered this request',
       contentPolicyRejected: true,
     });
+    expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledTimes(options.hang || options.overflow ? 1 : 0);
+    if (options.hang || options.overflow) {
+      expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(childPid);
+    }
   });
 
   it('prioritizes a policy rejection over a tool-activity error', async () => {
@@ -572,6 +578,44 @@ process.exitCode = 1;`
       }
     }
   );
+
+  it('rejects a buffered invalid cost before returning a timeout error', async () => {
+    const killSignals = [];
+    const spawnImpl = () => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => {
+        child.stdout.emit(
+          'data',
+          Buffer.from(`${JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: false } })}\n`)
+        );
+      };
+      child.kill = (signal) => {
+        killSignals.push(signal);
+        queueMicrotask(() => child.emit('close', null, signal));
+        return true;
+      };
+      return child;
+    };
+
+    await expect(
+      runKiloCompletion({
+        command: process.execPath,
+        model: 'model:free',
+        prompt: 'prompt',
+        timeoutMs: 25,
+        platform: 'linux',
+        spawnImpl,
+      })
+    ).resolves.toEqual({
+      error: 'Kilo reported non-zero or invalid completion cost',
+      exhaustSource: true,
+      safetyStop: true,
+    });
+    expect(killSignals).toEqual(['SIGTERM']);
+  });
 
   it('aborts a stalled request at its configured inference timeout', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));

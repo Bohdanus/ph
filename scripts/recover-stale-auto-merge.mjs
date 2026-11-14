@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
+import { samePath } from './lib/path-identity.mjs';
 
 const USAGE = `Usage:
   node scripts/recover-stale-auto-merge.mjs --expected-head <full-sha> [--apply --confirm-owner-stopped]
@@ -213,7 +214,7 @@ function parseArgs(argv) {
 function inspect(cwd, options) {
   const root = resolve(git(['rev-parse', '--show-toplevel'], cwd));
   if (git(['rev-parse', '--show-prefix'], cwd) !== '') throw new Error(`Run from the worktree root: ${root}`);
-  if (resolve(cwd) !== root) throw new Error(`Run from the worktree root: ${root}`);
+  if (!samePath(cwd, root)) throw new Error(`Run from the worktree root: ${root}`);
   const branch = git(['branch', '--show-current'], root);
   if (!branch) throw new Error('Refusing recovery from a detached or unborn HEAD.');
   if (branch === 'main') throw new Error('Refusing recovery on the main branch.');

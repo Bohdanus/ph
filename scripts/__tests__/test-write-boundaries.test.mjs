@@ -60,8 +60,8 @@ const REVIEWED = {
   },
   'free-model-pool-external.test.mjs': {
     scope:
-      'External-provider, typed transient 5xx, Kilo cost-stop, and keyless catalog fixtures use unique OS temporary directories with finally cleanup.',
-    patterns: `filesystem-write:mkdtemp=5 filesystem-write:rm=5 filesystem-write:writeFile=1`,
+      'External-provider, typed transient 5xx, Kilo cost-stop and source-cooldown, OpenRouter quota metadata, and keyless catalog fixtures use unique OS temporary directories with finally cleanup.',
+    patterns: `filesystem-write:mkdtemp=9 filesystem-write:rm=9 filesystem-write:writeFile=1`,
   },
   'free-model-pool.test.mjs': {
     scope:
