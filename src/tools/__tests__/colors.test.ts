@@ -64,10 +64,11 @@ describe('normalizeColorsToolArgs', () => {
     expect(normalizeColorsToolArgs({ ...baseArgs, sepia: 150 }).sepia).toBe(100);
   });
 
-  it('does not clamp saturation (allows any finite value)', () => {
+  it('clamps saturation to the slider range', () => {
     expect(normalizeColorsToolArgs({ ...baseArgs, saturation: -100 }).saturation).toBe(-100);
     expect(normalizeColorsToolArgs({ ...baseArgs, saturation: 0 }).saturation).toBe(0);
-    expect(normalizeColorsToolArgs({ ...baseArgs, saturation: 200 }).saturation).toBe(200);
+    expect(normalizeColorsToolArgs({ ...baseArgs, saturation: -200 }).saturation).toBe(-100);
+    expect(normalizeColorsToolArgs({ ...baseArgs, saturation: 200 }).saturation).toBe(100);
   });
 
   it('preserves toolName', () => {

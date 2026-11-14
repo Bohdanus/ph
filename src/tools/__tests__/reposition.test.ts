@@ -20,31 +20,40 @@ describe('reposition processor', () => {
     }
   });
 
-  it('returns only bitmap when no move is provided', () => {
-    const result = reposition({ bitmap, size })({ toolName: 'reposition' } satisfies RepositionToolArgs);
-
-    // The function returns undefined when no move is provided
-    expect(result).toBeUndefined();
-  });
-
-  it('handles resize args (though not used in processor)', () => {
+  it('returns the bitmap and resize geometry without rasterizing it', () => {
     const resize = { x: 100, y: 100, width: 100, height: 100 };
     const result = reposition({ bitmap, size })({ resize, toolName: 'reposition' } satisfies RepositionToolArgs);
 
-    expect(result).toBeUndefined();
+    expect(result).toEqual([bitmap, resize]);
+    expect(result?.[0]).toBe(bitmap);
+  });
+
+  it('returns the bitmap when the selected reposition tool has no pending geometry patch', () => {
+    const result = reposition({ bitmap, size })({ toolName: 'reposition' } satisfies RepositionToolArgs);
+
+    expect(result).toEqual([bitmap]);
   });
 });
 
 describe('RepositionToolArgs type', () => {
-  it('requires toolName and optional move and resize', () => {
+  it('accepts move, resize, and the idle tool state but rejects both patches together', () => {
+    const move = { move: { x: 10, y: 20 }, toolName: 'reposition' } satisfies RepositionToolArgs;
+    const resize = {
+      resize: { x: 100, y: 100, width: 100, height: 100 },
+      toolName: 'reposition',
+    } satisfies RepositionToolArgs;
+    const idle = { toolName: 'reposition' } satisfies RepositionToolArgs;
+
+    // @ts-expect-error move and resize are mutually exclusive
     const args: RepositionToolArgs = {
       move: { x: 10, y: 20 },
       resize: { x: 100, y: 100, width: 100, height: 100 },
       toolName: 'reposition',
     };
-    expect(args.move).toEqual({ x: 10, y: 20 });
-    expect(args.resize).toEqual({ x: 100, y: 100, width: 100, height: 100 });
-    expect(args.toolName).toBe('reposition');
+    void args;
+    expect(move.move).toEqual({ x: 10, y: 20 });
+    expect(resize.resize).toEqual({ x: 100, y: 100, width: 100, height: 100 });
+    expect(idle.toolName).toBe('reposition');
   });
 
   it('allows only move', () => {

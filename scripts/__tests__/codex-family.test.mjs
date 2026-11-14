@@ -179,9 +179,10 @@ describe('Codex Chat trailer ownership', () => {
     const external = tempDir();
     const { path, db } = createCodexDb(directory);
     const externalRollout = join(external, `${ROOT}.jsonl`);
-    const linkedRollout = join(directory, `${ROOT}.jsonl`);
+    const linkedDirectory = join(directory, 'external-rollouts');
+    const linkedRollout = join(linkedDirectory, `${ROOT}.jsonl`);
     writeFileSync(externalRollout, completeRollout());
-    symlinkSync(externalRollout, linkedRollout);
+    symlinkSync(external, linkedDirectory, process.platform === 'win32' ? 'junction' : 'dir');
     db.prepare('INSERT INTO threads VALUES (?, ?, ?)').run(ROOT, linkedRollout, null);
     db.close();
 
