@@ -105,17 +105,15 @@ describe('AutoSaveRecoveryBanner', () => {
     expect(screen.getByText('Recovery Available')).toBeInTheDocument();
   });
 
-  it('announces a failed dismissal so the recovery copy can be kept or dismissed again', () => {
-    render(
-      <AutoSaveRecoveryBanner
-        metadata={baseMetadata}
-        recovering={false}
-        dismissError="Could not clear the recovery copy. Please try again."
-        onRecover={noop}
-        onDismiss={noop}
-      />
-    );
+  it('includes a failed dismissal in the accessible recovery dialog description', () => {
+    const props = { metadata: baseMetadata, recovering: false, onRecover: noop, onDismiss: noop };
+    const { rerender } = render(<AutoSaveRecoveryBanner {...props} />);
 
-    expect(screen.getByRole('alert')).toHaveTextContent('Could not clear the recovery copy. Please try again.');
+    const dialog = screen.getByRole('alertdialog');
+    rerender(<AutoSaveRecoveryBanner {...props} dismissError="Could not clear the recovery copy. Please try again." />);
+
+    expect(dialog).toHaveAttribute('aria-describedby', 'autosave-recovery-description');
+    expect(dialog).toHaveAttribute('aria-atomic', 'false');
+    expect(dialog).toHaveAccessibleDescription(/Could not clear the recovery copy\. Please try again\./);
   });
 });

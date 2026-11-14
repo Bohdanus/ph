@@ -142,13 +142,24 @@ vi.mock('../../components/AutoSaveRecoveryBanner/AutoSaveRecoveryBanner.tsx', ()
     dismissError: string | null;
     onDismiss: () => Promise<void>;
   }) => (
-    <>
-      <div data-testid="mock-banner" data-filename={metadata.fileName} />
-      <button data-testid="mock-dismiss-button" onClick={() => void onDismiss()} type="button">
+    <div
+      aria-atomic="false"
+      aria-describedby="mock-autosave-recovery-description"
+      aria-labelledby="mock-autosave-recovery-title"
+      aria-modal="true"
+      data-filename={metadata.fileName}
+      data-testid="mock-banner"
+      role="alertdialog"
+    >
+      <h2 id="mock-autosave-recovery-title">Recovery Available</h2>
+      <div id="mock-autosave-recovery-description">
+        AutoSave found a recovery copy of your previous document.
+        {dismissError && <p>{dismissError}</p>}
+      </div>
+      <button data-testid="mock-dismiss-button" onClick={onDismiss} type="button">
         Dismiss
       </button>
-      {dismissError && <div role="alert">{dismissError}</div>}
-    </>
+    </div>
   ),
 }));
 
@@ -887,7 +898,9 @@ describe('AutoSaveProvider: dismissAutosave', () => {
 
     await waitFor(() => {
       expect(api.autosaveMetadata).toEqual(baseMetadata);
-      expect(screen.getByRole('alert')).toHaveTextContent('Could not clear the recovery copy. Please try again.');
+      expect(screen.getByRole('alertdialog')).toHaveAccessibleDescription(
+        /Could not clear the recovery copy\. Please try again\./
+      );
     });
     expect(consoleError).toHaveBeenCalledWith('AutoSave: Failed to dismiss recovery copy', storageError);
 
@@ -895,7 +908,7 @@ describe('AutoSaveProvider: dismissAutosave', () => {
 
     await waitFor(() => {
       expect(api.autosaveMetadata).toBe(null);
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     });
     expect(clearAutosaveMock).toHaveBeenCalledTimes(2);
   });

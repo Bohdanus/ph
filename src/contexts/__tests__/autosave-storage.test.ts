@@ -25,9 +25,9 @@ type StorageModule = typeof import('../autosave-storage.ts');
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
- * Minimal in-memory IndexedDB mock. The open() call returns a request whose
- * onsuccess fires on the next microtask (after the caller has had a chance to
- * attach event handlers), mirroring real IndexedDB's async contract.
+ * Minimal in-memory IndexedDB mock. IndexedDB request and transaction events are
+ * dispatched as tasks, so use timers instead of microtasks to keep their ordering
+ * distinct from promise callbacks.
  */
 function makeMockIDB(
   data = new Map<string, unknown>(),
@@ -53,9 +53,9 @@ function makeMockIDB(
         objectStore: () => state.store,
       };
       const scheduleComplete = () =>
-        queueMicrotask(() => {
+        setTimeout(() => {
           if (transaction.oncomplete) transaction.oncomplete({} as Event);
-        });
+        }, 0);
       // Simulate an explicit transaction abort before a request error; this path reports abort only.
       const scheduleAbort = (error: Error) =>
         setTimeout(() => {
@@ -69,9 +69,9 @@ function makeMockIDB(
             scheduleAbort(transactionAbortError);
           } else {
             data.set(obj.key, obj);
-            queueMicrotask(() => {
+            setTimeout(() => {
               if (req.onsuccess) req.onsuccess({} as Event);
-            });
+            }, 0);
             scheduleComplete();
           }
           return req;
@@ -83,23 +83,23 @@ function makeMockIDB(
             mode === 'readonly' ? options.loadTransactionErrorAfterRequest : undefined;
           const req: any = { result, error: loadRequestError ?? null };
           if (loadRequestError) {
-            queueMicrotask(() => {
+            setTimeout(() => {
               if (req.onerror) req.onerror({} as Event);
               transaction.error = loadRequestError;
               if (transaction.onerror) transaction.onerror({} as Event);
               scheduleAbort(loadRequestError);
-            });
+            }, 0);
           } else if (loadTransactionErrorAfterRequest) {
-            queueMicrotask(() => {
+            setTimeout(() => {
               if (req.onsuccess) req.onsuccess({} as Event);
               scheduleAbort(loadTransactionErrorAfterRequest);
-            });
+            }, 0);
           } else if (transactionAbortError) {
             scheduleAbort(transactionAbortError);
           } else {
-            queueMicrotask(() => {
+            setTimeout(() => {
               if (req.onsuccess) req.onsuccess({} as Event);
-            });
+            }, 0);
             scheduleComplete();
           }
           return req;
@@ -108,20 +108,20 @@ function makeMockIDB(
           const req: any = {};
           if (clearTransactionError) {
             req.error = clearTransactionError;
-            queueMicrotask(() => {
+            setTimeout(() => {
               if (req.onerror) req.onerror({} as Event);
               transaction.error = clearTransactionError;
               if (transaction.onerror) transaction.onerror({} as Event);
               // IndexedDB dispatches the bubbling request error before the later transaction abort task.
               scheduleAbort(clearTransactionError);
-            });
+            }, 0);
           } else if (transactionAbortError) {
             scheduleAbort(transactionAbortError);
           } else {
             data.delete(key);
-            queueMicrotask(() => {
+            setTimeout(() => {
               if (req.onsuccess) req.onsuccess({} as Event);
-            });
+            }, 0);
             scheduleComplete();
           }
           return req;
@@ -132,23 +132,23 @@ function makeMockIDB(
           const countTransactionErrorAfterRequest = options.countTransactionErrorAfterRequest;
           const req: any = { result, error: countError ?? null };
           if (countError) {
-            queueMicrotask(() => {
+            setTimeout(() => {
               if (req.onerror) req.onerror({} as Event);
               transaction.error = countError;
               if (transaction.onerror) transaction.onerror({} as Event);
               scheduleAbort(countError);
-            });
+            }, 0);
           } else if (countTransactionErrorAfterRequest) {
-            queueMicrotask(() => {
+            setTimeout(() => {
               if (req.onsuccess) req.onsuccess({} as Event);
               scheduleAbort(countTransactionErrorAfterRequest);
-            });
+            }, 0);
           } else if (transactionAbortError) {
             scheduleAbort(transactionAbortError);
           } else {
-            queueMicrotask(() => {
+            setTimeout(() => {
               if (req.onsuccess) req.onsuccess({} as Event);
-            });
+            }, 0);
             scheduleComplete();
           }
           return req;
@@ -167,14 +167,14 @@ function makeMockIDB(
 
   return {
     open: (): any => {
-      queueMicrotask(() => {
+      setTimeout(() => {
         if (options.openError) {
           if (openRequest.onerror) openRequest.onerror({} as Event);
         } else {
           if (openRequest.onupgradeneeded) openRequest.onupgradeneeded({} as Event);
           if (openRequest.onsuccess) openRequest.onsuccess({} as Event);
         }
-      });
+      }, 0);
       return openRequest;
     },
     deleteDatabase: vi.fn(),
