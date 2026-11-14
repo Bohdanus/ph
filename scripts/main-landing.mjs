@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readMergeHeadRefs, resolveWorktree } from './main-worktree-guard.mjs';
 import { readOperations } from './lib/git-operation-state.mjs';
+import { samePath } from './lib/path-identity.mjs';
 import { isProjectMainWorktree } from './merge-takeover-guard.mjs';
 
 const OWNER_FILE = 'owner.json';
@@ -94,13 +95,6 @@ function gitConfigValue(key, cwd) {
 function resolvePath(value, base) {
   if (!value) return null;
   return resolve(isAbsolute(value) ? value : join(base, value));
-}
-
-function samePath(left, right) {
-  if (!left || !right) return false;
-  const first = resolve(left).replace(/\\/g, '/');
-  const second = resolve(right).replace(/\\/g, '/');
-  return process.platform === 'win32' ? first.toLowerCase() === second.toLowerCase() : first === second;
 }
 
 function resolvePaths(cwd = process.cwd()) {
@@ -1683,7 +1677,7 @@ export async function watch(
   }
 }
 
-async function main(argv = process.argv.slice(2), { cwd = process.cwd() } = {}) {
+export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), watcherStarter = startWatcher } = {}) {
   const [action, ...rest] = argv;
   if (!action || action === '--help' || action === '-h') {
     process.stdout.write(USAGE + '\n');
@@ -1701,7 +1695,7 @@ async function main(argv = process.argv.slice(2), { cwd = process.cwd() } = {}) 
   const options = parseOptions(rest);
   const paths = resolvePaths(cwd);
   if (action === 'status') return showStatus(paths, options.flags.has('json'));
-  if (action === 'land') return land(paths, options, cwd);
+  if (action === 'land') return land(paths, options, cwd, { watcherStarter });
   if (action === 'takeover') return takeover(paths, options);
   if (action === 'release-stale') return releaseStale(paths, options);
   if (action === 'release-incomplete') return releaseIncomplete(paths, options);

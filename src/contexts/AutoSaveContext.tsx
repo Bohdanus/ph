@@ -132,6 +132,7 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
   const [autosaveMetadata, setAutosaveMetadata] = useState<AutosaveMetadata | null>(null);
   const [pendingAutosave, setPendingAutosave] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [dismissError, setDismissError] = useState<string | null>(null);
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedVersionRef = useRef<string | null>(null);
@@ -417,6 +418,7 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
   const recoverFromAutosave = useCallback(async () => {
     if (!autosaveMetadata || recovering) return;
 
+    setDismissError(null);
     setRecovering(true);
     recoveringRef.current = true;
     try {
@@ -439,8 +441,14 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
   }, [autosaveMetadata, recovering, clearStoredAutosave]);
 
   const dismissAutosave = useCallback(async () => {
-    await clearStoredAutosave();
-    setAutosaveMetadata(null);
+    setDismissError(null);
+    try {
+      await clearStoredAutosave();
+      setAutosaveMetadata(null);
+    } catch (error) {
+      console.error('AutoSave: Failed to dismiss recovery copy', error);
+      setDismissError('Could not clear the recovery copy. Please try again.');
+    }
   }, [clearStoredAutosave]);
 
   const value = useMemo<AutoSaveContextType>(
@@ -470,6 +478,7 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
         <AutoSaveRecoveryBanner
           metadata={autosaveMetadata}
           recovering={recovering}
+          dismissError={dismissError}
           onRecover={recoverFromAutosave}
           onDismiss={dismissAutosave}
         />

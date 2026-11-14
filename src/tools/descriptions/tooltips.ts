@@ -71,7 +71,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   pencil: {
     summary:
-      'Paints hard-edged, non-antialiased foreground lines, with an Auto Erase option that paints background over foreground at the stroke’s start.',
+      "Paints hard-edged, non-antialiased foreground lines, with an Auto Erase option that paints background over foreground at the stroke's start.",
     implementation: 'partial',
   },
   'color-replacement': {
@@ -98,20 +98,23 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   'clone-stamp': {
     summary:
-      'Copies pixels from an Alt-clicked source point and paints them under the cursor, with controls for Opacity, Flow, alignment and tip shape.',
+      'Stamps a sampled source onto the destination: Alt/Option-click to set the source point, then drag to paint the sampled pixels into the active layer.',
     implementation: 'partial',
     shortcut: 'S',
   },
-  'healing-brush': {
-    summary: 'Blends sampled texture into a brush stroke while preserving destination lighting and tone.',
+  'red-eye': {
+    summary:
+      'Clicks a red pupil and corrects it to a natural color using a bounded connected-component algorithm on red pixels, with Pupil Size and Darken Amount controls.',
     implementation: 'partial',
   },
   'spot-healing': {
-    summary: 'Repairs small marks by blending nearby texture into a soft brush stroke.',
+    summary:
+      'Drags a stroke that automatically samples surrounding pixels to repair the area, with Type (Proximity Match / Content-Aware / Create Texture) and Diffusion.',
     implementation: 'partial',
   },
-  'red-eye': {
-    summary: 'Reduces the red flash reflection in an eye with adjustable pupil size and darkening.',
+  'healing-brush': {
+    summary:
+      'Alt/Option-click to set a source, then drag to paint the sampled texture with luminance correction, like the Patch tool but stroke-based.',
     implementation: 'partial',
   },
   blur: {
@@ -212,13 +215,13 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   text: {
     summary:
-      'Sets a typed string into the document as a raster text layer, with font, size, leading, tracking and caps controls.',
+      'Creates raster text layers; a 3 CSS px drag threshold distinguishes point from paragraph type. Unlike Photoshop, text is not live vector type.',
     implementation: 'partial',
     shortcut: 'T',
   },
   crop: {
     summary:
-      'Frames a new boundary for the photo; nothing is committed until you confirm, and Esc restores the old framing.',
+      'Frames a document boundary; extending past the image reveals retained pixels. Enter applies; Esc cancels. No Fill, Straighten or Delete Cropped Pixels.',
     implementation: 'partial',
     shortcut: 'C',
   },
@@ -250,41 +253,45 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   eyedropper: {
     summary:
-      'Samples a color from anywhere in the image and makes it the foreground color, previewing as you drag and confirming on release.',
+      'Samples a color from the composited canvas at the pointer position and writes it to the foreground or background swatch; no drag preview, no history entry.',
     implementation: 'partial',
     shortcut: 'I',
   },
   'color-sampler': {
     summary:
-      'Drops numbered markers on the image and reports each one’s color, up to four at a time. Sample Size sets the footprint each marker reads.',
+      'Places up to four numbered markers with RGB/hex readouts. Drag to move; Alt-click or drag off-canvas to delete. Clear removes all markers.',
     implementation: 'partial',
   },
   draw: {
     summary:
-      'This app’s own freehand stroke tool, not a Photoshop tool: a drag becomes a new layer of ink, drawn with a pen, a dashed pen or a spray.',
+      "This app's own freehand stroke tool (OVR-2 override): a drag becomes a new layer of ink, drawn with Pen, Dashed Pen, or Spray renderers.",
     implementation: 'implemented',
   },
   ruler: {
     summary:
-      'Measures a distance on the canvas: drag a nonprinting line and the options bar reports X, Y, W, H, the angle and the length, with Shift snapping to 45 degrees.',
+      'Measures position, distance and angle with a nonprinting line; Shift constrains to 45°. Alt-drag an endpoint to add a protractor leg.',
     implementation: 'partial',
   },
   hand: {
-    summary: 'Pans the canvas view without moving or changing the document pixels.',
+    summary:
+      'Pans the canvas; double-click or Fit On Screen restores contain-fit. No flick momentum, Pan All Windows or Overscroll.',
     implementation: 'implemented',
     shortcut: 'H',
   },
   zoom: {
-    summary: 'Magnifies or reduces the canvas around the pointer without changing document pixels.',
+    summary:
+      'Click or scrub to zoom around the pointer; Ctrl/Cmd+wheel zooms and unmodified wheel pans. No animated or marquee zoom.',
     implementation: 'implemented',
     shortcut: 'Z',
   },
   'rotate-view': {
-    summary: 'Rotates the canvas presentation around the viewport without transforming the image.',
+    summary:
+      'Rotates the canvas view; Shift snaps to 15°. Esc, Reset View or double-click returns to 0°. No compass, GPU checks or Rotate All Windows.',
     implementation: 'implemented',
   },
   patch: {
-    summary: 'Moves an active selection over a donor area and blends the donor texture into the selected target.',
+    summary:
+      'Repairs a selection with texture dragged from a donor. This app implements Source only; Destination, Content-Aware, Pattern and Transparent are unavailable.',
     implementation: 'partial',
   },
 };

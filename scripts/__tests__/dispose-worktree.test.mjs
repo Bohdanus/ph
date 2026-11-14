@@ -1426,6 +1426,7 @@ describe('unregistered worktree directories', () => {
       // still run and remain verifiable.
     }
 
+    expect(resolveOrphan(root, worktreesRoot)).toMatchObject({ found: false, reason: 'not-direct-child' });
     expect(resolveOrphan(root, 'missing')).toMatchObject({ found: false, reason: 'missing' });
     expect(resolveOrphan(root, file)).toMatchObject({ found: false, reason: 'not-directory' });
     expect(resolveOrphan(root, outside)).toMatchObject({ found: false, reason: 'outside-worktrees' });

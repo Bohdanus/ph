@@ -65,35 +65,72 @@ function invoke(root, args = []) {
 
 function invokeWithMarkerRewrite(root, args, { marker, replacementTree, rewriteOnCatFileCall = 4 }) {
   const gitDir = git(root, 'rev-parse', '--absolute-git-dir');
-  const shimPath = join(gitDir, 'git');
-  const countPath = join(gitDir, 'recovery-test-cat-file-count');
-  const realGit = execFileSync('which', ['git'], { cwd: root, env, encoding: 'utf8' }).trim();
-  writeFileSync(
-    shimPath,
-    [
-      '#!/bin/sh',
-      `${JSON.stringify(realGit)} "$@"`,
-      'result=$?',
-      'if [ "$1" = "cat-file" ] && [ "$2" = "-t" ]; then',
-      '  count=0',
-      '  if [ -f "$AUTO_MERGE_TEST_COUNT" ]; then IFS= read -r count < "$AUTO_MERGE_TEST_COUNT"; fi',
-      '  count=$((count + 1))',
-      '  printf "%s\\n" "$count" > "$AUTO_MERGE_TEST_COUNT"',
-      '  if [ "$count" -eq "$AUTO_MERGE_TEST_REWRITE_ON" ]; then',
-      '    printf "%s\\n" "$AUTO_MERGE_TEST_TREE" > "$AUTO_MERGE_TEST_MARKER"',
-      '  fi',
-      'fi',
-      'exit "$result"',
-      '',
-    ].join('\n')
-  );
-  chmodSync(shimPath, 0o755);
+  let environment;
+  if (process.platform === 'win32') {
+    // Windows cannot execute the POSIX `git` shim below. Patch Node's child-process
+    // builtin before this ESM script imports it, then synchronize named exports.
+    const preloadPath = join(gitDir, 'recovery-test-preload.cjs');
+    writeFileSync(
+      preloadPath,
+      [
+        "const fs = require('node:fs');",
+        "const childProcess = require('node:child_process');",
+        "const { syncBuiltinESMExports } = require('node:module');",
+        'const realExecFileSync = childProcess.execFileSync;',
+        'let catFileCalls = 0;',
+        'childProcess.execFileSync = function (...args) {',
+        '  const result = realExecFileSync.apply(this, args);',
+        '  const [command, argv] = args;',
+        "  if (command === 'git' && argv?.[0] === 'cat-file' && argv?.[1] === '-t') {",
+        '    catFileCalls += 1;',
+        '    if (catFileCalls === Number(process.env.AUTO_MERGE_TEST_REWRITE_ON)) {',
+        "      fs.writeFileSync(process.env.AUTO_MERGE_TEST_MARKER, process.env.AUTO_MERGE_TEST_TREE + '\\n');",
+        '    }',
+        '  }',
+        '  return result;',
+        '};',
+        'syncBuiltinESMExports();',
+        '',
+      ].join('\n')
+    );
+    const requirePath = preloadPath.replace(/\\/g, '/');
+    environment = {
+      NODE_OPTIONS: [env.NODE_OPTIONS, `--require="${requirePath}"`].filter(Boolean).join(' '),
+    };
+  } else {
+    const shimPath = join(gitDir, 'git');
+    const countPath = join(gitDir, 'recovery-test-cat-file-count');
+    const realGit = execFileSync('which', ['git'], { cwd: root, env, encoding: 'utf8' }).trim();
+    writeFileSync(
+      shimPath,
+      [
+        '#!/bin/sh',
+        `${JSON.stringify(realGit)} "$@"`,
+        'result=$?',
+        'if [ "$1" = "cat-file" ] && [ "$2" = "-t" ]; then',
+        '  count=0',
+        '  if [ -f "$AUTO_MERGE_TEST_COUNT" ]; then IFS= read -r count < "$AUTO_MERGE_TEST_COUNT"; fi',
+        '  count=$((count + 1))',
+        '  printf "%s\\n" "$count" > "$AUTO_MERGE_TEST_COUNT"',
+        '  if [ "$count" -eq "$AUTO_MERGE_TEST_REWRITE_ON" ]; then',
+        '    printf "%s\\n" "$AUTO_MERGE_TEST_TREE" > "$AUTO_MERGE_TEST_MARKER"',
+        '  fi',
+        'fi',
+        'exit "$result"',
+        '',
+      ].join('\n')
+    );
+    chmodSync(shimPath, 0o755);
+    environment = {
+      PATH: `${gitDir}:${env.PATH ?? ''}`,
+      AUTO_MERGE_TEST_COUNT: countPath,
+    };
+  }
   return spawnSync(process.execPath, [SCRIPT, ...args], {
     cwd: root,
     env: {
       ...env,
-      PATH: `${gitDir}:${env.PATH ?? ''}`,
-      AUTO_MERGE_TEST_COUNT: countPath,
+      ...environment,
       AUTO_MERGE_TEST_MARKER: marker,
       AUTO_MERGE_TEST_TREE: replacementTree,
       AUTO_MERGE_TEST_REWRITE_ON: String(rewriteOnCatFileCall),
@@ -107,6 +144,28 @@ afterEach(() => {
 });
 
 describe('recover-stale-auto-merge', () => {
+  it('runs the pinned script with the target worktree as cwd, independent of its local package script', () => {
+    const root = repo();
+    mkdirSync(join(root, 'scripts'));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ scripts: { 'repo:state:recover-auto-merge': 'node scripts/recover-stale-auto-merge.mjs' } })
+    );
+    writeFileSync(join(root, 'scripts', 'recover-stale-auto-merge.mjs'), 'process.stdout.write("stale target code")');
+    git(root, 'add', 'package.json', 'scripts/recover-stale-auto-merge.mjs');
+    git(root, 'commit', '-m', 'add stale target recovery command');
+    const { head, marker } = makeMarker(root);
+
+    // SCRIPT is resolved from the test checkout; invoke that absolute path while cwd
+    // points to a different, potentially stale target checkout.
+    const result = invoke(root, ['--expected-head', head]);
+
+    expect(result.status, result.stdout).toBe(0);
+    expect(result.stdout).toContain('SAFE PREFLIGHT ONLY');
+    expect(result.stdout).not.toContain('stale target code');
+    expect(existsSync(marker)).toBe(true);
+  });
+
   it('defaults to a read-only preflight and requires explicit owner acknowledgment to apply', () => {
     const root = repo();
     const { head, marker } = makeMarker(root);

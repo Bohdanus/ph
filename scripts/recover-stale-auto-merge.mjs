@@ -20,8 +20,10 @@ const USAGE = `Usage:
 
 Default is a read-only preflight. Recovery only unlinks AUTO_MERGE when it is the
 only operation marker, the worktree is clean and conflict-free, and its tree equals
-HEAD^{tree}. Run from that worktree itself, after independently confirming its owner
-has stopped. Preserve modes permit dirty work only when the index matches HEAD and
+HEAD^{tree}. Invoke this script from the current designated main checkout by absolute
+path, while keeping the process working directory at the target worktree root; do not
+run a package script from the target, which may execute stale recovery code. Apply only
+after independently confirming the target's owner has stopped. Preserve modes permit dirty work only when the index matches HEAD and
 the supplied HEAD, marker-tree, worktree-status, and worktree-content pins still
 match. Matching mode also requires tracked files to equal AUTO_MERGE. Divergent mode
 requires one unstaged tracked path to differ from both HEAD and AUTO_MERGE. Both
@@ -210,6 +212,7 @@ function parseArgs(argv) {
 
 function inspect(cwd, options) {
   const root = resolve(git(['rev-parse', '--show-toplevel'], cwd));
+  if (git(['rev-parse', '--show-prefix'], cwd) !== '') throw new Error(`Run from the worktree root: ${root}`);
   if (resolve(cwd) !== root) throw new Error(`Run from the worktree root: ${root}`);
   const branch = git(['branch', '--show-current'], root);
   if (!branch) throw new Error('Refusing recovery from a detached or unborn HEAD.');

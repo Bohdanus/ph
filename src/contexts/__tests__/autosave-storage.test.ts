@@ -25,64 +25,156 @@ type StorageModule = typeof import('../autosave-storage.ts');
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
- * Minimal in-memory IndexedDB mock. The open() call returns a request whose
- * onsuccess fires on the next microtask (after the caller has had a chance to
- * attach event handlers), mirroring real IndexedDB's async contract.
+ * Minimal in-memory IndexedDB mock. IndexedDB request and transaction events are
+ * dispatched as tasks, so use timers instead of microtasks to keep their ordering
+ * distinct from promise callbacks.
  */
-function makeMockIDB(data = new Map<string, unknown>()): any {
+function makeMockIDB(
+  data = new Map<string, unknown>(),
+  options: {
+    countError?: Error;
+    clearTransactionError?: Error;
+    countTransactionErrorAfterRequest?: Error;
+    loadRequestError?: Error;
+    loadTransactionError?: Error;
+    loadTransactionErrorAfterRequest?: Error;
+    openError?: Error;
+    saveTransactionError?: Error;
+  } = {}
+): any {
   const mockDB = {
     createObjectStore: () => {},
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- matches real IndexedDB signature
-    transaction: (_name: string, _mode: string): any => {
+    transaction: (_name: string, mode: string): any => {
+      const clearTransactionError = mode === 'readwrite' ? options.clearTransactionError : undefined;
+      const transactionAbortError = mode === 'readwrite' ? options.saveTransactionError : options.loadTransactionError;
+      const state: { store?: any } = {};
+      const transaction: any = {
+        error: null,
+        objectStore: () => state.store,
+      };
+      const scheduleComplete = () =>
+        setTimeout(() => {
+          if (transaction.oncomplete) transaction.oncomplete({} as Event);
+        }, 0);
+      // Simulate an explicit transaction abort before a request error; this path reports abort only.
+      const scheduleAbort = (error: Error) =>
+        setTimeout(() => {
+          transaction.error = error;
+          if (transaction.onabort) transaction.onabort({} as Event);
+        });
       const store = {
         put: (obj: any) => {
-          data.set(obj.key, obj);
           const req: any = {};
-          queueMicrotask(() => req.onsuccess && req.onsuccess({} as Event));
+          if (transactionAbortError) {
+            scheduleAbort(transactionAbortError);
+          } else {
+            data.set(obj.key, obj);
+            setTimeout(() => {
+              if (req.onsuccess) req.onsuccess({} as Event);
+            }, 0);
+            scheduleComplete();
+          }
           return req;
         },
         get: (key: string) => {
           const result = data.get(key);
-          const req: any = { result };
-          queueMicrotask(() => req.onsuccess && req.onsuccess({} as Event));
+          const loadRequestError = mode === 'readonly' ? options.loadRequestError : undefined;
+          const loadTransactionErrorAfterRequest =
+            mode === 'readonly' ? options.loadTransactionErrorAfterRequest : undefined;
+          const req: any = { result, error: loadRequestError ?? null };
+          if (loadRequestError) {
+            setTimeout(() => {
+              if (req.onerror) req.onerror({} as Event);
+              transaction.error = loadRequestError;
+              if (transaction.onerror) transaction.onerror({} as Event);
+              scheduleAbort(loadRequestError);
+            }, 0);
+          } else if (loadTransactionErrorAfterRequest) {
+            setTimeout(() => {
+              if (req.onsuccess) req.onsuccess({} as Event);
+              scheduleAbort(loadTransactionErrorAfterRequest);
+            }, 0);
+          } else if (transactionAbortError) {
+            scheduleAbort(transactionAbortError);
+          } else {
+            setTimeout(() => {
+              if (req.onsuccess) req.onsuccess({} as Event);
+            }, 0);
+            scheduleComplete();
+          }
           return req;
         },
         delete: (key: string) => {
-          data.delete(key);
           const req: any = {};
-          queueMicrotask(() => req.onsuccess && req.onsuccess({} as Event));
+          if (clearTransactionError) {
+            req.error = clearTransactionError;
+            setTimeout(() => {
+              if (req.onerror) req.onerror({} as Event);
+              transaction.error = clearTransactionError;
+              if (transaction.onerror) transaction.onerror({} as Event);
+              // IndexedDB dispatches the bubbling request error before the later transaction abort task.
+              scheduleAbort(clearTransactionError);
+            }, 0);
+          } else if (transactionAbortError) {
+            scheduleAbort(transactionAbortError);
+          } else {
+            data.delete(key);
+            setTimeout(() => {
+              if (req.onsuccess) req.onsuccess({} as Event);
+            }, 0);
+            scheduleComplete();
+          }
           return req;
         },
         count: (key: string) => {
           const result = data.has(key) ? 1 : 0;
-          const req: any = { result };
-          queueMicrotask(() => req.onsuccess && req.onsuccess({} as Event));
+          const countError = options.countError;
+          const countTransactionErrorAfterRequest = options.countTransactionErrorAfterRequest;
+          const req: any = { result, error: countError ?? null };
+          if (countError) {
+            setTimeout(() => {
+              if (req.onerror) req.onerror({} as Event);
+              transaction.error = countError;
+              if (transaction.onerror) transaction.onerror({} as Event);
+              scheduleAbort(countError);
+            }, 0);
+          } else if (countTransactionErrorAfterRequest) {
+            setTimeout(() => {
+              if (req.onsuccess) req.onsuccess({} as Event);
+              scheduleAbort(countTransactionErrorAfterRequest);
+            }, 0);
+          } else if (transactionAbortError) {
+            scheduleAbort(transactionAbortError);
+          } else {
+            setTimeout(() => {
+              if (req.onsuccess) req.onsuccess({} as Event);
+            }, 0);
+            scheduleComplete();
+          }
           return req;
         },
       };
 
-      const tx: any = {
-        objectStore: () => store,
-      };
-      queueMicrotask(() => {
-        if (tx.oncomplete) tx.oncomplete({} as Event);
-      });
-      return tx;
+      state.store = store;
+      return transaction;
     },
   };
 
   const openRequest: any = {
     result: mockDB,
-    error: null,
+    error: options.openError ?? null,
   };
 
   return {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- matches real IndexedDB signature
-    open: (_name: string, _version: number): any => {
-      queueMicrotask(() => {
-        if (openRequest.onupgradeneeded) openRequest.onupgradeneeded({} as Event);
-        if (openRequest.onsuccess) openRequest.onsuccess({} as Event);
-      });
+    open: (): any => {
+      setTimeout(() => {
+        if (options.openError) {
+          if (openRequest.onerror) openRequest.onerror({} as Event);
+        } else {
+          if (openRequest.onupgradeneeded) openRequest.onupgradeneeded({} as Event);
+          if (openRequest.onsuccess) openRequest.onsuccess({} as Event);
+        }
+      }, 0);
       return openRequest;
     },
     deleteDatabase: vi.fn(),
@@ -166,6 +258,51 @@ describe('autosave-storage: IndexedDB available', () => {
     expect(loaded).toEqual(baseRecord);
   });
 
+  it('saveAutosave rejects when its transaction aborts', async () => {
+    const transactionError = new Error('save transaction aborted');
+    (globalThis as Record<string, unknown>).indexedDB = makeMockIDB(data, {
+      saveTransactionError: transactionError,
+    });
+    vi.resetModules();
+    storage = await import('../autosave-storage.ts');
+
+    await expect(storage.saveAutosave(baseRecord)).rejects.toBe(transactionError);
+  });
+
+  it('loadAutosave rejects when its transaction aborts before the read completes', async () => {
+    const transactionError = new Error('load transaction aborted');
+    (globalThis as Record<string, unknown>).indexedDB = makeMockIDB(data, {
+      loadTransactionError: transactionError,
+    });
+    vi.resetModules();
+    storage = await import('../autosave-storage.ts');
+
+    await expect(storage.loadAutosave()).rejects.toBe(transactionError);
+  });
+
+  it('loadAutosave waits for the transaction to complete after the read request succeeds', async () => {
+    const transactionError = new Error('transaction aborted after read');
+    (globalThis as Record<string, unknown>).indexedDB = makeMockIDB(data, {
+      loadTransactionErrorAfterRequest: transactionError,
+    });
+    vi.resetModules();
+    storage = await import('../autosave-storage.ts');
+
+    await expect(storage.loadAutosave()).rejects.toBe(transactionError);
+  });
+
+  it('loadAutosave rejects when its read request fails', async () => {
+    const requestError = new Error('read request failed');
+    (globalThis as Record<string, unknown>).indexedDB = makeMockIDB(data, { loadRequestError: requestError });
+    vi.resetModules();
+    storage = await import('../autosave-storage.ts');
+
+    await expect(storage.loadAutosave()).rejects.toBe(requestError);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+
   it('clearAutosave removes the record', async () => {
     await storage.saveAutosave(baseRecord);
     await vi.waitFor(async () => {
@@ -186,6 +323,70 @@ describe('autosave-storage: IndexedDB available', () => {
 
   it('hasAutosave returns false when no record exists', async () => {
     await expect(storage.hasAutosave()).resolves.toBe(false);
+  });
+
+  it('observes a failed database open before the first storage call', async () => {
+    const openError = new Error('database open failed');
+    (globalThis as Record<string, unknown>).indexedDB = makeMockIDB(data, { openError });
+    vi.resetModules();
+    storage = await import('../autosave-storage.ts');
+
+    // Let the open request fail for a full task turn before any caller observes the shared promise.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+
+    await expect(storage.loadAutosave()).rejects.toThrow('database open failed');
+    await expect(storage.saveAutosave(baseRecord)).rejects.toThrow('database open failed');
+    await expect(storage.hasAutosave()).resolves.toBe(false);
+    await expect(storage.clearAutosave()).resolves.toBeUndefined();
+  });
+
+  it('hasAutosave resolves false when the count request errors', async () => {
+    (globalThis as Record<string, unknown>).indexedDB = makeMockIDB(data, {
+      countError: new Error('count request failed'),
+    });
+    vi.resetModules();
+    storage = await import('../autosave-storage.ts');
+
+    await expect(storage.hasAutosave()).resolves.toBe(false);
+    // Let the abort task run after the bubbling request and transaction error events.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+
+  it('hasAutosave resolves false when the transaction aborts after the count request succeeds', async () => {
+    (globalThis as Record<string, unknown>).indexedDB = makeMockIDB(data, {
+      countTransactionErrorAfterRequest: new Error('transaction aborted after count'),
+    });
+    vi.resetModules();
+    storage = await import('../autosave-storage.ts');
+
+    await expect(storage.hasAutosave()).resolves.toBe(false);
+  });
+
+  it('clearAutosave rejects when its delete request fails', async () => {
+    const transactionError = new Error('clear transaction failed');
+    (globalThis as Record<string, unknown>).indexedDB = makeMockIDB(data, { clearTransactionError: transactionError });
+    vi.resetModules();
+    storage = await import('../autosave-storage.ts');
+
+    await expect(storage.clearAutosave()).rejects.toBe(transactionError);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+
+  it('clearAutosave rejects when its transaction aborts without a request error', async () => {
+    const transactionError = new Error('clear transaction aborted');
+    (globalThis as Record<string, unknown>).indexedDB = makeMockIDB(data, {
+      saveTransactionError: transactionError,
+    });
+    vi.resetModules();
+    storage = await import('../autosave-storage.ts');
+
+    await expect(storage.clearAutosave()).rejects.toBe(transactionError);
   });
 
   it('overwrite replaces the existing record', async () => {

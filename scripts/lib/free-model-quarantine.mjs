@@ -6,13 +6,17 @@ import { randomUUID } from 'node:crypto';
 export const MAX_QUARANTINE_HOURS = 168;
 export const DEFAULT_QUARANTINE_HOURS = 6;
 export const QUARANTINE_SOURCES = new Set(['kilo', 'openrouter', 'groq', 'opencode']);
-export const QUARANTINE_REASONS = new Set([
+export const AUTOMATIC_QUARANTINE_REASONS = new Set([
   'rate_limit',
   'provider_outage',
   'model_unavailable',
   'poor_performance',
   'non_zero_cost',
 ]);
+// Local operator bans are still keyed to one exact source/model pair. They are read and honored,
+// but automatic failure recording and the CLI cannot create them.
+const OPERATOR_QUARANTINE_REASONS = new Set(['permanent_ban', 'provider_ban']);
+const VALID_QUARANTINE_REASONS = new Set([...AUTOMATIC_QUARANTINE_REASONS, ...OPERATOR_QUARANTINE_REASONS]);
 
 const WORKTREE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const WORKTREES_MARKER = `${sep}.kilo${sep}worktrees${sep}`;
@@ -54,6 +58,15 @@ function validateEpochMilliseconds(now) {
   if (!Number.isFinite(now)) throw new Error('Quarantine time must be finite epoch milliseconds');
 }
 
+function withinOperatorQuarantineLimit(quarantinedAt, expiresAt) {
+  const maximumExpiry = new Date(quarantinedAt);
+  const originalMonth = maximumExpiry.getUTCMonth();
+  maximumExpiry.setUTCFullYear(maximumExpiry.getUTCFullYear() + 100);
+  // Clamp a leap-day anniversary to the last valid day of February when the target year is not leap.
+  if (maximumExpiry.getUTCMonth() !== originalMonth) maximumExpiry.setUTCDate(0);
+  return expiresAt <= maximumExpiry.getTime();
+}
+
 export function validateQuarantineState(state) {
   if (!state || typeof state !== 'object' || Array.isArray(state) || state.schemaVersion !== 1) {
     throw new Error('Unsupported free-model quarantine file format');
@@ -69,6 +82,12 @@ export function validateQuarantineState(state) {
     throw new Error('Free-model quarantine migration markers must be boolean');
   }
   for (const [key, entry] of Object.entries(state.entries)) {
+    const quarantinedAt = Date.parse(entry?.quarantinedAt);
+    const expiresAt = Date.parse(entry?.expiresAt);
+    const operatorBan = OPERATOR_QUARANTINE_REASONS.has(entry?.reason);
+    const withinDuration = operatorBan
+      ? withinOperatorQuarantineLimit(quarantinedAt, expiresAt)
+      : expiresAt - quarantinedAt <= MAX_QUARANTINE_HOURS * 60 * 60 * 1000;
     if (
       !entry ||
       typeof entry !== 'object' ||
@@ -76,11 +95,11 @@ export function validateQuarantineState(state) {
       typeof entry.model !== 'string' ||
       entry.model.length === 0 ||
       quarantineKey(entry.source, entry.model) !== key ||
-      !QUARANTINE_REASONS.has(entry.reason) ||
-      !Number.isFinite(Date.parse(entry.quarantinedAt)) ||
-      !Number.isFinite(Date.parse(entry.expiresAt)) ||
-      Date.parse(entry.expiresAt) <= Date.parse(entry.quarantinedAt) ||
-      Date.parse(entry.expiresAt) - Date.parse(entry.quarantinedAt) > MAX_QUARANTINE_HOURS * 60 * 60 * 1000
+      !VALID_QUARANTINE_REASONS.has(entry.reason) ||
+      !Number.isFinite(quarantinedAt) ||
+      !Number.isFinite(expiresAt) ||
+      expiresAt <= quarantinedAt ||
+      !withinDuration
     ) {
       throw new Error(`Invalid free-model quarantine entry: ${key}`);
     }
@@ -190,7 +209,7 @@ export function upsertQuarantine(state, { source, model, reason, hours = DEFAULT
     typeof model !== 'string' ||
     model.length === 0 ||
     model !== model.trim() ||
-    !QUARANTINE_REASONS.has(reason)
+    !AUTOMATIC_QUARANTINE_REASONS.has(reason)
   ) {
     throw new Error('A supported source, non-empty model ID, and supported quarantine reason are required');
   }
@@ -199,6 +218,8 @@ export function upsertQuarantine(state, { source, model, reason, hours = DEFAULT
   }
   const quarantinedAt = new Date(now).toISOString();
   const key = quarantineKey(source, model);
+  const existing = state.entries[key];
+  if (OPERATOR_QUARANTINE_REASONS.has(existing?.reason) && Date.parse(existing.expiresAt) > now) return null;
   state.entries[key] = {
     source,
     model,

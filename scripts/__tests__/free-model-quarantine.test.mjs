@@ -199,6 +199,20 @@ describe('free-model quarantine lifecycle', () => {
       })
     ).toThrow(/Invalid/);
     expect(() =>
+      validateQuarantineState({
+        schemaVersion: 1,
+        entries: {
+          'openrouter:long:free': {
+            source: 'openrouter',
+            model: 'long:free',
+            reason: 'rate_limit',
+            quarantinedAt: '2026-11-12T00:00:00.000Z',
+            expiresAt: '2126-10-19T00:00:00.000Z',
+          },
+        },
+      })
+    ).toThrow(/Invalid/);
+    expect(() =>
       upsertQuarantine(
         { schemaVersion: 1, entries: {} },
         {
@@ -219,6 +233,131 @@ describe('free-model quarantine lifecycle', () => {
         }
       )
     ).toThrow(/finite epoch milliseconds/);
+  });
+
+  it('honors bounded operator bans for exact provider/model pairs without letting automatic updates replace them', () => {
+    const quarantinedAt = Date.parse('2026-11-12T10:33:41.000Z');
+    const state = {
+      schemaVersion: 1,
+      migration_v2: true,
+      migration_v3: true,
+      migration_v4: true,
+      entries: {
+        'kilo:kilo-auto/free': {
+          source: 'kilo',
+          model: 'kilo-auto/free',
+          reason: 'permanent_ban',
+          quarantinedAt: new Date(quarantinedAt).toISOString(),
+          expiresAt: '2126-10-19T10:33:41.000Z',
+        },
+        'openrouter:thinkingmachines/inkling-small:free': {
+          source: 'openrouter',
+          model: 'thinkingmachines/inkling-small:free',
+          reason: 'provider_ban',
+          quarantinedAt: new Date(quarantinedAt).toISOString(),
+          expiresAt: '2126-10-19T10:33:41.000Z',
+        },
+      },
+    };
+    const before = structuredClone(state.entries);
+
+    expect(validateQuarantineState(state)).toBe(state);
+    expect(activeQuarantineKeys(state, quarantinedAt)).toEqual(
+      new Set(['kilo:kilo-auto/free', 'openrouter:thinkingmachines/inkling-small:free'])
+    );
+    expect(() =>
+      validateQuarantineState({
+        schemaVersion: 1,
+        entries: {
+          'kilo:too-long:free': {
+            source: 'kilo',
+            model: 'too-long:free',
+            reason: 'permanent_ban',
+            quarantinedAt: '2026-11-12T00:00:00.000Z',
+            expiresAt: '2126-11-14T00:00:00.000Z',
+          },
+        },
+      })
+    ).toThrow(/Invalid/);
+    const centuryEntry = {
+      source: 'kilo',
+      model: 'century:free',
+      reason: 'permanent_ban',
+      quarantinedAt: '2026-11-12T00:00:00.000Z',
+      expiresAt: '2126-11-12T00:00:00.000Z',
+    };
+    expect(
+      validateQuarantineState({
+        schemaVersion: 1,
+        entries: { 'kilo:century:free': centuryEntry },
+      })
+    ).toMatchObject({ entries: { 'kilo:century:free': centuryEntry } });
+    expect(() =>
+      validateQuarantineState({
+        schemaVersion: 1,
+        entries: {
+          'kilo:century:free': { ...centuryEntry, expiresAt: '2126-11-12T00:00:00.001Z' },
+        },
+      })
+    ).toThrow(/Invalid/);
+    const leapDayEntry = {
+      source: 'kilo',
+      model: 'leap-day:free',
+      reason: 'permanent_ban',
+      quarantinedAt: '2000-02-29T23:59:59.999Z',
+      expiresAt: '2100-02-28T23:59:59.999Z',
+    };
+    expect(
+      validateQuarantineState({ schemaVersion: 1, entries: { 'kilo:leap-day:free': leapDayEntry } })
+    ).toMatchObject({ entries: { 'kilo:leap-day:free': leapDayEntry } });
+    expect(() =>
+      validateQuarantineState({
+        schemaVersion: 1,
+        entries: {
+          'kilo:leap-day:free': { ...leapDayEntry, expiresAt: '2100-03-01T00:00:00.000Z' },
+        },
+      })
+    ).toThrow(/Invalid/);
+
+    const protectedUpdate = upsertQuarantine(state, {
+      source: 'kilo',
+      model: 'kilo-auto/free',
+      reason: 'rate_limit',
+      hours: 6,
+      now: quarantinedAt + 60_000,
+    });
+
+    expect(protectedUpdate).toBeNull();
+    expect(state.entries).toEqual(before);
+    expect(() =>
+      upsertQuarantine(state, {
+        source: 'kilo',
+        model: 'new:free',
+        reason: 'permanent_ban',
+        now: quarantinedAt,
+      })
+    ).toThrow(/supported quarantine reason/);
+
+    const expiredState = {
+      schemaVersion: 1,
+      entries: {
+        'kilo:expired:free': {
+          source: 'kilo',
+          model: 'expired:free',
+          reason: 'permanent_ban',
+          quarantinedAt: '2026-11-01T00:00:00.000Z',
+          expiresAt: '2026-11-02T00:00:00.000Z',
+        },
+      },
+    };
+    const expiredKey = upsertQuarantine(expiredState, {
+      source: 'kilo',
+      model: 'expired:free',
+      reason: 'rate_limit',
+      now: Date.parse('2026-11-12T00:00:00.000Z'),
+    });
+    expect(expiredState.entries[expiredKey].reason).toBe('rate_limit');
+    expect(expiredState.entries[expiredKey].expiresAt).toBe('2026-11-12T06:00:00.000Z');
   });
 
   it('sets a six-hour default expiry and refuses a quarantine beyond seven days', () => {
@@ -331,6 +470,9 @@ describe('free-model quarantine lifecycle', () => {
     expect(
       await runQuarantineCli(['add', '--source', 'unknown', '--model', 'x:free', '--reason', 'rate_limit'], output)
     ).toBe(2);
+    expect(
+      await runQuarantineCli(['add', '--source', 'kilo', '--model', 'x:free', '--reason', 'permanent_ban'], output)
+    ).toBe(2);
   });
 
   it('supports list, add, release, and prune against an injected state path', async () => {
@@ -360,11 +502,49 @@ describe('free-model quarantine lifecycle', () => {
       expect(await runQuarantineCli(['list'], output, { quarantineFile: filePath })).toBe(0);
       expect(JSON.parse(output.stdout.value).entries['openrouter:vendor/model:free'].reason).toBe('rate_limit');
 
+      output.stdout.value = '';
+      expect(await runQuarantineCli(['status'], output, { quarantineFile: filePath })).toBe(0);
+      expect(JSON.parse(output.stdout.value)).toMatchObject({
+        checkedAt: expect.any(String),
+        active: [expect.objectContaining({ key: 'openrouter:vendor/model:free', reason: 'rate_limit' })],
+      });
+      expect(JSON.parse(output.stdout.value).active[0].remainingMs).toBeGreaterThan(0);
+
       expect(
         await runQuarantineCli(['release', '--source', 'openrouter', '--model', 'vendor/model:free'], output, {
           quarantineFile: filePath,
         })
       ).toBe(0);
+
+      const now = Date.now();
+      const operatorExpiry = new Date(now);
+      operatorExpiry.setUTCFullYear(operatorExpiry.getUTCFullYear() + 50);
+      const operatorState = {
+        schemaVersion: 1,
+        migration_v2: true,
+        migration_v3: true,
+        migration_v4: true,
+        entries: {
+          'kilo:operator:free': {
+            source: 'kilo',
+            model: 'operator:free',
+            reason: 'provider_ban',
+            quarantinedAt: new Date(now).toISOString(),
+            expiresAt: operatorExpiry.toISOString(),
+          },
+        },
+      };
+      await writeQuarantineState(operatorState, filePath);
+      output.stdout.value = '';
+      expect(
+        await runQuarantineCli(
+          ['add', '--source', 'kilo', '--model', 'operator:free', '--reason', 'rate_limit'],
+          output,
+          { quarantineFile: filePath }
+        )
+      ).toBe(0);
+      expect(output.stdout.value).toContain('Kept active operator ban provider_ban');
+      expect(await readQuarantineState(filePath)).toEqual(operatorState);
 
       const expiredState = { schemaVersion: 1, migration_v2: true, migration_v3: true, entries: {} };
       upsertQuarantine(expiredState, {
@@ -377,6 +557,47 @@ describe('free-model quarantine lifecycle', () => {
       await writeQuarantineState(expiredState, filePath);
       expect(await runQuarantineCli(['prune'], output, { quarantineFile: filePath })).toBe(0);
       expect((await readQuarantineState(filePath)).entries).toEqual({});
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('reports only unexpired entries in dynamic quarantine status', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-status-'));
+    const filePath = join(directory, 'state.json');
+    const now = Date.parse('2026-11-12T12:00:00.000Z');
+    const state = { schemaVersion: 1, migration_v2: true, migration_v3: true, entries: {} };
+    upsertQuarantine(state, { source: 'kilo', model: 'active:free', reason: 'rate_limit', hours: 1, now });
+    upsertQuarantine(state, {
+      source: 'openrouter',
+      model: 'expired:free',
+      reason: 'provider_outage',
+      hours: 1,
+      now: now - 2 * 60 * 60 * 1000,
+    });
+    await writeQuarantineState(state, filePath);
+    const output = {
+      stdout: {
+        value: '',
+        write(text) {
+          this.value += text;
+        },
+      },
+      stderr: { write() {} },
+    };
+
+    try {
+      expect(await runQuarantineCli(['status'], output, { quarantineFile: filePath, now: () => now })).toBe(0);
+      expect(JSON.parse(output.stdout.value)).toEqual({
+        checkedAt: new Date(now).toISOString(),
+        active: [
+          expect.objectContaining({
+            key: 'kilo:active:free',
+            expiresAt: new Date(now + 60 * 60 * 1000).toISOString(),
+            remainingMs: 60 * 60 * 1000,
+          }),
+        ],
+      });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
