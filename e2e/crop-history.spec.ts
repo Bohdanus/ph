@@ -8947,6 +8947,8 @@ test.describe('Crop history', () => {
             throw new Error(`${stage} background did not produce PSD-bounds diagnostic controls`);
           }
           const comparedFramePixels = expectedSize.width * expectedSize.height;
+          // These synthetic common-backing clips can rasterize differently across platforms.
+          // Keep their deltas diagnostic; actual composite and eligible output parity stays exact below.
           for (const source of ['legacy', 'durable'] as const) {
             const commonBacking = backgroundBoundsControl[source].commonBackingClipControls;
             const physicalBacking = backgroundBoundsControl[source].physicalBackingSizeMatrixControls;
@@ -8956,25 +8958,41 @@ test.describe('Crop history', () => {
             expect(commonBacking.originalFrameComparedPixels, `${source} clip diagnostic frame coverage`).toBe(
               comparedFramePixels
             );
-            // These synthetic common-backing clips characterize platform-sensitive canvas raster behavior.
-            // Their measured deltas are diagnostic; actual composite and eligible output parity stay exact below.
+            expect(Object.keys(commonBacking.commonBackingClipVsBaseline).sort()).toEqual([
+              'combined',
+              'heightOnly',
+              'widthOnly',
+            ]);
             for (const [clipName, comparison] of Object.entries(commonBacking.commonBackingClipVsBaseline)) {
               expect(comparison.measurementStatus, `${source} ${clipName} clip measurement`).toBe('measured');
               expect(comparison.comparedPixels, `${source} ${clipName} clip coverage`).toBe(comparedFramePixels);
-              const differingBytes = comparison.pixelComparison?.differingBytes;
+              const pixelComparison = comparison.pixelComparison;
+              expect(pixelComparison?.expectedByteLength, `${source} ${clipName} clip expected-byte coverage`).toBe(
+                comparedFramePixels * 4
+              );
+              expect(pixelComparison?.receivedByteLength, `${source} ${clipName} clip received-byte coverage`).toBe(
+                comparedFramePixels * 4
+              );
+              expect(Number.isSafeInteger(pixelComparison?.differingBytes)).toBe(true);
               expect(
-                typeof differingBytes === 'number' && Number.isSafeInteger(differingBytes) && differingBytes >= 0,
-                `${source} ${clipName} clip has a measured difference count`
-              ).toBe(true);
+                pixelComparison?.differingBytes,
+                `${source} ${clipName} clip differing-byte lower bound`
+              ).toBeGreaterThanOrEqual(0);
+              expect(
+                pixelComparison?.differingBytes,
+                `${source} ${clipName} clip differing-byte upper bound`
+              ).toBeLessThanOrEqual(comparedFramePixels * 4);
             }
+            expect(
+              commonBacking.widthHeightInteraction.measurementStatus,
+              `${source} clip interaction measurement`
+            ).toBe('measured');
             expect(commonBacking.widthHeightInteraction.comparedPixels, `${source} clip interaction coverage`).toBe(
               comparedFramePixels
             );
-            expect(
-              Number.isSafeInteger(commonBacking.widthHeightInteraction.differingBytes) &&
-                commonBacking.widthHeightInteraction.differingBytes >= 0,
-              `${source} clip interaction has a measured difference count`
-            ).toBe(true);
+            expect(Number.isSafeInteger(commonBacking.widthHeightInteraction.differingBytes)).toBe(true);
+            expect(commonBacking.widthHeightInteraction.differingBytes).toBeGreaterThanOrEqual(0);
+            expect(commonBacking.widthHeightInteraction.differingBytes).toBeLessThanOrEqual(comparedFramePixels * 4);
             expect(physicalBacking.originalFrameComparedPixels, `${source} physical-size frame coverage`).toBe(
               comparedFramePixels
             );
