@@ -114,12 +114,13 @@ The three-transition mixed-source fixture pins composite pixels byte-for-byte af
 transition. Do not infer exact per-layer or export parity from that gate. A separate transformed
 raster with layer opacity 0.58 and `multiply` blend mode has exact raw materialization and direct
 composite parity. Its normal admission check refuses retained operations, so the product continues
-to use legacy rendering and export. A local Chrome diagnostic that manually invokes the refused
-runtime/export adapters records 42 differing channel bytes at the affine cursor and 46 after the
-fractional frame in runtime, export-canvas, and decoded PNG pixels. PSD has zero composite/layer
-differences at the affine cursor; after the fractional frame, the composite differs by 8 bytes, the
-background layer by 7, and the foreground layer by zero. These refused-adapter results are not proof
-of a current product-output defect; their cause remains unknown. The earlier 146-byte isolated-layer
+to use legacy rendering and export. An earlier local Chrome run that manually invokes the refused
+runtime/export adapters records 42 channel bytes at the affine cursor and 46 after the fractional
+frame in runtime, export-canvas, and decoded PNG pixels. The latest run-specific values and the
+first-difference trace are recorded in `docs/HISTORY-MIGRATION-NEXT.md`: runtime/export/PNG report
+42 bytes at both cursors; fractional-frame PSD reports 13 composite bytes and 11 background-layer
+bytes across 4 pixels. These refused-adapter results are not proof of a current product-output
+defect; their cause remains unknown. The earlier 146-byte isolated-layer
 comparison over transparency is not a valid blend-mode oracle. Keep retained-operation admission
 closed and follow the isolation steps in `docs/HISTORY-MIGRATION-NEXT.md` before changing the gate.
 Do not add `SET_DOCUMENT_FRAME_ACTION` to background
@@ -154,25 +155,45 @@ and pixels after two sequential affines on an opaque blank, one affine on a 45%-
 each on vector, paint, and point text, at all six affine cursors and after each frame transition. A
 separate raster differential pins exact raw materialization and direct composite output at opacity
 0.58 with `multiply`; refused-adapter runtime/export/PNG and fractional-frame PSD differences remain
-diagnostic-only while legacy fallback is active. Next expand the frame matrix across open angles,
-other affine combinations, other blank opacity values, and other text styling/rotation before
-claiming broader exact fractional bounds. Establish
-source-backed import/replacement ownership as a separate gate. The frame matrix and ownership gate
-are unordered and may proceed independently. Keep both surfaces legacy-gated until their parity and
-failure-containment evidence is explicit. See `docs/HISTORY-MIGRATION-NEXT.md` for the migration
-sequence.
+diagnostic-only while legacy fallback is active. Keep the broader frame matrix open across open
+angles, other affine combinations, other blank opacity values, and other text styling/rotation. It
+is independent of the next ownership slice and remains gated.
+
+**Next after the current `ph-71` diagnostic claim is reviewed and landed:** create or claim a separate
+source-ownership task for one product-reachable in-place text edit. Trace `commitDirtyTool` in
+`useLayer.ts` through `replaceLayerSource` to the typed `REPLACE_LAYER_SOURCE_ACTION`. Refresh the
+producer owner and handoff first. The current `StoreContext.tsx` gate returns
+`ownership-unproven` for this action, but existing StoreContext coverage uses a generic replacement
+history item; it does not prove the fallback for a valid typed text edit. Add StoreContext integration
+coverage that feeds the valid typed action through append, asserts no durable compose and the legacy
+selector/current legacy pixels, then invokes navigation and asserts the returned/published
+`legacy-fallback` with `ownership-unproven` for undo/redo and disabled-entry navigation. Append
+presentation remains `EMPTY_DURABLE_PRESENTATION` (`status: 'unpublished', cursor: null, reason: null`);
+do not require the navigation outcome at append time. Add a
+product E2E for the reachable text edit and exact legacy canvas plus production PNG/PSD output.
+
+Prove old/new runtime `bitmap` and `tmpCanvas` identity/generation and any disposable durable
+materialization lease across append, navigation, disabled rows, redo-branch truncation, and document
+close. Assert no early release and exactly-once cleanup after the last reachable owner is removed;
+derive lease events from the actual implementation. The immutable text action does not register a
+raster asset. Give stale/refused work, failed final drawing, and preview interleaving explicit
+pass/fail assertions. Compare production canvas, PNG, and PSD layer/composite pixels byte-for-byte.
+Keep whole-document replacement on its own teardown contract. This slice ends with the gate closed;
+any eligibility change needs a separate reviewed change with full parity and failure-containment
+proofs. See
+`docs/HISTORY-MIGRATION-NEXT.md` for the full matrix and current-ref reconciliation.
 
 A bounded source-backed create exception allows an image or blank `NEW_LAYER_ACTION` to
 request background composition only when the active cursor prefix before that create passes the
 ownership and frame gates. The create's own undo/redo cursor still takes the legacy fallback, and
 later edits cannot use this exception to skip that gate. The default app starts with a blank
-`NEW_LAYER_ACTION`, which is already ownership-gated, and imported raster baselines are gated too;
-the tested paste and Background flows therefore remain on the legacy presentation. The browser
-spec verifies their exact undo/redo pixels and PNG/PSD exports, not durable presentation.
-The eligible gate-free prefix is covered by a focused unit test but has no proven normal UI entry
-point yet. A source-derived candidate is disabling the default blank history row through the
-History panel; validate it with the next-run E2E in `docs/HISTORY-MIGRATION-NEXT.md` before calling
-the exception product-reachable. Logical replay remains legacy-owned.
+`NEW_LAYER_ACTION`, which is already ownership-gated, and imported raster baselines are gated too.
+The disabled-default-row route is now proven in `e2e/source-backed-history.spec.ts`: raster paste
+and tablet blank-layer creation reach the bounded append exception after the user disables the
+opening blank History row. Their exact canvas, PNG, and PSD pixels pass; undo is exact and redo
+returns to the full legacy fallback with `ownership-unproven`. This proves only that narrow,
+user-disabled-root prefix. The default active root, imported-raster starts, later source-backed
+edits, and frame-changing commits remain gated. Logical replay remains legacy-owned.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,

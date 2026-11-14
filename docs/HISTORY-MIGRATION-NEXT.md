@@ -1,9 +1,9 @@
 # History Migration Next Steps
 
 This is the restart guide for the durable-history migration. `docs/HISTORY-MIGRATION.md` remains the
-architecture map; this file records the live gates and the next bounded proof slice. The status
-contract and subsequent renderer work have already landed on `main`; the checkpoint below records
-the main drift and the new evidence from this continuation.
+architecture map; this file records the live gates and the next bounded proof slice. Historical
+measurements retain their run timestamps. Use the latest continuation reconciliation below for
+current refs, ownership, and follow-up scope.
 
 ## Current Contract
 
@@ -18,9 +18,11 @@ the main drift and the new evidence from this continuation.
   or `unavailable` into `stale`.
 - `layer transparency` remains a legacy diagnostic label but is no longer a legal `ActionType`:
   there is no writer, durable translator, or replay arm for it.
-- A duplicate history id is classified against legacy replay: state-changing enabled duplicates
-  produce an error diagnostic and `partial` status, while idempotent/absent-layer duplicates and
-  disabled duplicates remain warning-only because they do not change the legacy snapshot.
+- A duplicate history id is classified against legacy replay: enabled duplicates that change, or
+  lack a canonical no-op proof against, the legacy snapshot produce an error diagnostic and
+  `partial` status. Proven idempotent/absent-layer duplicates and disabled duplicates remain
+  warning-only. Operations without an explicit no-op proof are conservatively treated as potentially
+  state-changing.
 - `convertLegacyHistorySafely()` requires `documentId` for legacy arrays so successful asset
   conversions cannot create an unreachable random registry owner; durable-document pass-through
   still derives its identity from the document.
@@ -60,17 +62,30 @@ transparent baseline, visible rectangle, PNG, and PSD composite/layer pixels aga
 pixel oracle, then checks exact undo/redo; redo reports `ownership-unproven`. This pins the gate,
 not vector eligibility.
 
-## Current-main drift and new renderer evidence
+## Main checkpoints and renderer evidence
 
-At the 2026-11-07 checkpoint, local `main` is `30e32ccf6efba0536525ac66a8e71e04a97889ab`.
-Since the history-export landing at `659ca8ede3be5c4f05aa0d250d63d6f394964315`, main advanced
-through `df1d78387` and merge `30e32ccf6`; that delta adds the migration audit and updates this
-restart guide, without changing history replay, compositor, renderer, export, or the crop fixture.
-This candidate is rebased onto that local main. Commit `bd5f3d29f` adds the adapter diagnostics and
-`8c842c4fe` removes the two-pixel allowances from the affected frame and tight-raster assertions.
-Neither changes production admission or renderer behavior. This local rebase is not a remote update.
-Before landing, recheck the live main SHA and tree, candidate ancestry, repository state, and
-ownership; this task does not include a remote push.
+The 69d checkpoint below is the earlier 14:33 snapshot; the later continuation reconciliations
+record the current refs and candidate base. On 2026-11-14, the designated local `main` worktree at
+`.kilo/worktrees/landing-main-recovered-20261112` advanced from
+`21be39289f688d40c562fc614049cdca73856450` through `4d0d33130dcbbbdd406ee4ed735da1cefa853553`
+to `69d22e89a3d8b4e6921834cf98083a5f241f2fa8`. The task worktree was fast-forwarded to `69d22e89a`
+before this continuation's final focused run. The `4d0d33130..69d22e89a` diff changes only
+`scripts/__tests__/agent-board.test.mjs`, `scripts/__tests__/find-session-id.test.mjs`,
+`scripts/__tests__/free-web-research.test.mjs`, and `scripts/lib/agent-board/db.mjs`; it does not
+change history source, migration docs, or `e2e/crop-history.spec.ts`. The earlier merge from
+`21be392` to `4d0d33130` changed only `docs/TOOLS.md` and `src/tools/descriptions/shape.ts`. The
+earlier ten-commit fast-forward from `52cf9e614` to `21be392` touched
+only `scripts/__tests__/agent-board.test.mjs`, `scripts/__tests__/free-model-pool-external.test.mjs`,
+`scripts/__tests__/test-write-boundaries.test.mjs`, `scripts/free-model-pool.mjs`, and
+`scripts/lib/agent-board/db.mjs`; no migration docs, crop-history tests, durable-history source, or
+renderer code changed. The existing migration commits remain in main, including `0535f48d5`
+(transformed-raster diagnostics), `7cc7cdc28` (out-of-bounds crop samples), `4ecce4b6d`
+(premultiplied frame diagnostics), and `fd2915557` (premultiplied mirror readout). No newer
+migration implementation was found in the checked history/export-parity or crop-history DPR2
+branches; their checks are recorded with the chat-history reconciliation below. Live `git ls-remote`
+checks during this continuation returned both `origin/main` and `mirror/main` at `69d22e89a`; the
+task worktree fetched and fast-forwarded to that pin. No push was performed. The designated local
+`main` worktree is clean at the same commit.
 
 The historical `7cf69dca` affine-parity commit is not an ancestor of current main. Its behavior has
 evolved in the current compositor: `3ccccba0` introduced direct affine raster composition and
@@ -91,23 +106,226 @@ differ by one at each cursor; the exact premultiplied comparison remains zero. D
 Invert processor's returned OffscreenCanvas into a fresh HTMLCanvas readback yields identical bytes
 for legacy and durable inputs through both source canvas paths. This pins the downstream draw/read
 boundary, not raw processor backing-store identity. The direct durable composite also matches the
-legacy composite exactly. The committed E2E diagnostic now
-measures runtime projection, the `durableExportRecords()`/`renderExportCanvas()` result, decoded PNG,
-and PSD layer plus composite pixels at both cursors. The normal admission predicate refuses the
-retained `apply-affine-transform` case at the affine cursor and the retained frame-transform case
-after the fractional frame. Accordingly, the test requires that refusal and records the adapter
-pixels for diagnosis; these manually invoked, refused adapter outputs are not selected for product
-rendering or export. On local Chrome, those diagnostics show 42 differing channel bytes in runtime,
-export-canvas, and decoded-PNG pixels at the affine cursor, with zero PSD composite or layer-byte
-differences. After the fractional frame they show 46 differing bytes in runtime, export-canvas, and
-decoded-PNG pixels, 8 in the PSD composite, 7 in the PSD background layer, and zero in the
-foreground layer. The 42/46 results are now reproduced as adapter diagnostics, not as a confirmed
-product-output defect. The test requires exact zero bytes on all surfaces if the records are
-admitted. The earlier 146-byte isolated-layer comparison over transparency is not a valid blend-mode
-oracle. Keep retained operations outside runtime and export admission; the current product path
-continues to use legacy records. Hidden layers also force legacy PSD records, and export checks
-actual materialized bounds before selecting durable records. This does not admit frame-changing
-commits or alter logical history authority.
+legacy composite exactly. The focused E2E compares runtime projection,
+`durableExportRecords()`/`renderExportCanvas()`, decoded PNG, PSD layer rasters, and PSD composite.
+The normal admission predicate refuses the retained `apply-affine-transform` case at the affine
+cursor and the retained frame-transform case after the fractional frame. These manually invoked,
+refused adapter outputs are not selected for product rendering or export. An earlier local Chrome
+run recorded 42 runtime/export/PNG bytes at the affine cursor and 46 after the fractional frame,
+with PSD differences of 0 at the affine cursor and 8 composite/7 background-layer/0 foreground-layer
+bytes after the frame. Continuation run `2026-11-14T08-19-01-147Z-1961` reports runtime/export/PNG
+differences of 42 bytes across 38 pixels at the affine cursor and 42 bytes across 39 pixels after
+the fractional frame. The cause of the difference between the 42/46-byte earlier capture and this
+42/42-byte run is unknown; do not combine the runs or treat one as explaining the other. Keep these
+run-specific observations separate; neither establishes a product-output defect. The earlier 146-byte
+isolated-layer comparison over transparency is not a valid blend-mode oracle.
+
+That current run also paints both paths over the fixture's opaque `#5070a0` backdrop. HTMLCanvas and
+OffscreenCanvas each report 42 differing bytes across 38 pixels at the affine cursor and 42 across
+39 pixels after the fractional frame; all differing bytes are RGB. Its controls report normal
+composite `111/90` then `94/74` bytes/pixels, opacity-only `43/38` then `66/60`, and multiply-only
+`71/61` then `79/64`. The different control counts show that opacity and blend affect the differential;
+they do not identify its cause.
+
+The same run mirrors `savePsd()`'s `drawLayerSource()` rasterization before `writePsd()` and checks
+the decoded PSD separately. Integer layer bounds match between paths. Both pre-encode layers are
+exact at the affine cursor. After the fractional frame, the foreground remains exact, while the
+background raster differs by 11 channel bytes across 4 pixels (maximum channel delta 43); the
+decoded PSD background layer reports the same 11/4 result, and the PSD composite differs by 13 bytes
+across 4 pixels. The fractional background raster uses PSD-local bounds `left=-19`, `top=-21`,
+`89x89`; the foreground uses `left=0`, `top=5`, `50x38`. A new same-backing experiment renders the
+background into one `89x89` canvas and applies explicit `51x46`, `89x46`, `51x89`, and `89x89` clip
+rectangles. Across all 2,346 original-frame pixels, those four common-backing clip outputs are
+byte-identical for both legacy and durable sources. For legacy, comparing the native-size surfaces
+to their corresponding common-backing clips gives 11 bytes/4 pixels (maximum delta 43) for the
+baseline and width-only cases, 5 bytes/2 pixels (maximum delta 1) for height-only, and zero for the
+combined `89x89` case. The native width-only surface itself matches the frame baseline; the native
+height-only surface differs by 10 bytes/5 pixels, and the combined native surface differs by 11/4.
+Durable is exact for every comparison. In this fixture, explicit clip size does not reproduce the
+legacy changes; the physical backing dimensions do, especially backing height. This localizes the
+first observed difference to the refused `drawLayerSource()` rasterization into differently sized
+canvases, but does not explain why the browser raster output depends on those dimensions. The
+mismatch is present before encoding; it is not a confirmed product-path failure. The focused run
+passed 1 test. Its physical backing-size matrix compares each result over the same 2,346 original-
+frame pixels. The legacy raw and rounded-`ImageData`-premultiplied results are:
+
+| Backing size | Legacy raw bytes/pixels/max | Legacy premultiplied bytes/pixels/max | Durable raw/premultiplied |
+| ------------ | --------------------------: | ------------------------------------: | ------------------------: |
+| 51×46        |                       0/0/0 |                                 0/0/0 |              0/0/0; 0/0/0 |
+| 89×46        |                       0/0/0 |                                 0/0/0 |              0/0/0; 0/0/0 |
+| 51×47        |                       8/3/2 |                                 4/3/1 |              0/0/0; 0/0/0 |
+| 89×47        |                       3/1/1 |                                 1/1/1 |              0/0/0; 0/0/0 |
+| 51×51        |                      8/3/17 |                                 4/3/1 |              0/0/0; 0/0/0 |
+| 89×51        |                      7/2/17 |                                 3/2/1 |              0/0/0; 0/0/0 |
+| 51×89        |                     10/5/43 |                                 6/5/1 |              0/0/0; 0/0/0 |
+| 89×89        |                     11/4/43 |                                 6/4/1 |              0/0/0; 0/0/0 |
+
+The first legacy difference in matrix order appears when height grows from 46 to 47 at width 51:
+frame-local pixel `(2, 0)` / document `(9.25, 8.5)` changes from raw RGBA `[80,112,161,224]` to
+`[80,112,159,224]`; the premultiplied readback changes from `[70,98,141,224]` to
+`[70,98,140,224]`. Across widths 51 vs. 89, raw/premultiplied deltas at heights 46, 47, 51, and
+89 are `0/0`, `5/3`, `1/1`, and `5/2` bytes respectively. Raw width-height interaction deltas at
+heights 47, 51, and 89 are 5/2/max-2, 1/1/max-2, and 5/2/max-1. Durable results remain exact in
+all eight sizes and interactions. These are run measurements, not platform-specific assertions or
+proof of the browser's internal surface representation. The extra backing row is associated with
+the first observed difference; the rasterization cause remains unknown. Keep exact zero bytes on every surface if these records are admitted; retained
+operations remain outside runtime and export admission, hidden layers force legacy PSD records, and
+export checks actual materialized bounds before selecting durable records. No frame-changing commit
+or logical history authority changed.
+
+## Direct drawImage reproduction — 2026-11-14
+
+Focused Chrome run `2026-11-14T12-04-20-540Z-28065` passed the
+`e2e/crop-history.spec.ts` test “an affine raster keeps composite opacity and blend mode exact”
+after the trace was tightened to select the first differing cell from a full-frame comparison and
+to require exact replay fidelity.
+For the legacy source, the 51×46 versus 51×47 comparison covers all 2,346 frame pixels and finds
+8 differing channel bytes across 3 pixels, maximum delta 2. Its first differing frame-local cell is
+`(2, 0)` / document `(9.25, 8.5)`: `[80,112,161,224]` becomes `[80,112,159,224]`. The durable source
+has zero differing bytes at these sizes and is recorded as `no difference`, not assigned a synthetic
+first-difference cell. HTMLCanvas and OffscreenCanvas report the same result.
+
+The legacy trace captures the same 64×64 `ImageBitmap` and identical five-argument call
+`drawImage(bitmap, 0, 0, 64, 64)` at both backing sizes. Its destination rectangle is `(0,0,64,64)`;
+the context transform is approximately `(a=.857167, b=-.515038, c=.515038, d=.857167,
+e=-18.620644, f=12.748785)`, with filter `none`, smoothing disabled, alpha `1`, and
+`source-over`, image-smoothing quality `low`, and transparent zero-offset shadow settings. The first
+differing pixel center maps to source coordinate `(24.4125, 0.3787)`.
+The measured in-bounds source texels around it are `[80,112,160,255]`; the read does not include
+out-of-bounds source texels.
+
+The control replays the captured source, numeric arguments, transform, filter, smoothing, alpha, and
+composite mode onto fresh 51×46 and 51×47 HTMLCanvas and OffscreenCanvas surfaces. For both backing
+sizes, the direct replay matches its corresponding `drawLayerSource()` trace across all 2,346 pixels
+with zero differing bytes. The direct pair therefore reproduces the same 8-byte/3-pixel legacy
+difference on both canvas types; the durable pair remains exact. This isolates the observed
+height-associated change to the captured Canvas 2D `drawImage` operation with these inputs. It does
+not identify the browser's internal sampling or backing-store rule. The output copy to a common-size
+canvas also preserves the already-rendered pixels and does not create the difference.
+
+The same run's refused-adapter comparison reports 42 runtime, export-canvas, and decoded-PNG channel
+bytes at the affine cursor (38 pixels, maximum delta 1) and 42 after the fractional frame (39 pixels,
+maximum delta 1). PSD is exact at the affine cursor. After the fractional frame, the PSD composite
+differs by 13 bytes across 4 pixels (maximum delta 43), the background PSD layer and pre-encode
+raster each differ by 11 bytes across 4 pixels (maximum delta 43), and the foreground layer remains
+exact. The normal admission predicate still refuses the retained operations. These are run-specific
+measurements of manually invoked adapters, not product-output failures.
+
+**Completed control:** add a one-pixel transparent border around the captured source and make
+an `ImageBitmap` from that padded surface so the source type remains the same. For the original
+`drawImage(source, dx, dy, dw, dh)` call, compute `scaleX=dw/sourceWidth` and
+`scaleY=dh/sourceHeight`, then use destination rectangle `(dx-scaleX, dy-scaleY,
+dw+2*scaleX, dh+2*scaleY)` for one-pixel padding. For the current 64×64 source/call this is
+`(-1,-1,66,66)`. Before drawing, verify that the padded bitmap's visible interior matches the
+original pixel-for-pixel and every new border pixel is transparent. Replay the same captured source
+type, transform, filter, smoothing quality, alpha, composite mode, and shadow state at 51×46 and
+51×47. Run the original unpadded control in the same evaluation and read all outputs through the
+same `getImageData` path; compare the selected sample and all 2,346 frame pixels. Record deltas
+without requiring a browser-specific output value. This deliberately changes source bounds and
+rectangles; keep it separate from the exact-input reproduction above. The mapped sample is near the
+original source's top edge, while its readback neighborhood contains no out-of-bounds source texels.
+
+### Captured results — 2026-11-14
+
+Focused Chrome run `2026-11-14T14-33-54-271Z-53382` passed the
+`e2e/crop-history.spec.ts` test “an affine raster keeps composite opacity and blend mode exact” and
+captured
+the padding diagnostics for HTMLCanvas and OffscreenCanvas. Every output comparison covers all 2,346
+frame pixels. The original 64×64 `ImageBitmap` and padded 66×66 `ImageBitmap` have byte-identical
+64×64 interiors (16,384 bytes, zero differences); all 260 added border pixels have alpha zero. The
+original five-argument destination is `(0,0,64,64)`. The mapped padded call uses
+`(-1,-1,66,66)`, preserving the interior's document mapping exactly.
+
+| Control                                                                              | Compared with the original five-argument draw at 51×46 and 51×47 | Difference between 51×46 and 51×47                                                |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Padded 66×66 source, five-argument call at mapped `(-1,-1,66,66)`                    | 28 bytes across 11 pixels at each size; max channel delta 170    | Exact: zero bytes                                                                 |
+| Padded source interior `(1,1,64,64)`, nine-argument call to `(0,0,64,64)`            | 8 bytes across 2 pixels at each size                             | 1 byte / 1 pixel, max delta 2, at document `(9.25,8.5)`                           |
+| Original 64×64 source `(0,0,64,64)`, nine-argument call to `(0,0,64,64)`             | Exact at each size                                               | 8 bytes across 3 pixels, max delta 2, matching the original backing-height result |
+| Padded full source `(0,0,66,66)`, nine-argument call to original `(0,0,64,64)`       | 76 bytes across 19 pixels at each size                           | Exact: zero bytes                                                                 |
+| Padded full source with mapped expanded geometry `(-1,-1,66,66)`, nine-argument call | Exact to the padded five-argument result at each size            | Exact: zero bytes                                                                 |
+
+The exact original-source nine-argument replay matches its five-argument replay, so overload choice
+alone does not explain the padding result. The padded-interior replay still differs when the
+byte-identical visible source rectangle moves from `(0,0)` on the original bitmap to `(1,1)` on the
+larger bitmap. This associates the remaining difference with the changed bitmap bounds/source
+coordinates, but does not distinguish transparent neighboring texels from other bounds or
+coordinate effects. The full-padded-source control at the original destination changes visible
+content mapping and is not an equivalent-content comparison. The matched expanded-geometry control
+shows that the five- and nine-argument overloads agree for that changed input; it does not identify
+the browser's internal sampling or backing-store rule. These are HTMLCanvas/OffscreenCanvas
+measurements in this Chrome run, not browser-specific assertions.
+
+After removing the temporary diagnostic log and adding runtime guards for the trace's `unknown`
+metadata, focused Chrome run `2026-11-14T14-44-43-452Z-3075` passed again and `npm run tsc` passed.
+The output-capture run above is the measurement source; this final run verifies the test without
+temporary logging.
+
+**Completed edge-extension control:** Chrome run `2026-11-14T15-01-54-291Z-63465` passed
+`e2e/crop-history.spec.ts` test “an affine raster keeps composite opacity and blend mode exact.” It
+compared the transparent-border, all-edge, and right-edge-only
+66×66 `ImageBitmap` sources using the same nine-argument source rectangle `(1,1,64,64)`, destination
+`(0,0,64,64)`, captured context, both 51×46 and 51×47 backing sizes, and all 2,346 frame pixels.
+HTMLCanvas and OffscreenCanvas results matched.
+
+The table columns answer separate comparisons: the per-size column compares each control with the
+original-source baseline at that same backing size, while the final column compares one control
+across the 51×46 and 51×47 backing sizes. The 8-byte/2-pixel delta from transparent padding at each
+fixed size is distinct from the 8-byte/3-pixel height delta for the original-source control.
+
+The 64×64 source interior, all-edge border, and right-only border were each verified byte-for-byte
+against the expected construction. The right-only bitmap extends exactly 64 border pixels and
+leaves 196 transparent; the all-edge bitmap extends 260 border pixels. At both backing sizes, the
+right-only output exactly matches the all-edge output and the original-source nine-argument replay.
+Both edge-extended outputs differ from transparent padding by 8 bytes across 2 pixels at each
+backing size. The 51×46 versus 51×47 output still differs by 8 bytes across 3 pixels, maximum channel
+delta 2. For the separate 89×89 source control, all-edge and right-only outputs match transparent
+padding and original-source replay exactly at both heights; the height comparison is also exact.
+After removing the temporary edge-output log, focused run `2026-11-14T15-25-40-663Z-92127` passed
+the same `e2e/crop-history.spec.ts` affine-opacity/blend test and `npm run tsc` passed. The 15:01
+capture supplies the output measurements; the final run checks the test without that temporary log.
+
+This run shows that changing only the right border changes output for the 64×64 fixture and that the
+right-only result reproduces the all-edge/original-source result there. It does not identify the
+browser mechanism, generalize to other source bounds, or explain the fractional-frame PSD difference.
+The test validates source construction and complete comparison buffers; output byte counts remain
+run diagnostics, not platform-specific assertions. Do not change production rendering, durable
+admission, or the exact runtime, PNG, PSD-layer, and PSD-composite gates from this result.
+
+**Added frame-matrix point:** Chrome run `2026-11-14T16-43-18-983Z-99538` passed one focused E2E for
+a 23-degree crop with fractional frame `{x:8.25,y:9.5,width:47.75,height:43.25}` and two positioned
+raster layers (`background` and a 16×16 `center-patch`). The test requires byte-identical legacy and
+durable composites, exact materialized bounds and sizes, and zero HTMLCanvas/OffscreenCanvas frame
+and tight-bitmap pixel differences. It does not exercise the refused runtime/export adapters, PNG,
+PSD, other source types, or other angles; it closes only this fixture. Keep the wider frame matrix
+open and do not infer export or authority eligibility from it. The test name explicitly limits the
+claim to two positioned raster layers.
+
+The source-bound diagnostic is complete under the current `ph-71` claim. The next implementation
+slice is a separately owned text-source lifecycle proof after this diagnostic is reviewed and
+landed: trace one product-reachable in-place text-layer edit through `commitDirtyTool` (`useLayer.ts`)
+→ `replaceLayerSource` → typed `REPLACE_LAYER_SOURCE_ACTION`. Refresh the producer's live owner and
+handoff before editing. The current StoreContext gate rejects this action as `ownership-unproven`,
+but existing StoreContext coverage uses a generic replacement history item; it does not prove
+append/navigation fallback for a valid typed text edit.
+
+First add StoreContext integration coverage that passes the valid typed edit through append and
+asserts no durable compose, the legacy selector, and exact current legacy pixels. Append presentation
+must equal `EMPTY_DURABLE_PRESENTATION` (`status: 'unpublished', cursor: null, reason: null`); do not
+require a navigation outcome at append time. Then invoke navigation,
+undo, redo, and disabled-entry navigation and assert the returned/published
+`legacy-fallback` with `ownership-unproven` and exact legacy output. Add a product E2E for the
+reachable text edit, undo/redo, and production export. Compare production canvas, PNG, and PSD
+layer/composite pixels byte-for-byte against an independent input oracle.
+
+Track old/new runtime `bitmap` and `tmpCanvas` identity/generation and identify the actual disposable
+materialization lease, if any. Assert acquisition/reachability, no early release, and exactly-once
+cleanup after the last reachable owner is removed across append, navigation, disabled entries,
+redo-branch truncation, and document close; do not invent lease renewal/expiry semantics. Give stale
+or refused work, failed final drawing, and preview interleaving explicit pass/fail assertions. The
+immutable typed text action does not register a raster asset. Keep whole-document replacement on
+its separate document-teardown contract and the broader fractional-frame matrix independent. This
+slice ends with admission closed; any eligibility change requires a separate reviewed change and
+complete surface/failure proof.
 
 ## Loose Ends
 
@@ -131,14 +349,18 @@ commits or alter logical history authority.
    mismatch or the wider frame matrix. The opacity `0.58`/`multiply` fixture has exact premultiplied
    materialization and direct-composite results. macOS straight-alpha readback differences remain
    diagnostic; the production Invert processor's returned raster also matches after a fresh-canvas
-   readback. The fixture adds local-Chrome diagnostics for the refused runtime/export adapters, PNG,
-   and PSD. The measured 42/46 runtime/export/PNG differences and the fractional-frame PSD
-   differences are not product-path failures because admission refuses those records and the app
-   retains legacy rendering/export. The root cause remains unknown. Keep the
-   gate closed and isolate the first differing intermediate surface before changing production code.
-   The diagnostic fixture records differing-pixel document coordinates, RGBA/alpha, aggregate bounds,
+   readback. The fixture records refused runtime/export adapters, decoded PNG, PSD layer rasters, and
+   PSD composite pixels. An earlier local Chrome run's 42/46 runtime/export/PNG differences and the
+   fractional-frame PSD differences are not product-path failures because admission refuses those records and the app
+   retains legacy rendering/export. The observed draw operation and backing-height change are now
+   localized by the exact-input and backing-size controls, but the browser sampling mechanism remains
+   unknown, as does whether it explains the fractional-frame PSD difference. Keep the gate closed;
+   resolve those causal questions before changing production code.
+   The fixture records differing-pixel document coordinates, RGBA/alpha, aggregate bounds,
    source/backdrop samples, and exact runtime/export/PNG/PSD surface bounds. Its opacity-only and
-   multiply-only controls run at both the affine cursor and fractional frame. The [Linux mirror run
+   multiply-only controls run at both the affine cursor and fractional frame. The opaque-backdrop
+   control compares legacy `drawLayer()` with a durable materialized-bitmap composite; its counts are
+   a path differential, not a shared-renderer resampling oracle. The [Linux mirror run
    for commit `0535f48d`](https://github.com/Bohdanus/ph/actions/runs/42987298464) reproduces refused
    adapter differences: runtime/export/PNG differ by 118 channel bytes (91 pixels, maximum delta 1)
    at the affine cursor and 86 bytes (69 pixels, maximum delta 1) after the fractional frame. PSD is
@@ -152,22 +374,27 @@ commits or alter logical history authority.
    commit `1adbd46075e3d038d15c2769038aa4cc163ccdb2`; all 30 tests passed with no skips, retries, or
    unexpected results. Both HTMLCanvas and OffscreenCanvas report the same byte and pixel counts
    after premultiplication: 101/91 at the affine cursor and 94/82 after the fractional frame. The
-   raw comparison reports zero non-edge pixels, but the current premultiplied comparison does not
-   classify non-edge differences. Its first eight samples at each stage have equal alpha and a
-   one-unit premultiplied channel difference. Materialized bounds match exactly; tight-bitmap
+   raw comparison reports zero non-edge pixels, but that Linux run predates the premultiplied
+   alpha-neighborhood classifier. Its first eight premultiplied samples at each stage have equal
+   alpha and a one-unit channel difference; the Linux run does not establish whether its remaining
+   differing pixels lie on alpha boundaries. Materialized bounds match exactly; tight-bitmap
    premultiplied comparisons and fresh-canvas Invert readbacks report zero differences for both
-   canvas types. These measurements show that the raw frame differences persist after
-   premultiplication, so straight-alpha readback alone does not explain them. Whether the
-   premultiplied differences extend beyond alpha boundaries remains unmeasured. Keep the gate closed
-   and test the transparent-backdrop and direct frame-surface-copy versus tight-bitmap-placement
-   controls.
-   Check operation order and intermediate alpha/premultiplication around
-   `drawEvaluatedPresentation()` and `renderExportCanvas()`; `durable-compositor.ts` explicitly
-   disables image smoothing on its composition path, so smoothing is not an established explanation.
-   Investigate the fractional PSD discrepancy separately by comparing legacy and durable background
-   raster bytes before encoding at identical integer bounds, then check layer placement relative to
-   the fractional frame and decoded layer versus composite pixels. Require exact zero at runtime,
-   PNG, and PSD before considering an admission change; keep `SET_DOCUMENT_FRAME_ACTION` out of
+   canvas types. In the 2026-11-14 macOS/Chrome run, HTMLCanvas and OffscreenCanvas each report 101
+   differing premultiplied channel bytes across 81 pixels at the affine cursor and 96 bytes across
+   76 pixels after the fractional frame. The per-channel counts are affine `r=21, g=24, b=34, a=22`,
+   then fractional `r=29, g=23, b=18, a=26`. The broad eight-neighbor alpha heuristic marks all
+   81/76 differing pixels as boundary-related and zero as non-boundary-related in this Mac run.
+   This is not geometric-edge proof: the heuristic unions either image's partial-alpha neighborhood,
+   can include unrelated alpha transitions, excludes center alpha 0/255, and ignores neighbors
+   outside the frame. Do not apply the Mac classification to the older Linux counts. Both runs keep
+   exact admission closed; the platform counts remain separate.
+   The opaque-backdrop, PSD pre-encode, axis-extent, common-backing clip, eight-size physical backing
+   comparison, first-difference trace, direct `drawImage` replay, transparent/source-bound,
+   original-source overload, and edge-extension controls are recorded above. Do not repeat those
+   probes without a new discriminating hypothesis. The edge run shows a right-border contribution in
+   one 64×64 fixture but leaves the browser mechanism and fractional-frame PSD difference unresolved;
+   it does not support a production rendering or admission change. Keep runtime, PNG, PSD layer, and
+   PSD composite equality as separate exact-zero gates, and keep `SET_DOCUMENT_FRAME_ACTION` out of
    durable publication.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
@@ -176,9 +403,15 @@ commits or alter logical history authority.
 
 ## Recommended Sequence
 
-The immediate parity slice is step 3: prove the transformed raster through runtime projection,
-PNG, and PSD. Source-backed ownership in step 4 remains an independent open gate; the numbering does
-not impose a dependency between them.
+Continue using the canonical migration gates in Loose Ends §2. The physical backing-size sweep,
+first-difference trace, exact-input `drawImage` reproduction, transparent/source-bound controls,
+original-source overload, and all-edge/right-edge-only border comparison are complete. The
+recommended next implementation slice is one product-reachable in-place text-layer edit through
+`commitDirtyTool` (`useLayer.ts`) → `replaceLayerSource` → typed `REPLACE_LAYER_SOURCE_ACTION` under
+step 4's independent source-backed ownership gate. Refresh the producer's owner/handoff and prove
+its `ownership-unproven` fallback before editing. Keep whole-document replacement on its separate
+teardown contract. The broader frame-parity matrix remains open and unordered with this ownership
+work.
 
 1. Keep `safePrefix` diagnostic-only and release its independent owner at every consumer boundary;
    never let `partial` satisfy an exact projection gate.
@@ -187,34 +420,15 @@ not impose a dependency between them.
    layer base while append composition is pending or accepted, then reveal the durable base only
    after the preview clears; `useLayer.render.test.tsx` pins accepted and refused append cases, and
    `e2e/undo-redo.spec.ts` pins live Brush preview pixels while durable status is current.
-3. Continue parity-only work with the transformed raster opacity/blend fixture. Exact premultiplied
-   materialization, downstream Invert readback, and direct-composite assertions pass locally;
-   straight-alpha source readback differences remain diagnostic because they map to identical
-   premultiplied pixels. The Invert check pins a fresh-canvas consumer readback, not raw OffscreenCanvas
-   backing-store identity. Adapter measurements are intentionally diagnostic because the normal gate
-   refuses retained operations.
-   The mirror measurements for `1adbd46075e3d038d15c2769038aa4cc163ccdb2` show that the frame
-   surface differences persist after premultiplication, while tight-bitmap and Invert consumer
-   results remain exact. Classify premultiplied differing pixels against alpha boundaries for both
-   canvas types; the current report only classifies raw frame differences. Then use the
-   document-coordinate samples, source/backdrop RGBA, exact bounds, and opacity-only/multiply-only
-   controls at both cursors to locate the first meaningful divergence. Compare the direct
-   original-source draw, materialized bitmap at matching frame-grid coordinates, and projected-record
-   draw. Hold canvas type, transform, clipping, layer order, and destination constant; next compare an
-   opaque versus transparent backdrop and a direct frame-surface copy versus tight-bitmap placement,
-   changing one condition at a time. Inspect intermediate alpha/premultiplication and operation
-   order; preserve the explicit `imageSmoothingEnabled = false` setting rather than attributing the
-   result to filtering without evidence. For PSD, isolate the legacy and durable background-layer
-   bytes before encoding at `savePsd()`'s equal integer bounds, inspect `left`/`top`/width/height
-   against the fractional frame, then compare PSD layer and composite pixels separately using the
-   same quantized opacity. Do not use PNG as the PSD pixel oracle. Keep separate exact
-   assertions for source pixels, materialized premultiplied pixels/bounds/dimensions,
-   opacity/blend metadata, runtime pixels, PNG pixels, PSD layer pixels, and PSD composite pixels.
-   Require zero differing bytes
-   without tolerance before proposing any admission change. Preserve bitmap lease and stale-completion
-   release assertions. The current product path must continue selecting legacy records for retained
-   operations, hidden PSD layers, and replay/legacy layer sets or materialized bounds that do not
-   match the legacy record.
+3. Keep the transformed-raster opacity/blend fixture diagnostic-only. The exact-input `drawImage`,
+   transparent/source-bound, original-source overload, and edge-extension controls are complete and
+   recorded in §2. The right-only result matches all-edge extension and original-source replay for
+   the 64×64 fixture, while the 89×89 fixture is exact against transparent padding; neither result
+   identifies the remaining fractional-frame PSD mismatch or the browser mechanism. The existing
+   E2E already compares direct legacy drawing with tight-bitmap placement into a transparent frame,
+   copied frame-grid pixels with the materialized tight bitmap, and PSD pre-encode with decoded
+   layer/composite output; do not describe those controls as unmeasured. Keep runtime, PNG, PSD layer,
+   and PSD composite equality as separate exact gates.
 
    Do not change production rendering until these comparisons identify the first divergent boundary.
    If the evidence shows direct source drawing is required, consider a narrowly scoped durable
@@ -226,12 +440,11 @@ not impose a dependency between them.
    independently with exact equality before considering admission. Do not allocate a full-document
    bitmap per layer.
 
-   Once that slice is exact, broaden the fractional frame matrix across open angles, additional
-   retained-affine combinations, text styling/rotation, blank opacity variants, and fractional
-   materialized bounds for each source family. Keep `SET_DOCUMENT_FRAME_ACTION` out of durable
-   publication until that matrix is explicit; add cursor checks without changing publication, cursor,
-   or lease ownership. Frame parity and source-backed import/replacement ownership remain independent
-   gates.
+   Keep the broader fractional-frame matrix open across open angles, additional retained-affine
+   combinations, text styling/rotation, blank opacity variants, and fractional materialized bounds
+   for each source family. Keep `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that
+   matrix is explicit; add cursor checks without changing publication, cursor, or lease ownership.
+   Frame parity and source-backed import/replacement ownership remain independent gates.
 
 4. Keep the image/blank create exception scoped to the current append. It may request background
    composition after asset finalization only when the preceding active cursor prefix passes the
@@ -365,15 +578,315 @@ parity proof, broader frame matrix, and source-backed ownership as independent r
 
 ## Chat-history reconciliation
 
-The local Kilo, Codex, and Copilot history scan found no additional migration step or authority-order
-decision. Codex's exact prompt and controlled experiment records distinguish an earlier one-alpha
-materialization discrepancy at `(36, 26)`—addressed by shared frame-surface reuse—from the later
-mixed-source composite observation at `(5, 26)`. The verified-free Kilo Nemotron search did not
-establish that later case's root cause; focused Kilo SQLite results corroborate that the earlier
-`(36, 26)` result is a different issue. Copilot Chronicle contained no usable exact transcript for
-this case; the candidate session had 23 local turns marked failed, so that scan is not evidence that
-no discussion occurred. The current implementation work therefore verifies the recovered
-fractional fixture directly and keeps the opacity/blend export gap as the next bounded proof.
+The local-only scan was refreshed on 2026-11-14 against Kilo's current SQLite store, Codex's
+`state_5.sqlite` index and selected rollout JSONL files, Copilot Chronicle's normalized
+`session-store.db`, and Copilot Agent Host session databases. Search terms covered `/Users/bkalynovskyi/ph`
+and `history migration`, `durable history`, `crop-history`, `premultiplied`, `affine frame`, and
+`history authority`. Transcript text and model summaries were treated as leads and checked against
+the live refs, source, tests, and migration docs. This is a bounded local scan, not proof that no
+other conversation exists.
+
+- Kilo's `ses_e83e2f95fffekfXcQ5FRRtAKCP` (“Continue history migration”, Oct. 27) records the
+  one-alpha per-layer mismatch at `(36, 26)` and shared frame-surface reuse that addressed that
+  exact case; broader frame coverage remained open. `ses_e4a86735affeprODxyceMw78v6` (“Integrate
+  opencode into free compute machinery”, Nov. 7–8) contains the failed cross-platform crop-history
+  run and refused opacity/blend adapter observations, without an authority-order decision.
+  `ses_e31495b30ffevxkBRHjL4Y3CpD` (Nov. 12) is Photoshop tool-documentation work. Recent Kilo
+  records `ses_e28649794ffeo0sj6cCywsUj4Y` (“Migration state review”) and
+  `ses_e6708ccb1ffeUuAzKBcd77rF80` (“E2E test hardening with subagents”) contain generated state
+  summaries and durable reset unit-test work, respectively; neither supplies a newer migration
+  authority decision. The free plan `ses_e27d6a3f1ffefrFGpSatjKLjKi` recommended width-only and
+  height-only extent controls, now present in the E2E. The free review `ses_e27dd927dffeZeOYCdcowHKgTO`
+  raised claims about removed helpers, `drawImage` arguments, and frame assertions that were checked
+  against current source and found stale or misread.
+- The broad Kilo/Codex/Chronicle chat-search returned 500 Kilo sessions (the configured cap), 37
+  Codex sessions, zero `/ph` Copilot Chronicle sessions, and 30 excerpts. Its Nemotron 3 Ultra
+  `:free` Kilo synthesis completed with `finish_reason=stop`, reported `$0` cost, and used 32,965
+  input, 1,783 output, and 3,520 reasoning tokens. It repeated a stale main pin, mischaracterized
+  already-implemented axis controls as future work, and asserted review issues that local source
+  checks did not confirm. Treat that synthesis as a retrieval aid, not review or branch authority;
+  the Kilo cap also means the scan is not exhaustive.
+- Codex's current continuation is `01a1791a-beaf-7eb2-8c7c-e10b483cf962`. The historical plan
+  `01a17f24-9224-7aa0-a412-3afafa09f797` has a Nov. 13 metadata update, but its last substantive
+  migration content is Nov. 7. `01a1b828-1d74-7c72-ae2f-a3b20b696b87` preserves the Nov. 7 frame
+  diagnostic; `01a18993-03cd-7e00-9188-f51dcff8532d` contains earlier mixed work. The Nov. 12
+  tool-documentation conversation `01a1cc81-4a3b-7d41-948d-c44c6ff25325` is not a migration-order
+  decision. No additional authority-order decision was found in the searched local Codex records.
+- Copilot Chronicle had no `/ph` migration session. Its eight local content matches for history,
+  crop, or durable terms belong to `drguz69/lightshopy.com` and date Sep. 16–21, 2026. The separate
+  Agent Host scan checked 715 parent/descendant databases (180,203,520 bytes) and found 14 matching
+  local-turn records across nine files; these are failed task/review prompts, with no successful
+  assistant answer or migration decision. A more recent index candidate
+  `copilotcli:/46d32923-26fa-4bf5-97a3-b5cb13226047` had no `/ph` workspace path in its metadata or
+  edits; its parent and 12 child databases contained 12 local turns, including five failed
+  `crop-history` child prompts, and no successful answer or new migration decision. Copilot's local
+  records are incomplete for Agent Host and do not prove that no discussion occurred elsewhere.
+
+### Fresh continuation scan — 2026-11-14 11:16 UTC
+
+The current Codex state index reports `backfill_state=complete`. Its newest relevant result is the
+same long-running `01a1791a-beaf-7eb2-8c7c-e10b483cf962` (“Continue history migration”), indexed at
+11:06 UTC; the separate `01a17f24-9224-7aa0-a412-3afafa09f797` (“Plan further history migration”)
+was indexed at Nov. 13 23:49 UTC and contains older migration decisions. No newer independent
+Codex migration thread was found. The current continuation is the active user conversation, not an
+independent migration result.
+
+The recent Kilo records add proposals and reviews, not an authority-order change. `ses_e27d6a3f1ffefrFGpSatjKLjKi`
+(03:45 UTC) proposed a PSD-bound origin/extent control; those controls and the later physical-size
+matrix are already recorded above. `ses_e26d3ba31ffeZUfyqbMqHrLCx7` (08:28 UTC) reviewed the E2E
+diagnostics. Source checks confirmed that `frameChannels` is in the enclosing test scope and
+`savePsd()` itself calls `drawLayerSource()` for its integer-bound raster. The review's alleged
+negative unpaired-strip count misread `comparedPixels`: it counts all outside-frame cells, while the
+function reports nontransparent cells separately. Its opaque-backdrop path asymmetry is a valid
+interpretation limit: legacy draws the source layer while the durable control composites a
+materialized bitmap, so those counts are a path differential, not a shared-renderer parity oracle.
+The both-axes guard applies to this fixture's 89×89 bounds; the independent physical-size matrix
+contains width-only and height-only cases. The remaining review claims did not establish a product
+defect. `ses_e26ea64cfffe9PWtTMQn7lUHes` (08:03 UTC) is a model-generated summary that claimed exact
+parity for every control; that conflicts with the run artifacts and is not evidence. `ses_e27bbc317ffeyzJyIgwqfNt2KN`
+(04:15 UTC) is a relevance-ranking response over excerpts, not a migration decision.
+
+A refreshed read-only query of Copilot Chronicle's normalized `session-store.db` again found zero
+sessions with `/ph` in `cwd` or `repository`. This does not extend the separate Agent Host scan or
+prove that no Copilot discussion exists outside these local stores. No newer Kilo, Codex, or Copilot
+record changes logical `HistoryItem[]` authority, the retained-operation admission gates, or the
+diagnostic-only status of these renderer measurements.
+
+The Codex host exposed no free task/agent-manager tool. A tool-free `free-model-pool` synthesis was
+attempted at 11:17 UTC and returned no answer: Kilo was skipped under its cooldown through
+11:56:18.279 UTC, OpenRouter's live daily counter was exhausted (`1006/1000`, zero remaining), and
+OpenCode `mimo-v2.6-flash-free` returned HTTP 429 `provider.free-limit`. No output from that attempt
+was used as evidence; do not retry those exhausted sources in this run. Groq was not eligible because
+the required Free-plan opt-in and key are absent in this environment.
+
+The prior and refreshed local records add no authority-order change. They distinguish the earlier `(36, 26)`
+per-layer case from the later `(5, 26)` mixed-source observation; the latter's root cause remains
+unknown. Current source and main history remain authoritative. The refused opacity/blend adapters are
+an open parity investigation, not a confirmed product export defect.
+
+### Continuation reconciliation — 2026-11-14 12:04 UTC
+
+The designated local `main` advanced from `4d0d33130` to `69d22e89a`. The live `origin/main` and
+`mirror/main` heads matched `69d22e89a`; the fast-forward delta modifies only the agent-board,
+session-ID, and web-research test files plus `scripts/lib/agent-board/db.mjs`. The candidate was
+fast-forwarded to that tree before the final focused E2E. No migration source, migration docs, or
+crop-history test changed in that main delta.
+
+A new read-only local-history query covering records updated since the 11:16 scan found no recent
+Kilo session matching migration terms, either in `/ph` workspaces or elsewhere in the current Kilo
+SQLite store. The Codex state index returned only the active `01a1791a-beaf-7eb2-8c7c-e10b483cf962`
+continuation, not an independent migration chat. Copilot Chronicle had no `/ph` sessions or matching
+turns after the scan boundary. The prior Agent Host database sweep was not repeated; its incomplete
+coverage limitation still applies.
+
+The separate `history-migration-reconcile-20261114` worktree remains dirty at `ef8baf59`. Its
+modified migration guide still lists the physical backing-size sweep as the next action, while its
+E2E diff contains older diagnostic instrumentation. The current candidate already records that
+sweep, the first-difference trace, and the direct `drawImage` reproduction. A fresh read-only review
+found no unique production or source-backed-test evidence in that worktree; its next-step note is
+stale against current main and this candidate. Preserve the dirty worktree and do not harvest it.
+
+After the Kilo cooldown expired at `11:56:18 UTC`, three sequential tool-denying Kilo
+Nemotron-3-Ultra free completions reviewed the transparent-padding control design. All returned
+`finish_reason=stop` and `$0` reported cost. They converged on exact visible-mapping math, byte-exact
+verification of the padded interior, a transparent-border check, and the same source/readback path
+for padded and unpadded controls. One response incorrectly used backing dimensions as the draw scale;
+that is rejected because the captured source and destination are both 64×64 in user space. Other
+filter-radius and sampling-rule suggestions are not treated as facts; the experiment records its
+changed inputs and does not claim a browser mechanism. These completions are design leads, not source
+evidence or code review. OpenRouter remained exhausted, OpenCode was not retried after its
+`provider.free-limit`, and Groq Free opt-in/API key were absent from the runner environment; no
+Groq probe ran. The Codex host has no free task/agent-manager tool. Three fresh Luna read-only reviews
+and focused follow-ups were also used; their first-difference and replay-fidelity findings were
+reproduced locally and fixed. These diagnostics change neither logical replay authority nor product
+admission.
+
+### Continuation reconciliation — 2026-11-14 14:40 UTC
+
+The designated local `main` worktree is clean at `108cc5d6477487ece41d89f9d85b5650d2144c6b`;
+live `git ls-remote` checks report both `origin/main` and `mirror/main` at the same SHA. The current
+task branch is still based on `69d22e89a3d8b4e6921834cf98083a5f241f2fa8` and must be synchronized
+before landing. The `69d22e89a..108cc5d6` delta changes only the CI workflows
+`capture-linux-baselines.yml`, `ci.yml`, and `focused-e2e.yml`, plus
+`free-model-pool.test.mjs`, `test-write-boundaries.test.mjs`, and `free-model-pool.mjs`. It does not
+change migration source, migration docs, `e2e/crop-history.spec.ts`, or renderer code. A fresh
+`repo:state --json` scan found two unrelated in-progress `AUTO_MERGE` operations in
+`dirty-landing-cross-validated-20261113` and `unit-test-hardening-20261113`; preserve both. A
+repository-wide report is not the scoped landing decision: before landing, rerun
+`npm run repo:state -- --for-landing task/history-migration-continuation-20261114` and
+`npm run main:landing -- status`, and leave those unrelated operations untouched. `ph-71` remains
+claimed by this task branch; the six scoped paths have no foreign file holder.
+
+The local history scans found no newer independent migration implementation or authority decision:
+
+- **Kilo:** the local database contains 6,667 sessions; a read-only search of recent user/assistant
+  text was capped at 100 matching sessions and covered records since Nov. 7. The latest substantive
+  padding-design critique found was `ses_e261109eaffeL1ky7lZEJvLN0Q` (Nov. 14, 12:01 UTC). Later
+  records around 13:50–13:54 include `ses_e25aa9f22ffeaJiLN8mvtW3sQl`, whose prompt omitted the
+  later padding observation and still proposed alpha-boundary classification as next. Treat that
+  sequencing as stale; no local Kilo transcript recorded the actual padding output captured by this
+  E2E. The bounded search does not cover other Kilo stores.
+- **Codex:** `state_5.sqlite` reports `backfill_state=complete`; the active root
+  `01a1791a-beaf-7eb2-8c7c-e10b483cf962` is the latest substantive migration conversation. Its
+  13:03 UTC padding observation was chat-reported until focused Chrome run
+  `2026-11-14T14-33-54-271Z-53382` captured the control results recorded in §2. The separate
+  planning chat `01a17f24-9224-7aa0-a412-3afafa09f797` contains migration work through Nov. 7; its
+  later index timestamp is metadata. The Nov. 8–10 origin audit `01a1bc27-1187-7050-87bd-f94c47c801f0`
+  is adjacent context, not a newer implementation. The local rollout search found no archived
+  session directory; remote/synced Codex history was not searched.
+- **Copilot:** the local Chronicle database has 19 sessions and 45 turns, with no `/ph` migration
+  session. The two chat-session journals mapped to `/ph` replay to empty request lists. The local
+  Agent Host database has 89 Copilot CLI session rows and 915 chat metadata objects but no mirrored
+  turn rows; its available local records add no migration decision. Remote chats and inaccessible
+  `ahp-chat://` resources were not queried. These bounds support only “no newer local Copilot
+  decision found,” not a global absence claim.
+
+Across these stores, no later conversation changes `HistoryItem[]`/`replayHistory()` logical
+authority, retained-operation admission, or the frame-publication gate. At the 14:40 checkpoint the
+edge-extended-border comparison was still next; the 15:01 run captured it, and its result is recorded
+in §2. The browser sampling mechanism remains unproven. Reviews used Luna read-only subagents in
+this continuation. The previous live checks found exact-free Kilo/OpenRouter inference unavailable;
+no model output substitutes for captured local test evidence.
+
+### Continuation reconciliation — 2026-11-14 16:43 UTC
+
+**Live refs and drift.** The designated local `main` worktree
+`.kilo/worktrees/landing-main-recovered-20261112` is clean at
+`422f28a67f784eab8ecdb0232b3503df52d80d2f`. This candidate is at
+`69d22e89a3d8b4e6921834cf98083a5f241f2fa8`, an ancestor of local `main` with 8 commits behind and
+0 ahead; its six dirty paths are the scoped diagnostic/docs candidate and must be preserved while
+syncing `main` into the branch before landing. The 4 commits in `108cc5d6477487ece41d89f9d85b5650d2144c6b..422f28a67f784eab8ecdb0232b3503df52d80d2f` change only `.husky/post-merge`, `docs/ORCHESTRATION.md`, and main-landing/merge-release tooling and tests. They do not change history source, renderer, E2E, or migration docs.
+
+Live remote heads are `origin/main=d0aa7bbf4037c2c98ebea80c9eef3aebb75b38e2` and
+`mirror/main=108cc5d6477487ece41d89f9d85b5650d2144c6b`. Their common base with local `main` is
+`108cc5d`; `git rev-list --left-right --count main...origin/main` is `4 30`. The remote-only
+history-relevant change is `d15adb877202398448c14335c13f06634e056f0a`, a test-only hardening of
+`src/contexts/__tests__/durable-export-adapter-parity.test.tsx`. It adds assertions for exclusion of
+the unmatched legacy layer, blocked durable composition, the opposite serialization path, and
+release behavior on refusal. Local `main` already has the production export guard and its earlier
+fallback test but not these additional assertions. No history production or `crop-history` change
+was found in the remote delta. Do not merge all 30 remote commits or push as part of this local
+landing; use the designated local `main` pin and its pinned landing wrapper.
+
+**Current proof and migration boundary.** The new 23-degree fractional-crop test is one
+compositor/frame-matrix point and does not exercise runtime/export/PNG/PSD or change admission. Its
+initial Chrome run `2026-11-14T16-23-44-434Z-51411` preceded a title clarification; the final focused
+run `2026-11-14T16-43-18-983Z-99538` passed the renamed test. Both runs are evidence for the same
+fixture, not two matrix points. Its exact fixture limits are recorded above. The
+backing-size, source-bound, border, and alpha-neighborhood evidence remains diagnostic. The selected
+product path still falls back to legacy rendering for retained operations; `HistoryItem[]` and
+`replayHistory()` remain logical authority, and retained-operation/frame-publication gates remain
+closed.
+
+The live `ph-71` claim covers diagnostic parity only. It must not be expanded to source ownership.
+After `ph-71` is reviewed and landed, create or claim a separate text-source ownership task. The
+active `REPLACE_LAYER_SOURCE_ACTION` gate is `ownership-unproven`. Current StoreContext coverage uses
+a generic replacement-action entry; it does not yet prove the fallback for a valid typed text edit.
+The next task must test that producer-level append/navigation decision and track old/new runtime
+`bitmap`/`tmpCanvas` identity/generation plus any disposable durable materialization lease. The
+immutable typed text action does not register a raster asset. The complete acceptance matrix is in
+HANDOFF §1 and the current continuation plan above; whole-document replacement and the broader
+frame matrix remain separate slices.
+
+**Other chats and search limits.** The refreshed local Kilo/Codex search did not establish a newer
+independent migration implementation. The 13:53 Kilo evidence-audit completion
+`ses_e25aa9f22ffeaJiLN8mvtW3sQl` was based on the then-current `main=108cc5d` and recommended an
+alpha-boundary classification as the next bounded diagnostic. The current candidate contains that
+diagnostic classifier and its exact synthetic accounting check; the later local browser captures and
+source-bound controls supersede the audit's proposed ordering. Its warnings against treating free
+summaries as proof remain valid. A new Kilo search since 14:40 returned search/completion helper
+sessions rather than migration work; the separate Kilo root `ses_e2680acabffeIFAeTuw4675oOT` is an
+E2E-hardening run whose user request explicitly forbids product changes, not a migration decision.
+The search summaries are leads, not proof of absence.
+
+The current Codex root `01a1791a-beaf-7eb2-8c7c-e10b483cf962` is this continuation; its local state
+index is complete and shows no separate newer migration root after the cutoff. The earlier planning
+thread `01a17f24-9224-7aa0-a412-3afafa09f797` and the Nov. 8–10 origin audit remain historical
+context. A read-only query of local Copilot Chronicle found no `/ph` session; remote/synced sessions,
+other user-data profiles, and inaccessible chat resources were not searched. The dirty
+`history-migration-reconcile-20261114` worktree at `ef8baf59` is 31 commits behind and an ancestor of
+current local `main`; its three uncommitted paths are the two migration docs and
+`e2e/crop-history.spec.ts`. Its browser diagnostics and next-step note are older. A read-only
+identifier comparison found all 30 named tests and all 38 named functions in that worktree's E2E
+file in this candidate, with no reconcile-only test/function/const names; this does not claim every
+function body is byte-identical. Preserve the dirty worktree and do not treat its stale next-step
+note as current. The separate `history-migration-continuation-20261115` worktree is clean at
+`108cc5d`, 4 commits behind local `main`, with no additional implementation. Unrelated dirty test
+branches and foreign merge markers remain untouched. Full `repo:state --json` at 16:44 UTC scanned
+229 worktrees and returned `ok: true` with exit 1 because of three foreign in-progress `AUTO_MERGE`
+markers in `codex-owner-liveness-20261114`, `dirty-landing-cross-validated-20261113`, and
+`unit-test-hardening-20261113`; it reported no destructive `MERGE_HEAD`. Preserve those operations
+and decide this landing only with the scoped `--for-landing` check.
+
+The prior broad open-source editor survey remains comparative only. A fresh check of [GIMP's undo
+overview](https://developer.gimp.org/core/specifications/undo/), [Krita's undo-history
+docker](https://docs.krita.org/en/reference_manual/dockers/undo_history.html), and [Aseprite's undo
+history documentation](https://github.com/aseprite/docs/blob/main/undo-history.md) confirms that
+grouping, cursor navigation, and optional non-linear redo behavior vary between editors. These
+patterns motivate branch and lifecycle tests but do not set Photoshop behavior or this app's
+contract; repository and Photoshop-grounded requirements remain authoritative.
+
+Free chat-search output on this refresh returned helper/scaffolding sessions and was not accepted as
+review evidence. The live OpenRouter quota check at `2026-11-14T16:21:20Z` reported
+`used=1006/1000`, `remaining=0`; no OpenRouter inference was used. The exact Kilo
+`nvidia/nemotron-3-ultra-550b-a55b:free` route was available for free summarization.
+
+**Independent review reconciliation.** Three Luna read-only follow-ups agreed that the renderer
+diagnostics remain non-authoritative and found no actionable E2E defect. The source-contract review
+identified the valid typed-edit StoreContext gap and clarified that the typed text action owns no
+raster asset; both details are now explicit above. The planning review correctly separated this
+source lifecycle slice from `ph-71` and identified the 23-degree test as a single matrix point. It
+also questioned ancestry; the live Git proof resolves that claim: candidate `69d22e89a` is an ancestor
+of local `main=422f28a67`, 8 behind and 0 ahead.
+
+The planning review also noted that the 16:23 and 16:43 run IDs are the initial and final runs of
+that same test. This reconciliation now treats them as one frame-matrix point and uses the 16:43 run
+as the final passing run; the title clarification did not expand the fixture or its claims. The
+source-contract review confirmed that append presentation stays empty/unpublished and the explicit
+`legacy-fallback / ownership-unproven` result belongs to navigation, undo, and redo. The next-slice
+acceptance text states those outcomes separately.
+
+A fresh Luna 6 documentation review found four clarity gaps, now corrected: it reconciled the two
+23-degree run IDs as one fixture, named the exact `EMPTY_DURABLE_PRESENTATION` shape in the append
+assertion, and clarified that operation-level source-edit support does not prove the producer's
+StoreContext ownership lifecycle. It also narrowed the open diagnostic question from an unspecified
+first-difference boundary to the still-unknown browser sampling mechanism and whether it explains
+the fractional-frame PSD difference. Its read-only follow-up found no remaining inconsistency. A
+separate Luna E2E review found no assertion or scope defect in the renamed two-layer test; it confirms
+the exact composite, frame bounds, and per-layer pixels without claiming export or admission parity.
+
+A second free Kilo Nemotron review found that the plan's phrase “a second test” could blur the 16:23
+and 16:43 run IDs. The live status now spells out that they are initial/final runs of one fixture and
+names the final test. Its other requested checks found no contradiction in the 42/46 versus 42/42
+run-specific counts, the padding comparison axes, current ref ancestry, local chat-search limits, or
+the next source-lifecycle gate.
+
+The Luna source review found that the normal, opacity-only, and blend-only test controls inherited
+the main fixture's full projected-output flag, so they repeated export/PNG/PSD and backing diagnostics
+that their runtime-composite comparison does not consume. The controls now capture only runtime
+pixels and dimensions, disable the unused invert/backdrop diagnostics, and skip their per-layer
+comparison surfaces; the main fixture retains the full refused-adapter and PSD/backing evidence. A
+first post-refactor focused run `2026-11-14T17-07-41-349Z-52216` caught a missing `expectedSize` on
+the shared cursor result. The result now carries the exact frame pixel size to both control arrays.
+The focused Chrome run `2026-11-14T17-10-30-734Z-58675` passed one test after the dimension fix.
+After the commit hook's required Prettier reflow, focused Chrome run
+`2026-11-14T17-18-00-204Z-1299` passed one test and `npm run tsc` passed. The full E2E suite was
+not run.
+
+Five free Kilo Nemotron reviews in this continuation returned non-empty text with
+`finish_reason=stop`, `cost=0`, and one Kilo request each; OpenRouter remained exhausted. The free
+model outputs were treated as leads: full-source Luna review and the focused E2E rejected several
+partial-diff concerns and reproduced/fixed the missing-dimension defect before the passing rerun.
+
+Four independent free Kilo reviews used the exact `nvidia/nemotron-3-ultra-550b-a55b:free` model;
+each returned non-empty text, `finish_reason=stop`, `cost=0`, with one Kilo request and no OpenRouter
+attempt. The ref review found the pin account internally consistent and suggested naming the common
+base explicitly, which is reflected above. The source-slice review prompted the typed-action fallback
+assertions and product E2E requirement now recorded above. The E2E review confirmed that the new
+test supports only its one exact frame/layer fixture; its name now says “two positioned raster
+layers,” and no wider matrix or export claim is made. The chat-history review found the bounded,
+local-only wording calibrated. These model reviews remain leads; the coordinator checked their
+claims against source, live refs, Kilo/Codex/Copilot metadata, and the focused browser run.
 
 ## Current continuation plan
 
@@ -382,19 +895,12 @@ The implementation slices and acceptance gates remain governed by the
 The current-state audit and its resolved/open findings are recorded in
 [History Migration Audit — 2026-11-07](HISTORY-MIGRATION-AUDIT-20261107.md).
 
-The source audit originally recorded local `main` at
-`659ca8ede3be5c4f05aa0d250d63d6f394964315`, which merges the prior main pin
-`b5df9dbc272e208dc04768259228e13abdad33fb` and candidate
-`e9debc96e8620c3494632aee74fad8753157b582`. Main subsequently advanced to
-`30e32ccf6efba0536525ac66a8e71e04a97889ab` through documentation-only audit updates. The local
-candidate is rebased on that current main and includes the exact-assertion and adapter-diagnostic
-follow-ups described above. Validation recorded below is for the current candidate; no Linux or
-Windows mirror was run, and the wider parity matrix remains open.
-
-The immediate implementation target is to isolate the transformed-raster adapter differences while
-retaining the legacy fallback. Only after exact runtime, PNG, PSD layer, and PSD composite proof on
-the currently refused fixture should a separate reviewed change consider admission. Then continue
-the broader fractional-frame matrix and source-backed import/replacement ownership as separate gates.
-Only after every presentation surface has explicit identity, coverage, freshness, lease, preview,
-and fallback proofs should durable replay be considered for logical undo/redo authority. The current
-`HistoryItem[]` and `replayHistory()` authority remains unchanged.
+The latest refs, ancestry, and migration-specific cross-chat reconciliation are in
+[Continuation reconciliation — 2026-11-14 16:43 UTC](#continuation-reconciliation--2026-11-14-1643-utc).
+The diagnostic candidate must be reviewed, synced to the clean designated local main, and landed
+through the pinned wrapper. After that diagnostic claim is closed, start the separate typed text
+source-ownership slice described in HANDOFF §1; verify its owner before editing and do not change the
+`ownership-unproven` gate until its integration, lifecycle, failure, and production export proofs
+pass. Continue the wider fractional-frame matrix independently. Only after every presentation
+surface has explicit identity, coverage, freshness, lease, preview, and fallback proofs should
+durable replay be considered for logical undo/redo authority.
