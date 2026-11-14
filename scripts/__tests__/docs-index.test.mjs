@@ -65,13 +65,12 @@ const ALLOWED_UNLISTED = new Map([
       'repository guide, so one index row per completed branch would duplicate that directory entry.',
   ],
   [
-    'docs/handoffs/audit-free-subagent-hardening-review.md',
-    'covered by the docs/handoffs/ directory row, which states the ' +
-      '<branch>-<topic>.md naming convention. One row per merged branch would make the ' +
-      'index unbounded, and the set grows by exactly one line in HANDOFF.md at a time.',
+    'docs/handoffs/merge-harvest-all-worktrees-20261114.md',
+    'one-off evidence for this worktree harvest; the docs/handoffs/ directory row covers ' +
+      'task-specific records, so this audit does not need a permanent index row.',
   ],
   [
-    'docs/handoffs/nemotron-disablement-unproven-20261111.md',
+    'docs/handoffs/audit-free-subagent-hardening-review.md',
     'covered by the docs/handoffs/ directory row, which states the ' +
       '<branch>-<topic>.md naming convention. One row per merged branch would make the ' +
       'index unbounded, and the set grows by exactly one line in HANDOFF.md at a time.',

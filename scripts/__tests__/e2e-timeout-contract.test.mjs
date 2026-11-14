@@ -211,7 +211,7 @@ describe('E2E timeout contract', () => {
       'scripts/__tests__/free-chat-search-agent.test.mjs': 1,
       'scripts/__tests__/merge-takeover-guard.test.mjs': 11,
       'scripts/__tests__/path-identity.test.mjs': 3,
-      'scripts/__tests__/recover-stale-auto-merge.test.mjs': 1,
+      'scripts/__tests__/recover-stale-auto-merge.test.mjs': 2,
       'scripts/__tests__/repo-state-gate.test.mjs': 2,
       'scripts/__tests__/windows-command-shim.test.mjs': 1,
     });

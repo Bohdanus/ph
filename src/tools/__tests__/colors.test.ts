@@ -138,6 +138,17 @@ describe('colors processor', () => {
     const canvas = result as unknown as PixelOffscreenCanvas;
     expect(canvas.ctx.filter).toContain('saturate(');
   });
+
+  it('throws when the source bitmap is missing', () => {
+    expect(() =>
+      colors({ size, bitmap: undefined as unknown as BitmapSource })({
+        grayscale: 0,
+        sepia: 0,
+        saturation: 100,
+        toolName: 'color',
+      })
+    ).toThrow('Color tool requires a source bitmap');
+  });
 });
 
 describe('ColorsToolArgs type', () => {

@@ -15,14 +15,14 @@ import type { RectXY } from '../contexts/general-types.ts';
  * `left`/`right` edge drag needs because there the width is the free axis.
  *
  * Returns only the two edges it moves so both callers can spread it over the rect they already
- * hold. A falsy `aspectRatio` is the "no constraint" case and returns the edges untouched, which
+ * hold. A null, non-finite, or non-positive `aspectRatio` is the "no constraint" case and returns the edges untouched, which
  * is what the hook's `null` default and the panel's `Free` option both mean.
  */
 export function refitRectWidthToAspect(
   { x1, y1, x2, y2 }: RectXY,
   aspectRatio: number | null
 ): { x1: number; x2: number } {
-  if (aspectRatio) {
+  if (aspectRatio !== null && Number.isFinite(aspectRatio) && aspectRatio > 0) {
     const height = Math.abs(y2 - y1);
     const currentWidth = Math.abs(x2 - x1);
     const wantedWidth = height * aspectRatio;

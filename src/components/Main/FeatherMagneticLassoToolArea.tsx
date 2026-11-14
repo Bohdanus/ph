@@ -8,7 +8,7 @@ import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useContainScale } from '../../hooks/useContainScale.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import type { FeatherMagneticLassoToolArgs } from '../../tools/featherMagneticLasso.ts';
-import { magneticLassoAnchorSpan } from '../../tools/featherMagneticLasso.ts';
+import { magneticLassoAnchorSpan, normalizeMagneticLassoEdgeContrast } from '../../tools/featherMagneticLasso.ts';
 import { createCommittedPolygonSelection, distanceBetweenPoints, drawSelectionAnchors } from '../../util/selection.ts';
 import {
   createEdgeMapFromCanvas,
@@ -192,7 +192,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
 
   function getMagneticPathOptions(): MagneticPathOptions {
     return {
-      edgeContrast: args.edgeContrast,
+      edgeContrast: normalizeMagneticLassoEdgeContrast(args.edgeContrast),
       maxArea: 32_000,
       searchRadius: args.magneticWidth,
       snapStrength: args.snapStrength,
@@ -404,7 +404,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
         featherRadius: args.featherRadius,
         magneticLasso: {
           antiAlias: args.antiAlias,
-          contrast: args.edgeContrast,
+          contrast: normalizeMagneticLassoEdgeContrast(args.edgeContrast),
           frequency: args.frequency,
           pathPointCount: finalPoints.length,
           smoothing: args.smoothing,

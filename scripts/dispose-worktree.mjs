@@ -102,6 +102,7 @@ import { relativePathInside, samePath } from './lib/path-identity.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
+import { inspectCodexChatTrailers } from './lib/worktree-inventory/codex-family.mjs';
 import { ACTION, LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
 import { SCHEMA_VERSION } from './lib/worktree-inventory/assemble.mjs';
 import {
@@ -163,6 +164,12 @@ export const REFUSALS = {
     `The board database could not be read (${detail}), so the claims, file locks and live agents that would say whether this worktree is in use are all unknown. An absent signal is not an unowned worktree — restore the board, or ask the operator.`,
   'sessions-unavailable': (detail) =>
     `The Kilo session database could not be read (${detail}), so a chat with this worktree as its \`directory\` cannot be ruled out. An absent signal is not an absent chat.`,
+  'codex-owner-unverified': (detail) =>
+    `Codex ownership evidence is unavailable or unresolved (${detail}). A current-tip UUID \`Chat:\` trailer must resolve to a complete Codex thread family before this worktree can be disposed.`,
+  'codex-family-active': (chatIds, detail) =>
+    `The current tip names Codex chat family ${chatIds}, and its transcript contains an unfinished turn${detail ? ` (${detail})` : ''}. Preserve the worktree until every family member has a verified terminal result.`,
+  'codex-owner-audit-required': () =>
+    'The required Codex live-owner audit has not been asserted. Search the recent Codex overlay and each root/subagent transcript for this worktree path, branch, changed files, and commit subject; then rerun with `--codex-owner-audit-complete`. The flag records that the audit was performed; it does not replace the search.',
   'derived-live-writer': (ids) =>
     `The inventory records this worktree as derived-live: ${ids} wrote a file in it inside the live window. \`classify.mjs\` reports \`live\` as false only when \`--no-live-writers\` suppressed it, so the \`dispose\` beside it is a suppression, not a clearance.`,
   'inventory-missing': () =>
@@ -459,6 +466,8 @@ export function preflight({
   inventory,
   board,
   sessions,
+  codexOwnership,
+  codexOwnerAuditComplete = false,
   maxAgeMs = MAX_INVENTORY_AGE_MS,
   preserveBranch = false,
 } = {}) {
@@ -659,6 +668,14 @@ export function preflight({
   if ((board?.fileLocks?.length ?? 0) > 0) refuse('board-lock', board.fileLocks.length);
   if ((board?.liveAgents?.length ?? 0) > 0) refuse('board-agent-live', board.liveAgents.length);
   if ((sessions?.live?.length ?? 0) > 0) refuse('live-session', sessions.live.length);
+  if (!codexOwnership || !['not-applicable', 'complete', 'active', 'unproven'].includes(codexOwnership.status)) {
+    refuse('codex-owner-unverified', codexOwnership?.reason ?? 'the Codex ownership audit is missing');
+  } else if (codexOwnership.status === 'active') {
+    refuse('codex-family-active', (codexOwnership.chatIds ?? []).join(', ') || 'unknown chat', codexOwnership.reason);
+  } else if (codexOwnership.status === 'unproven') {
+    refuse('codex-owner-unverified', codexOwnership.reason ?? 'the Codex family could not be verified');
+  }
+  if (codexOwnerAuditComplete !== true) refuse('codex-owner-audit-required');
 
   return {
     ok: failures.length === 0,
@@ -1185,7 +1202,14 @@ function collectOwnership(cwd, gitState, { nowMs = Date.now(), liveWindowMs = LI
   // `available: false`, which `preflight` now treats as a refusal rather than as
   // zero rows.
   const sessions = readSessionsIn(gitState.absolutePath, { nowMs, liveWindowMs });
-  return { board: boardRows, sessions };
+  // This exact-tip UUID lookup is only additional evidence. `not-applicable` does
+  // not mean owner-free; preflight separately requires the explicit live-overlay
+  // and transcript audit assertion before any registered worktree is disposed.
+  const codexOwnership =
+    typeof gitState.tip === 'string'
+      ? inspectCodexChatTrailers(cwd, gitState.tip)
+      : { status: 'not-applicable', chatIds: [], family: [], reason: 'unregistered directory has no commit tip' };
+  return { board: boardRows, sessions, codexOwnership };
 }
 
 /** The ownership and content checks for a directory without a Git worktree. */
@@ -1713,7 +1737,7 @@ function defaultRun(cwd, args, { input } = {}) {
 /** The real filesystem, as an object so a caller can substitute one. */
 const defaultFs = { mkdirSync, writeFileSync };
 
-const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> [--dry-run] [--keep-branch] [--max-age-minutes <n>]
+const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> --codex-owner-audit-complete [--dry-run] [--keep-branch] [--max-age-minutes <n>]
 
   <worktree>   a registered worktree, or an unregistered directory to inspect for a
                refusal. Recursive removal of unregistered directories is disabled.
@@ -1723,6 +1747,13 @@ For a registered worktree, refuses unless the generated inventory calls it
  an \`at-risk\` worktree. No board claim, lock or live agent may name it, no session
 may have it as its directory inside the live window, and ignored content or Git
 operations in progress always refuse removal.
+
+The coordinator must inspect the recent Codex live overlay and the full root/subagent
+transcript family for the exact worktree before either dry-run or removal, including
+path, branch, changed-file, and commit-subject searches. The required
+\`--codex-owner-audit-complete\` flag asserts that this audit found no active owner;
+it is not a substitute for the search. An exact UUID \`Chat:\` trailer is checked
+automatically as additional evidence.
 
 If Git no longer registers the directory, the fallback inspects a real direct
 child of the repository's \`.kilo/worktrees/\` and reports ownership and content
@@ -1786,6 +1817,7 @@ function main(argv) {
   }
   const dryRun = args.includes('--dry-run');
   const preserveBranch = args.includes('--keep-branch');
+  const codexOwnerAuditComplete = args.includes('--codex-owner-audit-complete');
   const target = args.find((a) => !a.startsWith('--') && args[args.indexOf(a) - 1] !== '--max-age-minutes');
   if (!target) {
     process.stderr.write(USAGE);
@@ -1875,6 +1907,8 @@ function main(argv) {
     inventory,
     board: ownership.board,
     sessions: ownership.sessions,
+    codexOwnership: ownership.codexOwnership,
+    codexOwnerAuditComplete,
     maxAgeMs,
     preserveBranch,
   });
