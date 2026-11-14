@@ -136,19 +136,20 @@ describe('spot healing processor', () => {
       expect(canvas.ctx.putImageData).not.toHaveBeenCalled();
     });
 
-    it('is a no-op that does not throw for a stroke entirely outside the canvas', () => {
-      expect(() =>
-        run({
-          size: 8,
-          points: [
-            { x: 40, y: 40 },
-            { x: 44, y: 44 },
-          ],
-        })
-      ).not.toThrow();
+    it('leaves every pixel unchanged for a stroke entirely outside the canvas', () => {
+      const canvas = run({
+        size: 8,
+        points: [
+          { x: 40, y: 40 },
+          { x: 44, y: 44 },
+        ],
+      });
 
-      const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
-      expect(canvas.ctx.putImageData).toHaveBeenCalled();
+      for (let y = 0; y < size.height; y++) {
+        for (let x = 0; x < size.width; x++) {
+          expect(at(canvas, x, y), `(${x}, ${y})`).toEqual(dest(x, y));
+        }
+      }
     });
   });
 
@@ -222,8 +223,12 @@ describe('spot healing processor', () => {
       // At (3,4): with soft tip, weight < 1, but proximity sample equals destination
       expect(at(canvas, 3, 4)).toEqual({ r: 80, g: 100, b: 100, a: 255 });
       expect(at(canvas, 5, 4)).toEqual({ r: 80, g: 100, b: 100, a: 255 });
-      expect(at(canvas, 4, 3)).not.toEqual(dest(4, 3));
-      expect(at(canvas, 4, 5)).not.toEqual(dest(4, 5));
+      expect(at(canvas, 4, 3)).toEqual({ r: 40, g: 100, b: 100, a: 255 });
+      expect(at(canvas, 4, 5)).toEqual({ r: 120, g: 100, b: 100, a: 255 });
+      expect(at(canvas, 3, 3)).toEqual({ r: 56, g: 100, b: 100, a: 255 });
+      expect(at(canvas, 5, 3)).toEqual({ r: 56, g: 100, b: 100, a: 255 });
+      expect(at(canvas, 3, 5)).toEqual({ r: 104, g: 100, b: 100, a: 255 });
+      expect(at(canvas, 5, 5)).toEqual({ r: 104, g: 100, b: 100, a: 255 });
     });
 
     it('leaves the half-open rim at distance exactly the radius untouched', () => {
