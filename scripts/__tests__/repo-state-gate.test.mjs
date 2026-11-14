@@ -702,8 +702,13 @@ describe('the report says which remedy applies, and warns about the destructive 
 
     const r = report(repo);
     expect(r.code).toBe(1);
-    expect(r.err).toContain('run the guarded recovery preflight from this worktree');
-    expect(r.err).toContain('npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"');
+    expect(r.err).toContain('unique `branch refs/heads/main` entry in `git worktree list --porcelain`');
+    expect(r.err).toContain('keeping the current directory at this target worktree root');
+    expect(r.err).toContain(
+      'node "<absolute-main-worktree>/scripts/recover-stale-auto-merge.mjs" --expected-head "$(git rev-parse HEAD)"'
+    );
+    expect(r.err).toContain('Do not use an npm script from this target');
+    expect(r.err).not.toContain('npm run repo:state:recover-auto-merge');
     expect(r.err).toContain('--preserve-matching-worktree preflight');
     expect(r.err).toContain('--preserve-divergent-worktree preflight');
     expect(r.err).toContain(
