@@ -1099,13 +1099,13 @@ value as a clean answer.
 
 **The refusal most likely to be hit by a reader who did nothing wrong.** `dispose` refuses
 `derived-live-writer` when the record's `derivedLive` is true or `writeHistory.derivedChatIds` is
-non-empty. `derivedLive` is an **or** of four arms, and only three of them are records of a call
+non-empty. `derivedLive` is an **or** of four arms, and only two of them are records of a call
 inside the directory:
 
 | arm         | what it actually is                                                   | window                     | names a chat?      |
 | ----------- | --------------------------------------------------------------------- | -------------------------- | ------------------ |
 | `writeLive` | the write calls inside the worktree                                   | `LIVE_WINDOW_MS`, 30 min   | **yes**            |
-| `ioLive`    | recent `shellHistory` — `readHistory` is intentionally excluded       | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
+| `ioLive`    | recent `shellHistory` for this worktree; excludes `readHistory`       | `RECENT_IO_WINDOW_MS`, 2 h | no                 |
 | `chatLive`  | `session.directory` plus `time_updated` — a chat that only _messaged_ | `LIVE_WINDOW_MS`           | no                 |
 | `liveAgent` | a board row, not a call history                                       | the board's own            | prints an agent id |
 
