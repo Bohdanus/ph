@@ -66,7 +66,7 @@ const REVIEWED = {
   'free-model-pool.test.mjs': {
     scope:
       'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
-    patterns: `filesystem-write:mkdtemp=30 filesystem-write:rm=30 filesystem-write:writeFile=15 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+    patterns: `filesystem-write:mkdtemp=31 filesystem-write:rm=31 filesystem-write:writeFile=15 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -75,7 +75,7 @@ const REVIEWED = {
   },
   'free-model-quarantine.test.mjs': {
     scope: 'Quarantine fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=10 filesystem-write:rm=10`,
+    patterns: `filesystem-write:mkdtemp=11 filesystem-write:rm=11`,
   },
   'free-model-sweep.test.mjs': {
     scope: 'Sweep and quarantine fixtures use unique OS temporary directories.',
@@ -135,8 +135,8 @@ const REVIEWED = {
   },
   'recover-stale-auto-merge.test.mjs': {
     scope:
-      'Git and filesystem fixtures use temporary repositories and directories, including symlinks, hostile merge/index markers, and a Node preload shim that rewrites a fixture marker; child Git commands use the fixture repository.',
-    patterns: `subprocess:execFileSync=1 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=35 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=3 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=1`,
+      'Git and filesystem fixtures use temporary repositories and directories, including a stale target package script, symlinks, hostile merge/index markers, and a Node preload shim that rewrites a fixture marker; child Git commands use the fixture repository.',
+    patterns: `subprocess:execFileSync=1 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=37 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=4 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=1`,
   },
   'repo-state-gate.test.mjs': {
     scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',

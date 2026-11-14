@@ -112,8 +112,9 @@ function describeWorktree(finding) {
     finding.operations[0].marker === 'AUTO_MERGE'
   ) {
     lines.push(
-      '    If the owner has stopped and this is a stale marker, run the guarded recovery preflight from this worktree:',
-      '      npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"',
+      '    If the owner has stopped and this is a stale marker, identify the unique `branch refs/heads/main` entry in `git worktree list --porcelain`, then run that checkout’s script by absolute path while keeping the current directory at this target worktree root:',
+      '      node "<absolute-main-worktree>/scripts/recover-stale-auto-merge.mjs" --expected-head "$(git rev-parse HEAD)"',
+      '    Do not use an npm script from this target: its checkout may contain an older recovery implementation.',
       '    For dirty work, also try the read-only --preserve-matching-worktree preflight; it requires the index at HEAD and tracked files identical to AUTO_MERGE.',
       '    For divergent edits, run the read-only --preserve-divergent-worktree preflight only when at least one unstaged tracked path differs from both HEAD and AUTO_MERGE. Multiple qualifying paths are allowed; differences confined to separate paths and untracked-only changes do not qualify.',
       '    It still requires the index at HEAD and no other operation markers.',

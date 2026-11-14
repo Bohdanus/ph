@@ -187,8 +187,8 @@ describe('E2E timeout contract', () => {
     expect(job).toContain('ref: ${{ needs.validate-dispatch.outputs.source_sha }}');
     expect(job).toContain('persist-credentials: false');
     expect(runCommands).toEqual(['npm ci', 'npm run test -- scripts/__tests__', 'npm run test:e2e:unit']);
-    // The Nov 12 Windows run spent 14m04 in the script step without finishing; keep room for both suites and setup.
-    expect(readFixedJobTimeoutMinutes(job, 'Windows platform tests')).toBeGreaterThanOrEqual(30);
+    // A synchronized Windows run completed script tests in 6m29s; another reached 14m04 without finishing.
+    expect(readFixedJobTimeoutMinutes(job, 'Windows platform tests')).toBe(30);
     const scriptTestRoot = ['scripts/__tests__'];
     const e2eUnitTestRoot = ['e2e'];
     const e2eUnitFilePattern = /\.unit\.test\.ts$/;

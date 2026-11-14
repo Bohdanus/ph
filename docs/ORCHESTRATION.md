@@ -797,11 +797,24 @@ its remedy is nothing rather than a plausible-looking command that fatals.
 **An orphan `AUTO_MERGE` has guarded recovery paths, not a guessed abort.** When it is
 the only operation marker, the worktree is clean, the index has no unresolved paths,
 and the marker names exactly `HEAD^{tree}`, the remaining file can be a stale artifact from a completed
-rebase. `npm run repo:state:recover-auto-merge -- --expected-head <full-sha>` performs
-a read-only preflight from the target task worktree. Only after independently
-establishing that its owner has stopped may the operator repeat the command with
-`--apply --confirm-owner-stopped`; it rechecks every predicate and removes only that
-worktree's `AUTO_MERGE` file.
+rebase. First identify the current designated main checkout from `git worktree list
+--porcelain`; select the unique worktree block whose `branch` is `refs/heads/main`.
+Invoke that checkout's `scripts/recover-stale-auto-merge.mjs` by
+absolute path, while keeping the process working directory at the target task
+worktree root:
+
+```sh
+node "<absolute-main-worktree>/scripts/recover-stale-auto-merge.mjs" --expected-head "$(git rev-parse HEAD)"
+```
+
+This performs a read-only preflight using the current recovery implementation. Do not
+run `npm run repo:state:recover-auto-merge` (or a relative script path) from the target
+worktree: its checkout may be stale and execute older recovery code. Only after
+independently establishing that the target's owner has stopped may the operator repeat
+the absolute-path command with `--apply --confirm-owner-stopped`; it rechecks every
+predicate and removes only that worktree's `AUTO_MERGE` file. Use the same absolute
+script path and target working directory for matching and divergent preserve modes
+below.
 
 Before applying **any** recovery mode, manually verify that the owning root chat and
 every descendant have stopped, then recheck the current live-session overlay,

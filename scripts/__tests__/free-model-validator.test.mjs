@@ -20,6 +20,7 @@ function catalogFetch({
   kilo = [kiloRow(XING)],
   openrouter = [openRouterRow(XING)],
   groq = [{ id: 'openai/gpt-oss-120b' }],
+  opencode = [],
   groqStatusByKey = {},
   quota = { data: { free_model_daily_requests: { used: 1, limit: 10, remaining: 9 } } },
 } = {}) {
@@ -35,7 +36,7 @@ function catalogFetch({
       const status = groqStatusByKey[key] ?? 200;
       return jsonResponse({ data: groq }, status);
     }
-    if (requestUrl === 'https://opencode.ai/inference/v1/models') return jsonResponse({ data: [] });
+    if (requestUrl === 'https://opencode.ai/inference/v1/models') return jsonResponse({ data: opencode });
     throw new Error(`Unexpected catalog request: ${requestUrl}`);
   });
   return { fetchImpl, calls };
@@ -71,7 +72,7 @@ describe('free model validation', () => {
     ).rejects.toThrow('not currently verified free');
   });
 
-  it('allows the exact free route on Kilo and OpenRouter while blocking aliases and unapproved providers', async () => {
+  it('allows exact Nemotron routes verified by Kilo, OpenRouter, or OpenCode catalogs', async () => {
     const kilo = catalogFetch({ kilo: [kiloRow(NEMOTRON)] });
     await expect(
       validateFreeModel({ model: NEMOTRON, provider: 'kilo', ...validationOptions(kilo.fetchImpl) })
@@ -85,6 +86,11 @@ describe('free model validation', () => {
         ...validationOptions(openrouter.fetchImpl, { openRouterKey: 'test-key' }),
       })
     ).resolves.toEqual({ model: NEMOTRON, provider: 'openrouter', validated: true });
+
+    const opencode = catalogFetch({ opencode: [{ id: NEMOTRON, owned_by: 'opencode' }] });
+    await expect(
+      validateFreeModel({ model: NEMOTRON, provider: 'opencode', ...validationOptions(opencode.fetchImpl) })
+    ).resolves.toEqual({ model: NEMOTRON, provider: 'opencode', validated: true });
 
     for (const model of ['nvidia/nemotron-3-ultra-550b-a55b-v2:free', 'vendor/renamed-free Nemotron alias']) {
       for (const provider of ['kilo', 'openrouter', 'opencode', 'groq']) {
@@ -104,13 +110,14 @@ describe('free model validation', () => {
       }
     }
 
-    for (const provider of ['opencode', 'groq']) {
-      const { fetchImpl } = catalogFetch();
-      await expect(validateFreeModel({ model: NEMOTRON, provider, ...validationOptions(fetchImpl) })).rejects.toThrow(
-        'Nemotron model/provider pair is not approved by free-model policy'
-      );
-      expect(fetchImpl).not.toHaveBeenCalled();
-    }
+    const groq = catalogFetch();
+    await expect(
+      validateFreeModel({
+        model: NEMOTRON,
+        provider: 'groq',
+        ...validationOptions(groq.fetchImpl, { groqApiKey: 'test-key', groqFreePlan: true }),
+      })
+    ).rejects.toThrow('not currently verified free');
   });
 
   it('does not trust stale hard-coded models or retired catalog entries', async () => {

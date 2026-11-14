@@ -573,6 +573,41 @@ process.exitCode = 1;`
     }
   });
 
+  it('reports Windows tree-termination failure when the child closes before termination finishes', async () => {
+    let child;
+    const terminateWindowsProcessTreeImpl = vi.fn(
+      () =>
+        new Promise((_, reject) => {
+          setTimeout(() => child.emit('close', null, 'SIGTERM'), 0);
+          setTimeout(() => reject(new Error('taskkill and fallback failed')), 10);
+        })
+    );
+    const spawnImpl = () => {
+      child = new EventEmitter();
+      child.pid = 4242;
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => setImmediate(() => child.stdout.emit('data', Buffer.alloc(MAX_KILO_OUTPUT_BYTES + 1)));
+      child.kill = vi.fn();
+      return child;
+    };
+
+    await expect(
+      runKiloCompletion({
+        command: '/unused/kilo',
+        model: 'model:free',
+        prompt: 'prompt',
+        timeoutMs: 1000,
+        platform: 'win32',
+        terminateWindowsProcessTreeImpl,
+        spawnImpl,
+      })
+    ).resolves.toEqual({ error: 'Kilo process-tree termination failed', exhaustSource: true });
+    expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(4242);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
   it.skipIf(process.platform !== 'win32')(
     'terminates descendants of a stalled Windows CLI shim',
     async () => {
@@ -628,6 +663,25 @@ setInterval(() => {}, 1000);`
     30_000
   );
 
+  it('rejects invalid token and timeout values before starting the Kilo CLI', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    for (const maxTokens of [null, '4096', 1.5, 65_537]) {
+      const spawnImpl = vi.fn();
+      await expect(
+        runKiloCompletion({ command: '/fake-kilo', model, prompt: 'prompt', maxTokens, spawnImpl })
+      ).resolves.toEqual({ error: 'Invalid token limit' });
+      expect(spawnImpl).not.toHaveBeenCalled();
+    }
+
+    for (const timeoutMs of [null, '1000', 0, 12 * 60 * 1000 + 1]) {
+      const spawnImpl = vi.fn();
+      await expect(
+        runKiloCompletion({ command: '/fake-kilo', model, prompt: 'prompt', timeoutMs, spawnImpl })
+      ).resolves.toEqual({ error: 'Invalid completion timeout' });
+      expect(spawnImpl).not.toHaveBeenCalled();
+    }
+  });
+
   it('blocks noncanonical Nemotron variants before starting the Kilo CLI', async () => {
     const spawnImpl = vi.fn();
     await expect(
@@ -637,11 +691,11 @@ setInterval(() => {}, 1000);`
         prompt: 'private prompt',
         spawnImpl,
       })
-    ).resolves.toEqual({ error: 'Nemotron model/provider pair is not approved by free-model policy' });
+    ).resolves.toEqual({ error: 'Nemotron model ID is not approved by free-model policy' });
     expect(spawnImpl).not.toHaveBeenCalled();
   });
 
-  it('allows the exact approved Nemotron route and applies the requested output-token instruction', async () => {
+  it('uses the Nemotron reasoning variant and enforces its minimum output-token instruction', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-nemotron-'));
     const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     const command = await writeExecutable(
@@ -652,13 +706,14 @@ const valueAfter = (flag) => args[args.indexOf(flag) + 1];
 const message = fs.readFileSync(0, 'utf8');
 if (!args.includes('--pure') || valueAfter('--model') !== 'kilo/${model}') process.exit(4);
 if (valueAfter('--agent') !== 'free-completion') process.exit(5);
-if (!message.startsWith('Answer the provided request directly, in plain text, using at most 4000 output tokens.')) process.exit(6);
+if (valueAfter('--variant') !== 'high') process.exit(6);
+if (!message.startsWith('Answer the provided request directly, in plain text, using at most 4096 output tokens.')) process.exit(7);
 console.log(JSON.stringify({ type: 'text', part: { text: 'approved response' } }));
 console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0, tokens: { input: 8, output: 2 } } }));`
     );
 
     try {
-      await expect(runKiloCompletion({ command, model, prompt: 'bounded request', maxTokens: 4000 })).resolves.toEqual({
+      await expect(runKiloCompletion({ command, model, prompt: 'bounded request', maxTokens: 1200 })).resolves.toEqual({
         model,
         content: 'approved response',
         finishReason: 'stop',
