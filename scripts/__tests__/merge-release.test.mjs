@@ -70,11 +70,11 @@ afterEach(() => {
 });
 
 /** A worktree on its own branch, optionally with a commit that is not on main. */
-const makeWorktree = (name, { commit = false, dirty = false } = {}) => {
+const makeWorktree = (name, { commit = false, dirty = false, fileName = 'file.txt' } = {}) => {
   const path = join(repo, '..', `wt-${name}`);
   git(['worktree', 'add', '-q', '-b', `feat/${name}`, path], repo);
   if (commit) {
-    writeFileSync(join(path, 'file.txt'), `${name}\n`);
+    writeFileSync(join(path, fileName), `${name}\n`);
     execFileSync('git', ['add', '.'], { cwd: path });
     execFileSync('git', ['-c', 'user.email=t@e.com', '-c', 'user.name=T', 'commit', '-q', '-m', name], {
       cwd: path,
@@ -396,8 +396,8 @@ describe('releaseMerged — the whole sweep a merge triggers', () => {
   });
 
   it('pins eligibility to the base tip captured before a concurrent later landing', () => {
-    const first = makeWorktree('snapshot-first', { commit: true });
-    const later = makeWorktree('snapshot-later', { commit: true });
+    const first = makeWorktree('snapshot-first', { commit: true, fileName: 'snapshot-first.txt' });
+    const later = makeWorktree('snapshot-later', { commit: true, fileName: 'snapshot-later.txt' });
     const firstOwner = boardFor('feat/snapshot-first', first);
     const laterOwner = boardFor('feat/snapshot-later', later);
     const firstId = firstOwner.createIssue({ title: 'first snapshot landing' }).id;
