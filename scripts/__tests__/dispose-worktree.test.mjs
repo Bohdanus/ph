@@ -162,6 +162,8 @@ function green(overrides = {}) {
     inventory: greenInventory(),
     board: greenBoard,
     sessions: greenSessions,
+    codexOwnership: { status: 'not-applicable', chatIds: [], family: [], reason: null },
+    codexOwnerAuditComplete: true,
     ...overrides,
   });
 }
@@ -172,6 +174,38 @@ const codes = (v) => v.failures.map((f) => f.code).sort();
 describe('dispose preflight', () => {
   it('permits a worktree the inventory calls dispose and nobody is using', () => {
     const verdict = green();
+    expect(verdict.failures).toEqual([]);
+    expect(verdict.ok).toBe(true);
+  });
+
+  it('refuses unless the Codex live-owner audit is explicitly complete', () => {
+    const verdict = green({ codexOwnerAuditComplete: false });
+    expect(codes(verdict)).toContain('codex-owner-audit-required');
+    expect(verdict.ok).toBe(false);
+  });
+
+  it.each([
+    [
+      'unfinished Codex family',
+      { status: 'active', chatIds: ['codex-root'], reason: 'unfinished child' },
+      'codex-family-active',
+    ],
+    [
+      'unresolved Codex family',
+      { status: 'unproven', chatIds: ['codex-root'], reason: 'missing rollout' },
+      'codex-owner-unverified',
+    ],
+    ['missing Codex evidence', null, 'codex-owner-unverified'],
+  ])('refuses disposal for %s', (_label, codexOwnership, expected) => {
+    const verdict = green({ codexOwnership });
+    expect(codes(verdict)).toContain(expected);
+    expect(verdict.ok).toBe(false);
+  });
+
+  it('permits a Codex-linked tip only when every family transcript is terminal', () => {
+    const verdict = green({
+      codexOwnership: { status: 'complete', chatIds: ['codex-root'], family: [], reason: null },
+    });
     expect(verdict.failures).toEqual([]);
     expect(verdict.ok).toBe(true);
   });
@@ -524,6 +558,8 @@ describe('dispose preflight', () => {
         ],
       },
       sessions: { available: true, live: [{ id: 'ses_f0bd', title: 'Worktree Skills Review' }] },
+      codexOwnership: { status: 'not-applicable', chatIds: [], family: [], reason: null },
+      codexOwnerAuditComplete: true,
     });
 
     expect(verdict.ok).toBe(false);
@@ -543,6 +579,8 @@ describe('dispose preflight', () => {
       inventory: { ok: false, reason: 'missing' },
       board: { ...greenBoard, claims: [{ agentId: 'x' }] },
       sessions: { available: true, live: [{ id: 's' }] },
+      codexOwnership: { status: 'not-applicable', chatIds: [], family: [], reason: null },
+      codexOwnerAuditComplete: true,
     });
     expect(codes(verdict)).toEqual(['board-claim', 'dirty-tree', 'inventory-missing', 'live-session', 'main-worktree']);
   });
@@ -1780,6 +1818,8 @@ describe('readGitState reads the ignored content it is supposed to refuse on', (
       inventory: greenInventory(),
       board: greenBoard,
       sessions: greenSessions,
+      codexOwnership: { status: 'not-applicable', chatIds: [], family: [], reason: null },
+      codexOwnerAuditComplete: true,
     });
     expect(codes(verdict)).toContain('ignored-content');
     const message = verdict.failures.find((f) => f.code === 'ignored-content').message;
