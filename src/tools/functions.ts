@@ -85,10 +85,9 @@ const CONTRAST_FACTOR_SPAN = CONTRAST_SLIDER_RANGE.max;
  * | Contrast   | `+100` | `2`        |
  *
  * Each integer step changes the emitted factor by a constant amount. This describes the app's
- * scalar mapping; it does not imply an equal perceptual or rasterized pixel change. Non-finite
- * input propagates at this low-level formatter. `normalizeLevelsToolArgs()` handles malformed
- * values at the Levels tool boundary, while `presentation-evaluator.ts`'s `numericFilterArg`
- * continues to refuse corrupt retained operations.
+ * scalar mapping; it does not imply an equal perceptual or rasterized pixel change. This pure
+ * helper propagates non-finite input; `buildLevelsFilter()` clamps before emitting CSS, and
+ * `presentation-evaluator.ts` also rejects non-numeric retained operations.
  */
 export function proportionateFactor(value: number, span: number): number {
   return 1 + value / span;
@@ -97,6 +96,36 @@ export function proportionateFactor(value: number, span: number): number {
 export type ColorsFilterArgs = { grayscale: number; sepia: number; saturation: number };
 export type LevelsFilterArgs = { brightness: number; contrast: number };
 
+export const BLUR_RADIUS_SLIDER_RANGE = { min: 0, max: 100 } as const;
+
+function clampFinite(value: number, min: number, max: number, fallback = 0): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.min(max, Math.max(min, numeric)) : fallback;
+}
+
+export function normalizeColorsFilterArgs(args: ColorsFilterArgs): ColorsFilterArgs {
+  return {
+    grayscale: clampFinite(args.grayscale, 0, 100),
+    sepia: clampFinite(args.sepia, 0, 100),
+    saturation: clampFinite(args.saturation, -100, 100),
+  };
+}
+
+export function normalizeLevelsFilterArgs(args: LevelsFilterArgs): LevelsFilterArgs {
+  return {
+    brightness: clampFinite(args.brightness, BRIGHTNESS_SLIDER_RANGE.min, BRIGHTNESS_SLIDER_RANGE.max),
+    contrast: clampFinite(args.contrast, CONTRAST_SLIDER_RANGE.min, CONTRAST_SLIDER_RANGE.max),
+  };
+}
+
+export function normalizeBlurRadius(radius: number): number {
+  return clampFinite(radius, BLUR_RADIUS_SLIDER_RANGE.min, BLUR_RADIUS_SLIDER_RANGE.max);
+}
+
+export function buildBlurFilter(radius: number): string {
+  return `blur(${normalizeBlurRadius(radius)}px)`;
+}
+
 /**
  * The single source of the Colors CSS filter string. The live preview renderer
  * (`layer-renderer.ts`) and the durable materializer (`materialization.ts`) both route
@@ -104,8 +133,9 @@ export type LevelsFilterArgs = { brightness: number; contrast: number };
  * cannot disagree — the drift that four independent copies of this template allowed.
  */
 export function buildColorsFilter({ grayscale, sepia, saturation }: ColorsFilterArgs): string {
-  const saturate = adjustmentPercent(expAdjustment(saturation, SATURATION_EXPONENT));
-  return `grayscale(${grayscale}%) sepia(${sepia}%) saturate(${saturate})`;
+  const normalized = normalizeColorsFilterArgs({ grayscale, sepia, saturation });
+  const saturate = adjustmentPercent(expAdjustment(normalized.saturation, SATURATION_EXPONENT));
+  return `grayscale(${normalized.grayscale}%) sepia(${normalized.sepia}%) saturate(${saturate})`;
 }
 
 /**
@@ -131,8 +161,9 @@ export function buildColorsFilter({ grayscale, sepia, saturation }: ColorsFilter
  * express an arbitrary lookup table.
  */
 export function buildLevelsFilter({ brightness, contrast }: LevelsFilterArgs): string {
-  const light = adjustmentPercent(proportionateFactor(brightness, BRIGHTNESS_FACTOR_SPAN));
-  const punch = adjustmentPercent(proportionateFactor(contrast, CONTRAST_FACTOR_SPAN));
+  const normalized = normalizeLevelsFilterArgs({ brightness, contrast });
+  const light = adjustmentPercent(proportionateFactor(normalized.brightness, BRIGHTNESS_FACTOR_SPAN));
+  const punch = adjustmentPercent(proportionateFactor(normalized.contrast, CONTRAST_FACTOR_SPAN));
   return `brightness(${light}) contrast(${punch})`;
 }
 

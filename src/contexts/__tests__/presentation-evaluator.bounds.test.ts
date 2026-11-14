@@ -118,6 +118,16 @@ describe('presentation filter arguments', () => {
       'grayscale(0%) sepia(0%) saturate(100%)'
     );
   });
+
+  it('clamps finite retained filter values to the matching toolbar ranges', () => {
+    expect(
+      getPresentationFilter([
+        { kind: 'filter', toolName: 'blur', args: { radius: -5 } },
+        { kind: 'filter', toolName: 'color', args: { grayscale: -20, sepia: 200, saturation: -200 } },
+        { kind: 'filter', toolName: 'levels', args: { brightness: -200, contrast: -200 } },
+      ])
+    ).toBe('blur(0px) grayscale(0%) sepia(100%) saturate(0%) brightness(0%) contrast(50%)');
+  });
 });
 
 /**

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { blur, type BlurToolArgs } from '../blur.ts';
+import { blur, normalizeBlurToolArgs, type BlurToolArgs } from '../blur.ts';
 import { sharpen } from '../sharpen.ts';
 import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
@@ -150,18 +150,32 @@ describe('blur processor', () => {
       expect(canvas.ctx.drawImage).toHaveBeenCalledWith(sourceBitmap, 0, 0);
     });
 
-    it('handles very large radius', () => {
+    it('clamps radius above the slider maximum', () => {
       const canvas = run({ radius: 1000 });
 
-      expect(canvas.ctx.filter).toBe('blur(1000px)');
+      expect(canvas.ctx.filter).toBe('blur(100px)');
+    });
+
+    it.each([-1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+      'uses a zero radius for invalid or negative values (%s)',
+      (radius) => {
+        const canvas = run({ radius });
+
+        expect(canvas.ctx.filter).toBe('blur(0px)');
+      }
+    );
+
+    it('normalizes blur arguments before retaining them', () => {
+      expect(normalizeBlurToolArgs(args({ radius: 200 }))).toEqual(args({ radius: 100 }));
+      expect(normalizeBlurToolArgs(args({ radius: Number.NaN }))).toEqual(args({ radius: 0 }));
     });
   });
 });
 
 describe('BlurToolArgs type', () => {
   it('requires radius and toolName', () => {
-    const args: BlurToolArgs = { radius: 5, toolName: 'blur' };
-    expect(args.radius).toBe(5);
-    expect(args.toolName).toBe('blur');
+    const toolArgs: BlurToolArgs = { radius: 5, toolName: 'blur' };
+    expect(toolArgs.radius).toBe(5);
+    expect(toolArgs.toolName).toBe('blur');
   });
 });

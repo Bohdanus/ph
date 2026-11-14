@@ -1,5 +1,5 @@
 import type { RectXYSorted } from '../contexts/general-types.ts';
-import type { ProcessorToolParams } from './toolProcessors.ts';
+import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 import {
   applyMarqueeRatio,
   MARQUEE_RATIO_MAX,
@@ -37,6 +37,4 @@ export {
 
 export const rectangularSelection =
   ({ bitmap }: ProcessorToolParams) =>
-  () => {
-    return [bitmap];
-  };
+  (): ToolResult => [bitmap];

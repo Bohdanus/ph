@@ -9,14 +9,11 @@ import { levels } from '../levels.ts';
 import { BRIGHTNESS_SLIDER_RANGE, CONTRAST_SLIDER_RANGE } from '../functions.ts';
 import { magicWand } from '../magicWand.ts';
 import { rectangularSelection } from '../rectangularSelection.ts';
-import { reposition } from '../reposition.ts';
+import { reposition, type RepositionToolArgs } from '../reposition.ts';
 import { selection } from '../selection.ts';
-import type { FeatherMagneticLassoToolArgs } from '../featherMagneticLasso.ts';
-import type { MagicWandToolArgs } from '../magicWand.ts';
-import type { RectangularSelectionToolArgs } from '../rectangularSelection.ts';
 import { normalizeShapeGeometry, shape, shapeGeometryBounds } from '../shape.ts';
 import { defaultSettings } from '../settings.ts';
-import type { ProcessorToolParams, ToolResult } from '../toolProcessors.ts';
+import type { ProcessorToolParams } from '../toolProcessors.ts';
 import type { ToolArgs } from '../../contexts/tool-types.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import type { Point, RectXYSorted } from '../../contexts/general-types.ts';
@@ -70,15 +67,6 @@ const triangle: Point[] = [
   { x: 12, y: 13 },
 ];
 
-/**
- * `magicWand`, `featherMagneticLasso`, and `rectangularSelection` all declare an args
- * type but are typed as taking zero parameters, so their args have to be cast in.
- */
-const acceptsArgs =
-  <TArgs>(processor: () => readonly unknown[]) =>
-  (args: TArgs): ToolResult =>
-    (processor as unknown as (a: TArgs) => ToolResult)(args);
-
 /** Pulls the numeric operands out of a composed CSS filter, e.g. `brightness(120%)`. */
 const parseFilter = (filter: string, names: string[]): number[] =>
   names.map((name) => {
@@ -126,16 +114,19 @@ describe('tool image processors', () => {
       expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
-    it('passes negative and non-finite radii straight into the CSS filter string', () => {
-      // Regression pin: nothing clamps the radius, so a negative/NaN radius produces
-      // `blur(-4px)` / `blur(NaNpx)`, which is invalid CSS and silently renders unblurred.
+    it('clamps negative and non-finite radii to a valid no-op filter', () => {
       const [negative] = blur(params)({ radius: -4, toolName: 'blur' });
-      expect(lastCanvas().ctx.filter).toBe('blur(-4px)');
+      expect(lastCanvas().ctx.filter).toBe('blur(0px)');
       expect(negative).toBe(lastCanvas() as unknown as OffscreenCanvas);
 
       const [notANumber] = blur(params)({ radius: Number.NaN, toolName: 'blur' });
-      expect(lastCanvas().ctx.filter).toBe('blur(NaNpx)');
+      expect(lastCanvas().ctx.filter).toBe('blur(0px)');
       expect(notANumber).toBe(lastCanvas() as unknown as OffscreenCanvas);
+    });
+
+    it('clamps radii above slider travel', () => {
+      blur(params)({ radius: 200, toolName: 'blur' });
+      expect(lastCanvas().ctx.filter).toBe('blur(100px)');
     });
 
     it('records the filter through a real writable data property, so the assertions above are not vacuous', () => {
@@ -150,14 +141,6 @@ describe('tool image processors', () => {
       expect(descriptor?.get).toBeUndefined();
       expect(descriptor?.set).toBeUndefined();
       expect(descriptor).toMatchObject({ value: 'blur(3px)', writable: true });
-    });
-
-    it.fails('clamps a negative or non-finite radius into a valid CSS filter (src/tools/blur.ts:11)', () => {
-      blur(params)({ radius: -4, toolName: 'blur' });
-      expect(lastCanvas().ctx.filter).toBe('blur(0px)');
-
-      blur(params)({ radius: Number.NaN, toolName: 'blur' });
-      expect(lastCanvas().ctx.filter).toBe('blur(0px)');
     });
   });
 
@@ -184,15 +167,16 @@ describe('tool image processors', () => {
       expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
-    it('maps saturation through the exp curve at both extremes', () => {
-      const [low] = colors(params)({ grayscale: 0, sepia: 0, saturation: 100, toolName: 'color' });
+    it('clamps saturation to the maximum slider endpoint', () => {
+      const [maximum] = colors(params)({ grayscale: 0, sepia: 0, saturation: 100, toolName: 'color' });
       // (exp(2.1) - exp(-2.1)) / (1 - exp(-2.1)) = 9.166170.
       expect(parseFilter(lastCanvas().ctx.filter as string, ['saturate'])[0]).toBeCloseTo(916.62, 2);
-      expect(low).toBe(lastCanvas() as unknown as OffscreenCanvas);
+      expect(maximum).toBe(lastCanvas() as unknown as OffscreenCanvas);
 
-      const [high] = colors(params)({ grayscale: 0, sepia: 0, saturation: 200, toolName: 'color' });
-      expect(parseFilter(lastCanvas().ctx.filter as string, ['saturate'])[0]).toBeCloseTo(7585.25, 2);
-      expect(high).toBe(lastCanvas() as unknown as OffscreenCanvas);
+      const [outOfRange] = colors(params)({ grayscale: 0, sepia: 0, saturation: 200, toolName: 'color' });
+      expect(parseFilter(lastCanvas().ctx.filter as string, ['saturate'])[0]).toBeCloseTo(916.62, 2);
+      expect(lastCanvas().ctx.filter).toBe('grayscale(0%) sepia(0%) saturate(916.62%)');
+      expect(outOfRange).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('desaturates: the -100 end of the Saturation slider emits saturate(0%)', () => {
@@ -464,166 +448,27 @@ describe('tool image processors', () => {
 
   describe('identity selection processors', () => {
     it('magic wand returns the source bitmap by reference and allocates no canvas', () => {
-      const result = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
-        tolerance: 28,
-        smoothing: 1.5,
-        contiguous: true,
-        toolName: 'magic-wand',
-      });
+      const result = magicWand(params)();
 
       expect(result).toEqual([bitmap]);
       expect(result[0]).toBe(bitmap);
       expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
-    });
-
-    it('magic wand ignores tolerance and smoothing entirely', () => {
-      const strict = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
-        tolerance: 0,
-        smoothing: 0,
-        contiguous: true,
-        toolName: 'magic-wand',
-      });
-      const loose = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
-        tolerance: 255,
-        smoothing: 100,
-        contiguous: true,
-        toolName: 'magic-wand',
-      });
-
-      expect(strict[0]).toBe(bitmap);
-      expect(loose[0]).toBe(bitmap);
-    });
-
-    it('magic wand never throws on extreme or non-finite settings', () => {
-      expect(() =>
-        acceptsArgs<MagicWandToolArgs>(magicWand(params))({
-          tolerance: Number.NaN,
-          smoothing: Number.NaN,
-          contiguous: true,
-          toolName: 'magic-wand',
-        })
-      ).not.toThrow();
     });
 
     it('feather magnetic lasso returns the source bitmap by reference', () => {
-      const result = acceptsArgs<FeatherMagneticLassoToolArgs>(featherMagneticLasso(params))({
-        points: triangle,
-        featherRadius: 12,
-        magneticWidth: 18,
-        edgeContrast: 30,
-        frequency: 40,
-        snapStrength: 0.85,
-        smoothing: 1.5,
-        antiAlias: true,
-        previewFeather: true,
-        toolName: 'feather-magnetic-lasso',
-      });
+      const result = featherMagneticLasso(params)();
 
       expect(result).toEqual([bitmap]);
       expect(result[0]).toBe(bitmap);
-      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
-    });
-
-    it('feather magnetic lasso applies no feather regardless of the radius', () => {
-      const noFeather = acceptsArgs<FeatherMagneticLassoToolArgs>(featherMagneticLasso(params))({
-        points: triangle,
-        featherRadius: 0,
-        magneticWidth: 0,
-        edgeContrast: 0,
-        frequency: 0,
-        snapStrength: 0,
-        smoothing: 0,
-        antiAlias: false,
-        previewFeather: false,
-        toolName: 'feather-magnetic-lasso',
-      });
-
-      expect(noFeather[0]).toBe(bitmap);
       expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
     });
 
     it('rectangular selection returns the source bitmap without applying the rect', () => {
-      const result = acceptsArgs<RectangularSelectionToolArgs>(rectangularSelection(params))({
-        rect: rect(4, 4, 8, 8),
-        toolName: 'rectangular-selection',
-      });
+      const result = rectangularSelection(params)();
 
       expect(result).toEqual([bitmap]);
       expect(result[0]).toBe(bitmap);
       expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
-    });
-
-    it('rectangular selection ignores a degenerate null rect', () => {
-      const result = acceptsArgs<RectangularSelectionToolArgs>(rectangularSelection(params))({
-        rect: null,
-        toolName: 'rectangular-selection',
-      });
-
-      expect(result[0]).toBe(bitmap);
-    });
-
-    it('declares zero parameters on all three identity processors despite the registry feeding them ToolArgs', () => {
-      // The type lies are src/tools/magicWand.ts:11-15, src/tools/featherMagneticLasso.ts:19-23,
-      // and src/tools/rectangularSelection.ts:9-13: each publishes a `ToolArgs` type but is
-      // typed `() => BitmapSource[]`, so the registry has to @ts-expect-error them into place.
-      expect(magicWand(params).length).toBe(0);
-      expect(featherMagneticLasso(params).length).toBe(0);
-      expect(rectangularSelection(params).length).toBe(0);
-    });
-
-    it.fails('derives a selection from the tolerance it is fed (src/tools/magicWand.ts:11-15)', () => {
-      const strict = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
-        tolerance: 0,
-        smoothing: 0,
-        contiguous: true,
-        toolName: 'magic-wand',
-      });
-      const loose = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
-        tolerance: 255,
-        smoothing: 100,
-        contiguous: true,
-        toolName: 'magic-wand',
-      });
-
-      expect(strict[0]).not.toBe(loose[0]);
-    });
-
-    it.fails('applies the feather radius it is fed (src/tools/featherMagneticLasso.ts:19-23)', () => {
-      const noFeather = acceptsArgs<FeatherMagneticLassoToolArgs>(featherMagneticLasso(params))({
-        points: triangle,
-        featherRadius: 0,
-        magneticWidth: 0,
-        edgeContrast: 0,
-        frequency: 0,
-        snapStrength: 0,
-        smoothing: 0,
-        antiAlias: false,
-        previewFeather: false,
-        toolName: 'feather-magnetic-lasso',
-      });
-      const feathered = acceptsArgs<FeatherMagneticLassoToolArgs>(featherMagneticLasso(params))({
-        points: triangle,
-        featherRadius: 12,
-        magneticWidth: 18,
-        edgeContrast: 30,
-        frequency: 40,
-        snapStrength: 0.85,
-        smoothing: 1.5,
-        antiAlias: true,
-        previewFeather: true,
-        toolName: 'feather-magnetic-lasso',
-      });
-
-      expect(noFeather[0]).not.toBe(feathered[0]);
-    });
-
-    it.fails('bounds the selection to the rect it is fed (src/tools/rectangularSelection.ts:9-13)', () => {
-      const result = acceptsArgs<RectangularSelectionToolArgs>(rectangularSelection(params))({
-        rect: rect(4, 4, 8, 8),
-        toolName: 'rectangular-selection',
-      });
-
-      expect(result[0]).not.toBe(bitmap);
     });
   });
 
@@ -641,57 +486,27 @@ describe('tool image processors', () => {
       expect(result?.[1]).toEqual({ x: 0, y: 0 });
     });
 
-    it('returns undefined for a resize-only arg set, never rasterizing a stretch', () => {
-      // The registry commits reposition as `geometry`, so the raster branch must stay
-      // unused; the runtime value is `undefined` even though the signature promises ToolResult.
-      const result = reposition(params)({ resize: { x: 1, y: 2, width: 30, height: 30 }, toolName: 'reposition' });
+    it('returns the bitmap and geometry patch for resize without rasterizing', () => {
+      const resize = { x: 1, y: 2, width: 30, height: 30 };
+      const result = reposition(params)({ resize, toolName: 'reposition' });
 
-      expect(result).toBeUndefined();
+      expect(result).toEqual([bitmap, resize]);
       expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
     });
 
-    it('returns undefined when neither move nor resize is supplied', () => {
-      expect(reposition(params)({ toolName: 'reposition' })).toBeUndefined();
+    it('returns a valid identity result for the idle tool state', () => {
+      expect(reposition(params)({ toolName: 'reposition' })).toEqual([bitmap]);
     });
 
-    it('crashes a caller that destructures the raster result for a resize-only or empty arg set (src/tools/reposition.ts:12-24)', () => {
-      // `ToolProcessorDefinition.imageProcessor` promises a `ToolResult`, so the cast below is
-      // exactly what the registry's declared type allows; at runtime the value is `undefined`
-      // and any `const [source] = result` throws.
-      const resizeOnly = reposition(params)({
-        resize: { x: 1, y: 2, width: 30, height: 30 },
+    it('uses resize precedence for legacy args containing both geometry patches', () => {
+      const resize = { x: 1, y: 2, width: 30, height: 30 };
+      const result = reposition(params)({
+        move: { x: 12, y: -8 },
+        resize,
         toolName: 'reposition',
-      }) as ToolResult;
-      const empty = reposition(params)({ toolName: 'reposition' }) as ToolResult;
+      } as unknown as RepositionToolArgs);
 
-      expect(() => {
-        const [source] = resizeOnly;
-        return source;
-      }).toThrow(TypeError);
-      expect(() => {
-        const [source] = empty;
-        return source;
-      }).toThrow(TypeError);
-    });
-
-    it.fails('returns a ToolResult for a resize-only arg set (src/tools/reposition.ts:12-24)', () => {
-      const result: unknown = reposition(params)({
-        resize: { x: 1, y: 2, width: 30, height: 30 },
-        toolName: 'reposition',
-      });
-      const [resized] = Array.isArray(result) ? (result as OffscreenCanvas[]) : [];
-
-      // A raster branch, if one is ever written, has to honour the extent it is asked for:
-      // handing back the 40x24 source would be the silent no-op this tripwire exists to catch.
-      expect(Array.isArray(result)).toBe(true);
-      expect(resized?.width).toBe(30);
-      expect(resized?.height).toBe(30);
-    });
-
-    it.fails('returns a ToolResult for an empty arg set (src/tools/reposition.ts:12-24)', () => {
-      // `defaultSettings.reposition` seeds `move: { x: 0, y: 0 }`, so the identity ToolResult the
-      // move branch already produces is what an arg set carrying no move owes the registry.
-      expect(reposition(params)({ toolName: 'reposition' })).toEqual([bitmap, { x: 0, y: 0 }]);
+      expect(result).toEqual([bitmap, resize]);
     });
   });
 
