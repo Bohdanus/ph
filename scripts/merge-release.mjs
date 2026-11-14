@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Release the board claims and file locks of every worktree that is now ON main.
+ * Release claims and locks only for a clean worktree newly merged into the base branch.
  *
  * WHY A MERGE IS THE RIGHT TRIGGER
  * --------------------------------
@@ -10,25 +10,25 @@
  * refused the files that work actually finished on. The symptom is a board that reports a
  * file held by a task that no longer exists, and no command that will say so.
  *
- * A merge is the one event that makes the claim FALSE rather than merely old. That is why
- * the trigger is a git fact and not a timer, and it is the same class of evidence `doctor`
- * already accepts: a claim whose worktree is gone is released on that basis
- * (`doctor()`), not on a lease countdown.
+ * A merge identifies the work whose claim is now complete, but a later merge must not
+ * sweep every older branch already on main. The hook therefore runs only on the base
+ * branch and considers branches added since this exact base transition. `ORIG_HEAD` must
+ * agree with the base branch reflog; if either is stale or unavailable, the transition is
+ * reported as unproven and nothing is released. Each branch is checked against the single
+ * base-tip snapshot captured before the sweep, so another landing cannot widen this pass.
+ * Board heartbeat age is not used: a quiet editor can be live without running a swarm command.
  *
  * WHY IT NEVER USES `--force`
  * ---------------------------
  * The repo's rule is that a sweep may reclaim what lapsed but may NOT take a file from an
  * agent that is still writing — only the operator stops a chat (the `releaseFiles()` policy,
- * enforced by withholding `force`). `--force` skips that check on EVERY row for a path
- * (the same JSDoc), so a forced release here would revoke a live agent's lock over files
- * this script never inspected.
+ * enforced by withholding `force`). This script enumerates only claims and locks owned by
+ * the newly merged branch. A different identity's row is refused by the board.
  *
  * So nothing is forced. Each release is made as the MERGED BRANCH'S OWN IDENTITY, which is
  * the same string the board already keys on (identity is the branch,
  * not a session or a pid). Releasing as the owner needs no force at all, and a claim held
- * by a DIFFERENT agent is refused rather than taken (the holder check in
- * `releaseFiles()`). The hook can therefore
- * only ever clean up after the worktree it is looking at, never after somebody else.
+ * by a DIFFERENT agent is refused rather than taken (the holder check in `releaseFiles()`).
  *
  * THE LOAD-BEARING PART IS THE ENUMERATION, NOT THE ABSENCE OF `force`, and the difference
  * is worth being exact about because the two are easy to confuse. Adding `force: true` to
@@ -42,13 +42,18 @@
  *
  * WHAT QUALIFIES
  * --------------
- * A worktree is released only when all three hold, and each is a fact rather than a guess:
+ * A worktree is released only when all of these hold:
  *
- * 1. Its branch is an ancestor of the base (`git merge-base --is-ancestor`). The work is
- *    on main, which is the claim being made about it.
- * 2. Its working tree is clean. A branch can be merged and then have uncommitted work
+ * 1. The hook is running on the base branch. `ORIG_HEAD` must match the prior base tip in
+ *    that branch's reflog; otherwise each branch is reported with an unproven transition
+ *    and nothing is released. A task checkout that merely fast-forwarded from main cannot
+ *    sweep the board.
+ * 2. The branch is an ancestor of the captured current base tip but not the previous base.
+ *    This limits the sweep to work introduced by this merge and excludes a later concurrent
+ *    landing. Duplicate branch checkouts are also refused because the board keys by branch.
+ * 3. Its working tree is clean. A branch can be merged and then have uncommitted work
  *    added on top — a follow-up fix on the same branch — and that work is NOT on main.
- * 3. Its directory still exists. A registration whose directory is gone has nothing to
+ * 4. Its directory still exists. A registration whose directory is gone has nothing to
  *    release and is `doctor`'s business, not this script's.
  *
  * Failures are REPORTED AND SWALLOWED. A merge has already happened by the time a post-merge
@@ -57,7 +62,7 @@
  * exits 0.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -99,6 +104,30 @@ function listWorktrees(repoRoot) {
   return records;
 }
 
+function isAncestor(ancestor, descendant, cwd) {
+  const result = spawnSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
+    cwd,
+    stdio: 'ignore',
+  });
+  if (result.error || result.signal || result.status === null) return null;
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  return null;
+}
+
+function previousBaseForMerge(repoRoot, base, baseTip) {
+  const recordedPreviousBase = git(['rev-parse', '--verify', '--end-of-options', 'ORIG_HEAD^{commit}'], repoRoot);
+  const reflogPreviousBase = git(['rev-parse', '--verify', '--end-of-options', `${base}@{1}^{commit}`], repoRoot);
+  if (
+    !recordedPreviousBase ||
+    recordedPreviousBase !== reflogPreviousBase ||
+    isAncestor(recordedPreviousBase, baseTip, repoRoot) !== true
+  ) {
+    return null;
+  }
+  return recordedPreviousBase;
+}
+
 /**
  * Why this worktree is or is not releasable. Null means releasable.
  *
@@ -108,29 +137,49 @@ function listWorktrees(repoRoot) {
  * for every one of them, so a report that grouped on the string printed thirty lines
  * where four would do. `code` is the stable half, and it is what `formatReport` buckets on.
  */
-export function releaseBlocker({ worktreePath, branch, base, dirtyOutput, exists = true }) {
+export function releaseBlocker({
+  worktreePath,
+  branch,
+  base,
+  dirtyOutput = null,
+  exists = true,
+  previousBase = null,
+  currentBase = base,
+  duplicateBranch = false,
+}) {
   if (!exists) return { code: 'directory-gone', message: 'the worktree directory is gone' };
   if (!branch) {
     return { code: 'detached', message: 'HEAD is detached, so there is no branch to have merged' };
   }
   if (branch === base) return { code: 'base-branch', message: 'this is the base branch itself' };
-  // `git merge-base --is-ancestor` exits 0 for yes and 1 for no, so the boolean is the
-  // exit code rather than stdout.
-  const merged = (() => {
-    try {
-      execFileSync('git', ['merge-base', '--is-ancestor', branch, base], {
-        cwd: worktreePath,
-        stdio: 'ignore',
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-  if (!merged) return { code: 'not-on-base', message: `${branch} is not on ${base} yet` };
-  if (dirtyOutput) {
+  if (duplicateBranch) {
+    return { code: 'duplicate-branch-worktree', message: `${branch} is checked out in multiple worktrees` };
+  }
+  const merged = isAncestor(branch, currentBase, worktreePath);
+  if (merged === null) {
+    return { code: 'ancestry-unreadable', message: `Git could not verify whether ${branch} is on ${base}` };
+  }
+  if (!merged) {
+    return { code: 'not-on-base', message: `${branch} is not on ${base} yet` };
+  }
+  if (typeof dirtyOutput !== 'string') {
+    return { code: 'status-unreadable', message: `${branch} working-tree status could not be read` };
+  }
+  if (dirtyOutput !== '') {
     return { code: 'dirty', message: `${branch} is on ${base} but its working tree is dirty` };
   }
+  if (!previousBase) {
+    return { code: 'base-transition-unproven', message: `the previous ${base} tip could not be established` };
+  }
+  const wasOnPreviousBase = isAncestor(branch, previousBase, worktreePath);
+  if (wasOnPreviousBase === null) {
+    return {
+      code: 'previous-ancestry-unreadable',
+      message: `Git could not verify whether ${branch} was already on ${base}`,
+    };
+  }
+  if (wasOnPreviousBase)
+    return { code: 'already-on-base', message: `${branch} was already on ${base} before this merge` };
   return null;
 }
 
@@ -146,13 +195,19 @@ function dirtyState(worktreePath) {
  * eligible. It never throws: a claim held by another agent is left alone by the board's
  * own check, and that is a refusal rather than an error.
  */
-export function releaseWorktree(board, { worktreePath, branch, base, dryRun = false }) {
+export function releaseWorktree(
+  board,
+  { worktreePath, branch, base, currentBase = base, dryRun = false, previousBase = null, duplicateBranch = false }
+) {
   const dirty = dirtyState(worktreePath);
   const blocker = releaseBlocker({
     worktreePath,
     branch,
     base,
-    dirtyOutput: dirty === null ? null : dirty !== '',
+    currentBase,
+    dirtyOutput: dirty,
+    previousBase,
+    duplicateBranch,
   });
 
   // Queried even when a blocker stopped the release, because "was NOT released" is only
@@ -215,6 +270,31 @@ export function releaseWorktree(board, { worktreePath, branch, base, dryRun = fa
  * real board, rather than asserting against a hand-built stub of one.
  */
 export function releaseMerged({ repoRoot = process.cwd(), base = 'main', dryRun = false, board = null } = {}) {
+  const currentBranch = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], repoRoot);
+  if (currentBranch !== base) {
+    return [
+      {
+        worktree: path.basename(repoRoot),
+        branch: currentBranch ?? '(detached)',
+        skipped: `post-merge ran outside the ${base} branch`,
+        skipCode: 'outside-base-branch',
+      },
+    ];
+  }
+
+  const baseTip = git(['rev-parse', `${base}^{commit}`], repoRoot);
+  if (!baseTip) {
+    return [
+      {
+        worktree: path.basename(repoRoot),
+        branch: currentBranch,
+        skipped: `the ${base} tip could not be read`,
+        skipCode: 'base-unreadable',
+      },
+    ];
+  }
+  const previousBase = previousBaseForMerge(repoRoot, base, baseTip);
+
   // The board lives in the COMMON git dir, so every worktree of this repository reads the
   // same one — which is the point: a claim taken in a worktree has to be visible to the
   // merge that happens in another. `create: false` so a repository with no board is
@@ -222,7 +302,12 @@ export function releaseMerged({ repoRoot = process.cwd(), base = 'main', dryRun 
   // wraps this in a try, because a hook must not fail a merge that already happened.
   const owned = board ?? new Board({ dir: resolveBoardDir({ cwd: repoRoot }) }).open({ create: false });
   const results = [];
-  for (const worktree of listWorktrees(repoRoot)) {
+  const worktrees = listWorktrees(repoRoot);
+  const branchCounts = new Map();
+  for (const worktree of worktrees) {
+    if (worktree.branch) branchCounts.set(worktree.branch, (branchCounts.get(worktree.branch) ?? 0) + 1);
+  }
+  for (const worktree of worktrees) {
     // Existence is checked here rather than inside `releaseWorktree` because a missing
     // directory has to be answered before `git status` is run inside it: the whole point
     // of that branch is that there is nothing left to ask.
@@ -240,7 +325,10 @@ export function releaseMerged({ repoRoot = process.cwd(), base = 'main', dryRun 
         worktreePath: worktree.path,
         branch: worktree.branch,
         base,
+        currentBase: baseTip,
         dryRun,
+        previousBase,
+        duplicateBranch: Boolean(worktree.branch && branchCounts.get(worktree.branch) > 1),
       })
     );
   }

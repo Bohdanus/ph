@@ -1433,8 +1433,8 @@ the guard self-served. `HANDOFF.md` §225 is the entry.
 
 ```bash
 node scripts/worktree-inventory.mjs          # a fresh verdict: disposal reads it
-npm run dispose -- <name> --dry-run          # names the signal that refuses, if any
-npm run dispose -- <name>
+npm run dispose -- <name> --codex-owner-audit-complete --dry-run # after the fresh Codex audit
+npm run dispose -- <name> --codex-owner-audit-complete
 ```
 
 There is no other sanctioned removal path, and reaching for one is what destroyed a live chat's

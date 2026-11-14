@@ -178,6 +178,11 @@ variant or an equivalent atomic history action.
    `e2e/undo-redo.spec.ts`, and nested `args.enabled` parity is pinned by
    `history-adapter.branches.test.ts`; vector and broader text pixel gaps remain proof gaps,
    not permission to weaken the authority gate.
+   This operation-level source-edit support does not prove the product-reachable
+   `commitDirtyTool` producer's typed text edit at the StoreContext append/navigation boundary or
+   its source lifetime. That producer integration and lifecycle proof remains open; the
+   `REPLACE_LAYER_SOURCE_ACTION` path stays gated as `ownership-unproven` until a separate reviewed
+   slice proves those behaviors.
 4. Preserve the explicit bedrock conversion UX and its history operation while
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
@@ -229,6 +234,11 @@ variant or an equivalent atomic history action.
    established. The
    retained-affine fixtures below separately pin exact per-layer bounds for their listed raster and
    styled-text combinations.
+   A separate 23-degree crop fixture uses a fractional frame and two positioned raster layers. It
+   passed exact legacy/durable composite, materialized-bounds, and HTMLCanvas/OffscreenCanvas layer
+   pixel checks for that input. It adds one frame-matrix datapoint only; it does not exercise runtime,
+   PNG, PSD, or export parity and does not close the wider frame gate. The run and exact fixture are
+   recorded in [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md).
    A separate transformed-raster fixture uses opacity `0.58` and `multiply`. Its premultiplied tight
    pixels, bounds, dimensions, opacity and blend metadata match in HTML and OffscreenCanvas
    materialization at the affine and fractional-frame cursors, and the direct durable composite
@@ -242,19 +252,34 @@ variant or an equivalent atomic history action.
    `durableExportRecords()`/`renderExportCanvas()`, decoded PNG, and PSD layer plus composite pixels.
    The normal admission predicate refuses the retained affine and fractional-frame cases, so these
    adapter outputs are recorded only as diagnostics and do not represent the product's selected
-   render/export path. When the refused adapters are invoked for diagnosis in local Chrome, runtime,
-   export-canvas, and decoded-PNG pixels differ by 42 channel bytes at the affine cursor and 46 after
-   the fractional frame. PSD has zero composite/layer differences at the affine cursor; after the
-   fractional frame, its composite differs by 8 bytes, the background layer by 7, and the foreground
-   layer by zero. The test requires the refusal reason and would require exact zero on every surface
+   render/export path. An earlier local Chrome run of the refused adapters reported runtime,
+   export-canvas, and decoded-PNG differences of 42 channel bytes at the affine cursor and 46 after
+   the fractional frame. The latest run-specific measurements and direct `drawImage` reproduction
+   are in [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md#direct-drawimage-reproduction--2026-11-14):
+   runtime/export/PNG are 42 bytes at both cursors; fractional-frame PSD composite is 13 bytes and
+   the background layer is 11 bytes across 4 pixels. PSD has zero composite/layer differences in the
+   earlier run at the affine cursor; after that run's fractional frame, its composite differs by 8
+   bytes, the background layer by 7, and the foreground layer by zero. The test requires the refusal
+   reason and would require exact zero on every surface
    if admission were allowed. These results do not establish a product-output defect; the root cause
-   remains unproven. The earlier 146-byte isolated-layer comparison over transparency is not a valid
-   blend-mode oracle. Retained operations stay outside runtime and export admission. The export
+   remains unproven. A captured single `drawImage` call exactly reproduces the legacy source's
+   8-byte/3-pixel difference when backing height changes from 46 to 47, with zero direct-replay error
+   against `drawLayerSource()`. The browser's underlying backing-height effect remains unexplained;
+   the restart guide records the transparent/source-bound, source-overload, all-edge, and right-edge-
+   only controls. In the 64×64 diagnostic, right-only extension matches all-edge and original-source
+   replay while differing from transparent padding; the 89×89 control remains exact. These results
+   do not identify a browser mechanism or explain the fractional-frame PSD difference. The earlier
+   146-byte isolated-layer comparison over transparency is not a valid blend-mode oracle. Retained operations stay outside runtime and export admission. The export
    preflight shares the runtime's exact layer-set and conservative source/operation/metadata/bounds
    checks, blocks durable PSD export when any hidden layer lacks materialized pixels, and checks
    actual materialized bounds before selecting durable records. Unsupported, transformed, or
    otherwise unproven cases keep legacy records. This changes neither logical history authority nor
    the closed frame-publication gate.
+   Current platform-specific frame-surface measurements, the diagnostic-only alpha-neighborhood
+   classifier, the opaque-backdrop control, the PSD pre-encode comparison, and the same-backing clip
+   experiment are recorded in [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md). They remain
+   refused-adapter diagnostics; do not combine Mac and Linux counts or use the classifier to relax
+   exact gates.
    These fixtures close only their listed cases, not the frame gate: other angles and source/tool
    variants, additional text styling/rotation combinations, other frame sequences and other
    retained-affine operation combinations still need parity proof. The blank pair and 45%-opacity case

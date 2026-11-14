@@ -96,7 +96,7 @@ classification and review each recoverable branch before any cherry-pick.
    `npm run swarm -- doctor --dry-run --json`, and `npm run branches:orphan`.
 2. Confirm the layers-documentation writer and all review descendants are
    finished before disposing any `in-use` worktree.
-3. Preview `npm run dispose -- <name> --keep-branch --dry-run` for every stale
+3. Preview `npm run dispose -- <name> --keep-branch --codex-owner-audit-complete --dry-run` for every stale
    candidate. Never use `--no-live-writers`, force removal, reset, checkout, or
    stash.
 4. Archive dirty snapshots with `--keep-branch` only after their unique payload
