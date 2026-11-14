@@ -1,23 +1,16 @@
-import type { ProcessorToolParams } from './toolProcessors.ts';
+import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 import type { Point, Pos } from '../contexts/general-types.ts';
 
-// should be either move or resize, not both, and not none
-export type RepositionToolArgs = {
-  move?: Point;
-  resize?: Pos;
+type RepositionPatch =
+  { move: Point; resize?: never } | { resize: Pos; move?: never } | { move?: undefined; resize?: undefined };
 
-  toolName: 'reposition';
-};
+export type RepositionToolArgs = RepositionPatch & { toolName: 'reposition' };
 
 export const reposition =
   ({ bitmap }: ProcessorToolParams) =>
-  ({ move }: RepositionToolArgs) => {
-    if (move) {
-      // do nothing to do with the canvas and bitmap, just move the position
-      return [bitmap, move];
-    }
-    // Reposition commits as `commit: 'geometry'` and is handled structurally
-    // (pos patch only) in useLayer.ts / history-replay.ts, which rematerializes
-    // vector sources rather than stretching a bitmap. This image processor is
-    // never invoked for reposition, and resize must not rasterize here.
+  ({ move, resize }: RepositionToolArgs): ToolResult => {
+    // Reposition commits geometry structurally; this processor only passes the source
+    // through with the same position patch that live preview and history replay apply.
+    const positionPatch = resize ?? move;
+    return positionPatch ? [bitmap, positionPatch] : [bitmap];
   };

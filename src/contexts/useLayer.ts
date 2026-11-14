@@ -56,6 +56,7 @@ import {
 import { clearTextDraftArgs, renderText, type TextToolArgs } from '../tools/text.ts';
 import { normalizeColorsToolArgs } from '../tools/colors.ts';
 import { normalizeLevelsToolArgs } from '../tools/levels.ts';
+import { normalizeBlurToolArgs } from '../tools/blur.ts';
 import { canvasRectToLocal } from '../util/rect.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
@@ -249,6 +250,7 @@ function isTransformArgs(args: ToolArgs): args is TransformToolArgs {
 function normalizeToolArgs(args: ToolArgs): ToolArgs {
   if (args.toolName === 'color') return normalizeColorsToolArgs(args);
   if (args.toolName === 'levels') return normalizeLevelsToolArgs(args);
+  if (args.toolName === 'blur') return normalizeBlurToolArgs(args);
   return args;
 }
 
@@ -1312,8 +1314,8 @@ export const useLayers = () => {
   // THE MAIN POINT IS THAT THIS method does not leave any trace in history and REACT lifecycle
   //
   // The `boolean` is load-bearing: `updateLayerByTool` appends the `TOOL_ACTION` history entry
-  // only after this succeeds. Colors and Levels args are normalized before the operation is
-  // rendered, and the same normalized args are what their history entries record.
+  // only after this succeeds. Filter args are normalized before rendering, and the same args
+  // are recorded in history.
   function tempUpdateLayer({ id = activeLayerId, toolArgs: inputToolArgs }: LayerEditParams): boolean {
     const toolArgs = normalizeToolArgs(inputToolArgs);
     if (!id) return false;
