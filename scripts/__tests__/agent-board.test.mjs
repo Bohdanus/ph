@@ -15,7 +15,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -27,6 +27,7 @@ import {
   IDLE_LIVE_MS,
   MAX_MESSAGE_CHARS,
   isImportedOrigin,
+  normalizePaths,
   parseDuration,
 } from '../lib/agent-board/db.mjs';
 import { resolveIdentity } from '../lib/agent-board/identity.mjs';
@@ -482,6 +483,46 @@ describe('claims are exclusive and leased', () => {
 });
 
 describe('file locks make one-file-one-agent real', () => {
+  it.skipIf(process.platform === 'win32')('preserves backslashes in POSIX worktree and file names', () => {
+    const worktree = join(dir, 'repo\\name');
+    mkdirSync(worktree);
+    const file = join(worktree, 'src\\literal.ts');
+    const board = new Board({
+      dir: join(dir, 'shared-board'),
+      identity: { agentId: 'a', worktree },
+    }).open();
+
+    try {
+      expect(normalizePaths([file], { roots: [worktree] })).toEqual(['src\\literal.ts']);
+      board.holdFiles([file]);
+      expect(board.locksHeldBy('a').map(({ path }) => path)).toEqual(['src\\literal.ts']);
+    } finally {
+      board.close();
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('uses one lock for an absolute symlink alias and its worktree path', () => {
+    const worktree = join(dir, 'repo');
+    const sourceDirectory = join(worktree, 'src');
+    const aliasDirectory = join(dir, 'src-alias');
+    mkdirSync(sourceDirectory, { recursive: true });
+    symlinkSync(sourceDirectory, aliasDirectory, 'dir');
+    identityFor('a').worktree = worktree;
+    identityFor('b').worktree = worktree;
+
+    const a = boardFor('a');
+    const b = boardFor('b');
+    try {
+      a.holdFiles([join(aliasDirectory, 'not-created.ts')]);
+      expect(a.locksHeldBy('a').map(({ path }) => path)).toEqual(['src/not-created.ts']);
+      expect(b.checkPath('src/not-created.ts').free).toBe(false);
+      expect(() => b.holdFiles(['src/not-created.ts'])).toThrow(/held by another agent/);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
   it('refuses a path another live agent holds, naming the holder', () => {
     const a = boardFor('a');
     a.holdFiles(['src/contexts/StoreContext.tsx']);

@@ -107,29 +107,29 @@ describe('unverifiable free routers', () => {
     expect(catalogCandidates('kilo', [row]).map(({ model }) => model)).toEqual(['reflection/beam-free']);
   });
 
-  it('prefers exact Nemotron 3 Ultra before XingChen in the OpenRouter catalog', () => {
+  it('preserves OpenRouter catalog order before cross-provider route ranking', () => {
     const rows = [
       openRouterRow('recursive/flint-v1.0'),
       openRouterRow('nvidia/nemotron-3-ultra-550b-a55b'),
       openRouterRow('xingchen-agi/xing4.0-29b-a4b'),
     ];
     expect(catalogCandidates('openrouter', { data: rows }).map(({ model }) => model)).toEqual([
+      'recursive/flint-v1.0:free',
       'nvidia/nemotron-3-ultra-550b-a55b:free',
       'xingchen-agi/xing4.0-29b-a4b:free',
-      'recursive/flint-v1.0:free',
     ]);
   });
 
-  it('prefers exact Nemotron 3 Ultra before XingChen in the Kilo catalog', () => {
+  it('preserves Kilo catalog order before cross-provider route ranking', () => {
     const rows = [
       kiloRow('recursive/flint-v1.0:free'),
       kiloRow('xingchen-agi/xing4.0-29b-a4b:free'),
       kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'),
     ];
     expect(catalogCandidates('kilo', rows).map(({ model }) => model)).toEqual([
-      'nvidia/nemotron-3-ultra-550b-a55b:free',
-      'xingchen-agi/xing4.0-29b-a4b:free',
       'recursive/flint-v1.0:free',
+      'xingchen-agi/xing4.0-29b-a4b:free',
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
     ]);
   });
 
@@ -333,8 +333,8 @@ describe('keyless free-model catalog CLI', () => {
       const rows = JSON.parse(stdout.write.mock.calls[0][0]);
       expect(code).toBe(0);
       expect(rows).toEqual([
-        { source: 'kilo', model: 'kilo-free', name: 'kilo-free', configured: null },
-        { source: 'openrouter', model: 'router-free:free', name: 'router-free:free', configured: false },
+        { source: 'kilo', model: 'kilo-free', name: 'kilo-free', priority: 2, configured: null },
+        { source: 'openrouter', model: 'router-free:free', name: 'router-free:free', priority: 2, configured: false },
       ]);
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -467,19 +467,27 @@ describe('lazy OpenRouter quota preflight', () => {
     expect(onOpenRouterQuota).toHaveBeenCalledWith({ used: 10, limit: 50, remaining: 40, reason: 'ok' });
   });
 
-  it('does not infer from a Nemotron Kilo catalog row or probe lower-priority routes', async () => {
+  it('uses a verified Nemotron Kilo route before probing lower-priority routes', async () => {
     const chat = vi.fn();
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')], chat });
-    const runKilo = vi.fn().mockResolvedValue({ content: 'must not run', finishReason: 'stop' });
-    await expect(
-      completeWithFreeModel('prompt', {
-        fetchImpl,
-        openRouterKey: 'rk',
-        kiloCommand: '/fake-kilo',
-        runKilo,
-      })
-    ).rejects.toThrow(/No free model completed/);
-    expect(runKilo).not.toHaveBeenCalled();
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({ kilo: [kiloRow(model)], chat });
+    const runKilo = vi.fn().mockResolvedValue({
+      model,
+      content: 'Kilo Nemotron result',
+      finishReason: 'stop',
+      usage: { cost: 0 },
+    });
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'rk',
+      kiloCommand: '/fake-kilo',
+      runKilo,
+    });
+    expect(result).toMatchObject({ source: 'kilo', model, content: 'Kilo Nemotron result', finishReason: 'stop' });
+    expect(result.requestCounts).toEqual({ kilo: 1, openrouter: 0 });
+    expect(runKilo).toHaveBeenCalledWith(
+      expect.objectContaining({ model, maxTokens: 4096, timeoutMs: 12 * 60 * 1000 })
+    );
     expect(chat).not.toHaveBeenCalled();
     const keyInfoCalls = fetchImpl.mock.calls.filter((call) => String(call[0]).includes('api/v1/key'));
     expect(keyInfoCalls).toHaveLength(0);
@@ -622,7 +630,7 @@ describe('lazy OpenRouter quota preflight', () => {
   });
 });
 
-describe('Reasoning parameter is not sent to any provider', () => {
+describe('reasoning options follow the selected model route', () => {
   it('does not send reasoning for OpenRouter requests (avoids breaking mandatory-reasoning models)', async () => {
     const chat = vi.fn().mockResolvedValue({
       ok: true,
@@ -643,15 +651,14 @@ describe('Reasoning parameter is not sent to any provider', () => {
     expect(body.reasoning).toBeUndefined();
   });
 
-  it('does not use non-preferred Kilo catalog entries as fallback routes', async () => {
+  it('uses an eligible XingChen Kilo route when it is the available fallback', async () => {
     const chat = vi.fn();
     const model = 'xingchen-agi/xing4.0-29b-a4b:free';
     const fetchImpl = catalogFetch({ kilo: [kiloRow(model)], chat });
     const runKilo = vi.fn().mockResolvedValue({ content: 'done', finishReason: 'stop' });
-    await expect(completeWithFreeModel('prompt', { fetchImpl, kiloCommand: '/fake-kilo', runKilo })).rejects.toThrow(
-      /No free model completed/
-    );
-    expect(runKilo).not.toHaveBeenCalled();
+    const result = await completeWithFreeModel('prompt', { fetchImpl, kiloCommand: '/fake-kilo', runKilo });
+    expect(result).toMatchObject({ source: 'kilo', model, content: 'done', finishReason: 'stop' });
+    expect(runKilo).toHaveBeenCalledWith(expect.objectContaining({ model, maxTokens: 1200, timeoutMs: 300_000 }));
     expect(chat).not.toHaveBeenCalled();
   });
 });
@@ -692,7 +699,7 @@ describe('disabled Nemotron routes', () => {
 });
 
 describe('recommended Nemotron OpenRouter route', () => {
-  it('selects the exact free model first and sends the requested 4,000-token budget', async () => {
+  it('selects the exact free model and enforces its minimum reasoning token budget', async () => {
     const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     const keyInfo = vi.fn(() => ({
       ok: true,
@@ -728,7 +735,11 @@ describe('recommended Nemotron OpenRouter route', () => {
       content: 'Nemotron response',
       finishReason: 'stop',
     });
-    expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ model, max_tokens: 4000 });
+    expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({
+      model,
+      max_tokens: 4096,
+      reasoning: { effort: 'high' },
+    });
     expect(keyInfo).toHaveBeenCalledOnce();
     expect(chat).toHaveBeenCalledOnce();
   });
@@ -2065,7 +2076,8 @@ describe('provider rate-limit diagnostics', () => {
     }
   );
 
-  it('rotates to the next OpenRouter model when the bounded same-route retry also fails and quota remains', async () => {
+  it('tries an eligible OpenCode route while rotating OpenRouter models after same-route retry', async () => {
+    const attempts = [];
     const providerError = {
       error: {
         code: 503,
@@ -2073,34 +2085,31 @@ describe('provider rate-limit diagnostics', () => {
         metadata: { error_type: 'provider_overloaded' },
       },
     };
-    const chat = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(providerError), {
-          status: 503,
-          headers: { 'content-type': 'application/json' },
-        })
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(providerError), {
-          status: 503,
-          headers: { 'content-type': 'application/json' },
-        })
-      )
-      .mockResolvedValueOnce(
-        new Response(
+    const chat = vi.fn(async (_url, options) => {
+      const model = JSON.parse(options.body).model;
+      attempts.push(`openrouter/${model}`);
+      if (model === 'r2:free') {
+        return new Response(
           JSON.stringify({
-            model: 'r2:free',
+            model,
             choices: [{ message: { content: 'second model completed' }, finish_reason: 'stop' }],
           }),
           { status: 200, headers: { 'content-type': 'application/json' } }
-        )
-      );
+        );
+      }
+      return new Response(JSON.stringify(providerError), {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
     const keyInfo = vi.fn(() => ({
       ok: true,
       json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
     }));
-    const runOpenCode = vi.fn();
+    const runOpenCode = vi.fn(async ({ model }) => {
+      attempts.push(`opencode/${model}`);
+      return undefined;
+    });
     const fetchImpl = catalogFetch({
       kilo: [],
       openrouter: [openRouterRow('r1'), openRouterRow('r2')],
@@ -2129,7 +2138,15 @@ describe('provider rate-limit diagnostics', () => {
     ]);
     expect(result.requestCounts.openrouter).toBe(3);
     expect(keyInfo).toHaveBeenCalledTimes(3);
-    expect(runOpenCode).not.toHaveBeenCalled();
+    expect(attempts).toEqual(['openrouter/r1:free', 'openrouter/r1:free', 'opencode/beam-free', 'openrouter/r2:free']);
+    expect(runOpenCode).toHaveBeenCalledOnce();
+    expect(runOpenCode).toHaveBeenCalledWith({
+      command: 'opencode',
+      maxTokens: 1200,
+      model: 'beam-free',
+      prompt: 'prompt',
+      timeoutMs: 300_000,
+    });
   });
 
   it('stops OpenRouter rotation when quota reaches zero after its same-route retry', async () => {

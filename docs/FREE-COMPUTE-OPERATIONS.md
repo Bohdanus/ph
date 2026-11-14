@@ -25,6 +25,20 @@ receives a response-length instruction instead. Verify the resolved route, non-e
 reason, and cost. The runner ranks Nemotron first across eligible providers, then Xing 4.0, and
 interleaves unranked fallback routes. See [`MODELS.md`](../MODELS.md).
 
+### Operator-managed quarantine entries
+
+The default shared quarantine file is `.kilo/free-model-quarantine.json`.
+
+The shared local quarantine file may contain manually maintained `permanent_ban` and `provider_ban`
+entries. Both apply only to their exact `source:model` pair; `provider_ban` does not disable the
+provider's other models. The pool honors these entries for up to 100 UTC calendar years, clamping a
+February 29 anniversary to February 28 when the target year is not a leap year. Automatic quarantine
+updates and the `free:quarantine add` command accept only transient reasons with a 168-hour maximum;
+they preserve an active operator ban for the same pair. Unknown reasons and out-of-range durations
+fail closed.
+
+The CLI defaults to six hours when `--hours` is omitted.
+
 ## Find credentials safely
 
 If the operator says credentials were saved, search the relevant local chat before concluding they
@@ -34,18 +48,19 @@ into logs. Report only the provider, path, and whether authentication is availab
 
 ## Kilo Code
 
-When the Kilo adapter is explicitly invoked, it uses `kilo run`, which picks up the logged-in Kilo
-Gateway OAuth account used by the Kilo Code extension. The shared completion pool does not select
-Kilo candidates as fallback routes. The adapter discovers `kilo` on `PATH` and then checks common VS
-Code, Cursor, and Windsurf extension folders. If discovery misses the installed CLI, set
-`KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never read or
-print the Kilo auth database or JSON file.
+The shared completion pool selects eligible, verified-free Kilo routes in model-first provider
+order and invokes this adapter; Kilo is not a fallback-only route. `kilo run` uses the logged-in Kilo
+Gateway OAuth account used by the Kilo Code extension. The adapter discovers `kilo` on `PATH` and
+then checks common VS Code, Cursor, and Windsurf extension folders. If discovery misses the installed
+CLI, set `KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never
+read or print the Kilo auth database or JSON file.
 
 `kilo run` starts with `--pure` and the tracked `free-completion` agent. That profile denies every
 tool name. The prompt is piped through stdin, keeping it out of process arguments and avoiding
 Kilo's file-attachment and external-directory permission checks. Do not add `--auto`: it would
 broaden permissions beyond the tool-free profile. The runner verifies a clean JSON completion,
-rejects tool events and reported non-zero cost. Inference has a five-minute timeout. It
+rejects tool events and reported non-zero cost. Nemotron inference has a 12-minute timeout; other
+inference routes use five minutes. Catalog and quota checks use a separate 15-second timeout. It
 uses the public Kilo catalog only for model and exact-zero price discovery; it does not send
 inference requests anonymously to the public Gateway endpoint. The child environment is limited to
 runtime paths and locale settings, including the Kilo database selector; unrelated provider keys
