@@ -1683,6 +1683,35 @@ describe('the schema this script writes', () => {
     expect(board.db, 'a failed open left a live handle, so a retry short-circuits').toBeNull();
   });
 
+  it('retries a busy journal-mode probe during first-open contention', () => {
+    const board = new Board({ dir, identity: identityFor('wal-retry') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 5 });
+    board.db = { exec: vi.fn() };
+    const currentJournalMode = vi
+      .spyOn(board, 'currentJournalMode')
+      .mockImplementationOnce(() => {
+        throw busy;
+      })
+      .mockReturnValueOnce('wal');
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBe('wal');
+    expect(currentJournalMode).toHaveBeenCalledTimes(2);
+    expect(board.db.exec).not.toHaveBeenCalled();
+  });
+
+  it('does not fail open when the final journal-mode probe stays busy', () => {
+    const board = new Board({ dir, identity: identityFor('wal-busy') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 5 });
+    board.db = { exec: vi.fn() };
+    const currentJournalMode = vi.spyOn(board, 'currentJournalMode').mockImplementation(() => {
+      throw busy;
+    });
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBeNull();
+    expect(currentJournalMode).toHaveBeenCalledTimes(3);
+    expect(board.db.exec).not.toHaveBeenCalled();
+  });
+
   it('refuses before it creates anything, not after', () => {
     // The two refusals in `migrate()` have to agree: a newer board is refused
     // BEFORE `exec(SCHEMA)` precisely so it does not half-adopt a schema, and a
