@@ -1353,16 +1353,16 @@ export class Board {
     // same conservative parser as the conflict checks. SQLite's date parser
     // does not have the same accepted-input set as Date.parse.
     const claimJoin = claimedBy
-      ? 'LEFT JOIN claims c ON c.issue_id = issues.id AND c.agent_id = ? AND c.released_at IS NULL'
+      ? 'JOIN claims c ON c.issue_id = issues.id AND c.agent_id = ? AND c.released_at IS NULL'
       : '';
-    const claimColumns = claimedBy ? ', c.issue_id AS claim_issue_id, c.lease_until AS claim_lease_until' : '';
+    const claimColumns = claimedBy ? ', c.lease_until AS claim_lease_until' : '';
     const rows = this.db
       .prepare(`SELECT issues.*${claimColumns} FROM issues ${claimJoin} ${clause}`)
       .all(...(claimedBy ? [claimedBy, ...params] : params));
     const matching = claimedBy
       ? rows
-          .filter((issue) => issue.claim_issue_id !== null && isLiveDeadline(issue.claim_lease_until, claimsFilterAt))
-          .map(({ claim_issue_id: _claimIssueId, claim_lease_until: _claimLeaseUntil, ...issue }) => issue)
+          .filter((issue) => isLiveDeadline(issue.claim_lease_until, claimsFilterAt))
+          .map(({ claim_lease_until: _claimLeaseUntil, ...issue }) => issue)
       : rows;
     return matching
       .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority) || a.created_at.localeCompare(b.created_at))

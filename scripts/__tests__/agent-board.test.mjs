@@ -415,6 +415,7 @@ describe('claims are exclusive and leased', () => {
     expect(b.readyIssues().map((issue) => issue.id)).not.toContain(id);
     expect(b.issuesForPath('src/lease.ts')[0]?.claimed_by).toBe('a');
     expect(b.listIssues({ claimedBy: 'a' }).map((issue) => issue.id)).toContain(id);
+    expect(b.listIssues({ claimedBy: 'b' }).map((issue) => issue.id)).not.toContain(id);
     expect(b.status().expiredClaims).toBe(0);
     expect(b.health().claims.expired).toBe(0);
     expect(b.doctor()).toEqual([]);
