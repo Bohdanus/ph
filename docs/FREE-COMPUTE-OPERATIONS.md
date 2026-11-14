@@ -25,6 +25,16 @@ receives a response-length instruction instead. Verify the resolved route, non-e
 reason, and cost. The runner ranks Nemotron first across eligible providers, then Xing 4.0, and
 interleaves unranked fallback routes. See [`MODELS.md`](../MODELS.md).
 
+### Operator-managed quarantine entries
+
+The shared local quarantine file may contain manually maintained `permanent_ban` and `provider_ban`
+entries. Both apply only to their exact `source:model` pair; `provider_ban` does not disable the
+provider's other models. The pool honors these entries for up to 100 UTC calendar years, clamping a
+February 29 anniversary to February 28 when the target year is not a leap year. Automatic quarantine
+updates and the `free:quarantine add` command accept only transient reasons with a 168-hour maximum;
+they preserve an active operator ban for the same pair. Unknown reasons and out-of-range durations
+fail closed.
+
 ## Find credentials safely
 
 If the operator says credentials were saved, search the relevant local chat before concluding they
