@@ -8,7 +8,7 @@ const TEST_DIRECTORY = join(import.meta.dirname, '.');
 const REVIEWED = {
   'agent-board.test.mjs': {
     scope: 'Temporary board directories and in-memory/test-owned databases; CLI children use the test board.',
-    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=9 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=14 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
+    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=9 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=16 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
   },
   'agents-citations.test.mjs': {
     scope: 'Subprocess invocation is part of the citation/tooling contract; review its command and cwd.',
@@ -127,7 +127,7 @@ const REVIEWED = {
   'path-identity.test.mjs': {
     scope:
       'Git path identity is read from the current checkout; directory and symlink fixtures are created under unique OS temporary directories and removed after each test.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=1 filesystem-write:rmSync=1 filesystem-write:mkdirSync=3 filesystem-write:writeFileSync=1 filesystem-write:symlinkSync=2`,
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=1 filesystem-write:rmSync=1 filesystem-write:mkdirSync=3 filesystem-write:writeFileSync=1 filesystem-write:symlinkSync=3`,
   },
   'quiet-command.test.mjs': {
     scope: 'Subprocess invocation is the command-wrapper behavior under test; review command and cwd.',
@@ -136,7 +136,7 @@ const REVIEWED = {
   'recover-stale-auto-merge.test.mjs': {
     scope:
       'Git and filesystem fixtures use temporary repositories and directories, including a stale target package script, symlinks, hostile merge/index markers, and a Node preload shim that rewrites a fixture marker; child Git commands use the fixture repository.',
-    patterns: `subprocess:execFileSync=1 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=37 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=4 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=1`,
+    patterns: `subprocess:execFileSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=38 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=4 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=2`,
   },
   'repo-state-gate.test.mjs': {
     scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',

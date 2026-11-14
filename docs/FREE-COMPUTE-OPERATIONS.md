@@ -34,10 +34,10 @@ into logs. Report only the provider, path, and whether authentication is availab
 
 ## Kilo Code
 
-When the Kilo adapter is explicitly invoked, it uses `kilo run`, which picks up the logged-in Kilo
-Gateway OAuth account used by the Kilo Code extension. The shared completion pool does not select
-Kilo candidates as fallback routes. The adapter discovers `kilo` on `PATH` and then checks common VS
-Code, Cursor, and Windsurf extension folders. If discovery misses the installed CLI, set
+The Kilo adapter uses `kilo run`, which picks up the logged-in Kilo Gateway OAuth account used by
+the Kilo Code extension. The shared completion pool selects verified-free Kilo routes in its
+model-first provider order. The adapter discovers `kilo` on `PATH` and then checks common VS Code,
+Cursor, and Windsurf extension folders. If discovery misses the installed CLI, set
 `KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never read or
 print the Kilo auth database or JSON file.
 

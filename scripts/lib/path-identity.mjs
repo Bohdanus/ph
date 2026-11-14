@@ -8,7 +8,8 @@ function resolvedAbsolutePath(path) {
   while (true) {
     try {
       return join(realpathSync(current), ...suffix.reverse());
-    } catch {
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error;
       const parent = dirname(current);
       if (parent === current) return absolute;
       suffix.push(basename(current));
@@ -19,7 +20,8 @@ function resolvedAbsolutePath(path) {
 
 function normalizedAbsolutePath(path) {
   const resolved = resolvedAbsolutePath(path);
-  return resolved.replace(/\\/g, '/').replace(/\/+$/, '') || '/';
+  const normalized = process.platform === 'win32' ? resolved.replace(/\\/g, '/') : resolved;
+  return normalized.replace(/\/+$/, '') || '/';
 }
 
 function sameExistingWindowsPath(left, right) {
@@ -49,7 +51,16 @@ function sameExistingWindowsPath(left, right) {
 /** Stable grouping key for a path in one filesystem inventory pass. */
 export function pathIdentityKey(path) {
   if (typeof path !== 'string' || !path) return null;
-  const normalized = normalizedAbsolutePath(path);
+  let normalized;
+  try {
+    normalized = normalizedAbsolutePath(path);
+  } catch {
+    // Keep an exact lexical key when the filesystem cannot resolve this path.
+    // Unknown filesystem state must not make unrelated paths share a null key.
+    normalized = resolve(path);
+    if (process.platform === 'win32') normalized = normalized.replace(/\\/g, '/');
+    normalized = normalized.replace(/\/+$/, '') || '/';
+  }
   if (process.platform === 'win32') {
     try {
       const stats = statSync(path, { bigint: true });
@@ -65,7 +76,12 @@ export function pathIdentityKey(path) {
 /** Compare existing file or directory identity without assuming path spellings match. */
 export function samePath(left, right) {
   if (typeof left !== 'string' || typeof right !== 'string' || !left || !right) return false;
-  if (normalizedAbsolutePath(left) === normalizedAbsolutePath(right)) return true;
+  try {
+    if (normalizedAbsolutePath(left) === normalizedAbsolutePath(right)) return true;
+  } catch {
+    // Continue to the filesystem identity check; unresolved aliases are not equal
+    // merely because an ancestor lookup failed.
+  }
   return sameExistingWindowsPath(left, right);
 }
 
@@ -81,8 +97,17 @@ export function relativePathInside(root, target) {
   if (typeof root !== 'string' || typeof target !== 'string' || !root || !target) return null;
 
   const rootPath = resolve(root);
-  const rootKey = normalizedAbsolutePath(root);
-  const targetKey = normalizedAbsolutePath(target);
+  let rootKey;
+  let targetKey;
+  try {
+    rootKey = normalizedAbsolutePath(root);
+    targetKey = normalizedAbsolutePath(target);
+  } catch {
+    // Permission errors, symlink loops, and other unresolved states cannot
+    // establish containment. Only missing descendants are appended by
+    // resolvedAbsolutePath; every other resolution error fails closed here.
+    return null;
+  }
   if (rootKey === targetKey) return '';
 
   const rootPrefix = rootKey.endsWith('/') ? rootKey : `${rootKey}/`;

@@ -415,6 +415,11 @@ function isMissingPath(error) {
   return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
 }
 
+function normalizeBoardPathSeparators(path) {
+  const value = String(path ?? '');
+  return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+}
+
 /**
  * True when a normalised path is NOT inside any worktree of this repository.
  *
@@ -425,9 +430,7 @@ function isMissingPath(error) {
  * matches.
  */
 function isOutsideRepoPath(path) {
-  const p = String(path ?? '')
-    .split('\\')
-    .join('/');
+  const p = normalizeBoardPathSeparators(path);
   return p.startsWith('/') || p === '..' || p.startsWith('../') || /^[a-z]:/i.test(p);
 }
 
@@ -1889,7 +1892,7 @@ export class Board {
       // No agents table yet, or no row.
     }
     this._pathRoots = [...roots]
-      .map((root) => `${String(root).split('\\').join('/').replace(/\/+$/, '')}/`)
+      .map((root) => `${normalizeBoardPathSeparators(root).replace(/\/+$/, '')}/`)
       .sort((a, b) => b.length - a.length);
     return this._pathRoots;
   }
@@ -1923,7 +1926,7 @@ export class Board {
     // it against the process's directory would turn the stored answer into an
     // absolute path that matches nothing.
     if (direct === undefined) return undefined;
-    const input = typed.split('\\').join('/');
+    const input = normalizeBoardPathSeparators(typed);
     const root =
       roots.find((candidate) => input.startsWith(candidate))?.replace(/\/$/, '') ??
       roots.find((candidate) => relativePathInside(candidate, typed) !== null)?.replace(/\/$/, '') ??
@@ -2796,14 +2799,14 @@ export function normalizePaths(paths, { worktree = null, roots = null } = {}) {
   const list = Array.isArray(paths) ? paths : [paths];
   const rootPaths = roots ?? (worktree ? [worktree] : []);
   const prefixes = rootPaths
-    .map((root) => `${String(root).split('\\').join('/').replace(/\/+$/, '')}/`)
+    .map((root) => `${normalizeBoardPathSeparators(root).replace(/\/+$/, '')}/`)
     .sort((a, b) => b.length - a.length);
   const out = [];
   for (const raw of list) {
     if (typeof raw !== 'string') continue;
     const trimmed = raw.trim();
     if (!trimmed) continue;
-    let normalized = trimmed.split('\\').join('/').replace(/^\.\//, '');
+    let normalized = normalizeBoardPathSeparators(trimmed).replace(/^\.\//, '');
     let matchedRoot = false;
     for (const prefix of prefixes) {
       if (normalized.startsWith(prefix)) {

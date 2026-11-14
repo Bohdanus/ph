@@ -425,19 +425,28 @@ describe('scanRepository covers every registered worktree, not one', () => {
     const path = addWorktree(repo, 'linked');
 
     const found = scanRepository(repo).worktrees;
+    const asPaths = (entries) => entries.map((w) => realpathSync(w.path)).sort();
+    expect(asPaths(found)).toEqual([realpathSync(repo), realpathSync(path)].sort());
     // Compare directory identity because Git and Node can spell the same Windows
     // checkout through its long and 8.3 path forms.
     expect(found).toHaveLength(2);
     expect(found.some((worktree) => samePath(worktree.path, repo))).toBe(true);
     expect(found.some((worktree) => samePath(worktree.path, path))).toBe(true);
 
-    const primary = found.find((worktree) => samePath(worktree.path, repo));
-    const linked = found.find((worktree) => samePath(worktree.path, path));
+    const primary = found.find((w) => realpathSync(w.path) === realpathSync(repo));
+    const linked = found.find((w) => realpathSync(w.path) === realpathSync(path));
+    expect(found.find((worktree) => samePath(worktree.path, repo))).toBe(primary);
+    expect(found.find((worktree) => samePath(worktree.path, path))).toBe(linked);
     // The primary's git dir is the repository's own; a linked worktree's is a
     // directory INSIDE it. A reader that assumed the first form for both would read
     // every linked worktree's state out of the shared `.git`, which is the primary's.
     expect(primary.gitDir).not.toBe(linked.gitDir);
     expect(relativePathInside(primary.gitDir, linked.gitDir)?.startsWith('worktrees/')).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(linked.gitDir.startsWith(`${primary.gitDir}/worktrees/`)).toBe(true);
+    }
+    const normalizedPrimaryGitDir = primary.gitDir.replace(/\\/g, '/');
+    expect(linked.gitDir.replace(/\\/g, '/').startsWith(`${normalizedPrimaryGitDir}/worktrees/`)).toBe(true);
     expect(linked.branch).toBe('wt/linked');
   });
 
@@ -757,6 +766,7 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.code).toBe(0);
     expect(r.out).toContain('landing scope clear for wt/candidate');
     expect(r.out).toContain('1 unrelated finding(s) remain reported and untouched');
+    expect(r.err).toContain(unrelated);
     const reportedPaths = r.err
       .split(/\r?\n/)
       .filter((line) => line.startsWith('    '))
@@ -1048,9 +1058,10 @@ describe("the third review's findings, pinned", () => {
     const boom = () => {
       throw new Error('Command failed: git diff --name-only --diff-filter=U -z');
     };
-    const found = scanRepository(repo, { unmergedOf: boom }).worktrees.find((worktree) =>
-      samePath(worktree.path, path)
+    const found = scanRepository(repo, { unmergedOf: boom }).worktrees.find(
+      (w) => realpathSync(w.path) === realpathSync(path)
     );
+    expect(samePath(found.path, path)).toBe(true);
     // The operation is still known — that is the point of recording rather than throwing.
     expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
     expect(found.unmerged).toEqual([]);
@@ -1205,6 +1216,7 @@ describe('the roster cannot be trusted on its own', () => {
 
       const found = scanRepository(repo).worktrees.find((w) => w.path.includes('\n'));
       expect(found, 'the newline path must survive parsing').toBeDefined();
+      expect(found.path).toBe(realpathSync(path));
       expect(samePath(found.path, path)).toBe(true);
       expect(found.present).toBe(true);
       expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
@@ -1314,6 +1326,7 @@ describe('the cross-check must not invent worktrees either', () => {
     expect(isAbsolute(gitdir)).toBe(false);
 
     const resolved = resolveAdminDirFor(resolveCommonDir(repo), relative);
+    expect(realpathSync(resolved)).toBe(realpathSync(adminDir));
     expect(samePath(resolved, adminDir)).toBe(true);
     expect(readOperations(resolved).map((o) => o.operation)).toEqual(['merge']);
 
@@ -1365,9 +1378,11 @@ describe('the cross-check must not invent worktrees either', () => {
   });
 
   it('reports two administrative directories claiming one worktree as unresolvable', () => {
-    // Git's roster names the worktree, not every administrative directory claiming it.
-    // The worktree's own .git link identifies the authoritative directory; a duplicate
-    // must be reported separately so markers in it cannot be hidden by the roster entry.
+    // A Set cannot see this: the second directory's state is then read by nothing at
+    // all. Measured, a `gitdir` naming an already-claimed worktree produced no finding
+    // and its `MERGE_HEAD` was never read — real merge state, in a directory git does
+    // not list, invisible. The worktree's own `.git` link identifies the authoritative
+    // directory; a duplicate must be reported separately so its markers cannot be hidden.
     const repo = addConflictingBranch(makeRepo(), 'theirs');
     const path = addWorktree(repo, 'one');
     git(path, 'checkout', '-B', 'wt/one');
@@ -1392,6 +1407,7 @@ describe('the cross-check must not invent worktrees either', () => {
         readError: expect.stringContaining('administrative directories claim this worktree'),
       })
     );
+    expect(reported.some((f) => f.operations.length > 0)).toBe(true);
   });
 
   it('keeps locked and prunable, which the -z rewrite had been discarding', () => {

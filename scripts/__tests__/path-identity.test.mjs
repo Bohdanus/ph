@@ -42,6 +42,18 @@ describe('filesystem path identity', () => {
     expect(relativePathInside(root.toUpperCase(), child)).toBe('child');
   });
 
+  it.skipIf(process.platform === 'win32')('preserves backslashes as POSIX filename characters', () => {
+    const root = temporaryDirectory();
+    const literalBackslashName = join(root, 'left\\right');
+    const nestedPath = join(root, 'left', 'right');
+
+    expect(literalBackslashName).not.toBe(nestedPath);
+    expect(samePath(literalBackslashName, nestedPath)).toBe(false);
+    expect(pathIdentityKey(literalBackslashName)).not.toBe(pathIdentityKey(nestedPath));
+    expect(relativePathInside(root, literalBackslashName)).toBe('left\\right');
+    expect(relativePathInside(root, nestedPath)).toBe('left/right');
+  });
+
   it('returns a relative path only for descendants of the same directory', () => {
     const root = temporaryDirectory();
     const child = join(root, 'child');
@@ -74,5 +86,14 @@ describe('filesystem path identity', () => {
     expect(relativePathInside(root, join(root, 'outside-link', 'not-created.txt'))).toBeNull();
     expect(relativePathInside(rootAlias, join(root, 'child'))).toBe('child');
     expect(relativePathInside(rootAlias, join(rootAlias, 'child'))).toBe('child');
+  });
+
+  it.skipIf(process.platform === 'win32')('fails closed when a symlink loop prevents path resolution', () => {
+    const root = temporaryDirectory();
+    const loop = join(root, 'loop');
+    symlinkSync(loop, loop, 'dir');
+
+    expect(pathIdentityKey(loop)).toContain(loop);
+    expect(relativePathInside(root, loop)).toBeNull();
   });
 });
