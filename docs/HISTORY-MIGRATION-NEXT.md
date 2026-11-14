@@ -136,12 +136,33 @@ commits or alter logical history authority.
    differences are not product-path failures because admission refuses those records and the app
    retains legacy rendering/export. The root cause remains unknown. Keep the
    gate closed and isolate the first differing intermediate surface before changing production code.
-   The diagnostic test records pixel offsets and channel values; extend that capture with document
-   coordinates, alpha, source/backdrop pixels, and exact surface bounds. Compare identical frame,
-   transform, clipping, layer order, and opaque backdrop, then vary one factor at a time: opacity 1
-   versus 0.58, source-over versus multiply, integer versus fractional frame, and direct frame-surface
-   copy versus tight-bitmap placement. Check operation order and intermediate alpha/premultiplication
-   around `drawEvaluatedPresentation()` and `renderExportCanvas()`; `durable-compositor.ts` explicitly
+   The diagnostic fixture records differing-pixel document coordinates, RGBA/alpha, aggregate bounds,
+   source/backdrop samples, and exact runtime/export/PNG/PSD surface bounds. Its opacity-only and
+   multiply-only controls run at both the affine cursor and fractional frame. The [Linux mirror run
+   for commit `0535f48d`](https://github.com/Bohdanus/ph/actions/runs/42987298464) reproduces refused
+   adapter differences: runtime/export/PNG differ by 118 channel bytes (91 pixels, maximum delta 1)
+   at the affine cursor and 86 bytes (69 pixels, maximum delta 1) after the fractional frame. PSD is
+   exact at the affine cursor; after the fractional frame its composite differs by 51 bytes across
+   15 pixels, the background layer by 39 bytes across 15 pixels, and the foreground layer is exact.
+   The measured layer bounds agree. At the reported source/backdrop samples, raw source and backdrop
+   values agree; tight-bitmap premultiplied pixels and the fresh-canvas Invert result are exact. The
+   raw frame surfaces differ at the affine cursor (101 bytes/91 pixels) and after the fractional
+   frame (94 bytes/82 pixels). Focused Linux mirror run
+   [`43208568731`](https://github.com/Bohdanus/ph/actions/runs/43208568731) tested exact source
+   commit `1adbd46075e3d038d15c2769038aa4cc163ccdb2`; all 30 tests passed with no skips, retries, or
+   unexpected results. Both HTMLCanvas and OffscreenCanvas report the same byte and pixel counts
+   after premultiplication: 101/91 at the affine cursor and 94/82 after the fractional frame. The
+   raw comparison reports zero non-edge pixels, but the current premultiplied comparison does not
+   classify non-edge differences. Its first eight samples at each stage have equal alpha and a
+   one-unit premultiplied channel difference. Materialized bounds match exactly; tight-bitmap
+   premultiplied comparisons and fresh-canvas Invert readbacks report zero differences for both
+   canvas types. These measurements show that the raw frame differences persist after
+   premultiplication, so straight-alpha readback alone does not explain them. Whether the
+   premultiplied differences extend beyond alpha boundaries remains unmeasured. Keep the gate closed
+   and test the transparent-backdrop and direct frame-surface-copy versus tight-bitmap-placement
+   controls.
+   Check operation order and intermediate alpha/premultiplication around
+   `drawEvaluatedPresentation()` and `renderExportCanvas()`; `durable-compositor.ts` explicitly
    disables image smoothing on its composition path, so smoothing is not an established explanation.
    Investigate the fractional PSD discrepancy separately by comparing legacy and durable background
    raster bytes before encoding at identical integer bounds, then check layer placement relative to
@@ -172,14 +193,15 @@ not impose a dependency between them.
    premultiplied pixels. The Invert check pins a fresh-canvas consumer readback, not raw OffscreenCanvas
    backing-store identity. Adapter measurements are intentionally diagnostic because the normal gate
    refuses retained operations.
-   First identify the earliest intermediate surface where legacy and durable bytes diverge. Reuse the
-   same opaque backdrop, layer order, frame, transform, clipping, opacity, and blend settings, and
-   capture the differing pixel coordinates, channels, alpha, source/backdrop samples, and bounds.
-   At each cursor, compare the direct original-source draw, the materialized bitmap drawn at matching
-   frame-grid coordinates, and the projected-record draw. Hold canvas type, transform, clipping, and
-   destination constant; include controls that prove the transform and blend each affect pixels.
-   Then vary opacity 1 versus 0.58, source-over versus multiply, integer versus fractional frame,
-   opaque versus transparent backdrop, and direct frame-surface copy versus tight-bitmap placement,
+   The mirror measurements for `1adbd46075e3d038d15c2769038aa4cc163ccdb2` show that the frame
+   surface differences persist after premultiplication, while tight-bitmap and Invert consumer
+   results remain exact. Classify premultiplied differing pixels against alpha boundaries for both
+   canvas types; the current report only classifies raw frame differences. Then use the
+   document-coordinate samples, source/backdrop RGBA, exact bounds, and opacity-only/multiply-only
+   controls at both cursors to locate the first meaningful divergence. Compare the direct
+   original-source draw, materialized bitmap at matching frame-grid coordinates, and projected-record
+   draw. Hold canvas type, transform, clipping, layer order, and destination constant; next compare an
+   opaque versus transparent backdrop and a direct frame-surface copy versus tight-bitmap placement,
    changing one condition at a time. Inspect intermediate alpha/premultiplication and operation
    order; preserve the explicit `imageSmoothingEnabled = false` setting rather than attributing the
    result to filtering without evidence. For PSD, isolate the legacy and durable background-layer

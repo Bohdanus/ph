@@ -97,6 +97,7 @@ const BUDGETED = [
   'quiet-command.test.mjs',
   'recover-stale-auto-merge.test.mjs',
   'repo-state-gate.test.mjs',
+  'secrets.test.mjs',
   'stale-branch-files.test.mjs',
   'tsc-guard.test.mjs',
   'worktree-inventory.test.mjs',

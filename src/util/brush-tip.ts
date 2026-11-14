@@ -33,6 +33,8 @@ export const buildTipLut = (overrides?: Partial<TipParams>): TipLut => {
   const hard = hardness >= 1;
   const powerGamma = clamp(params.powerGamma, 0.01, 64);
   const smoothstep = params.falloff === 'smoothstep';
+  // Prevent malformed persisted angles from poisoning every rotated pixel sample with NaN.
+  const angle = Number.isFinite(params.angle) ? params.angle : 0;
 
   const profile = (t: number): number => {
     if (hard) return t <= 1 ? 1 : 0;
@@ -60,7 +62,7 @@ export const buildTipLut = (overrides?: Partial<TipParams>): TipLut => {
     hard,
     square: params.shape === 'square',
     wetEdges: clamp(params.wetEdges, 0, 1),
-    cos: Math.cos(params.angle),
-    sin: Math.sin(params.angle),
+    cos: Math.cos(angle),
+    sin: Math.sin(angle),
   };
 };

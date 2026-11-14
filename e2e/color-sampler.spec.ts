@@ -12,7 +12,7 @@ import {
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
-import { imagePointToCss } from './helpers/screenshot-scale';
+import { cssPointToImage, imagePointToCss } from './helpers/screenshot-scale';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
@@ -70,9 +70,20 @@ const pageClip = (box: BoundingBox): ViewportClip =>
     height: SLAB_BOUNDS.height,
   });
 
+/** Reads the slab's representative CSS point through the decoded capture's own image scale. */
+const slabSampleColor = async (capture: Buffer | import('./helpers/canvas-helpers').ImageDataResult) => {
+  const image = Buffer.isBuffer(capture) ? await loadImageData(capture) : capture;
+  const point = cssPointToImage(
+    image,
+    { x: 0, y: 0, width: SLAB_BOUNDS.width, height: SLAB_BOUNDS.height },
+    SLAB_SAMPLE_POINT_IN_CLIP
+  );
+  return getColorAtPoint(image, Math.floor(point.x), Math.floor(point.y), 2);
+};
+
 /** Is the capture showing the red slab? Used as the redraw predicate, so it must be total. */
 const showsRedSlab = async (capture: Buffer | import('./helpers/canvas-helpers').ImageDataResult) => {
-  const point = await getColorAtPoint(capture, 100, 30, 2);
+  const point = await slabSampleColor(capture);
   return point !== null && point.red > 150 && point.green < 100 && point.blue < 100;
 };
 
@@ -213,12 +224,7 @@ test.describe('the Color Sampler tool', () => {
     await selectColorSampler(page);
 
     const box = await canvasBox(page);
-    const red = await getColorAtPoint(
-      await page.screenshot({ clip: pageClip(box) }),
-      SLAB_SAMPLE_POINT_IN_CLIP.x,
-      SLAB_SAMPLE_POINT_IN_CLIP.y,
-      2
-    );
+    const red = await slabSampleColor(await page.screenshot({ clip: pageClip(box) }));
     expect(red, 'the sampled target must be the red the Brush laid down').not.toBeNull();
     expect(red!.red).toBeGreaterThan(150);
 
@@ -269,9 +275,16 @@ test.describe('the Color Sampler tool', () => {
       await page.goto('/');
       await expect(getWorkspaceCanvas(page)).toBeVisible();
       await expect(page.getByTitle('Drag to reorder').filter({ hasText: 'Blank 1' })).toBeVisible();
-      expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1);
-      await expect(getWorkspaceCanvas(page)).toHaveAttribute('width', '800');
-      await expect(getWorkspaceCanvas(page)).toHaveAttribute('height', '600');
+      const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio);
+      expect([1, 2]).toContain(devicePixelRatio);
+      const backing = await getWorkspaceCanvas(page).evaluate((element) => {
+        const canvas = element as HTMLCanvasElement;
+        return { width: canvas.width, height: canvas.height, scaleX: canvas.width / 800, scaleY: canvas.height / 600 };
+      });
+      expect(backing.width).toBe(800 * devicePixelRatio);
+      expect(backing.height).toBe(600 * devicePixelRatio);
+      expect(backing.scaleX).toBe(devicePixelRatio);
+      expect(backing.scaleY).toBe(devicePixelRatio);
 
       await selectColorSampler(page);
       await sampleSizeSelect(page).selectOption('1');
@@ -285,14 +298,24 @@ test.describe('the Color Sampler tool', () => {
           const context = canvas.getContext('2d');
           if (!context) throw new Error('workspace compositor has no 2D context');
 
-          const image = context.createImageData(3, 3);
+          const scaleX = canvas.width / 800;
+          const scaleY = canvas.height / 600;
+          if (scaleX !== scaleY || (scaleX !== 1 && scaleX !== 2)) {
+            throw new Error(`workspace compositor has unexpected backing scale ${scaleX}x${scaleY}`);
+          }
+
           for (let y = 0; y < 3; y += 1) {
             for (let x = 0; x < 3; x += 1) {
+              const documentX = center.x + x - 1;
+              const documentY = center.y + y - 1;
+              const backingX = Math.floor((documentX + 0.5) * scaleX);
+              const backingY = Math.floor((documentY + 0.5) * scaleY);
               const color = tile[y]![x]!;
-              image.data.set([...color, 255], (y * 3 + x) * 4);
+              const image = context.createImageData(1, 1);
+              image.data.set([...color, 255]);
+              context.putImageData(image, backingX, backingY);
             }
           }
-          context.putImageData(image, center.x - 1, center.y - 1);
         },
         { center: SLAB_SAMPLE_POINT, tile: uniquePixelTile }
       );

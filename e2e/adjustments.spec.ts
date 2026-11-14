@@ -8,6 +8,7 @@ import {
   getStrokeAnalysis,
   getWorkspaceCanvas,
   hasDarkPixels,
+  lineScreenshotPixelMask,
   hasRedPixels,
   isBuffer,
   type ImageDataResult,
@@ -56,6 +57,10 @@ const STROKE_MIDDLE = STROKE_SAMPLES[1];
  * spread and reads as a spray where it is solid.
  */
 const LINE_CAPTURE_REGION = { width: DEFAULT_LINE_CLIP.width, height: DEFAULT_LINE_CLIP.height };
+
+async function lineCaptureRegion(page: Page, box: BoundingBox) {
+  return { ...LINE_CAPTURE_REGION, mask: await lineScreenshotPixelMask(page, box) };
+}
 
 /**
  * How far the stroke's ink BOUNDS may move across an adjustment, in capture pixels.
@@ -195,8 +200,8 @@ async function remeasureCanvasBox(page: Page): Promise<BoundingBox> {
 /** The polarity `waitForCanvasPixels` polls on, as a named predicate. */
 const isNot =
   (predicate: CanvasPixelPredicate): CanvasPixelPredicate =>
-  async (png) =>
-    !(await predicate(png));
+  async (png, mask) =>
+    !(await predicate(png, mask));
 
 /**
  * Selects the Colors panel through `Image ▸ Adjustments ▸ Desaturate`.
@@ -358,10 +363,11 @@ test.describe('Blur adjustment', () => {
   test('a non-zero radius disperses the stroke off its hard edge', async ({ page }, testInfo) => {
     const box = await drawStroke(page, BLACK_STROKE);
     const before = await takeLineScreenshot(page, box, 'blur-before', testInfo);
-    const beforeBounds = await getDarkPixelBounds(before);
+    const beforeRegion = await lineCaptureRegion(page, box);
+    const beforeBounds = await getDarkPixelBounds(before, beforeRegion.mask);
     expect(beforeBounds, 'The black stroke should have a fully dark core before the adjustment').not.toBeNull();
     expect(beforeBounds!.height, 'The unblurred stroke should have a hard, finite edge').toBeGreaterThan(0);
-    const beforeAnalysis = await getStrokeAnalysis(before, LINE_CAPTURE_REGION);
+    const beforeAnalysis = await getStrokeAnalysis(before, beforeRegion);
     expect(beforeAnalysis, 'The stroke should be visible to stroke analysis').not.toBeNull();
     expect(beforeAnalysis!.type, 'The unblurred stroke should read as solid').toBe('solid');
     const beforeMiddle = await sampleCssPoint(before, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 5, {
@@ -390,6 +396,7 @@ test.describe('Blur adjustment', () => {
     });
 
     const after = await takeLineScreenshot(page, panelBox, 'blur-radius-10', testInfo);
+    const afterRegion = await lineCaptureRegion(page, panelBox);
 
     // DIRECTIONAL, NOT A MAGIC NUMBER. The exact spread of a CSS `blur()` is
     // implementation defined, so nothing here pins one. What is asserted is the
@@ -397,11 +404,11 @@ test.describe('Blur adjustment', () => {
     // the core that was dark enough to have bounds is gone, the soft edge covers more
     // rows, and the stroke's own value is lifted towards the white document behind it.
     expect(
-      await getDarkPixelBounds(after),
+      await getDarkPixelBounds(after, afterRegion.mask),
       `The fully dark core the unblurred stroke had (${beforeBounds!.height}px tall) is dispersed by the blur`
     ).toBeNull();
 
-    const afterAnalysis = await getStrokeAnalysis(after, LINE_CAPTURE_REGION);
+    const afterAnalysis = await getStrokeAnalysis(after, afterRegion);
     expect(afterAnalysis, 'The blurred stroke should still be visible to stroke analysis').not.toBeNull();
     expect(
       afterAnalysis!.verticalSpread,

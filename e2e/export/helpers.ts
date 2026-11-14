@@ -12,6 +12,7 @@ import {
   inkHeight,
   INK_LUMA_FLOOR,
   measureInk,
+  readWorkspaceDocumentSize,
   viewportClip,
   waitForCanvasRedraw,
 } from '../helpers/canvas-helpers';
@@ -446,16 +447,10 @@ export async function setupExportTest(
   const box = await canvas.boundingBox();
   if (!box) throw new Error('Canvas not found');
 
-  // The document size, READ rather than assumed. `documentToCanvasOffset` used to divide by
-  // a hardcoded 800x600, so a document opened at any other size would have been drawn
-  // somewhere the app never looks and the export would silently not be the line the
-  // constants describe. The backing store carries the truth (it is the document's own
-  // resolution, which is also why the exported image is 1:1 with document pixels).
-  const backingStore = await canvas.evaluate((element) => {
-    const node = element as HTMLCanvasElement;
-    return { width: node.width, height: node.height };
-  });
-  const documentSize = { width: backingStore.width, height: backingStore.height };
+  // The document size, READ rather than assumed. Canvas width/height are physical backing
+  // pixels and double at DPR 2; the workspace publishes the logical image dimensions used
+  // by pointer mapping. Use that same document-space truth for the fixture coordinates.
+  const documentSize = await readWorkspaceDocumentSize(page, 'setupExportTest');
 
   // The line is specified in document coordinates and mapped into this canvas, so the
   // document it marks — and therefore the exported image — is the same whatever the shell

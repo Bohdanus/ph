@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { access, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { isDisabledFreeModel } from './free-model-policy.mjs';
 import { resolveCommandShim } from './windows-command-shim.mjs';
 import { terminateWindowsProcessTree } from './windows-process-tree.mjs';
 
@@ -275,6 +276,9 @@ export async function runKiloCompletion({
   if (typeof model !== 'string' || !/^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/.test(model)) {
     return { error: 'Invalid model ID' };
   }
+  if (isDisabledFreeModel(model, '', source)) {
+    return { error: 'Nemotron model/provider pair is not approved by free-model policy' };
+  }
   if (typeof prompt !== 'string' || !prompt) return { error: 'Prompt is empty' };
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 65536) return { error: 'Invalid token limit' };
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return { error: 'Invalid completion timeout' };
@@ -282,9 +286,6 @@ export async function runKiloCompletion({
   const message = `Answer the provided request directly, in plain text, using at most ${maxTokens} output tokens.\n\n${prompt}`;
   try {
     const args = ['run', '--pure', '--format', 'json', '--model', `kilo/${model}`, '--agent', 'free-completion'];
-    if (model === 'nvidia/nemotron-3-ultra-550b-a55b:free') {
-      args.push('--variant', 'high');
-    }
     const commandShim = resolveCommandShim(command, args);
 
     const { events, stderrText, code, signal, timedOut, outputOverflow, malformed, inputError, terminationError } =
@@ -319,11 +320,18 @@ export async function runKiloCompletion({
           if (stopping) return killPromise;
           stopping = true;
           if (process.platform === 'win32') {
+            if (child.exitCode != null || child.signalCode != null) {
+              terminationError = new Error('Kilo CLI exited before Windows process-tree termination started');
+              return killPromise;
+            }
             killPromise = terminateWindowsProcessTree(child.pid).catch((error) => {
               terminationError = error;
-              try {
-                child.kill('SIGKILL');
-              } catch {}
+              // Do not signal a PID after Node has observed its process exit; Windows may have reused it.
+              if (child.exitCode == null && child.signalCode == null) {
+                try {
+                  child.kill('SIGKILL');
+                } catch {}
+              }
             });
             return killPromise;
           }

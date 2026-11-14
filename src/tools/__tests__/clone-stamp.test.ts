@@ -124,11 +124,13 @@ class RecordingOffscreenCanvas {
     this.width = Math.max(1, Math.ceil(width));
     this.height = Math.max(1, Math.ceil(height));
     this.pixels = new Uint8ClampedArray(this.width * this.height * 4);
-    this.seed = new Uint8ClampedArray(FIXTURE.subarray(0, this.width * this.height * 4));
+    this.seed = new Uint8ClampedArray(this.width * this.height * 4);
+    this.seed.set(FIXTURE.subarray(0, this.seed.length));
     this.ctx = createPixelCanvasContext({ width: this.width, height: this.height });
 
     const target = this.ctx as unknown as Record<string, unknown>;
-    target.drawImage = vi.fn(() => {
+    target.drawImage = vi.fn((bitmap: ImageBitmap & { fixture?: Uint8ClampedArray }) => {
+      if (bitmap.fixture) this.seed.set(bitmap.fixture.subarray(0, this.seed.length));
       this.pixels.set(this.seed);
     });
     // A FRESH buffer per call, exactly as a real canvas returns one, so `getImageData`'s
@@ -176,8 +178,16 @@ const args = (overrides: Partial<CloneStampToolArgs> = {}): CloneStampToolArgs =
 });
 
 /** Runs the processor and returns the single canvas it must have produced. */
-const run = (overrides: Partial<CloneStampToolArgs> = {}): RecordingOffscreenCanvas => {
-  const result = cloneStamp({ size: DOCUMENT, bitmap: sourceBitmap })(args(overrides));
+const run = (
+  overrides: Partial<CloneStampToolArgs> = {},
+  fixture: Uint8ClampedArray = FIXTURE,
+  document: typeof DOCUMENT = DOCUMENT
+): RecordingOffscreenCanvas => {
+  const bitmap =
+    fixture === FIXTURE && document === DOCUMENT
+      ? sourceBitmap
+      : { ...sourceBitmap, width: document.width, height: document.height, fixture };
+  const result = cloneStamp({ size: document, bitmap })(args(overrides));
 
   expect(result).toHaveLength(1);
   const canvas = result[0] as unknown as RecordingOffscreenCanvas;
@@ -401,7 +411,7 @@ describe('clone stamp processor', () => {
     });
   });
 
-  describe('aligned and free strokes read different places on the source', () => {
+  describe('legacy aligned and unaligned history retains its original renderer', () => {
     // The stroke [(6, 3), (8, 3)] with a 3px tip at 25% spacing is a 0.75px step, so
     // `brushDabCenters` emits (6, 3), (6.75, 3), (7.5, 3) and (8, 3). The LAST of those
     // covers every texel asserted below at weight 1, so what each mode leaves at (7, 2),
@@ -456,6 +466,30 @@ describe('clone stamp processor', () => {
     });
   });
 
+  describe('explicit stroke offsets used by new actions', () => {
+    const stroke: Point[] = [
+      { x: 6, y: 3 },
+      { x: 8, y: 3 },
+    ];
+
+    it.each([true, false])('uses the saved sampling offset for aligned=%s', (aligned) => {
+      // Both new modes sample forward from the first dab. `samplingOffset` is the exact
+      // source-to-destination translation stored on each history action, so replay does not
+      // depend on the current tool settings or the path's last point.
+      const canvas = run({ points: stroke, aligned, samplingOffset: { x: -5, y: -2 } });
+
+      expect(at(canvas, 7, 2)).toEqual(src(2, 0));
+      expect(at(canvas, 8, 3)).toEqual(src(3, 1));
+    });
+
+    it('fails closed for a malformed saved offset without changing source pixels', () => {
+      const canvas = run({ points: stroke, samplingOffset: { x: Number.NaN, y: -2 } });
+
+      expect(canvas.ctx.putImageData).not.toHaveBeenCalled();
+      expect(pixelsOf(canvas)).toEqual(Array.from(FIXTURE));
+    });
+  });
+
   describe('alpha', () => {
     // size 3, hardness 100: the whole 3x3 block takes the source at weight 1, so `alpha` is
     // the only thing left in the blend. Both operands are opaque, so coverage `a` gives
@@ -485,6 +519,153 @@ describe('clone stamp processor', () => {
       // a clamp that mapped 0 to the default 1 would be invisible here.
       expect(canvas.ctx.putImageData).not.toHaveBeenCalled();
       expect(pixelsOf(canvas)).toEqual(Array.from(FIXTURE));
+    });
+  });
+
+  describe('Flow', () => {
+    const overlappingStroke = [
+      { x: 6, y: 3 },
+      { x: 8, y: 3 },
+    ];
+
+    it('uses Flow as the deposition rate under the Opacity ceiling on one dab', () => {
+      const canvas = run({ alpha: 0.4, flow: 20 });
+
+      // One 20% Flow pass deposits 20% coverage; 40% Opacity is the stroke ceiling, not a
+      // multiplier on Flow. Source (200, 30, 200) over destination (12, 34, 56) gives 50, 33, 85.
+      expect(at(canvas, 6, 3)).toEqual({ r: 50, g: 33, b: 85, a: 255 });
+    });
+
+    it('builds on overlapping dabs but caps the whole stroke at Opacity', () => {
+      const canvas = run({ alpha: 0.4, flow: 20, points: overlappingStroke });
+
+      // Four dabs cover this texel; their 20% deposits reach the 40% ceiling. The sampled
+      // source at (2, 1) is neutral white, so the output is the exact 40% lerp from the base.
+      expect(at(canvas, 7, 3)).toEqual({ r: 87, g: 100, b: 114, a: 255 });
+    });
+
+    it('does not exceed Opacity when Flow is 100 and the stroke overlaps itself', () => {
+      const canvas = run({ alpha: 0.4, flow: 100, points: overlappingStroke });
+
+      expect(at(canvas, 7, 3)).toEqual({ r: 87, g: 100, b: 114, a: 255 });
+    });
+
+    it('accounts for the sampled texel alpha while repeated dabs build to the opacity ceiling', () => {
+      const fixture = new Uint8ClampedArray(FIXTURE);
+      const sourceAlphaOffset = (1 * DOCUMENT.width + 2) * 4 + 3;
+      fixture[sourceAlphaOffset] = 128;
+
+      const canvas = run({ alpha: 0.4, flow: 20, points: overlappingStroke }, fixture);
+
+      // The source is half transparent. Forty-percent stroke coverage therefore contributes
+      // about 20% effective alpha over the opaque destination, not repeated over-deposition.
+      expect(at(canvas, 7, 3)).toEqual({ r: 50, g: 67, b: 85, a: 255 });
+    });
+
+    it('composites the clone over a translucent destination using straight-alpha source-over', () => {
+      const fixture = new Uint8ClampedArray(FIXTURE);
+      const destinationAlphaOffset = (3 * DOCUMENT.width + 7) * 4 + 3;
+      fixture[destinationAlphaOffset] = 128;
+
+      const canvas = run({ alpha: 0.4, flow: 20, points: overlappingStroke }, fixture);
+
+      // A full-alpha white sample at 40% coverage over a half-alpha destination yields
+      // approximately (119, 129, 138, 179) after straight-alpha source-over and byte rounding.
+      expect(at(canvas, 7, 3)).toEqual({ r: 119, g: 129, b: 138, a: 179 });
+    });
+
+    it('keeps the same local coverage index independent across 64-pixel tiles', () => {
+      const raster = { width: 70, height: 5 };
+      const fixture = new Uint8ClampedArray(raster.width * raster.height * 4);
+      for (let offset = 0; offset < fixture.length; offset += 4) {
+        fixture[offset] = 12;
+        fixture[offset + 1] = 34;
+        fixture[offset + 2] = 56;
+        fixture[offset + 3] = 255;
+      }
+      const sourceLeft = 2 * raster.width * 4;
+      fixture.set([200, 200, 200, 255], sourceLeft);
+      const sourceRight = (2 * raster.width + 64) * 4;
+      fixture.set([200, 200, 200, 255], sourceRight);
+
+      const canvas = run(
+        {
+          size: 4,
+          alpha: 1,
+          flow: 1,
+          source: { x: 0, y: 2 },
+          samplingOffset: { x: -1, y: 0 },
+          points: [
+            { x: 1, y: 2 },
+            { x: 65, y: 2 },
+          ],
+        },
+        fixture,
+        raster
+      );
+
+      // x=1 and x=65 share local tile index 129 but live in different tiles. The symmetric
+      // endpoint dabs sample equal white texels over equal destinations, so their coverage
+      // must match instead of carrying Flow from the first tile into the second.
+      expect(at(canvas, 1, 2)).toEqual(at(canvas, 65, 2));
+      expect(at(canvas, 1, 2)).not.toEqual({ r: 12, g: 34, b: 56, a: 255 });
+    });
+
+    it('applies a feathered selection once after Flow reaches its stroke coverage', () => {
+      const mask = new Uint8Array(DOCUMENT.width * DOCUMENT.height);
+      mask[3 * DOCUMENT.width + 7] = 128;
+      createSelectionAlphaMaskMock.mockReturnValue(mask);
+
+      const canvas = run({
+        alpha: 0.4,
+        flow: 20,
+        points: overlappingStroke,
+        selection: { points: [], featherRadius: 1, antiAlias: true },
+      });
+
+      // Overlapping dabs reach the 40% Opacity ceiling before the half-selection is applied,
+      // so the opaque white sample contributes a 20% mix over the destination.
+      expect(at(canvas, 7, 3)).toEqual({ r: 50, g: 67, b: 85, a: 255 });
+    });
+
+    it('preserves pre-Flow history when the saved args have no Flow field', () => {
+      const legacy = run({ alpha: 0.4, points: overlappingStroke });
+      const flowAware = run({ alpha: 0.4, flow: 20, points: overlappingStroke });
+
+      expect(at(legacy, 7, 3).r).toBeGreaterThan(at(flowAware, 7, 3).r);
+      expect(at(flowAware, 7, 3)).toEqual({ r: 87, g: 100, b: 114, a: 255 });
+    });
+
+    it('clamps values below the shared paint Flow minimum', () => {
+      const belowMinimum = run({ flow: 0 });
+      const minimum = run({ flow: 1 });
+
+      expect(pixelsOf(belowMinimum)).toEqual(pixelsOf(minimum));
+      expect(at(minimum, 6, 3)).not.toEqual(DEST);
+    });
+
+    it('normalizes invalid Flow to its safe default', () => {
+      const invalid = run({ flow: Number.NaN });
+      const defaultFlow = run({ flow: 100 });
+
+      expect(pixelsOf(invalid)).toEqual(pixelsOf(defaultFlow));
+    });
+
+    it.each([
+      [-20, 1],
+      [150, 100],
+    ])('clamps saved Flow %i to the shared paint range', (flow, expectedFlow) => {
+      const clamped = run({ flow });
+      const expected = run({ flow: expectedFlow });
+
+      expect(pixelsOf(clamped)).toEqual(pixelsOf(expected));
+    });
+
+    it('rounds fractional saved percentages to the slider precision', () => {
+      const fractional = run({ flow: 20.4 });
+      const rounded = run({ flow: 20 });
+
+      expect(pixelsOf(fractional)).toEqual(pixelsOf(rounded));
     });
   });
 

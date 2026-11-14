@@ -57,6 +57,15 @@ describe('blur processor', () => {
     const canvas = result as unknown as PixelOffscreenCanvas;
     expect(canvas.ctx.filter).toBe('blur(10px)');
   });
+
+  it('throws when the source bitmap is missing', () => {
+    expect(() =>
+      blur({ size, bitmap: undefined as unknown as BitmapSource })({
+        radius: 5,
+        toolName: 'blur',
+      })
+    ).toThrow('Blur tool requires a source bitmap');
+  });
 });
 describe('BlurToolArgs type', () => {
   it('requires radius and toolName', () => {

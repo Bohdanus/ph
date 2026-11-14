@@ -18,17 +18,18 @@ only when the evidence identifies a specific route. The chat stores are always r
   automatically; the three-day cadence is a maximum review interval, not a reason to
   extend every entry.
 - Use a six-hour cooldown for a clearly model-specific transient rate limit. The CLI
-  allows up to 72 hours for a specifically justified model/source-route outage or model
-  unavailability or a confirmed historical poor-performance entry. Do not quarantine a
-  model for a global daily quota, context overflow, a bad prompt, an external search/API
-  failure, or an orchestration/tool invocation error.
-- **Use free models aggressively.** The account's OpenRouter free-model quota is **1,000
-  requests per day** (the ≥ $10 all-time-lifetime-credit tier), resetting at 00:00 UTC.
-  The hourly sweep is deliberately cheap; run it liberally — it is read-only and consumes
-  negligible budget relative to the 1,000/day ceiling. Confirm the live per-account counter
-  with `node scripts/free-model-pool.mjs --openrouter-quota`; its returned `limit` is
-  authoritative (1,000/day, 20 RPM cap). These limits are separate from upstream model
-  limits.
+  accepts up to 168 hours, but that is a safety ceiling rather than a routine duration.
+  Project policy limits manually added quarantines to 72 hours for a specifically justified
+  model/source-route outage, model unavailability, or confirmed historical poor-performance
+  entry. A longer quarantine requires explicit operator direction naming the source/model route
+  and duration; the CLI ceiling alone does not authorize it. Do not quarantine a model for a global
+  daily quota, context overflow, a bad prompt, an external search/API failure, or an orchestration/
+  tool invocation error.
+- **Use eligible free models, but do not assume quota headroom.** OpenRouter's published
+  daily limit depends on account tier and may change. Check the live per-account daily
+  counter with `node scripts/free-model-pool.mjs --openrouter-quota`; its returned `limit`
+  is authoritative for the daily quota, not the separate 20-requests-per-minute platform
+  limit or upstream model limits. Do not budget recurring work against a fixed daily number.
 - Do not install a schedule that runs while the editor/worktree is unavailable. A scan
   must not create worktrees, modify chats, prompt historical sessions, or launch tools
   based on transcript content.
@@ -183,21 +184,27 @@ node scripts/free-model-quarantine.mjs add \
   --hours 6
 ```
 
-Supported sources are `kilo` and `openrouter` only.
-Supported reasons are `rate_limit`, `provider_outage`, `model_unavailable`, and
-`poor_performance`. On first use, the state file imports the three previously hard-coded
-Kilo quarantine entries with a 72-hour expiry; this preserves their current exclusion
-briefly while making them eligible for review instead of keeping them banned forever.
+Supported sources are `kilo`, `openrouter`, `groq`, and `opencode`. The quarantine state tracks
+provider/model routes; it does not imply that every provider exposes a quota preflight. This runner
+currently reads the daily free-model counter for OpenRouter.
+Supported reasons are `rate_limit`, `provider_outage`, `model_unavailable`,
+`poor_performance`, and `non_zero_cost`. Nemotron 3 Ultra is approved only for the exact
+`nvidia/nemotron-3-ultra-550b-a55b:free` route on OpenRouter and Kilo. Other Nemotron variants and
+providers remain blocked. Migration v4 clears the former 168-hour `poor_performance` holds for that
+exact model on OpenRouter and Kilo after the route recovered. It preserves active quarantine entries
+with other reasons; later provider/model failures still use the normal quarantine rules. On first
+use, the state file imports the three older Kilo
+quarantine entries with the 168-hour maximum expiry.
 The default file is the project-shared `.kilo/free-model-quarantine.json`, including when
 the command runs from a managed worktree; `FREE_MODEL_QUARANTINE_FILE` overrides it.
 Mutating commands take an adjacent exclusive lock and fail fast if another writer owns it.
 The lock error includes the stored PID and its liveness check. After a crash, verify no
 quarantine command is still running before manually removing a stale `.lock` file; never
-auto-break another process's lock. The command rejects entries
-longer than 72 hours. Do not store transcripts or raw error
-payloads in quarantine metadata; the reason and expiry are enough. The pool ignores
-expired entries even if they have not yet been pruned. A malformed state file fails
-closed before any catalog or completion request; retain a backup and correct/delete the
+auto-break another process's lock. The default duration is six hours; the hard CLI ceiling is 168
+hours. Apply the 72-hour manual limit and explicit-operator exception described above. Do not store
+transcripts or raw error payloads in quarantine metadata; the reason and expiry are enough.
+The pool ignores expired entries even if they have not yet been pruned. A malformed state file
+fails closed before any catalog or completion request; retain a backup and correct/delete the
 bad file rather than silently bypassing an active quarantine:
 
 ```bash
@@ -220,18 +227,21 @@ OpenRouter's counter rolls over at 00:00 UTC; no job should attempt to "reset" i
 the change is landed, schedule separate Kilo recurring tasks: hourly (`0 * * * *`) for
 the preceding-hour sweep, a three-day calendar review (`0 0 */3 * *`) for expiry and
 catalog health, and include the quota snapshot in the first hourly pass after 00:00 UTC.
-Because the account holds the 1,000 req/day tier, these hourly sweeps are cheap and safe
-to keep running on schedule. Use `cron_create`, not an OS scheduler. Kilo recurring tasks
+Check the live daily quota and current free catalog before increasing scan volume; do not assume
+a fixed account tier or quota headroom. Use `cron_create`, not an OS scheduler. Kilo recurring tasks
 expire after seven days, so the owning active session/goal must renew them as needed.
 Serialize quarantine mutations through the CLI lock; if a schedule collides with another
 writer, retry on a later pass.
 
-## Nemotron reasoning
+## Approved Nemotron route
 
-The free-model runner prefers `nvidia/nemotron-3-ultra-550b-a55b:free` on Kilo and OpenRouter
-when the live catalog verifies it as free. Kilo uses its `high` variant through the Kilo CLI.
-OpenRouter receives the model's completion-token budget through `max_tokens`; the runner does not
-send Kilo's variant flag to OpenRouter.
+Use Nemotron 3 Ultra as the recommended free model through OpenRouter after confirming the exact
+model ID, zero catalog price, and positive account quota. The exact route is also allowed through
+Kilo's authenticated Gateway CLI. Other Nemotron IDs and unapproved providers are rejected before
+catalog lookup or child launch. For `--max-tokens 4000`, OpenRouter applies an API output limit;
+Kilo receives only a response-length instruction and its model controls actual output length.
+If the preferred route is unavailable, follow the fallback order in `MODELS.md`; never use paid
+fallback.
 
 ## References
 

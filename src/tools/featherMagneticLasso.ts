@@ -21,6 +21,16 @@ export const MAGNETIC_LASSO_FREQUENCY_MIN = 0;
 export const MAGNETIC_LASSO_FREQUENCY_MAX = 100;
 export const MAGNETIC_LASSO_FREQUENCY_STEP = 1;
 
+/** Adobe's Magnetic Lasso Contrast range: 1–100%. */
+export const MAGNETIC_LASSO_EDGE_CONTRAST_MIN = 1;
+export const MAGNETIC_LASSO_EDGE_CONTRAST_MAX = 100;
+export const MAGNETIC_LASSO_EDGE_CONTRAST_DEFAULT = 30;
+
+export function normalizeMagneticLassoEdgeContrast(value: number): number {
+  if (!Number.isFinite(value)) return MAGNETIC_LASSO_EDGE_CONTRAST_DEFAULT;
+  return Math.round(Math.min(MAGNETIC_LASSO_EDGE_CONTRAST_MAX, Math.max(MAGNETIC_LASSO_EDGE_CONTRAST_MIN, value)));
+}
+
 /** The span one fastening step may cover at Frequency 0: the longest an unattended edge is followed. */
 const ANCHOR_SPAN_AT_LOWEST_FREQUENCY_PX = 120;
 /** ...and at Frequency 100, the shortest step the lasso takes. The old control's own floor. */

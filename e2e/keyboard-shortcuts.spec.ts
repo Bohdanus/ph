@@ -2,6 +2,7 @@ import { expect, type Locator, type Page, test } from './fixtures/extended-test'
 import {
   type BoundingBox,
   drawLine,
+  documentOnlyPixelMask,
   getWorkspaceCanvas,
   hasDarkPixels,
   LINE_END_X,
@@ -29,7 +30,7 @@ const MOD = 'Control';
  * a predicate over a fresh capture, so "the stroke is gone" is stated the same way as "the
  * stroke is there" rather than through a fixed sleep after the keystroke.
  */
-const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot) => !(await hasDarkPixels(screenshot));
+const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask));
 
 async function canvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
@@ -128,9 +129,13 @@ test.describe('Keyboard shortcuts', () => {
       await page.keyboard.press(`${MOD}+z`);
       await waitForCanvasPixels(page, secondClip, hasNoDarkPixels, { description: 'the undone second stroke' });
       await expect
-        .poll(async () => hasDarkPixels(await page.screenshot({ clip: firstClip })), {
-          message: 'the first stroke must survive an undo of the second one',
-        })
+        .poll(
+          async () =>
+            hasDarkPixels(await page.screenshot({ clip: firstClip }), await documentOnlyPixelMask(page, firstClip)),
+          {
+            message: 'the first stroke must survive an undo of the second one',
+          }
+        )
         .toBe(true);
       await expect(undoButton(page), 'one entry is left to undo').toBeEnabled();
 

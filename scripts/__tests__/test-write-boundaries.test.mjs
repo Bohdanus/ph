@@ -37,6 +37,10 @@ const REVIEWED = {
     scope: 'Baseline and report fixtures use unique OS temporary directories.',
     patterns: `filesystem-write:mkdtemp=2 filesystem-write:mkdir=4 filesystem-write:writeFile=3 filesystem-write:rm=2`,
   },
+  'e2e-timeout-contract.test.mjs': {
+    scope: 'Read-only workflow and Playwright config checks; no filesystem writes, subprocesses or databases.',
+    patterns: '',
+  },
   'find-session-id.test.mjs': {
     scope: 'Database and file fixtures live under unique OS temporary directories.',
     patterns: `database-open:DatabaseSync:write-capable=2 filesystem-write:mkdtempSync=18 filesystem-write:rmSync=18`,
@@ -52,16 +56,17 @@ const REVIEWED = {
   },
   'free-model-kilo.test.mjs': {
     scope: 'Each fake Kilo CLI and configuration fixture uses a unique OS temp directory with finally cleanup.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=17 filesystem-write:rm=17`,
+    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=19 filesystem-write:rm=19`,
   },
   'free-model-pool-external.test.mjs': {
-    scope: 'External-provider and Kilo cost-stop fixtures use unique OS temporary directories with finally cleanup.',
-    patterns: `filesystem-write:mkdtemp=3 filesystem-write:rm=3`,
+    scope:
+      'External-provider, typed transient 5xx, Kilo cost-stop, and keyless catalog fixtures use unique OS temporary directories with finally cleanup.',
+    patterns: `filesystem-write:mkdtemp=5 filesystem-write:rm=5 filesystem-write:writeFile=1`,
   },
   'free-model-pool.test.mjs': {
     scope:
-      'Model/provider and cost-safety fixtures use unique OS temporary directories; PATH overrides are restored in finally blocks.',
-    patterns: `filesystem-write:mkdtemp=31 filesystem-write:rm=31 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
+      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
+    patterns: `filesystem-write:mkdtemp=30 filesystem-write:rm=30 filesystem-write:writeFile=15 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -70,7 +75,7 @@ const REVIEWED = {
   },
   'free-model-quarantine.test.mjs': {
     scope: 'Quarantine fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=8 filesystem-write:rm=8`,
+    patterns: `filesystem-write:mkdtemp=10 filesystem-write:rm=10`,
   },
   'free-model-sweep.test.mjs': {
     scope: 'Sweep and quarantine fixtures use unique OS temporary directories.',
@@ -94,8 +99,9 @@ const REVIEWED = {
     patterns: `subprocess:execFileSync=1 subprocess:spawnSync=45 filesystem-write:mkdtempSync=10 filesystem-write:writeFileSync=35 filesystem-write:rmSync=13 filesystem-write:mkdirSync=5`,
   },
   'main-landing-alert.test.mjs': {
-    scope: 'Alert-claim marker fixtures use a unique temporary directory and are removed after the test.',
-    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:writeFileSync=2 filesystem-write:rmSync=2`,
+    scope:
+      'Alert-claim marker fixtures use a unique temporary directory and are removed after the test. Expanded coverage includes malformed recovery, invalid JSON shapes, sent markers, and lock contention.',
+    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=7 filesystem-write:rmSync=2`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
@@ -123,12 +129,13 @@ const REVIEWED = {
     patterns: `subprocess:spawnSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=3 filesystem-write:rmSync=2`,
   },
   'recover-stale-auto-merge.test.mjs': {
-    scope: 'Git and filesystem fixtures use temporary repositories and directories.',
-    patterns: `subprocess:execFileSync=1 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=18 subprocess:spawnSync=3 filesystem-write:rmSync=6 filesystem-write:mkdirSync=3 filesystem-write:symlinkSync=1`,
+    scope:
+      'Git and filesystem fixtures use temporary repositories and directories, including symlinks, hostile merge/index markers, and a PATH shim that rewrites a fixture marker; child Git commands use the fixture repository.',
+    patterns: `subprocess:execFileSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=35 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=3 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=2`,
   },
   'repo-state-gate.test.mjs': {
     scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=4 filesystem-write:writeFileSync=18 filesystem-write:rmSync=7 filesystem-write:chmodSync=4`,
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=4 filesystem-write:writeFileSync=19 filesystem-write:rmSync=7 filesystem-write:chmodSync=4`,
   },
   'session-db-snapshot.test.mjs': {
     scope: 'Snapshot fixtures use temporary databases; copies are explicitly opened read-only.',
@@ -169,8 +176,9 @@ const REVIEWED = {
     patterns: '',
   },
   'secrets.test.mjs': {
-    scope: 'In-memory secret-key and redaction assertions; no filesystem mutations, subprocesses, or database access.',
-    patterns: '',
+    scope:
+      'In-memory secret-key/redaction assertions plus one bounded Node child for the adversarial key; no filesystem or database access.',
+    patterns: `subprocess:spawnSync=1`,
   },
   'suite-budgets.test.mjs': {
     scope: 'Unit tests with mocked data; no filesystem mutations, subprocesses, or database access.',

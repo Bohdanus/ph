@@ -215,6 +215,36 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # The Linux unit suite skips Win32-only cases and cannot exercise Windows path/process
+  # branches in the script tests or E2E helpers. Run both full helper suites on Windows so
+  # platform behavior is covered by the required gate rather than only skipped on Linux.
+  windows-platform-tests:
+    name: Windows platform tests
+    needs: validate-dispatch
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-dispatch.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run script unit tests on Windows
+        run: npm run test -- scripts/__tests__
+
+      - name: Run E2E helper unit tests on Windows
+        run: npm run test:e2e:unit
+
   # Dependency licence terms are not checked by CI. The `npm audit` job below
   # checks vulnerability advisories only; see the README's dependency licensing note.
   # It runs as a separate non-blocking job so external advisories cannot block the
@@ -253,10 +283,9 @@ jobs:
   # fail": 2 CDP capture-size specs, 2 `levels.spec.ts` canvas-lookup specs, and a
   # sidebar keyboard flyout race. All three of those groups are fixed in this
   # repository, and are recorded as fixed in `e2e/OPEN_PROBLEMS.md` ("Observed
-  # failures") and in `e2e/README.md`. The specs declare no `test.fail`, no
-  # `test.fixme` and no `describe.skip`; the only two skips are unconditional
-  # `test.skip` declarations in `e2e/export/photopea.spec.ts` and
-  # `e2e/viewport-drawing.spec.ts`. Nothing in
+  # failures") and in `e2e/README.md`. The specs use no `test.fail`, `test.fixme`,
+  # or `describe.skip`; `e2e/skip-baseline.json` checks declared skips against
+  # all six reports after the full run. Nothing in
   # the tree marks a test as failing, so the stated justification had stopped
   # describing the suite, and the job went on reporting a state the suite no
   # longer had. The comment kept its number alive long after the failures behind
@@ -458,9 +487,10 @@ jobs:
 
   # Keep the existing `ci` status check as a final gate. The expensive jobs run
   # in parallel; this small job propagates any failure into the same check that
-  # branch protection already uses, including the cross-shard skip baseline.
+  # branch protection already uses, including the cross-shard skip baseline and
+  # Windows-only unit tests.
   ci:
-    needs: [validate-dispatch, ci-checks, e2e-unit, e2e, e2e-skip-baseline]
+    needs: [validate-dispatch, ci-checks, e2e-unit, windows-platform-tests, e2e, e2e-skip-baseline]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -470,6 +500,7 @@ jobs:
           VALIDATE_DISPATCH_RESULT: ${{ needs.validate-dispatch.result }}
           CI_CHECKS_RESULT: ${{ needs.ci-checks.result }}
           E2E_UNIT_RESULT: ${{ needs.e2e-unit.result }}
+          WINDOWS_PLATFORM_TESTS_RESULT: ${{ needs.windows-platform-tests.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
           E2E_SKIP_BASELINE_RESULT: ${{ needs.e2e-skip-baseline.result }}
         shell: bash
@@ -478,5 +509,6 @@ jobs:
           [[ "$VALIDATE_DISPATCH_RESULT" == "success" ]] || { echo "::error::Source validation ended with $VALIDATE_DISPATCH_RESULT"; exit 1; }
           [[ "$CI_CHECKS_RESULT" == "success" ]] || { echo "::error::CI checks ended with $CI_CHECKS_RESULT"; exit 1; }
           [[ "$E2E_UNIT_RESULT" == "success" ]] || { echo "::error::E2E unit checks ended with $E2E_UNIT_RESULT"; exit 1; }
+          [[ "$WINDOWS_PLATFORM_TESTS_RESULT" == "success" ]] || { echo "::error::Windows platform tests ended with $WINDOWS_PLATFORM_TESTS_RESULT"; exit 1; }
           [[ "$E2E_RESULT" == "success" ]] || { echo "::error::Cross-platform E2E ended with $E2E_RESULT"; exit 1; }
           [[ "$E2E_SKIP_BASELINE_RESULT" == "success" ]] || { echo "::error::E2E skip baseline ended with $E2E_SKIP_BASELINE_RESULT"; exit 1; }

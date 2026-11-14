@@ -5,6 +5,8 @@ import { terminateWindowsProcessTree } from '../lib/windows-process-tree.mjs';
 
 function childWithClose(code, signal = null) {
   const child = new EventEmitter();
+  child.exitCode = code;
+  child.signalCode = signal;
   child.kill = vi.fn();
   queueMicrotask(() => child.emit('close', code, signal));
   return child;
@@ -24,72 +26,41 @@ describe('Windows process-tree termination', () => {
     expect(spawnImpl).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to PowerShell with a proportional deadline when taskkill fails', async () => {
-    const systemRoot = 'system-root';
-    const spawnImpl = vi
-      .fn()
-      .mockImplementationOnce(() => childWithClose(1))
-      .mockImplementationOnce(() => childWithClose(0));
-
-    await expect(
-      terminateWindowsProcessTree(4321, { systemRoot, spawnImpl, commandTimeoutMs: 2_000 })
-    ).resolves.toBeUndefined();
-
-    const [command, args, options] = spawnImpl.mock.calls[1];
-    expect(command).toBe(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'));
-    expect(args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-Command']);
-    expect(args[3]).toContain('$rootPid = 4321');
-    expect(args[3]).toContain('[DateTime]::UtcNow.AddMilliseconds(1700)');
-    expect(args[3]).toContain('Get-CimInstance Win32_Process');
-    expect(args[3]).toContain('Stop-Process -Id');
-    expect(options).toEqual({ stdio: 'ignore', windowsHide: true });
-  });
-
-  it('reports both command failures when the fallback cannot terminate the tree', async () => {
-    const spawnImpl = vi
-      .fn()
-      .mockImplementationOnce(() => childWithClose(1))
-      .mockImplementationOnce(() => childWithClose(2));
+  it('fails closed without PID enumeration when taskkill reports a nonzero exit', async () => {
+    const spawnImpl = vi.fn(() => childWithClose(128));
 
     await expect(terminateWindowsProcessTree(4321, { spawnImpl })).rejects.toThrow(
-      /taskkill: exited 1; PowerShell fallback: exited 2/
+      /Windows process-tree termination failed \(taskkill: exited 128\)/
     );
+    expect(spawnImpl).toHaveBeenCalledTimes(1);
   });
 
-  it('reports synchronous spawn failures from both termination commands', async () => {
+  it('reports a synchronous taskkill spawn failure without another PID-based fallback', async () => {
     const spawnImpl = vi.fn(() => {
       throw new Error('spawn unavailable');
     });
 
     await expect(terminateWindowsProcessTree(4321, { spawnImpl })).rejects.toThrow(
-      /taskkill: spawn unavailable; PowerShell fallback: spawn unavailable/
+      /Windows process-tree termination failed \(taskkill: spawn unavailable\)/
     );
-    expect(spawnImpl).toHaveBeenCalledTimes(2);
+    expect(spawnImpl).toHaveBeenCalledTimes(1);
   });
 
-  it('checks for surviving descendants when taskkill cannot find the root PID', async () => {
-    const spawnImpl = vi
-      .fn()
-      .mockImplementationOnce(() => childWithClose(128))
-      .mockImplementationOnce(() => childWithClose(0));
-
-    await expect(terminateWindowsProcessTree(4321, { spawnImpl })).resolves.toBeUndefined();
-    expect(spawnImpl).toHaveBeenCalledTimes(2);
-  });
-
-  it('kills timed-out termination commands and reports both timeouts', async () => {
+  it('kills a timed-out taskkill command and reports its timeout', async () => {
     const children = [];
     const spawnImpl = vi.fn(() => {
       const child = new EventEmitter();
+      child.exitCode = null;
+      child.signalCode = null;
       child.kill = vi.fn();
       children.push(child);
       return child;
     });
 
     await expect(terminateWindowsProcessTree(4321, { spawnImpl, commandTimeoutMs: 100 })).rejects.toThrow(
-      /taskkill: .*timed out after 100ms; PowerShell fallback: .*timed out after 100ms/
+      /Windows process-tree termination failed \(taskkill: .*timed out after 100ms\)/
     );
-    expect(children).toHaveLength(2);
+    expect(children).toHaveLength(1);
     for (const child of children) expect(child.kill).toHaveBeenCalledTimes(1);
   });
 

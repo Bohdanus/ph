@@ -17,8 +17,8 @@ function jsonResponse(payload, status = 200) {
 }
 
 function catalogFetch({
-  kilo = [kiloRow(NEMOTRON)],
-  openrouter = [openRouterRow(NEMOTRON)],
+  kilo = [kiloRow(XING)],
+  openrouter = [openRouterRow(XING)],
   groq = [{ id: 'openai/gpt-oss-120b' }],
   groqStatusByKey = {},
   quota = { data: { free_model_daily_requests: { used: 1, limit: 10, remaining: 9 } } },
@@ -56,11 +56,11 @@ describe('free model validation', () => {
     const { fetchImpl } = catalogFetch();
     await expect(
       validateFreeModel({
-        model: NEMOTRON,
+        model: XING,
         provider: 'KILO',
         ...validationOptions(fetchImpl),
       })
-    ).resolves.toEqual({ model: NEMOTRON, provider: 'kilo', validated: true });
+    ).resolves.toEqual({ model: XING, provider: 'kilo', validated: true });
 
     await expect(
       validateFreeModel({
@@ -69,6 +69,48 @@ describe('free model validation', () => {
         ...validationOptions(fetchImpl),
       })
     ).rejects.toThrow('not currently verified free');
+  });
+
+  it('allows the exact free route on Kilo and OpenRouter while blocking aliases and unapproved providers', async () => {
+    const kilo = catalogFetch({ kilo: [kiloRow(NEMOTRON)] });
+    await expect(
+      validateFreeModel({ model: NEMOTRON, provider: 'kilo', ...validationOptions(kilo.fetchImpl) })
+    ).resolves.toEqual({ model: NEMOTRON, provider: 'kilo', validated: true });
+
+    const openrouter = catalogFetch({ openrouter: [openRouterRow(NEMOTRON)] });
+    await expect(
+      validateFreeModel({
+        model: NEMOTRON,
+        provider: 'openrouter',
+        ...validationOptions(openrouter.fetchImpl, { openRouterKey: 'test-key' }),
+      })
+    ).resolves.toEqual({ model: NEMOTRON, provider: 'openrouter', validated: true });
+
+    for (const model of ['nvidia/nemotron-3-ultra-550b-a55b-v2:free', 'vendor/renamed-free Nemotron alias']) {
+      for (const provider of ['kilo', 'openrouter', 'opencode', 'groq']) {
+        const { fetchImpl } = catalogFetch();
+        await expect(
+          validateFreeModel({
+            model,
+            provider,
+            ...validationOptions(fetchImpl, {
+              openRouterKey: 'test-key',
+              groqApiKey: 'test-key',
+              groqFreePlan: true,
+            }),
+          })
+        ).rejects.toThrow('Nemotron model/provider pair is not approved by free-model policy');
+        expect(fetchImpl).not.toHaveBeenCalled();
+      }
+    }
+
+    for (const provider of ['opencode', 'groq']) {
+      const { fetchImpl } = catalogFetch();
+      await expect(validateFreeModel({ model: NEMOTRON, provider, ...validationOptions(fetchImpl) })).rejects.toThrow(
+        'Nemotron model/provider pair is not approved by free-model policy'
+      );
+      expect(fetchImpl).not.toHaveBeenCalled();
+    }
   });
 
   it('does not trust stale hard-coded models or retired catalog entries', async () => {
@@ -91,7 +133,7 @@ describe('free model validation', () => {
     });
     await expect(
       validateFreeModel({
-        model: NEMOTRON,
+        model: XING,
         provider: 'kilo',
         ...validationOptions(fetchImpl),
       })
@@ -102,7 +144,7 @@ describe('free model validation', () => {
     const noKey = catalogFetch();
     await expect(
       validateSubagentConfig({
-        model: NEMOTRON,
+        model: XING,
         provider: 'openrouter',
         ...validationOptions(noKey.fetchImpl),
       })
@@ -112,7 +154,7 @@ describe('free model validation', () => {
     const blankKey = catalogFetch();
     await expect(
       validateSubagentConfig({
-        model: NEMOTRON,
+        model: XING,
         provider: 'openrouter',
         ...validationOptions(blankKey.fetchImpl, { openRouterKey: '   ' }),
       })
@@ -124,7 +166,7 @@ describe('free model validation', () => {
     });
     await expect(
       validateSubagentConfig({
-        model: NEMOTRON,
+        model: XING,
         provider: 'openrouter',
         ...validationOptions(exhausted.fetchImpl, { openRouterKey: 'test-key' }),
       })
@@ -134,7 +176,7 @@ describe('free model validation', () => {
     const kilo = catalogFetch();
     await expect(
       validateSubagentConfig({
-        model: NEMOTRON,
+        model: XING,
         provider: 'kilo',
         maxSubagents: 15,
         ...validationOptions(kilo.fetchImpl),
@@ -147,7 +189,7 @@ describe('free model validation', () => {
     const { fetchImpl } = catalogFetch({ quota: { data: {} } });
     await expect(
       validateSubagentConfig({
-        model: NEMOTRON,
+        model: XING,
         provider: 'openrouter',
         ...validationOptions(fetchImpl, { openRouterKey: 'test-key' }),
       })
@@ -219,17 +261,18 @@ describe('free model validation', () => {
   });
 
   it('validates every provider/model pair in one bounded batch', async () => {
+    const secondary = 'recursive/flint-v1.0:free';
     const { fetchImpl, calls } = catalogFetch({
-      kilo: [kiloRow(NEMOTRON), kiloRow(XING)],
-      openrouter: [openRouterRow(NEMOTRON)],
+      kilo: [kiloRow(XING), kiloRow(secondary)],
+      openrouter: [openRouterRow(secondary)],
       quota: { data: { free_model_daily_requests: { used: 1, limit: 10, remaining: 1 } } },
     });
     await expect(
       validateSubagentConfigs(
         [
-          { model: NEMOTRON, provider: 'kilo' },
           { model: XING, provider: 'kilo' },
-          { model: NEMOTRON, provider: 'openrouter' },
+          { model: secondary, provider: 'kilo' },
+          { model: secondary, provider: 'openrouter' },
         ],
         {
           ...validationOptions(fetchImpl, { openRouterKey: 'test-key' }),
@@ -237,9 +280,9 @@ describe('free model validation', () => {
         }
       )
     ).resolves.toEqual([
-      { model: NEMOTRON, provider: 'kilo', validated: true },
       { model: XING, provider: 'kilo', validated: true },
-      { model: NEMOTRON, provider: 'openrouter', validated: true },
+      { model: secondary, provider: 'kilo', validated: true },
+      { model: secondary, provider: 'openrouter', validated: true },
     ]);
     expect(calls.filter(({ url }) => url.endsWith('/models'))).toHaveLength(3);
     expect(calls.filter(({ url }) => url.endsWith('/key'))).toHaveLength(1);
@@ -248,7 +291,7 @@ describe('free model validation', () => {
   it('caps fan-out at 15 before making network requests', async () => {
     const { fetchImpl } = catalogFetch();
     await expect(
-      validateSubagentConfigs([{ model: NEMOTRON, provider: 'kilo' }], {
+      validateSubagentConfigs([{ model: XING, provider: 'kilo' }], {
         ...validationOptions(fetchImpl),
         maxSubagents: 16,
       })

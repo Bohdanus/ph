@@ -230,12 +230,11 @@ const INK_MARGIN = 6;
  * It does NOT have to stay inside a viewport, and the reason it used to say so is gone:
  * there is no fold at 1280x720 to truncate anything (see `DRAFT_RECT` above). What is
  * still true is the mechanism — `waitForCanvasPixels` reads through `page.screenshot`
- * (`canvas-helpers.ts:531`) with the clip re-derived on every poll by `onScreenClip`
- * (`canvas-helpers.ts:529`), which is a no-op while the region is in view, so with zero
- * page overflow it is a no-op on every poll. Measured, the clip this margin produces is
+ * with the clip re-derived on every poll by `onScreenClip`. That is a no-op while the
+ * region is in view, which is the case on this page. Measured, the clip this margin produces is
  * page x 232..680, y 276..444: inside the 1280x720 page and inside the 974x583 canvas
- * box, with room over. The CDP capture below does not go through either, which is why
- * the two clips differ.
+ * box, with room over. The later capture uses the full canvas box through the same
+ * Playwright API; the two captures have different clip extents for their separate checks.
  */
 const POLL_MARGIN = 24;
 
@@ -572,12 +571,11 @@ async function canvasBox(page: Page): Promise<BoundingBox> {
  * The crop of a capture a measurement is scanned from: the box-relative rectangle grown by
  * `STYLE_CROP_PAD` on every side, expressed in the CAPTURE's own pixels.
  *
- * The scale is derived from the decoded image rather than from `devicePixelRatio`, for the
- * reason `imageBoundsToCss` documents: CDP captures at Chrome's surface scale, which is not
- * the emulated ratio, and the committed-ink test's four capture assertions exist to keep a
- * caller from assuming otherwise. The clamp to the image is the same fact applied: a crop that
- * ran off the edge of the capture would slice out of range, and the numbers would be silently
- * short rather than loud.
+ * The scale is derived from the decoded image rather than assumed from `devicePixelRatio`.
+ * `captureCanvasScreenshot` requests Playwright's device scale, and fractional clip bounds can
+ * round each image axis independently. The clamp to the image keeps a crop inside the pixels
+ * actually returned, so coordinates beyond the captured edge cannot silently produce short
+ * measurements.
  */
 function cropWindow(
   image: ImageDataResult,
@@ -1689,11 +1687,11 @@ test.describe('Text tool', () => {
     // scan can see is inside it by construction, so all four comparisons below hold
     // whatever the app did. Capturing the canvas makes the ink bounds unconditional, so
     // ink anywhere else on it - a different origin, a shifted baseline - lands outside
-    // the rectangle and turns the run red. `viewport-drawing.spec.ts:61-69` is the same
+    // the rectangle and turns the run red. `viewport-drawing.spec.ts` is the same
     // pattern: capture an element, map with that element's box.
     //
-    // `box` is `captureCanvasScreenshot`'s fallback for when no clip is passed
-    // (`cdp-helpers.ts:67-72`); no clip is passed here, so the fallback IS the capture.
+    // `box` is `captureCanvasScreenshot`'s fallback for when no clip is passed;
+    // no clip is passed here, so the fallback IS the capture.
     const captureBox = await canvasBox(page);
     const capture = await captureCanvasScreenshot(page, captureBox, testInfo, 'text-committed');
     const image = await loadImageData(capture);
@@ -1703,18 +1701,10 @@ test.describe('Text tool', () => {
     // The capture really is the whole canvas box and not a clipped fragment of it, since
     // the mapping below divides by this box's extent.
     //
-    // The property asserted is the one that holds in every mode: the capture is exactly
-    // the requested rect at one integral scale shared by both axes. It is deliberately
-    // NOT `image.width === box.width * devicePixelRatio`. CDP's `Page.captureScreenshot`
-    // bypasses Playwright's device emulation and captures at Chrome's own surface
-    // scale, so the emulated ratio and the capture scale are not the same quantity.
-    // The two modes that expose it are named here because "it is wrong" is not
-    // reproducible without them: at an emulated `deviceScaleFactor: 2` CDP stayed at 1x
-    // while `window.devicePixelRatio` reported 2, and headed on a HiDPI host CDP was 2x
-    // while the ratio reported 1. Both make the DPR form red for a capture that is
-    // correct, which is what `getDevicePixelRatio` was deleted for. See
-    // `cdp-helpers.spec.ts` for the same measurement and `playwright.config.ts` for the
-    // headed/headless split.
+    // Playwright's device-scale screenshot varies with the context's device scale and
+    // rounds clip dimensions to image pixels. Derive the scale from the returned image
+    // and keep the shared-axis invariant instead of assuming a host-specific DPR. The
+    // helper's dedicated emulated-DPR spec pins the exact 2x case.
     const captureScaleX = image.width / captureBox.width;
     expect(
       Math.abs(image.height / captureBox.height - captureScaleX),
@@ -1953,15 +1943,34 @@ test.describe('Text tool', () => {
     await expect(commitButton(page)).toBeEnabled();
     const editPreviewCapture = await captureCanvasScreenshot(page, box, testInfo, 'small-caps-affine-edit-preview');
     const editPreviewImage = await loadImageData(editPreviewCapture);
+    const editPreviewMask = inkMask(editPreviewImage, isRedInk);
+    const expectedEditedPixels = redInkPixels(editPreviewImage);
     await setOffscreenCanvasAvailable(page, true);
     await commitDraft(page);
     await expect(draftOverlay(page), 'the committed re-entry left a second draft overlay').toHaveCount(0);
     await expect(layerRows, 'editing transformed Type created a duplicate layer').toHaveCount(layerCountBeforeEdit);
-    await waitForCanvasPixels(page, canvasClip, hasRedPixels, { description: 'edited Type after affine re-entry' });
+    // The document view is intentionally still rotated here. `waitForCanvasPixels` derives a
+    // document-pixel mask and correctly rejects rotated views. Poll the visible screenshot
+    // until its red pixels exactly match the already-captured edit preview instead.
+    await expect
+      .poll(
+        async () => {
+          const visibleCanvas = await page.screenshot({ clip: canvasClip, scale: 'device', type: 'png' });
+          const image = await loadImageData(visibleCanvas);
+          const currentAgreement = inkMaskAgreement(editPreviewMask, inkMask(image, isRedInk));
+          return (
+            currentAgreement.score === 1 &&
+            currentAgreement.offsetX === 0 &&
+            currentAgreement.offsetY === 0 &&
+            countDifferentPixels(expectedEditedPixels, redInkPixels(image)) === 0
+          );
+        },
+        { timeout: TEXT_TOOL_TIMEOUT_MS, message: 'committed transformed Type did not match its edit preview' }
+      )
+      .toBe(true);
 
     const editedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-reentered-and-edited');
     const editedImage = await loadImageData(editedCapture);
-    const editPreviewMask = inkMask(editPreviewImage, isRedInk);
     const editedMask = inkMask(editedImage, isRedInk);
     const previewCommitAgreement = inkMaskAgreement(editPreviewMask, editedMask);
     expect(
@@ -3333,5 +3342,133 @@ test.describe('Text tool', () => {
     const image = await loadImageData(capture);
     const ink = await scanPixelsForBounds(image, isRedInk);
     expect(ink.found, 'a 0.01px font rendered red ink above the isRedInk threshold').toBe(false);
+  });
+
+  /**
+   * Right alignment: the committed ink's right inset is small and the left
+   * inset is large, mirroring left alignment on the opposite side.
+   *
+   * `renderTextInto` resolves `'right'` to `boxRight - width`, so the
+   * ink's right edge sits at the rectangle's right edge minus padding.
+   * The `inset` field measures how far INSIDE the rectangle each edge of
+   * the ink sits, so for right-aligned text `inset.right` is small.
+   */
+  test('right alignment aligns the committed ink to the right edge of the dragged rectangle', async ({
+    page,
+  }, testInfo) => {
+    const box = await canvasBox(page);
+    const alignSelect = page.locator('#align-select');
+    const [left, right] = await commitStyledSeries(page, testInfo, box, 'WAVE', [
+      { name: 'text-align-left', rect: DRAFT_RECT, apply: async () => undefined },
+      {
+        name: 'text-align-right',
+        rect: SECOND_DRAFT_RECT,
+        apply: async () => {
+          await expect(alignSelect, 'alignment is not enabled on a paragraph draft').toBeEnabled();
+          await alignSelect.selectOption({ value: 'right' });
+          await expect(alignSelect).toHaveValue('right');
+        },
+      },
+    ]);
+
+    // Left-aligned (baseline): the ink hugs the left edge and recedes from the right.
+    expect(left.inset.left, 'left-aligned text did not start near the left edge').toBeLessThan(20);
+    expect(left.inset.right, 'left-aligned text did not reach away from the right edge').toBeGreaterThan(50);
+
+    // Right-aligned: the ink hugs the right edge and recedes from the left.
+    expect(right.inset.right, 'right-aligned text did not end near the right edge').toBeLessThan(20);
+    expect(right.inset.left, 'right-aligned text did not start away from the left edge').toBeGreaterThan(50);
+    // And the right commit's right inset is smaller than the left-aligned one's.
+    expect(
+      left.inset.right - right.inset.right,
+      'right alignment did not move the ink to the right edge'
+    ).toBeGreaterThan(20);
+
+    expectInkInsideRect(left, DRAFT_RECT, 'the left-aligned commit');
+    expectInkInsideRect(right, SECOND_DRAFT_RECT, 'the right-aligned commit');
+  });
+
+  /**
+   * Undo/redo for text editing operations: typing, style changes, and commits
+   * should be reversible through the history stack.
+   */
+  test.describe('Undo/redo for text editing', () => {
+    test('undo restores text content and redo reapplies it', async ({ page }) => {
+      const box = await canvasBox(page);
+
+      await setTextToolColor(page, TEXT_COLOR);
+      await dragDraftRect(page, box);
+      await replaceDraftText(page, 'Original');
+      await commitDraft(page);
+
+      // Re-enter edit mode on the committed layer by clicking on the canvas at the text position
+      const textCenterX = box.x + (DRAFT_RECT.x1 + DRAFT_RECT.x2) / 2;
+      const textCenterY = box.y + (DRAFT_RECT.y1 + DRAFT_RECT.y2) / 2;
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toBeVisible();
+      await expect(draftOverlay(page)).toHaveText('Original');
+
+      // Change the text
+      await replaceDraftText(page, 'Modified');
+      await expect(draftOverlay(page)).toHaveText('Modified');
+      await commitDraft(page);
+
+      // Undo should revert to 'Original'
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(draftOverlay(page)).toHaveCount(0);
+
+      // Click the text again to verify content
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toHaveText('Original');
+
+      const cancel = cancelButton(page);
+      await revealToolbarAction(cancel);
+      await cancel.click();
+      await expect(draftOverlay(page)).toHaveCount(0);
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toHaveText('Modified');
+    });
+
+    test('undo restores text style and redo reapplies it', async ({ page }) => {
+      const box = await canvasBox(page);
+
+      await setTextToolColor(page, TEXT_COLOR);
+      await dragDraftRect(page, box);
+      await replaceDraftText(page, 'Style test');
+      await commitDraft(page);
+
+      // Re-enter edit mode by clicking on the canvas at the text position
+      const textCenterX = box.x + (DRAFT_RECT.x1 + DRAFT_RECT.x2) / 2;
+      const textCenterY = box.y + (DRAFT_RECT.y1 + DRAFT_RECT.y2) / 2;
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toBeVisible();
+
+      // Apply bold
+      await styleToggle(page, 'Bold').click();
+      await expect(styleToggle(page, 'Bold')).toHaveAttribute('aria-pressed', 'true');
+      await replaceDraftText(page, 'Style test');
+      await commitDraft(page);
+
+      // Undo should revert the bold style
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(draftOverlay(page)).toHaveCount(0);
+
+      // The layer should no longer be bold. Click to re-enter and verify.
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toBeVisible();
+      await expect(styleToggle(page, 'Bold')).toHaveAttribute('aria-pressed', 'false');
+
+      const cancel = cancelButton(page);
+      await revealToolbarAction(cancel);
+      await cancel.click();
+      await expect(draftOverlay(page)).toHaveCount(0);
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await page.mouse.click(textCenterX, textCenterY);
+      await expect(draftOverlay(page)).toBeVisible();
+      await expect(styleToggle(page, 'Bold')).toHaveAttribute('aria-pressed', 'true');
+    });
   });
 });

@@ -58,6 +58,8 @@
  */
 
 import { realpathSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { abortCommand, findings, scanRepository } from './lib/git-operation-state.mjs';
 
@@ -65,10 +67,14 @@ const USAGE = `repo:state — report git operations in progress, in every worktr
 
   node scripts/repo-state-gate.mjs            report, exit 1 if any worktree is mid-operation
   node scripts/repo-state-gate.mjs --json     the same findings as JSON on stdout
+  node scripts/repo-state-gate.mjs --for-landing <source-branch> [--json]
+                                               report all operations; exit 1 only for landing-relevant or unknown state
 
-  Exits 0 only when the roster was read and nothing is in progress. Exits 1 otherwise,
-  and says whether that is a worktree mid-operation or a state it could not read.
-  Advisory: it never refuses anything on its own, and it is wired into no hook.
+  By default, exits 0 only when the roster was read and nothing is in progress. Exits 1
+  otherwise, and says whether that is a worktree mid-operation or a state it could not read. With
+  --for-landing, only the registered main checkout, the candidate branch, or unreadable/
+  unknown worktree state blocks; all other findings are still reported but are non-blocking.
+  Advisory: it never mutates or refuses anything on its own, and it is wired into no hook.
 `;
 
 /**
@@ -108,8 +114,11 @@ function describeWorktree(finding) {
       '    If the owner has stopped and this is a stale marker, run the guarded recovery preflight from this worktree:',
       '      npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"',
       '    For dirty work, also try the read-only --preserve-matching-worktree preflight; it requires the index at HEAD and tracked files identical to AUTO_MERGE.',
-      '    Apply preserved work only with the exact marker-tree and worktree-status pins it prints, --apply, and --confirm-owner-stopped.',
-      '    Apply only after reviewing the proof and confirming the owner stopped.'
+      '    For divergent edits, run the read-only --preserve-divergent-worktree preflight only when at least one unstaged tracked path differs from both HEAD and AUTO_MERGE. Multiple qualifying paths are allowed; differences confined to separate paths and untracked-only changes do not qualify.',
+      '    It still requires the index at HEAD and no other operation markers.',
+      '    Apply preserved work only with the original --expected-head plus these three printed values: --expected-auto-merge-tree, --expected-worktree-status-sha256, and --expected-worktree-content-sha256; include --apply --confirm-owner-stopped. It creates or verifies refs/recovery/auto-merge/<HEAD>/<TREE> before removing AUTO_MERGE and does not edit files or the index.',
+      '    Before any apply, manually verify the full root/descendant owner family is stopped, then check the live-session overlay, process tree/open files, and board for target writers or locks.',
+      '    --confirm-owner-stopped is a manual assertion; the recovery command does not verify owner liveness or board locks.'
     );
   }
 
@@ -193,6 +202,97 @@ say, and it will not report a repository it could not look at as clean.
 
 `;
 
+function readGitConfig(cwd, key) {
+  const result = spawnSync('git', ['config', '--local', '--get', key], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 10_000,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`registered ${key} is unavailable`);
+  const value = result.stdout.trim();
+  if (!value || !isAbsolute(value)) throw new Error(`registered ${key} is not an absolute path`);
+  return realpathSync(value);
+}
+
+function registeredMain(cwd) {
+  return {
+    mainPath: readGitConfig(cwd, 'ph.mainWorktreePath'),
+    mainGitDir: readGitConfig(cwd, 'ph.mainWorktreeGitDir'),
+  };
+}
+
+function samePath(first, second) {
+  if (!first || !second) return false;
+  const left = resolve(first).replace(/\\/g, '/');
+  const right = resolve(second).replace(/\\/g, '/');
+  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+function mainAutoMergeCanUseLandingRecovery(finding, mainPath) {
+  return (
+    samePath(finding.path, mainPath) &&
+    finding.readError === null &&
+    finding.unmerged.length === 0 &&
+    finding.operations.length === 1 &&
+    finding.operations[0]?.marker === 'AUTO_MERGE'
+  );
+}
+
+function landingScope(scanned, found, landing) {
+  const { sourceBranch, mainPath, mainGitDir } = landing;
+  const mainRecords = scanned.worktrees.filter(
+    (worktree) => samePath(worktree.path, mainPath) && samePath(worktree.gitDir, mainGitDir)
+  );
+  const sourceRecords = scanned.worktrees.filter((worktree) => worktree.branch === sourceBranch);
+  const errors = [];
+  if (!sourceBranch || sourceBranch === 'main') {
+    errors.push('source branch must identify a non-main candidate branch');
+  }
+  if (mainRecords.length !== 1 || mainRecords[0]?.branch !== 'main' || mainRecords[0]?.present !== true) {
+    errors.push('registered main checkout does not match one present main worktree in the repository scan');
+  } else if (mainRecords[0].readError) {
+    errors.push(`registered main checkout could not be read: ${mainRecords[0].readError}`);
+  }
+  if (sourceRecords.length !== 1 || sourceRecords[0]?.present !== true || sourceRecords[0]?.bare === true) {
+    errors.push('source branch does not identify exactly one present, non-bare worktree');
+  }
+  const unrelated = [];
+  const blockers = [];
+  let mainAutoMergeRecovery = false;
+  for (const finding of found) {
+    const inMain = samePath(finding.path, mainPath);
+    if (inMain && mainAutoMergeCanUseLandingRecovery(finding, mainPath)) {
+      mainAutoMergeRecovery = true;
+      continue;
+    }
+    if (finding.readError || !finding.branch || finding.branch === sourceBranch || inMain) blockers.push(finding);
+    else unrelated.push(finding);
+  }
+  const ready = errors.length === 0 && blockers.length === 0;
+  return {
+    sourceBranch,
+    mainPath,
+    ready,
+    errors,
+    blockers: blockers.map(({ name, path }) => ({ name, path })),
+    unrelated: unrelated.map(({ name, path }) => ({ name, path })),
+    mainAutoMergeRecovery,
+  };
+}
+
+function annotateLandingFinding(finding, scope) {
+  const sameFinding = (item) => item.name === finding.name && samePath(item.path, finding.path);
+  if (scope.blockers.some(sameFinding)) return 'BLOCKS selected landing';
+  if (scope.unrelated.some(sameFinding)) return 'unrelated worktree; preserved and non-blocking';
+  if (scope.mainAutoMergeRecovery && samePath(finding.path, scope.mainPath)) {
+    return 'designated-main orphan AUTO_MERGE; pinned main:landing wrapper must revalidate';
+  }
+  return 'landing scope unavailable; treat as blocking';
+}
+
 /**
  * Runs the report. Given its streams and exit function so a test drives the real
  * surface in-process and asserts on the text a person would read.
@@ -221,6 +321,8 @@ export function run({
   out = process.stdout,
   err = process.stderr,
   json = false,
+  landing = null,
+  landingError = null,
   scan = scanRepository,
 } = {}) {
   const scanned = scan(cwd);
@@ -239,9 +341,45 @@ export function run({
   }
 
   const found = findings(scanned.worktrees);
+  const scope = landing
+    ? landingError
+      ? {
+          sourceBranch: landing.sourceBranch,
+          mainPath: null,
+          ready: false,
+          errors: [landingError],
+          blockers: [],
+          unrelated: [],
+          mainAutoMergeRecovery: false,
+        }
+      : landingScope(scanned, found, landing)
+    : null;
 
   if (json) {
-    out.write(`${JSON.stringify({ scanned: scanned.worktrees.length, ok: true, findings: found }, null, 2)}\n`);
+    out.write(
+      `${JSON.stringify({ scanned: scanned.worktrees.length, ok: true, findings: found, ...(scope ? { landing: scope } : {}) }, null, 2)}\n`
+    );
+  } else if (scope) {
+    const summary = scope.ready
+      ? `repo:state — landing scope clear for ${scope.sourceBranch}; ${scope.unrelated.length} unrelated finding(s) remain reported and untouched.`
+      : `repo:state — landing scope BLOCKED for ${scope.sourceBranch}: ${scope.errors.length + scope.blockers.length} relevant or unknown finding(s).`;
+    out.write(`${summary}\n`);
+    if (scope.mainAutoMergeRecovery) {
+      out.write(
+        '  designated-main orphan AUTO_MERGE is delegated to the pinned main:landing wrapper for revalidation.\n'
+      );
+    }
+    if (scope.errors.length) out.write(scope.errors.map((message) => `  BLOCKING: ${message}`).join('\n') + '\n');
+    if (found.length > 0) {
+      err.write(REPORT_HEADER);
+      err.write(
+        `${found
+          .map(
+            (finding) => `${describeWorktree(finding)}\n    LANDING SCOPE: ${annotateLandingFinding(finding, scope)}`
+          )
+          .join('\n\n')}\n\n`
+      );
+    }
   } else if (found.length > 0) {
     err.write(REPORT_HEADER);
     err.write(`${found.map(describeWorktree).join('\n\n')}\n\n`);
@@ -260,6 +398,11 @@ export function run({
     out.write(`repo:state — clean. No worktree of ${scanned.worktrees.length} holds an operation in progress.\n`);
   }
 
+  if (scope) {
+    const code = scope.ready ? 0 : 1;
+    process.exitCode = code;
+    return { findings: found, landing: scope, code, ok: true };
+  }
   if (found.length > 0) {
     // `process.exitCode`, NOT `process.exit`. A review measured the difference: with 170
     // mid-merge worktrees, `err.write` followed by `process.exit` truncated at the pipe
@@ -286,6 +429,41 @@ if (invokedAsCommand()) {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
     process.stdout.write(USAGE);
   } else {
-    run({ json: process.argv.includes('--json') });
+    const args = process.argv.slice(2);
+    let json = false;
+    let sourceBranch = null;
+    let argumentError = null;
+    for (let index = 0; index < args.length; index += 1) {
+      if (args[index] === '--json' && !json) {
+        json = true;
+      } else if (args[index] === '--for-landing' && sourceBranch === null) {
+        const value = args[index + 1];
+        if (!value || value.startsWith('--')) {
+          argumentError = '--for-landing requires one source branch';
+          break;
+        }
+        sourceBranch = value;
+        index += 1;
+      } else {
+        argumentError = `unexpected or duplicate argument: ${args[index]}`;
+        break;
+      }
+    }
+    if (argumentError) {
+      process.stderr.write(`repo:state: ${argumentError}.\n${USAGE}`);
+      process.exitCode = 2;
+    } else {
+      let landing = null;
+      let landingError = null;
+      if (sourceBranch !== null) {
+        try {
+          landing = { sourceBranch, ...registeredMain(process.cwd()) };
+        } catch (error) {
+          landing = { sourceBranch };
+          landingError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      run({ json, landing, landingError });
+    }
   }
 }

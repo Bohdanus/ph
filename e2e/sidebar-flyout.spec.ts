@@ -2,6 +2,7 @@ import { expect, test, type Page } from './fixtures/extended-test';
 import {
   getWorkspaceCanvas,
   hasDarkPixels,
+  documentOnlyPixelMask,
   loadImageData,
   viewportClip,
   waitForCanvasPixels,
@@ -481,7 +482,10 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
       expect(`${corner.width}x${corner.height}`, `shape ${label} corner capture, clipped at the viewport edge`).toBe(
         `${SAMPLE_HALF_SIZE * 2}x${SAMPLE_HALF_SIZE * 2}`
       );
-      expect(await hasDarkPixels(corner), `shape ${label} corner`).toBe(false);
+      expect(
+        await hasDarkPixels(corner, await documentOnlyPixelMask(page, patch(cornerX, cornerY))),
+        `shape ${label} corner`
+      ).toBe(false);
     }
   });
 

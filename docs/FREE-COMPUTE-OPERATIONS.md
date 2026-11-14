@@ -3,15 +3,30 @@
 Current operating instructions for the free-model runner. Historical measurements belong in
 [`FREE-COMPUTE.md`](FREE-COMPUTE.md).
 
-## Model preferences
+## Model policy
 
-The runner prioritizes the exact NVIDIA Nemotron 3 Ultra route across Kilo, OpenRouter, then OpenCode.
-OpenCode is eligible for Nemotron only when its live catalog provides the exact canonical model ID.
-If those routes fail, fallback order is other OpenRouter models, other OpenCode models, then Groq;
-lower-ranked Kilo models are not fallback routes. This is an operator routing preference, not a
-benchmark claim. The available free models change; use `npm run free:models -- --list` to see current
-provider/model pairs before a run. Kilo and OpenRouter keep their explicit preferred-catalog ordering
-within their own model lists.
+The required policy is model-first: try exact Nemotron 3 Ultra
+(`nvidia/nemotron-3-ultra-550b-a55b:free`) through every eligible, verified-free provider before
+trying a weaker model. A quarantine or failure excludes only its provider/model pair. Once no
+Nemotron route is eligible, choose the strongest remaining free model across providers; provider
+order is not a priority. Never bypass pricing, authentication, quota, quarantine, or safety controls.
+
+As of 2026-11-12, the exact OpenRouter pair is under a 168-hour `poor_performance` quarantine
+through `2026-11-19T02:03:21.539Z`; that does not quarantine the model on other providers. The exact
+Kilo route remains approved. Active quarantines are removed before route ordering. Check
+`npm run free:quarantine -- list` for current expiry and refresh catalogs with
+`npm run free:models -- --list` before a run.
+
+For Nemotron, request high reasoning where supported, a minimum 4,096-token response budget, and a
+12-minute inference timeout. When omitted, OpenRouter may request up to 65,536 tokens, subject to the
+live endpoint ceiling. Kilo has no provider-side token-limit flag and receives a response-length
+instruction instead. Verify the resolved route, non-empty text, finish reason, and cost.
+
+**Implementation gap (2026-11-12):** the current completion pool is still provider-first: it filters
+Nemotron to exact Kilo/OpenRouter pairs, does not automatically route Kilo, rejects Nemotron on
+OpenCode, and falls back OpenRouter → OpenCode → Groq. It also uses a five-minute timeout and does not
+enforce the Nemotron token/reasoning profile. The required policy above is not yet implemented; see
+[`MODELS.md`](../MODELS.md).
 
 ## Find credentials safely
 
@@ -22,8 +37,9 @@ into logs. Report only the provider, path, and whether authentication is availab
 
 ## Kilo Code
 
-The runner uses `kilo run` for Kilo inference, which picks up the logged-in Kilo Gateway OAuth
-account used by the Kilo Code extension. It discovers `kilo` on `PATH` and then checks common VS
+When the Kilo adapter is explicitly invoked, it uses `kilo run`, which picks up the logged-in Kilo
+Gateway OAuth account used by the Kilo Code extension. The shared completion pool does not select
+Kilo candidates as fallback routes. The adapter discovers `kilo` on `PATH` and then checks common VS
 Code, Cursor, and Windsurf extension folders. If discovery misses the installed CLI, set
 `KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never read or
 print the Kilo auth database or JSON file.
@@ -32,8 +48,7 @@ print the Kilo auth database or JSON file.
 tool name. The prompt is piped through stdin, keeping it out of process arguments and avoiding
 Kilo's file-attachment and external-directory permission checks. Do not add `--auto`: it would
 broaden permissions beyond the tool-free profile. The runner verifies a clean JSON completion,
-rejects tool events and reported non-zero cost. Inference has a five-minute default timeout, extended
-to twelve minutes for the exact Nemotron 3 Ultra model. It
+rejects tool events and reported non-zero cost. Inference has a five-minute timeout. It
 uses the public Kilo catalog only for model and exact-zero price discovery; it does not send
 inference requests anonymously to the public Gateway endpoint. The child environment is limited to
 runtime paths and locale settings, including the Kilo database selector; unrelated provider keys
@@ -55,14 +70,20 @@ node scripts/free-model-pool.mjs --openrouter-quota
 
 The runner refreshes OpenRouter's public catalog and requires exact-zero pricing. It probes
 `GET /api/v1/key` only when routing reaches the first OpenRouter inference route, then uses the live
-`used`, `limit`, and `remaining` counters. If remaining is zero, it stores the current UTC date and
-skips OpenRouter until the date changes; no scheduled reset is required. If the probe is unknown,
-only one inference request is permitted and the quota-present retry is disabled. A positive quota
-allows one same-route retry after a bounded wait (maximum 60 seconds). HTTP 401/402 exhausts
+`used`, `limit`, and `remaining` counters. OpenRouter notes the tier counter is not enforced for every
+account or endpoint and does not gate BYOK; this runner conservatively stops when its live counter
+reports zero. If remaining is zero, it stores the current UTC date and
+skips OpenRouter until the date changes; no scheduled reset is required. If the initial probe is
+unknown, only one inference request is permitted in that run; a positive post-attempt refresh does
+not unlock another attempt. Quota-present retries require a positive initial probe. A positive quota
+allows one bounded same-route retry for a transient OpenRouter response (maximum wait 60 seconds).
+If that retry also fails, the pool rotates to another eligible OpenRouter model when a fresh quota
+check is still positive and the per-source attempt ceiling permits it. HTTP 401/402 exhausts
 OpenRouter for the run. A zero `X-RateLimit-Remaining` on a 429 identifies a platform rate limit and
 skips the source for that run without blaming the model. A zero daily counter persists today's
-exhaustion marker. Three confirmed upstream/model 429s for the same OpenRouter model in three hours
-create a two-hour model quarantine; 250 confirmed model-attributable failures in seven days create a
+exhaustion marker. Three confirmed upstream/model rate-limit failures (HTTP 429 or typed
+`rate_limit_exceeded`) for the same OpenRouter model in three hours create a two-hour quarantine; 250
+confirmed model-attributable failures in seven days create a
 seven-day quarantine. Network errors, truncation, empty responses, and unresolved model IDs do not
 increment those counters. OpenRouter currently documents 20 requests per minute and 50 daily by
 default, rising to 1,000 after qualifying lifetime credit purchases; failed attempts count. These
@@ -72,13 +93,9 @@ and [API rate-limit reference](https://openrouter.ai/docs/api_reference/limits).
 change when other tools use the account.
 
 OpenRouter can return HTTP 200 with no visible text when a reasoning model spends its output budget
-on reasoning. Exact Nemotron 3 Ultra calls request `high` reasoning and at least 4,096 completion
-tokens; if `--max-tokens` is omitted, they request up to the current free endpoint ceiling of 65,536.
-Smaller explicit values are raised to the floor, and this request cannot guarantee provider
-allocation. Other models default to 1,200 tokens. A Nemotron response ending with
-`finish_reason: length` is retried once on the same route with twice the output budget (up to 65,536)
-before falling back; truncation alone does not update provider failure or quarantine state. Verify
-the returned model and finish reason. OpenRouter's
+on reasoning. Routes default to 1,200 completion tokens unless `--max-tokens` is set. The runner
+accepts only non-empty completed text; inspect the returned model and finish reason. Truncation alone
+does not update provider failure or quarantine state. OpenRouter's
 [error guide](https://github.com/OpenRouterTeam/docs/blob/main/api_reference/errors-and-debugging.mdx)
 explains that retrying at the same exhausted budget does not fix reasoning-budget exhaustion.
 
@@ -93,10 +110,10 @@ database or auth file. See the [OpenCode CLI auth guide](https://opencode.ai/doc
 [storage guide](https://opencode.ai/docs/troubleshooting/).
 
 The runner accepts provider-owned model IDs ending in `-free`, denies tool use, and requires a clean
-CLI exit with non-empty text. The exact canonical Nemotron ID is the only suffix exception, and only
-when the live catalog marks it provider-owned. Display-name similarity is insufficient. OpenCode CLI
-JSON output can omit its final `step_finish` event; a clean exit, text response, and free catalog ID
-are sufficient when no explicit error, tool call, or non-zero cost was reported.
+CLI exit with non-empty text. Nemotron is not an approved OpenCode route; the exact 3 Ultra model is
+approved only on OpenRouter and Kilo.
+OpenCode CLI JSON output can omit its final `step_finish` event; a clean exit, text response, and free
+catalog ID are sufficient when no explicit error, tool call, or non-zero cost was reported.
 The typed `provider.free-limit` event and upstream `FreeUsageLimitError` alias both signal a service
 quota for the account, workspace, and network. This remains a source-wide stop when there is no HTTP
 status or when an earlier model-specific error came first. Skip OpenCode for the current run without
@@ -182,10 +199,10 @@ node scripts/free-model-pool.mjs --openrouter-quota
 node scripts/free-research.mjs --prompt-file ./prompt.txt --url-list ./urls.txt --output-file ./summary.md --max-tokens 1500
 ```
 
-The inference order is model-first: exact Nemotron on Kilo, OpenRouter, then OpenCode; fallback is
-other OpenRouter models, other OpenCode models, then Groq. Lower-ranked Kilo models are not fallback
-routes. Catalog checks can run in parallel; inference is sequential and capped at three attempts per
-source. The pool never falls back to paid models. Kilo 401/402 stops Kilo for the run; a 429 records a
+The intended inference order is Nemotron 3 Ultra across eligible providers, then weaker models in
+model-strength order across providers. Catalog checks can run in parallel; inference is sequential
+and capped at three attempts per source. The current pool does not yet honor this ordering (see the
+implementation gap above). It never falls back to paid models. Kilo 401/402 stops Kilo for the run; a 429 records a
 one-hour source cooldown. Groq retires a supplied key on 401/402/429 and stops when all supplied keys
 are exhausted. OpenRouter uses the live daily counter and platform headers as described above;
 401/402 or a zero platform remaining count skips the source for the run, and transient/upstream
@@ -193,9 +210,24 @@ failures receive at most one bounded retry when quota is known positive. `provid
 OpenCode for the run without a persistent provider cooldown; a transient model-attributable 429 may
 be retried once. Non-zero or invalid reported cost and explicit content-policy rejections fail closed
 across providers, including Kilo and OpenCode; HTTP 200 with `finish_reason: content_filter` also
-stops routing. Reported cost from Kilo Nemotron 3 Ultra still stops the run but is not automatically
-quarantined; that exact Kilo route is operator-managed. `--list` refreshes public catalogs and does
+stops routing. `--list` refreshes public catalogs and does
 not send an inference request.
+OpenRouter upstream 429 responses can include typed `error.metadata.error_type` and may include
+`error.metadata.provider_code` without platform rate-limit headers; with verified positive daily quota,
+the runner keeps that failure attributable to its model and applies a same-route retry if quota remains.
+Typed 502 `provider_unavailable`, 503 `provider_overloaded`, and 504 `timeout` errors establish upstream
+attribution even when `provider_code` is absent; generic HTTP 500 `server` errors remain unattributed
+unless other provider metadata is present.
+Because failed requests can consume the daily cap, the runner refreshes quota after a nonterminal failed
+or incomplete attempt, including transport and response parsing failures, before another OpenRouter
+inference. A zero or unknown refreshed quota stops the source;
+terminal safety outcomes do not send another inference. At most one bounded transient retry is allowed per
+OpenRouter run. A platform `X-RateLimit-Remaining: 0` still stops OpenRouter for the run. After HTTP 200 is
+committed, typed provider errors may appear in top-level `error.metadata` or `choices[].error.metadata`;
+transient rate-limit, overloaded, unavailable, and timeout types receive the same retry.
+`content_policy_violation` and `refusal` in the typed error metadata stop all provider fallback; see the
+[OpenRouter error reference](https://openrouter.ai/docs/api_reference/errors-and-debugging) and
+[free-model limits](https://openrouter.ai/collections/free-models).
 `--openrouter-quota` reads OpenRouter's daily counter only; it does not report Kilo's separate
 IP-based free-model limit. See [MODELS.md](../MODELS.md) for published limits. The URL runner
 accepts at most 20 public HTTPS URLs and writes only its condensed result. Quarantine operations are
@@ -215,22 +247,20 @@ npm run free:chat-search -- --prompt-file ./query.txt --since 2026-10-21 --local
 
 ### Reasoning-model token budgets
 
-Kilo Nemotron 3 Ultra uses the Kilo CLI's `high` variant. The CLI has no provider-side
-`--max-tokens` option, so the runner uses the requested value only as a response-length instruction.
-Exact Nemotron calls request at least 4,096 output tokens and default to a 65,536-token ceiling;
-values below the floor are raised, but delivery is not guaranteed. Other routes default to 1,200.
-GPT-OSS on Groq retains its 1,024-token floor for hidden reasoning tokens. Nemotron receives a
-12-minute inference timeout across eligible providers; other routes receive five minutes. Catalog
-and quota calls use 15 seconds.
+Nemotron's required profile is high reasoning where supported, at least 4,096 response tokens, and a
+12-minute inference timeout; an omitted OpenRouter budget may request up to 65,536 tokens. Kilo
+receives a response-length instruction because its CLI has no provider-side output limit. Other
+routes default to 1,200 tokens and GPT-OSS on Groq retains its 1,024-token floor for hidden reasoning
+tokens. The current runner instead uses 1,200 tokens and a five-minute timeout unless explicitly
+overridden. Catalog and quota calls use 15 seconds.
 
 ### Catalog ordering
 
-The exact Nemotron tier uses Kilo, OpenRouter, then OpenCode; fallback uses other OpenRouter models,
-other OpenCode models, then Groq. Lower-ranked Kilo models are not attempted. OpenCode Nemotron
-requires an exact canonical ID match. Kilo and OpenRouter keep their configured preferred models
-first within each catalog; remaining candidates retain live catalog order. Disabled model families
-are filtered before ordering. Refresh catalogs for each run rather than assuming a named alternative
-remains available.
+Rank by model strength before provider. Put the exact Nemotron 3 Ultra ID first across every
+eligible provider; route-specific quarantine removes only that pair. Do not discard weaker models or
+other providers from consideration based on provider rank alone. Refresh catalogs for each run rather
+than assuming a named model or route remains available. The current pool's catalog and routing rules
+do not yet implement this policy.
 
 ### Report-only failure sweep
 

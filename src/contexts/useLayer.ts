@@ -156,10 +156,11 @@ type EditableToolLayerSource = {
 };
 
 /**
- * Extend only an eraser brush-mode stroke from the previous preview.
+ * Extend only a legacy eraser brush-mode stroke from the previous preview.
  *
  * Incremental is allowed ONLY when:
  * - Both current and previous are eraser brush-mode (not pencil, not block)
+ * - Flow is absent from both args: Flow-aware strokes need the original per-stroke alpha budget
  * - All raster-affecting settings are identical (lineWidth, alpha, hardness, spacing, color)
  * - Previous points are an exact prefix of current points
  * The shared endpoint is preserved so brush spacing/falloff remains continuous.
@@ -173,11 +174,13 @@ export const getIncrementalEraserArgs = (toolArgs: ToolArgs, previousToolArgs?: 
 
   // Only brush mode supports incremental
   if (current.mode !== 'brush' || previous.mode !== 'brush') return null;
+  if (typeof current.flow === 'number' || typeof previous.flow === 'number') return null;
 
   // All raster-affecting settings must be identical
   if (
     current.lineWidth !== previous.lineWidth ||
     current.alpha !== previous.alpha ||
+    current.flow !== previous.flow ||
     current.hardness !== previous.hardness ||
     current.spacing !== previous.spacing ||
     current.color !== previous.color
@@ -1452,7 +1455,7 @@ export const useLayers = () => {
       const processorParams: ProcessorToolParams | CreatorToolParams = input
         ? ({ bitmap: input.bitmap, size: input.rasterSize } as ProcessorToolParams)
         : ({ size: layer.pos } as CreatorToolParams);
-      // Pass previousCanvas for incremental eraser brush-mode
+      // Pass previousCanvas only for the legacy incremental eraser brush-mode path.
       if (canIncrementalEraser && preview?.layer.tmpCanvas) {
         (processorParams as ProcessorToolParams).previousCanvas = preview.layer.tmpCanvas;
       }

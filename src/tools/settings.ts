@@ -17,9 +17,13 @@ import type { RepositionToolArgs } from './reposition.ts';
 import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelection.ts';
 import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
 import type { SingleColumnMarqueeToolArgs, SingleRowMarqueeToolArgs } from './singleRowColumnMarquee.ts';
-import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } from './featherMagneticLasso.ts';
+import {
+  MAGNETIC_LASSO_EDGE_CONTRAST_DEFAULT,
+  type FeatherMagneticLassoToolArgs,
+  type FeatherMagneticLassoToolSettings,
+} from './featherMagneticLasso.ts';
 import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
-import { ERASER_HARDNESS_DEFAULT, ERASER_SPACING_PERCENT, type EraserToolArgs } from './eraser.ts';
+import { ERASER_FLOW_DEFAULT, ERASER_HARDNESS_DEFAULT, ERASER_SPACING_PERCENT, type EraserToolArgs } from './eraser.ts';
 import type { FillToolArgs } from './fill.ts';
 import {
   COLOR_REPLACEMENT_SMOOTHNESS_DEFAULT,
@@ -37,7 +41,7 @@ import { PAINT_SMOOTHING_DEFAULT } from './brush.ts';
 import type { SmudgeToolArgs, SmudgeToolSettings } from './smudge.ts';
 import type { DodgeBurnToolArgs, DodgeBurnToolSettings } from './dodgeBurn.ts';
 import { SPONGE_FLOW_DEFAULT, SPONGE_MODE_DEFAULT, type SpongeToolArgs, type SpongeToolSettings } from './sponge.ts';
-import type { CloneStampToolArgs, CloneStampToolSettings } from './cloneStamp.ts';
+import { CLONE_STAMP_FLOW_DEFAULT, type CloneStampToolArgs, type CloneStampToolSettings } from './cloneStamp.ts';
 import {
   RED_EYE_DEFAULT_DARKEN_AMOUNT,
   RED_EYE_DEFAULT_PUPIL_SIZE,
@@ -170,7 +174,7 @@ export const defaultSettings = {
   'feather-magnetic-lasso': {
     featherRadius: 12,
     magneticWidth: 18,
-    edgeContrast: 30,
+    edgeContrast: MAGNETIC_LASSO_EDGE_CONTRAST_DEFAULT,
     frequency: 40,
     snapStrength: 0.85,
     smoothing: 1.5,
@@ -258,6 +262,7 @@ export const defaultSettings = {
     alpha: 1,
     hardness: ERASER_HARDNESS_DEFAULT,
     spacing: ERASER_SPACING_PERCENT,
+    flow: ERASER_FLOW_DEFAULT,
     color: '#000000',
     points: [],
     toolName: 'eraser',
@@ -361,8 +366,10 @@ export const defaultSettings = {
     size: 40,
     hardness: 100,
     alpha: 1,
+    flow: CLONE_STAMP_FLOW_DEFAULT,
     source: null,
-    aligned: true,
+    alignedSource: null,
+    aligned: false,
     points: [],
     toolName: 'clone-stamp',
   } satisfies CloneStampToolArgs,

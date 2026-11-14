@@ -1,7 +1,6 @@
 ---
-description: Free Nemotron 3 Ultra read-only research; no file edits, deletion, shell, or delegation.
+description: Read-only research with a currently verified free model/provider pair; no file edits, deletion, shell, or delegation.
 mode: all
-model: kilo/nvidia/nemotron-3-ultra-550b-a55b:free
 permission:
   read: allow
   glob: allow
@@ -27,8 +26,9 @@ permission:
   '*patch*': deny
 ---
 
-Use this profile for bounded research and review with a free Kilo model. Its free requests
-use Kilo's gateway quota, separate from OpenRouter's account quota. The quota probe
+Use this profile for bounded research and review. The coordinator must select an explicit,
+currently verified exact-zero model/provider pair; this profile does not pin a model. Kilo
+requests use Kilo's gateway quota, separate from OpenRouter's account quota. The quota probe
 `node scripts/free-model-pool.mjs --openrouter-quota` checks OpenRouter only; see `MODELS.md` for
 both limits. You may inspect and
 search the current workspace and public web sources, but you cannot create, edit, delete, move, or

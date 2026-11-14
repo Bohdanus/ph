@@ -746,6 +746,8 @@ The alternative reading is in `## Unverified` below.
 ### Sources
 
 - <https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html> — the Grayscale-mode sentence; `Mode` semantics; `Flow` as "the rate of saturation change"; `Vibrance`'s only description; `O` on the Sponge page.
+- <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/adjust-color-saturation-in-selected-image-areas.html> — the current desktop guide's Sponge Flow control; it does not state a numeric shortcut.
+- <https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf> — the 2019 generic painting/editing digit and Flow rules, including the Airbrush exception.
 - <https://helpx.adobe.com/photoshop/using/tool-techniques/sponge-tool.html> — the desktop bar enumeration including `Vibrance`; "select and hold the Dodge tool to show the other related tools".
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html> — the Dodge/Burn bar as `Range`/`Exposure`/`Airbrush`/`Protect Tones`, and the negative that `Tolerance` appears nowhere.
 - <https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html> — the per-mode grayscale contrast split.
@@ -753,7 +755,7 @@ The alternative reading is in `## Unverified` below.
 - <http://www.cheat-sheets.org/saved-copy/PSCS2_Shortcuts_Windows.pdf> — the Adobe-branded table rows "Dodge / Burn / Sponge Tool O", "Cycle Dodge / Burn / Sponge Tools Shift+O", "Desaturate (Sponge Tool) Alt+Shift+D", "Saturate (Sponge Tool) Alt+Shift+S".
 - <https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=646> — the CS3 manual's shortcut table, the same two rows.
 - <https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=217> — the CS4 bar listing, which already carries `Vibrance`.
-- <https://flylib.com/books/en/2.816.1.14/1/> — the CS2 Bible on Flow as the per-dab amount and on the digits stepping Flow.
+- <https://flylib.com/books/en/2.816.1.14/1/> — the CS2 Bible on Flow as the per-dab amount; its claim that bare digits step Flow is unverified for Sponge. Adobe's generic 2019 table assigns Flow to Shift+number in the normal mapping but does not provide Sponge-specific confirmation, and the current Sponge guide gives no numeric shortcut.
 - <https://www.glensmith.co.uk/photoshop/sponge-tool> — Flow's 50% default, and the alternative reading of `Vibrance` recorded above as rejected.
 - <https://jnack.com/blog/2008/11/02/cs4_whats_in_it_for_photographers/> — the CS4 rework of all three toning tools at once.
 - <https://github.com/simonhenke/photoshop-types/blob/main/types/Tool.d.ts> — `SaturationToolOptionsDescriptor { flow }` and the absence of `tolerance` on this tool.
@@ -1132,21 +1134,9 @@ a binding is **absent**, which is the stronger form of the same objection.
     walkthrough describes a Mode menu with a limited list; Wikiversity and other secondary
     sources also report menus and choices, but none establish current availability or a complete
     current list. The data file omits the row until a current tool-specific source resolves it.
-14. **The provenance of the keyboard bindings, which are reproductions rather than Adobe's page.**
-    The Smudge's `R`, the Dodge's and the Burn's `Shift+Alt+S/M/H`, the `0` for Exposure and the
-    `[`/`]` brush-size pair are all in Adobe's published default-keyboard list, and three
-    independent reproductions of it agree on the wording
-    (<https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>,
-    <https://shortcutkeys.net/adobe-photoshop-shortcut-keys/>,
-    <https://shortcuts.design/data/design/toolspage-adobephotoshop-windows>). **Adobe's own
-    default-keyboard page was not opened**, so the rows carry a third-party citation for a
-    first-party fact. The Smudge's `R` is the one that is not in this category: Adobe's current
-    tool page states it in the body text ("Select the Smudge tool (R) from the toolbar"), so that
-    row is first-party. What is still open under this item is the `R` for the **Blur** and the
-    **Sharpen**: Adobe's current Blur page names no letter, and the current Sharpen page could not
-    be opened, so neither tool's `shortcuts` array carries `R` even though they share the flyout
-    and Photoshop Elements' own reference prints `R` for all three
-    (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>).
+14. **The Smudge R evidence is versioned.** Adobe's current 2026 desktop Smudge guide says to press R to cycle through retouching tools until Smudge appears; its 2023 guide labels Smudge with R but does not describe cycling. Adobe's Photoshop reference PDF, last updated in 2019, assigns R to Rotate View in its tool-switch table and omits Smudge from that table. Adobe's current [View keyboard shortcuts](https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html) article says to inspect the Keyboard Shortcuts and Menus dialog under Tools, but does not publish the binding. The data row preserves the current tool-specific instruction, discloses the older conflict, and points readers to the installed dialog; no current Photoshop installation was checked. Do not infer R for Blur or Sharpen, or Shift+R cycling.
+
+    The 2019 PDF also lists the Dodge/Burn range keys, Exposure digit changes, brush-size brackets, and the shared-tool cycling preference. Its generic painting/editing row says number keys set opacity, tolerance, strength, or Exposure (0 = 100%, 1 = 10%, and two quick digits set an exact percentage); when Airbrush is enabled, Shift+number sets Exposure. Adobe’s current Dodge/Burn guide documents the controls but not these digit bindings. Locally, the app’s 0/1 handlers are gated by `opacityField`, which excludes Dodge/Burn; their implemented shortcuts are O/Shift+O and Shift+Alt+S/M/H. Keep the historical Photoshop mapping distinct from current app support. The third-party shortcut reproductions in the tool source arrays are secondary corroboration and do not replace current tool-specific documentation. For Sponge, Adobe’s 2026 guide documents Flow but no numeric binding. The shortcut data records Shift+number only as the 2019 generic Flow rule; whether its Airbrush exception applies to Sponge is unresolved. Do not infer that bare digits set Sponge Flow simply because its bar has Flow and no Opacity.
 
 15. **Which `Mode` the Sponge's bar opens on. Adobe states no default, and one source is not
     enough.** `helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html` is

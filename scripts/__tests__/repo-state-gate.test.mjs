@@ -30,7 +30,16 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative as relativePath } from 'node:path';
 
@@ -174,7 +183,7 @@ afterEach(() => {
 });
 
 /** Capture both streams and the exit code, so the assertions read what an operator reads. */
-function report(recordsOrCwd) {
+function report(recordsOrCwd, options = {}) {
   const out = [];
   const err = [];
   const cwd = typeof recordsOrCwd === 'function' ? undefined : recordsOrCwd;
@@ -182,6 +191,7 @@ function report(recordsOrCwd) {
   // The returned `code` is the whole signal now — there is no exit to intercept, because
   // `run` sets `process.exitCode` and returns rather than cutting itself off mid-write.
   const result = run({
+    ...options,
     cwd,
     scan: records === null ? undefined : () => ({ ok: true, reason: null, worktrees: records }),
     out: { write: (s) => out.push(s) },
@@ -695,6 +705,21 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.err).toContain('run the guarded recovery preflight from this worktree');
     expect(r.err).toContain('npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"');
     expect(r.err).toContain('--preserve-matching-worktree preflight');
+    expect(r.err).toContain('--preserve-divergent-worktree preflight');
+    expect(r.err).toContain(
+      '--preserve-divergent-worktree preflight only when at least one unstaged tracked path differs from both HEAD and AUTO_MERGE. Multiple qualifying paths are allowed'
+    );
+    expect(r.err).toContain('differences confined to separate paths and untracked-only changes do not qualify');
+    expect(r.err).toContain('original --expected-head plus these three printed values');
+    expect(r.err).toContain('--expected-worktree-content-sha256');
+    expect(r.err).toContain('refs/recovery/auto-merge/<HEAD>/<TREE>');
+    expect(r.err).toContain('before removing AUTO_MERGE');
+    expect(r.err).toContain('does not edit files or the index');
+    expect(r.err).toContain('full root/descendant owner family is stopped');
+    expect(r.err).toContain('live-session overlay');
+    expect(r.err).toContain('process tree/open files');
+    expect(r.err).toContain('board for target writers or locks');
+    expect(r.err).toContain('manual assertion');
     expect(r.err).toContain('--confirm-owner-stopped');
   });
 
@@ -707,6 +732,172 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.code).toBe(1);
     expect(r.err).toContain('AUTO_MERGE');
     expect(r.err).not.toContain('repo:state:recover-auto-merge');
+  });
+
+  it('keeps unrelated worktree operations visible without blocking a pinned landing scope', () => {
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    addWorktree(repo, 'candidate');
+    const unrelated = addWorktree(repo, 'unrelated');
+    mergeThatConflicts(unrelated, 'theirs');
+    expect(report(repo).code).toBe(1);
+
+    const r = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('landing scope clear for wt/candidate');
+    expect(r.out).toContain('1 unrelated finding(s) remain reported and untouched');
+    expect(r.err).toContain(unrelated);
+    expect(r.err).toContain('unrelated worktree; preserved and non-blocking');
+    expect(r.err).toContain('MERGE_HEAD');
+  });
+
+  it('does not let a preserved non-designated main worktree veto the registered main landing checkout', () => {
+    const records = [
+      {
+        name: 'registered-main',
+        path: '/registered-main',
+        branch: 'main',
+        present: true,
+        gitDir: '/registered-main/.git',
+        operations: [],
+        unmerged: [],
+      },
+      {
+        name: 'candidate',
+        path: '/candidate',
+        branch: 'wt/candidate',
+        present: true,
+        gitDir: '/candidate/.git',
+        operations: [],
+        unmerged: [],
+      },
+      {
+        name: 'preserved-main',
+        path: '/preserved-main',
+        branch: 'main',
+        present: true,
+        gitDir: '/preserved-main/.git',
+        operations: [{ operation: 'in-progress', marker: 'AUTO_MERGE', value: null }],
+        unmerged: [],
+      },
+    ];
+    const r = run({
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: '/registered-main',
+        mainGitDir: '/registered-main/.git',
+      },
+      scan: () => ({ ok: true, reason: null, roster: records.length, worktrees: records }),
+      out: { write: () => {} },
+      err: { write: () => {} },
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.landing?.unrelated).toEqual([{ name: 'preserved-main', path: '/preserved-main' }]);
+  });
+
+  it('blocks unknown or unreadable operation state in a scoped landing report', () => {
+    const worktrees = [
+      {
+        name: 'registered-main',
+        path: '/registered-main',
+        branch: 'main',
+        present: true,
+        gitDir: '/registered-main/.git',
+        operations: [],
+        unmerged: [],
+      },
+      {
+        name: 'candidate',
+        path: '/candidate',
+        branch: 'wt/candidate',
+        present: true,
+        gitDir: '/candidate/.git',
+        operations: [],
+        unmerged: [],
+      },
+      {
+        name: 'unknown',
+        path: '/unknown',
+        branch: null,
+        present: false,
+        gitDir: '/unknown/.git',
+        operations: [],
+        unmerged: [],
+        readError: 'administrative directory could not be described',
+      },
+    ];
+    const out = [];
+    const err = [];
+    const r = run({
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: '/registered-main',
+        mainGitDir: '/registered-main/.git',
+      },
+      scan: () => ({ ok: true, reason: null, roster: worktrees.length, worktrees }),
+      out: { write: (text) => out.push(text) },
+      err: { write: (text) => err.push(text) },
+    });
+
+    expect(r.code).toBe(1);
+    expect(out.join('')).toContain('landing scope BLOCKED');
+    expect(err.join('')).toContain('unknown');
+    expect(err.join('')).toContain('BLOCKS selected landing');
+  });
+
+  it('blocks a landing when its candidate branch has an operation in progress', () => {
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const candidate = addWorktree(repo, 'candidate');
+    mergeThatConflicts(candidate, 'theirs');
+
+    const r = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('landing scope BLOCKED for wt/candidate');
+    expect(r.err).toContain('BLOCKS selected landing');
+  });
+
+  it('blocks designated-main operations but delegates its orphan AUTO_MERGE shape to main:landing', () => {
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    addWorktree(repo, 'candidate');
+    mergeThatConflicts(repo, 'theirs');
+
+    const blocked = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+    expect(blocked.code).toBe(1);
+    expect(blocked.err).toContain('BLOCKS selected landing');
+
+    git(repo, 'merge', '--abort');
+    const marker = join(resolveGitDir(repo), 'AUTO_MERGE');
+    writeFileSync(marker, `${git(repo, 'rev-parse', 'HEAD^{tree}').trim()}\n`);
+    const recovery = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+    expect(recovery.code).toBe(0);
+    expect(recovery.out).toContain('designated-main orphan AUTO_MERGE');
+    expect(existsSync(marker)).toBe(true);
   });
 
   it('emits findings as JSON with no prose mixed in', () => {

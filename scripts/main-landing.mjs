@@ -343,14 +343,52 @@ function alertMarker(paths, minutes) {
   return join(paths.lockDir, 'alert-' + minutes + 'm.json');
 }
 
+function isValidAlertMarker(alert) {
+  if (!alert || typeof alert !== 'object' || Array.isArray(alert)) return false;
+  const hasLeaseId = typeof alert.leaseId === 'string' && alert.leaseId.trim().length > 0;
+  if (!hasLeaseId) return false;
+
+  if (alert.status === 'pending') {
+    return (
+      typeof alert.host === 'string' &&
+      alert.host.trim().length > 0 &&
+      typeof alert.platform === 'string' &&
+      alert.platform.length > 0 &&
+      Number.isSafeInteger(alert.pid) &&
+      alert.pid > 0 &&
+      typeof alert.startedAt === 'string' &&
+      Number.isFinite(Date.parse(alert.startedAt))
+    );
+  }
+
+  if (alert.status === 'sent') {
+    return (
+      typeof alert.sentAt === 'string' &&
+      Number.isFinite(Date.parse(alert.sentAt)) &&
+      typeof alert.message === 'string' &&
+      alert.message.length > 0
+    );
+  }
+
+  return false;
+}
+
 function readAlert(paths, minutes) {
   const file = alertMarker(paths, minutes);
   if (!existsSync(file)) return null;
+  let contents;
   try {
-    return JSON.parse(readFileSync(file, 'utf8'));
+    contents = readFileSync(file, 'utf8');
   } catch {
     return { status: 'unreadable' };
   }
+  let alert;
+  try {
+    alert = JSON.parse(contents);
+  } catch {
+    return { status: 'corrupt' };
+  }
+  return isValidAlertMarker(alert) ? alert : { status: 'corrupt' };
 }
 
 export function claimAlert(paths, owner, minutes) {
@@ -377,6 +415,12 @@ export function claimAlert(paths, owner, minutes) {
         const pendingSince = Date.parse(existing.startedAt ?? '');
         if (!Number.isFinite(pendingSince) || Date.now() - pendingSince < 60_000) return false;
       }
+      try {
+        rmSync(file, { force: true });
+      } catch {
+        return false;
+      }
+    } else if (existing?.status === 'corrupt') {
       try {
         rmSync(file, { force: true });
       } catch {

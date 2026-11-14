@@ -16,7 +16,7 @@ import {
   viewportClip,
   type ViewportClip,
 } from './helpers/canvas-helpers';
-import { waitForCanvasPixels } from './helpers/canvas-redraw';
+import { waitForCanvasPixels, type CanvasPixelPredicate } from './helpers/canvas-redraw';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { cssPointToImage, imagePointToCss } from './helpers/screenshot-scale';
 import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
@@ -38,7 +38,7 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * | Eraser                  | Opacity         | `<input type=range>`          | `eraser-opacity`                | `Opacity 100%`    | `Opacity 100%`  | 0..100, step 1; absent in Block    |
  * | Eraser                  | Hardness        | `<input type=range>`          | `eraser-hardness`               | `Hardness 50%`    | `Hardness 50%`  | 0..100; Brush mode only            |
  * | Eraser                  | Spacing         | `<input type=range>`          | `eraser-spacing`                | `Spacing 25%`     | `Spacing 25%`   | 1..100; Brush mode only            |
- * | Eraser                  | Flow            | `<input type=range>` DISABLED | `eraser-flow`                   | `Flow 100%`       | `Flow 100%`     | 1..100, always disabled            |
+ * | Eraser                  | Flow            | `<input type=range>`          | `eraser-flow`                   | `Flow 100%`       | `Flow 100%`     | 1..100; Brush/Pencil only          |
  * | Magic Eraser / Bucket   | Tolerance       | `<input type=range>`          | `<tool>-tolerance`              | `Tolerance 32`    | `Tolerance 32`  | 0..255, step 1 (Adobe, not 0..100) |
  * | Magic Eraser / Bucket   | Contiguous      | `<input type=checkbox>`       | `<tool>-contiguous`             | `Contiguous`      | `Contiguous`    | checked                             |
  * | Magic Eraser / Bucket   | Anti-aliased    | `<input type=checkbox>` DISABLED | `<tool>-anti-aliased`         | `Anti-aliased`    | `Anti-aliased`  | checked, always disabled            |
@@ -337,12 +337,7 @@ async function selectBrushFamilyTool(page: Page, _from: string, toolName: string
  * the stroke against the white base layer and every colour assertion below would then be
  * reading a blend rather than the colour that was asked for.
  */
-async function drawSlab(
-  page: Page,
-  color: string,
-  size: number,
-  wait: (screenshot: Buffer) => Promise<boolean>
-): Promise<void> {
+async function drawSlab(page: Page, color: string, size: number, wait: CanvasPixelPredicate): Promise<void> {
   await clickToolButton(page, 'draw');
   await setForegroundColor(page, color, true);
   const sizeSlider = page.getByRole('slider', { name: /^Size/ });
@@ -422,9 +417,14 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await page.getByRole('slider', { name: /^Size/ }).fill('60');
     // A 60px tip straddling a 20px line erases every dark pixel the line owns.
     await stroke(page, { x: LINE_START_X, y: LINE_Y }, { x: ERASE_LINE_END_X, y: LINE_Y }, 12);
-    await waitForCanvasPixels(page, await slabClip(page), async (screenshot) => !(await hasDarkPixels(screenshot)), {
-      description: 'no dark pixels left under the eraser stroke',
-    });
+    await waitForCanvasPixels(
+      page,
+      await slabClip(page),
+      async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask)),
+      {
+        description: 'no dark pixels left under the eraser stroke',
+      }
+    );
 
     const erased = await readPixel(page, { x: LINE_CENTRE_X, y: LINE_Y });
     expect(erased, 'nothing readable at the centre of the erased band').not.toBeNull();
@@ -432,6 +432,81 @@ test.describe('Eraser, fill tools and eyedropper', () => {
       Math.min(erased!.red, erased!.green, erased!.blue),
       'the eraser must leave the background showing, not paint over the line'
     ).toBeGreaterThan(240);
+  });
+
+  test('Flow controls within-stroke build-up beneath the Opacity ceiling', async ({ page }, testInfo) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    await openWorkspace(page);
+    const lowFlowPoint = { x: LINE_CENTRE_X - 65, y: LINE_Y };
+    const cappedFlowPoint = { x: LINE_CENTRE_X + 65, y: LINE_Y };
+    const backgroundPoint = { x: LINE_CENTRE_X, y: LINE_Y + 40 };
+    const background = await waitForPixel(page, backgroundPoint, isBackground, 'the untouched base to be white');
+    expect(Math.min(background.red, background.green, background.blue)).toBeGreaterThan(240);
+
+    await drawSlab(page, BLACK, SLIM, hasDarkPixels);
+    for (const [point, label] of [
+      [lowFlowPoint, 'Flow 20 probe'],
+      [cappedFlowPoint, 'Flow 100 probe'],
+    ] as const) {
+      const initial = await waitForPixel(
+        page,
+        point,
+        (color) => Math.max(color.red, color.green, color.blue) < 10,
+        `${label} to be inside the opaque black slab before erasing`
+      );
+      expect(Math.max(initial.red, initial.green, initial.blue)).toBeLessThan(10);
+    }
+
+    await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
+    await page.getByRole('slider', { name: /^Size/ }).fill('21');
+    await page.getByRole('slider', { name: /^Hardness/ }).fill('100');
+    await page.getByRole('slider', { name: /^Opacity/ }).fill('40');
+    const flow = page.getByRole('slider', { name: /^Flow/ });
+    await expect(flow).toBeEnabled();
+    await flow.fill('20');
+    await clickAt(page, lowFlowPoint);
+    const lowFlow = await waitForPixel(
+      page,
+      lowFlowPoint,
+      (color) =>
+        color.red > 10 &&
+        color.red < 60 &&
+        Math.max(color.red, color.green, color.blue) - Math.min(color.red, color.green, color.blue) <= 2,
+      'a low-Flow click to erase partially'
+    );
+
+    await flow.fill('100');
+    await clickAt(page, cappedFlowPoint);
+    const cappedFlow = await waitForPixel(
+      page,
+      cappedFlowPoint,
+      (color) =>
+        color.red > 80 &&
+        color.red < 140 &&
+        Math.max(color.red, color.green, color.blue) - Math.min(color.red, color.green, color.blue) <= 2,
+      'a Flow 100 click to erase up to the 40% Opacity ceiling'
+    );
+
+    expect(lowFlow.red, 'Flow 20% deposits less erasure than Flow 100%').toBeLessThan(cappedFlow.red);
+
+    const undonePoint = { x: LINE_CENTRE_X + 65, y: LINE_Y };
+    await page.getByTestId('undo-button').click();
+    await waitForPixel(page, undonePoint, (color) => color.red < 10, 'undo to restore the Flow stroke');
+    await page.getByTestId('redo-button').click();
+    await waitForPixel(
+      page,
+      undonePoint,
+      (color) => color.red > 80 && color.red < 140,
+      'redo to replay the Flow stroke with its Opacity cap'
+    );
+    const flowScreenshot = await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath('eraser-flow-build-up.png'),
+    });
+    await testInfo.attach('eraser-flow-build-up.png', {
+      contentType: 'image/png',
+      body: flowScreenshot,
+    });
   });
 
   // eraser: one history state per stroke, not per pointer event
@@ -443,9 +518,14 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
     // 20 interpolated moves, so a commit per pointer event would be 20 entries.
     await stroke(page, { x: LINE_START_X, y: LINE_Y }, { x: ERASE_LINE_END_X, y: LINE_Y }, 20);
-    await waitForCanvasPixels(page, await slabClip(page), async (screenshot) => !(await hasDarkPixels(screenshot)), {
-      description: 'the eraser stroke to land',
-    });
+    await waitForCanvasPixels(
+      page,
+      await slabClip(page),
+      async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask)),
+      {
+        description: 'the eraser stroke to land',
+      }
+    );
 
     const undo = page.getByTestId('undo-button');
     await expect(undo).toBeEnabled();
@@ -461,9 +541,14 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     // And nothing is left to undo, so the stroke wrote exactly one entry on top of the draw's.
     await undo.click();
     await expect(undo).toBeDisabled();
-    await waitForCanvasPixels(page, await slabClip(page), async (screenshot) => !(await hasDarkPixels(screenshot)), {
-      description: 'the drawn line removed by the second undo',
-    });
+    await waitForCanvasPixels(
+      page,
+      await slabClip(page),
+      async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask)),
+      {
+        description: 'the drawn line removed by the second undo',
+      }
+    );
   });
 
   // eraser: the Brush mode is a stamped soft tip now, so all three are offered and all three work
@@ -804,6 +889,20 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     }
     expect(edgeRow, 'the slab should have a red top edge inside the clip').toBeGreaterThanOrEqual(0);
     const target = imagePointToCss(image, clip, { x: column, y: edgeRow });
+
+    // The first red screenshot pixel can straddle a logical pixel boundary at high DPI. The
+    // screenshot is in device pixels, but the eyedropper samples the logical document pixel at
+    // that point; clicking the pixel's outer edge can therefore read its antialiased neighbour.
+    // Move half a logical image pixel into the slab so the click is inside the observed edge pixel
+    // instead of on its outer boundary. The 3x3 sample still reaches across the edge.
+    const workspace = page.getByTestId('workspace-container');
+    await expect(workspace, 'the app publishes the document-to-CSS fit').toHaveAttribute(
+      'data-fit-scale',
+      /^\d+(?:\.\d+)?$/
+    );
+    const fitScale = Number(await workspace.getAttribute('data-fit-scale'));
+    if (!Number.isFinite(fitScale) || fitScale <= 0) throw new Error(`invalid document fit scale: ${fitScale}`);
+    target.y += fitScale / 2;
 
     await setForegroundColor(page, '#010101', true);
     await page.mouse.click(target.x, target.y);

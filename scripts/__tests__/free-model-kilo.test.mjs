@@ -62,9 +62,9 @@ const args = process.argv.slice(2);
 const message = fs.readFileSync(0, 'utf8');
 const valueAfter = (flag) => args[args.indexOf(flag) + 1];
 if (!args.includes('--pure') || valueAfter('--format') !== 'json') process.exit(4);
-if (valueAfter('--model') !== 'kilo/nvidia/nemotron-3-ultra-550b-a55b:free') process.exit(5);
+if (valueAfter('--model') !== 'kilo/xingchen-agi/xing4.0-29b-a4b:free') process.exit(5);
 if (valueAfter('--agent') !== 'free-completion') process.exit(6);
-if (!args.includes('--variant') || valueAfter('--variant') !== 'high') process.exit(7);
+if (args.includes('--variant')) process.exit(7);
 if (args.includes('--file')) process.exit(8);
 if (!message.startsWith('Answer the provided request directly, in plain text, using at most 65536 output tokens.')) process.exit(9);
 if (!message.includes('private prompt')) process.exit(10);
@@ -80,7 +80,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       await expect(
         runKiloCompletion({
           command,
-          model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+          model: 'xingchen-agi/xing4.0-29b-a4b:free',
           prompt: 'private prompt',
           maxTokens: 65536,
           env: {
@@ -99,7 +99,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           },
         })
       ).resolves.toEqual({
-        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        model: 'xingchen-agi/xing4.0-29b-a4b:free',
         content: 'safe response',
         finishReason: 'stop',
         usage: { input_tokens: 10, output_tokens: 3, reasoning_tokens: 1, cost: 0 },
@@ -158,6 +158,26 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'length', cost
       await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
         error: 'Kilo did not return a complete non-empty response',
         finishReason: 'length',
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed JSONL stdout as a contained completion error', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const command = join(directory, 'fake-kilo');
+    await writeExecutable(
+      command,
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'partial response' } }));
+console.log('{"type":');
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0 } }));`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+        error: 'Kilo CLI returned malformed JSONL output',
+        exhaustSource: true,
       });
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -489,6 +509,11 @@ process.exitCode = 1;`
       'cost reported on stderr',
       `console.error(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`,
     ],
+    [
+      'buffered invalid cost before timeout',
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: false } }));\nsetInterval(() => {}, 1000);`,
+      2000,
+    ],
   ])(
     'rejects every reported invalid Kilo cost before process failure handling: %s',
     async (_scenario, source, timeoutMs = 5000) => {
@@ -508,34 +533,6 @@ process.exitCode = 1;`
       }
     }
   );
-
-  it('rejects a buffered invalid cost before returning a timeout error', async () => {
-    const spawnImpl = () => {
-      const child = new EventEmitter();
-      child.stdout = new EventEmitter();
-      child.stderr = new EventEmitter();
-      child.stdin = new EventEmitter();
-      child.stdin.end = () => {
-        child.stdout.emit(
-          'data',
-          Buffer.from(`${JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: false } })}\n`)
-        );
-      };
-      child.kill = (signal) => {
-        queueMicrotask(() => child.emit('close', null, signal));
-        return true;
-      };
-      return child;
-    };
-
-    await expect(
-      runKiloCompletion({ command: process.execPath, model: 'model:free', prompt: 'prompt', timeoutMs: 25, spawnImpl })
-    ).resolves.toEqual({
-      error: 'Kilo reported non-zero or invalid completion cost',
-      exhaustSource: true,
-      safetyStop: true,
-    });
-  });
 
   it('aborts a stalled request at its configured inference timeout', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
@@ -588,5 +585,46 @@ setInterval(() => {}, 1000);`
 
   it('kills the Kilo process tree when output overflows', async () => {
     await expectProcessTreeKilled('output overflow');
+  }, 15_000);
+
+  it('blocks noncanonical Nemotron variants before starting the Kilo CLI', async () => {
+    const spawnImpl = vi.fn();
+    await expect(
+      runKiloCompletion({
+        command: '/fake-kilo',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b-v2:free',
+        prompt: 'private prompt',
+        spawnImpl,
+      })
+    ).resolves.toEqual({ error: 'Nemotron model/provider pair is not approved by free-model policy' });
+    expect(spawnImpl).not.toHaveBeenCalled();
+  });
+
+  it('allows the exact approved Nemotron route and applies the requested output-token instruction', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-nemotron-'));
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+const valueAfter = (flag) => args[args.indexOf(flag) + 1];
+const message = fs.readFileSync(0, 'utf8');
+if (!args.includes('--pure') || valueAfter('--model') !== 'kilo/${model}') process.exit(4);
+if (valueAfter('--agent') !== 'free-completion') process.exit(5);
+if (!message.startsWith('Answer the provided request directly, in plain text, using at most 4000 output tokens.')) process.exit(6);
+console.log(JSON.stringify({ type: 'text', part: { text: 'approved response' } }));
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0, tokens: { input: 8, output: 2 } } }));`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model, prompt: 'bounded request', maxTokens: 4000 })).resolves.toEqual({
+        model,
+        content: 'approved response',
+        finishReason: 'stop',
+        usage: { input_tokens: 8, output_tokens: 2, cost: 0 },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }, 15_000);
 });

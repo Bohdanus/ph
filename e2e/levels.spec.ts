@@ -11,6 +11,7 @@ import {
   getColorAtPoint,
   getWorkspaceCanvas,
   hasDarkPixels,
+  lineScreenshotPixelMask,
   hasRedPixels,
   type ImageDataResult,
   isBuffer,
@@ -367,7 +368,10 @@ test.describe('Levels adjustment', () => {
     // `hasDarkPixels` needs all three channels under 60, and no unadjusted pixel of this
     // stroke is: its red channel remains 206. So the
     // state waited for below cannot have existed before the slider moved.
-    expect(await hasDarkPixels(original), 'The unadjusted stroke should have no dark pixel').toBe(false);
+    expect(
+      await hasDarkPixels(original, await lineScreenshotPixelMask(page, box!)),
+      'The unadjusted stroke should have no dark pixel'
+    ).toBe(false);
 
     await openLevelsTool(page);
     const adjustedBox = await remeasureCanvasBox(page);
@@ -384,7 +388,10 @@ test.describe('Levels adjustment', () => {
     });
 
     const after = await takeLineScreenshot(page, adjustedBox, 'levels-minus-100', testInfo);
-    expect(await hasDarkPixels(after), 'brightness(0%) must leave the stroke dark').toBe(true);
+    expect(
+      await hasDarkPixels(after, await lineScreenshotPixelMask(page, adjustedBox)),
+      'brightness(0%) must leave the stroke dark'
+    ).toBe(true);
     expect(await hasRedPixels(after), 'brightness(0%) must leave no red pixel behind').toBe(false);
 
     // `brightness(0%)` multiplies every channel by zero, so the layer's own pixels are

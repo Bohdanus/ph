@@ -1,8 +1,6 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
-const POWERSHELL_DEADLINE_RATIO = 0.85;
-
 function runWindowsCommand(command, args, timeoutMs, spawnImpl) {
   return new Promise((resolve) => {
     let child;
@@ -23,9 +21,11 @@ function runWindowsCommand(command, args, timeoutMs, spawnImpl) {
     child.once('error', (error) => finish({ error }));
     child.once('close', (code, signal) => finish({ code, signal }));
     timer = setTimeout(() => {
-      try {
-        child.kill();
-      } catch {}
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill();
+        } catch {}
+      }
       finish({ error: new Error(`${command} timed out after ${timeoutMs}ms`) });
     }, timeoutMs);
   });
@@ -52,40 +52,7 @@ export async function terminateWindowsProcessTree(
   );
   if (taskkill.code === 0) return;
 
-  // Leave time after the script deadline for PowerShell to exit before its outer timeout.
-  const fallbackDeadlineMs = Math.floor(commandTimeoutMs * POWERSHELL_DEADLINE_RATIO);
-  const script = [
-    '$ErrorActionPreference = "Stop"',
-    `$rootPid = ${pid}`,
-    '$knownIds = @($rootPid)',
-    `$deadline = [DateTime]::UtcNow.AddMilliseconds(${fallbackDeadlineMs})`,
-    'do {',
-    '  $processes = @(Get-CimInstance Win32_Process)',
-    '  do {',
-    '    $previousCount = $knownIds.Count',
-    '    foreach ($process in $processes) {',
-    '      if (($knownIds -contains [int]$process.ParentProcessId) -and ($knownIds -notcontains [int]$process.ProcessId)) { $knownIds += [int]$process.ProcessId }',
-    '    }',
-    '  } while ($knownIds.Count -gt $previousCount)',
-    '  for ($index = $knownIds.Count - 1; $index -ge 0; $index--) { Stop-Process -Id $knownIds[$index] -Force -ErrorAction SilentlyContinue }',
-    '  Start-Sleep -Milliseconds 100',
-    '  $current = @(Get-CimInstance Win32_Process)',
-    '  $remaining = @($current | Where-Object { $knownIds -contains [int]$_.ProcessId -or $knownIds -contains [int]$_.ParentProcessId })',
-    '} while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)',
-    'if ($remaining.Count -gt 0) { exit 1 }',
-  ].join('\n');
-  const powerShell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const fallback = await runWindowsCommand(
-    powerShell,
-    ['-NoProfile', '-NonInteractive', '-Command', script],
-    commandTimeoutMs,
-    spawnImpl
-  );
-  if (fallback.code === 0) return;
-
-  const describeFailure = (name, result) =>
-    `${name}: ${result.error?.message ?? `exited ${result.code ?? result.signal}`}`;
-  throw new Error(
-    `Windows process-tree termination failed (${describeFailure('taskkill', taskkill)}; ${describeFailure('PowerShell fallback', fallback)})`
-  );
+  // ParentProcessId can name a reused PID; never widen a failed tree kill into PID enumeration.
+  const failure = taskkill.error?.message ?? `exited ${taskkill.code ?? taskkill.signal}`;
+  throw new Error(`Windows process-tree termination failed (taskkill: ${failure})`);
 }

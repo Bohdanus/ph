@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -21,6 +30,7 @@ function repo() {
   const root = mkdtempSync(join(tmpdir(), 'stale-auto-merge-'));
   roots.push(root);
   git(root, 'init', '-b', 'fix/recovery-test');
+  git(root, 'config', 'core.autocrlf', 'false');
   git(root, 'config', 'user.name', 'recovery test');
   git(root, 'config', 'user.email', 'recovery@example.invalid');
   writeFileSync(join(root, 'tracked.txt'), 'tracked\n');
@@ -51,6 +61,45 @@ function makeMatchingWorktree(root) {
 
 function invoke(root, args = []) {
   return spawnSync(process.execPath, [SCRIPT, ...args], { cwd: root, env, encoding: 'utf8' });
+}
+
+function invokeWithMarkerRewrite(root, args, { marker, replacementTree, rewriteOnCatFileCall = 4 }) {
+  const gitDir = git(root, 'rev-parse', '--absolute-git-dir');
+  const shimPath = join(gitDir, 'git');
+  const countPath = join(gitDir, 'recovery-test-cat-file-count');
+  const realGit = execFileSync('which', ['git'], { cwd: root, env, encoding: 'utf8' }).trim();
+  writeFileSync(
+    shimPath,
+    [
+      '#!/bin/sh',
+      `${JSON.stringify(realGit)} "$@"`,
+      'result=$?',
+      'if [ "$1" = "cat-file" ] && [ "$2" = "-t" ]; then',
+      '  count=0',
+      '  if [ -f "$AUTO_MERGE_TEST_COUNT" ]; then IFS= read -r count < "$AUTO_MERGE_TEST_COUNT"; fi',
+      '  count=$((count + 1))',
+      '  printf "%s\\n" "$count" > "$AUTO_MERGE_TEST_COUNT"',
+      '  if [ "$count" -eq "$AUTO_MERGE_TEST_REWRITE_ON" ]; then',
+      '    printf "%s\\n" "$AUTO_MERGE_TEST_TREE" > "$AUTO_MERGE_TEST_MARKER"',
+      '  fi',
+      'fi',
+      'exit "$result"',
+      '',
+    ].join('\n')
+  );
+  chmodSync(shimPath, 0o755);
+  return spawnSync(process.execPath, [SCRIPT, ...args], {
+    cwd: root,
+    env: {
+      ...env,
+      PATH: `${gitDir}:${env.PATH ?? ''}`,
+      AUTO_MERGE_TEST_COUNT: countPath,
+      AUTO_MERGE_TEST_MARKER: marker,
+      AUTO_MERGE_TEST_TREE: replacementTree,
+      AUTO_MERGE_TEST_REWRITE_ON: String(rewriteOnCatFileCall),
+    },
+    encoding: 'utf8',
+  });
 }
 
 afterEach(() => {
@@ -87,11 +136,16 @@ describe('recover-stale-auto-merge', () => {
     const indexBefore = git(root, 'write-tree');
 
     const preflight = invoke(root, ['--expected-head', head, '--preserve-matching-worktree']);
+    const recoveryRef = `refs/recovery/auto-merge/${head}/${autoMergeTree}`;
     expect(preflight.status).toBe(0);
     expect(preflight.stdout).toContain('PRESERVING-WIP PREFLIGHT');
     expect(preflight.stdout).toContain(`AUTO_MERGE tree=${autoMergeTree}`);
+    expect(preflight.stdout).toContain(`recovery-ref=${recoveryRef}`);
+    expect(git(root, 'for-each-ref', '--format=%(objectname)', recoveryRef)).toBe('');
     const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+    const contentPin = preflight.stdout.match(/worktree-content-sha256=([a-f\d]{64})/i)?.[1];
     expect(statusPin).toBeTruthy();
+    expect(contentPin).toBeTruthy();
     expect(existsSync(marker)).toBe(true);
 
     const missingPins = invoke(root, [
@@ -102,7 +156,7 @@ describe('recover-stale-auto-merge', () => {
       '--confirm-owner-stopped',
     ]);
     expect(missingPins.status).toBe(1);
-    expect(missingPins.stdout).toContain('requires both worktree pins');
+    expect(missingPins.stdout).toContain('requires all three worktree pins');
     expect(existsSync(marker)).toBe(true);
 
     const applied = invoke(root, [
@@ -113,17 +167,373 @@ describe('recover-stale-auto-merge', () => {
       autoMergeTree,
       '--expected-worktree-status-sha256',
       statusPin,
+      '--expected-worktree-content-sha256',
+      contentPin,
       '--apply',
       '--confirm-owner-stopped',
     ]);
     expect(applied.status).toBe(0);
     expect(applied.stdout).toContain('tracked work matched the marker');
+    expect(applied.stdout).toContain(`created durable tree ref ${recoveryRef}`);
     expect(existsSync(marker)).toBe(false);
     expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(git(root, 'for-each-ref', '--format=%(objectname)', recoveryRef)).toBe(autoMergeTree);
+    expect(git(root, 'cat-file', '-t', recoveryRef)).toBe('tree');
     expect(git(root, 'write-tree')).toBe(indexBefore);
     expect(git(root, 'status', '--short')).toBe(statusBefore);
     expect(readFileSync(trackedPath, 'utf8')).toBe('preserved tracked work\n');
     expect(readFileSync(untrackedPath, 'utf8')).toBe('preserved untracked work\n');
+  });
+
+  it('removes only the marker while preserving tracked work that diverges from AUTO_MERGE', () => {
+    const root = repo();
+    const { head, marker, autoMergeTree } = makeMatchingWorktree(root);
+    const trackedPath = join(root, 'tracked.txt');
+    const untrackedPath = join(root, 'untracked.txt');
+    writeFileSync(trackedPath, 'divergent tracked work\n');
+    const statusBefore = git(root, 'status', '--short');
+    const indexBefore = git(root, 'write-tree');
+
+    const preflight = invoke(root, ['--expected-head', head, '--preserve-divergent-worktree']);
+    const recoveryRef = `refs/recovery/auto-merge/${head}/${autoMergeTree}`;
+    expect(preflight.status).toBe(0);
+    expect(preflight.stdout).toContain('PRESERVING-DIVERGENT-WIP PREFLIGHT');
+    expect(preflight.stdout).toContain(`AUTO_MERGE tree=${autoMergeTree}`);
+    expect(preflight.stdout).toContain(`recovery-ref=${recoveryRef}`);
+    expect(preflight.stdout).toContain('tracked-diff-paths=1');
+    const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+    const contentPin = preflight.stdout.match(/worktree-content-sha256=([a-f\d]{64})/i)?.[1];
+    expect(statusPin).toBeTruthy();
+    expect(contentPin).toBeTruthy();
+    expect(existsSync(marker)).toBe(true);
+
+    const missingPins = invoke(root, [
+      '--expected-head',
+      head,
+      '--preserve-divergent-worktree',
+      '--apply',
+      '--confirm-owner-stopped',
+    ]);
+    expect(missingPins.status).toBe(1);
+    expect(missingPins.stdout).toContain('requires all three worktree pins');
+    expect(existsSync(marker)).toBe(true);
+
+    const applied = invoke(root, [
+      '--expected-head',
+      head,
+      '--preserve-divergent-worktree',
+      '--expected-auto-merge-tree',
+      autoMergeTree,
+      '--expected-worktree-status-sha256',
+      statusPin,
+      '--expected-worktree-content-sha256',
+      contentPin,
+      '--apply',
+      '--confirm-owner-stopped',
+    ]);
+    expect(applied.status).toBe(0);
+    expect(applied.stdout).toContain('divergent tracked work was preserved');
+    expect(applied.stdout).toContain(`created durable tree ref ${recoveryRef}`);
+    expect(existsSync(marker)).toBe(false);
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(git(root, 'for-each-ref', '--format=%(objectname)', recoveryRef)).toBe(autoMergeTree);
+    expect(git(root, 'cat-file', '-t', recoveryRef)).toBe('tree');
+    expect(git(root, 'write-tree')).toBe(indexBefore);
+    expect(git(root, 'status', '--short')).toBe(statusBefore);
+    expect(readFileSync(trackedPath, 'utf8')).toBe('divergent tracked work\n');
+    expect(readFileSync(untrackedPath, 'utf8')).toBe('preserved untracked work\n');
+  });
+
+  it('refuses divergent preserve mode when the worktree status changes after preflight', () => {
+    const root = repo();
+    const { head, marker, autoMergeTree } = makeMatchingWorktree(root);
+    writeFileSync(join(root, 'tracked.txt'), 'divergent tracked work\n');
+    const preflight = invoke(root, ['--expected-head', head, '--preserve-divergent-worktree']);
+    const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+    const contentPin = preflight.stdout.match(/worktree-content-sha256=([a-f\d]{64})/i)?.[1];
+    expect(preflight.status).toBe(0);
+    expect(statusPin).toBeTruthy();
+    expect(contentPin).toBeTruthy();
+
+    writeFileSync(join(root, 'later.txt'), 'new work after preflight\n');
+    const result = invoke(root, [
+      '--expected-head',
+      head,
+      '--preserve-divergent-worktree',
+      '--expected-auto-merge-tree',
+      autoMergeTree,
+      '--expected-worktree-status-sha256',
+      statusPin,
+      '--expected-worktree-content-sha256',
+      contentPin,
+      '--apply',
+      '--confirm-owner-stopped',
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('Worktree status changed');
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(join(root, 'tracked.txt'), 'utf8')).toBe('divergent tracked work\n');
+    expect(readFileSync(join(root, 'untracked.txt'), 'utf8')).toBe('preserved untracked work\n');
+    expect(readFileSync(join(root, 'later.txt'), 'utf8')).toBe('new work after preflight\n');
+  });
+
+  it('refuses divergent preserve mode when a modified tracked file changes without changing status', () => {
+    const root = repo();
+    const { head, marker, autoMergeTree } = makeMatchingWorktree(root);
+    const trackedPath = join(root, 'tracked.txt');
+    writeFileSync(trackedPath, 'first divergent content\n');
+    const preflight = invoke(root, ['--expected-head', head, '--preserve-divergent-worktree']);
+    const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+    const contentPin = preflight.stdout.match(/worktree-content-sha256=([a-f\d]{64})/i)?.[1];
+    expect(preflight.status).toBe(0);
+    expect(statusPin).toBeTruthy();
+    expect(contentPin).toBeTruthy();
+    const statusBefore = git(root, 'status', '--short');
+
+    writeFileSync(trackedPath, 'second divergent content\n');
+    expect(git(root, 'status', '--short')).toBe(statusBefore);
+    const result = invoke(root, [
+      '--expected-head',
+      head,
+      '--preserve-divergent-worktree',
+      '--expected-auto-merge-tree',
+      autoMergeTree,
+      '--expected-worktree-status-sha256',
+      statusPin,
+      '--expected-worktree-content-sha256',
+      contentPin,
+      '--apply',
+      '--confirm-owner-stopped',
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('Worktree content changed');
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(trackedPath, 'utf8')).toBe('second divergent content\n');
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses to unlink AUTO_MERGE if its contents change in place after the final inspection',
+    () => {
+      const root = repo();
+      const { head, marker, autoMergeTree } = makeMatchingWorktree(root);
+      const replacementTree = git(root, 'rev-parse', 'HEAD^{tree}');
+      const preflight = invoke(root, ['--expected-head', head, '--preserve-matching-worktree']);
+      const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+      const contentPin = preflight.stdout.match(/worktree-content-sha256=([a-f\d]{64})/i)?.[1];
+      expect(preflight.status).toBe(0);
+      expect(statusPin).toBeTruthy();
+      expect(contentPin).toBeTruthy();
+
+      const result = invokeWithMarkerRewrite(
+        root,
+        [
+          '--expected-head',
+          head,
+          '--preserve-matching-worktree',
+          '--expected-auto-merge-tree',
+          autoMergeTree,
+          '--expected-worktree-status-sha256',
+          statusPin,
+          '--expected-worktree-content-sha256',
+          contentPin,
+          '--apply',
+          '--confirm-owner-stopped',
+        ],
+        { marker, replacementTree }
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('AUTO_MERGE changed after preflight');
+      expect(existsSync(marker)).toBe(true);
+      expect(readFileSync(marker, 'utf8')).toBe(`${replacementTree}\n`);
+      expect(
+        git(root, 'for-each-ref', '--format=%(objectname)', `refs/recovery/auto-merge/${head}/${autoMergeTree}`)
+      ).toBe(autoMergeTree);
+    }
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses preserved WIP if an untracked file mode changes after preflight',
+    () => {
+      const root = repo();
+      const { head, marker, autoMergeTree } = makeMatchingWorktree(root);
+      const untrackedPath = join(root, 'untracked.txt');
+      const preflight = invoke(root, ['--expected-head', head, '--preserve-matching-worktree']);
+      const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+      const contentPin = preflight.stdout.match(/worktree-content-sha256=([a-f\d]{64})/i)?.[1];
+      expect(preflight.status).toBe(0);
+      expect(statusPin).toBeTruthy();
+      expect(contentPin).toBeTruthy();
+      const statusBefore = git(root, 'status', '--porcelain=v2', '--untracked-files=all');
+
+      chmodSync(untrackedPath, 0o755);
+      expect(git(root, 'status', '--porcelain=v2', '--untracked-files=all')).toBe(statusBefore);
+      const result = invoke(root, [
+        '--expected-head',
+        head,
+        '--preserve-matching-worktree',
+        '--expected-auto-merge-tree',
+        autoMergeTree,
+        '--expected-worktree-status-sha256',
+        statusPin,
+        '--expected-worktree-content-sha256',
+        contentPin,
+        '--apply',
+        '--confirm-owner-stopped',
+      ]);
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('Worktree content changed');
+      expect(existsSync(marker)).toBe(true);
+      expect(readFileSync(untrackedPath, 'utf8')).toBe('preserved untracked work\n');
+    }
+  );
+
+  it('refuses untracked-only work when AUTO_MERGE differs from HEAD', () => {
+    const root = repo();
+    const { head, marker } = makeMarker(root);
+    writeFileSync(join(root, 'tracked.txt'), 'marker tree only\n');
+    git(root, 'add', 'tracked.txt');
+    const markerTree = git(root, 'write-tree');
+    git(root, 'reset', '--mixed', head);
+    git(root, 'checkout', '--', 'tracked.txt');
+    writeFileSync(marker, `${markerTree}\n`);
+    writeFileSync(join(root, 'untracked.txt'), 'untracked only\n');
+
+    const result = invoke(root, ['--expected-head', head, '--preserve-divergent-worktree']);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('requires the same unstaged tracked path to differ from both HEAD and AUTO_MERGE');
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(join(root, 'tracked.txt'), 'utf8')).toBe('tracked\n');
+    expect(readFileSync(join(root, 'untracked.txt'), 'utf8')).toBe('untracked only\n');
+  });
+
+  it('refuses divergent WIP when its HEAD and AUTO_MERGE differences are on disjoint paths', () => {
+    const root = repo();
+    writeFileSync(join(root, 'other.txt'), 'base other\n');
+    git(root, 'add', 'other.txt');
+    git(root, 'commit', '-m', 'add second tracked path');
+    const { head, marker } = makeMarker(root);
+
+    writeFileSync(join(root, 'tracked.txt'), 'marker tracked\n');
+    writeFileSync(join(root, 'other.txt'), 'worktree tracked\n');
+    git(root, 'add', 'tracked.txt', 'other.txt');
+    const autoMergeTree = git(root, 'write-tree');
+    git(root, 'reset', '--mixed', head);
+    writeFileSync(join(root, 'tracked.txt'), 'tracked\n');
+    writeFileSync(marker, `${autoMergeTree}\n`);
+
+    const result = invoke(root, ['--expected-head', head, '--preserve-divergent-worktree']);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('requires the same unstaged tracked path to differ from both HEAD and AUTO_MERGE');
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(join(root, 'tracked.txt'), 'utf8')).toBe('tracked\n');
+    expect(readFileSync(join(root, 'other.txt'), 'utf8')).toBe('worktree tracked\n');
+  });
+
+  it('refuses to pin an invalid UTF-8 untracked path on Linux', () => {
+    if (process.platform !== 'linux') return;
+    const root = repo();
+    const { head, marker } = makeMatchingWorktree(root);
+    writeFileSync(join(root, 'tracked.txt'), 'divergent tracked work\n');
+    const invalidPath = Buffer.concat([Buffer.from(join(root, 'invalid-')), Buffer.from([0xff])]);
+    writeFileSync(invalidPath, 'untracked bytes\n');
+
+    const result = invoke(root, ['--expected-head', head, '--preserve-divergent-worktree']);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('invalid UTF-8 encoding');
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(join(root, 'tracked.txt'), 'utf8')).toBe('divergent tracked work\n');
+    expect(readFileSync(invalidPath, 'utf8')).toBe('untracked bytes\n');
+  });
+
+  it('does not write Git objects while preflighting preserved file content', () => {
+    const root = repo();
+    const { head } = makeMatchingWorktree(root);
+    writeFileSync(join(root, 'tracked.txt'), 'divergent tracked work\n');
+    const objectsBefore = git(root, 'count-objects', '-v').match(/^count: (\d+)$/m)?.[1];
+
+    const result = invoke(root, ['--expected-head', head, '--preserve-divergent-worktree']);
+
+    const objectsAfter = git(root, 'count-objects', '-v').match(/^count: (\d+)$/m)?.[1];
+    expect(result.status).toBe(0);
+    expect(objectsBefore).toBeTruthy();
+    expect(objectsAfter).toBe(objectsBefore);
+  });
+
+  it('reuses an exact existing durable tree ref and refuses a mismatched one', () => {
+    const root = repo();
+    const { head, marker, autoMergeTree } = makeMatchingWorktree(root);
+    const ref = `refs/recovery/auto-merge/${head}/${autoMergeTree}`;
+    git(root, 'update-ref', ref, autoMergeTree);
+    const preflight = invoke(root, ['--expected-head', head, '--preserve-matching-worktree']);
+    const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+    const contentPin = preflight.stdout.match(/worktree-content-sha256=([a-f\d]{64})/i)?.[1];
+    expect(preflight.status).toBe(0);
+
+    const applied = invoke(root, [
+      '--expected-head',
+      head,
+      '--preserve-matching-worktree',
+      '--expected-auto-merge-tree',
+      autoMergeTree,
+      '--expected-worktree-status-sha256',
+      statusPin,
+      '--expected-worktree-content-sha256',
+      contentPin,
+      '--apply',
+      '--confirm-owner-stopped',
+    ]);
+    expect(applied.status).toBe(0);
+    expect(applied.stdout).toContain(`verified durable tree ref ${ref}`);
+    expect(git(root, 'for-each-ref', '--format=%(objectname)', ref)).toBe(autoMergeTree);
+    expect(existsSync(marker)).toBe(false);
+
+    const collisionRoot = repo();
+    const collision = makeMatchingWorktree(collisionRoot);
+    const collisionRef = `refs/recovery/auto-merge/${collision.head}/${collision.autoMergeTree}`;
+    git(collisionRoot, 'update-ref', collisionRef, git(collisionRoot, 'rev-parse', 'HEAD^{tree}'));
+    const refused = invoke(collisionRoot, ['--expected-head', collision.head, '--preserve-matching-worktree']);
+    expect(refused.status).toBe(1);
+    expect(refused.stdout).toContain(`Recovery ref ${collisionRef} points to`);
+    expect(existsSync(collision.marker)).toBe(true);
+  });
+
+  it('pins multi-chunk untracked asset contents before preserving a worktree', () => {
+    const root = repo();
+    const { head, marker, autoMergeTree } = makeMatchingWorktree(root);
+    const assetPath = join(root, 'large-asset.psd');
+    const originalAsset = Buffer.alloc(256 * 1024 + 17, 0x5a);
+    writeFileSync(assetPath, originalAsset);
+
+    const preflight = invoke(root, ['--expected-head', head, '--preserve-matching-worktree']);
+    const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+    const contentPin = preflight.stdout.match(/worktree-content-sha256=([a-f\d]{64})/i)?.[1];
+    expect(preflight.status).toBe(0);
+    expect(statusPin).toBeTruthy();
+    expect(contentPin).toBeTruthy();
+
+    const changedAsset = Buffer.from(originalAsset);
+    changedAsset[changedAsset.length - 1] ^= 0xff;
+    writeFileSync(assetPath, changedAsset);
+    const applied = invoke(root, [
+      '--expected-head',
+      head,
+      '--preserve-matching-worktree',
+      '--expected-auto-merge-tree',
+      autoMergeTree,
+      '--expected-worktree-status-sha256',
+      statusPin,
+      '--expected-worktree-content-sha256',
+      contentPin,
+      '--apply',
+      '--confirm-owner-stopped',
+    ]);
+
+    expect(applied.status).toBe(1);
+    expect(applied.stdout).toContain('Worktree content changed');
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(assetPath)).toEqual(changedAsset);
   });
 
   it('refuses preserved WIP if the status pin changes after preflight', () => {
@@ -131,8 +541,10 @@ describe('recover-stale-auto-merge', () => {
     const { head, marker, autoMergeTree } = makeMatchingWorktree(root);
     const preflight = invoke(root, ['--expected-head', head, '--preserve-matching-worktree']);
     const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+    const contentPin = preflight.stdout.match(/worktree-content-sha256=([a-f\d]{64})/i)?.[1];
     expect(preflight.status).toBe(0);
     expect(statusPin).toBeTruthy();
+    expect(contentPin).toBeTruthy();
 
     writeFileSync(join(root, 'later.txt'), 'new work after preflight\n');
     const result = invoke(root, [
@@ -143,6 +555,8 @@ describe('recover-stale-auto-merge', () => {
       autoMergeTree,
       '--expected-worktree-status-sha256',
       statusPin,
+      '--expected-worktree-content-sha256',
+      contentPin,
       '--apply',
       '--confirm-owner-stopped',
     ]);
@@ -181,6 +595,15 @@ describe('recover-stale-auto-merge', () => {
     expect(result.stdout).toContain('Tracked worktree differs from AUTO_MERGE tree');
     expect(existsSync(marker)).toBe(true);
     expect(readFileSync(join(root, 'tracked.txt'), 'utf8')).toBe('changed after AUTO_MERGE\n');
+  });
+
+  it('requires divergent preserve mode to contain an actual tracked difference from AUTO_MERGE', () => {
+    const root = repo();
+    const { head, marker } = makeMatchingWorktree(root);
+    const result = invoke(root, ['--expected-head', head, '--preserve-divergent-worktree']);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('requires tracked work that differs from AUTO_MERGE');
+    expect(existsSync(marker)).toBe(true);
   });
 
   it.each(

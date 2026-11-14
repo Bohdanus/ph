@@ -23,6 +23,8 @@ export function normalizeColorsToolArgs(args: ColorsToolArgs): ColorsToolArgs {
 export const colors =
   ({ bitmap, size }: ProcessorToolParams) =>
   (args: ColorsToolArgs) => {
+    if (!bitmap) throw new Error('Color tool requires a source bitmap');
+
     requireCanvasFilter('color');
     const normalizedArgs = normalizeColorsToolArgs(args);
 

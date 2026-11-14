@@ -87,177 +87,22 @@ Playwright UI mode returns before `globalSetup`, so the in-process guard cannot 
 window. `npm run test:e2e:headed` is the supported operator opt-in; agents use
 `npm run test:e2e`.
 
-## P2 — `boundingBox()` is viewport-relative and a CDP capture clip is page-relative
-
-`e2e/helpers/screenshot-scale.ts` — `viewportRectToPageRect()`, `e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`
-
-The hazard, for whoever refactors this next. `Locator.boundingBox()` measures against
-the VIEWPORT and goes negative the moment the page scrolls, and `page.mouse` shares
-that space. But `page.screenshot({ clip })` and CDP `Page.captureScreenshot`, which
-this suite calls directly, take their clip against the DOCUMENT origin. The two take
-**opposite** conventions from each other for the same numbers: Playwright takes a
-viewport clip and adds the scroll offset itself, so converting there moves the clip
-the wrong way; raw CDP takes a page clip, so converting nothing moves the capture away
-from the region the caller measured. Neither direction throws. A clip derived from a
-scrolled `boundingBox()` and handed to CDP untranslated either returns the wrong region
-or lands off-canvas, where the failure surfaces as `Clipped area is either empty or
-outside the resulting image` and reads as a capture bug rather than a coordinate bug.
-
-**This app no longer scrolls, so the numbers in the original version of this entry no
-longer describe it.** An earlier version opened "The app is taller than Playwright's
-720px window, so the window scrolls… a canvas scrolled 440px down reports `y: -340`
-where it reported `y: 100` before" — measured, that was true of a layout that no longer
-exists. The shell is now exactly viewport-tall at every size in
-`e2e/no-document-overflow.spec.ts`'s matrix, so `getPageScroll` returns `{0, 0}`,
-`boundingBox()` is not negative, and `preservingScroll` has nothing to undo. The
-hazard above is kept because it is about the two conventions disagreeing, which is a
-property of Playwright and CDP rather than of this app, and the same class of bug
-returns the moment anything is allowed to scroll the document again.
-
-**The helper-level fix is done, and it is recorded here so a refactor does not
-undo it.** The conversion is the pure function `viewportRectToPageRect()`
-(`screenshot-scale.ts`), it is applied **at the CDP site only** — inside
-`captureCanvasScreenshot()` in `cdp-helpers.ts`, not in the callers — the scroll
-offset is read per capture rather than cached (`getPageScroll()` in
-`canvas-helpers.ts` — the offset is a live read because a page that scrolls can
-scroll again between captures, whatever currently makes it scroll), and the rule is
-unit-tested for a non-zero offset by `describe('viewportRectToPageRect')` in
-`e2e/helpers/__tests__/screenshot-scale.unit.test.ts`. That unit test is the
-load-bearing part now: it is the only coverage of the non-zero-offset case, since the
-app cannot produce one.
-
-What is left is a rule for new code: a spec that mixes `boundingBox()` with a CDP
-capture must not assume the two agree, and must not introduce a second conversion
-somewhere that already has one.
-
-## P3 — transparent pixels weighted as fully opaque (low confidence)
-
-`dominantRed()` and `getColorAtPoint()` in `e2e/helpers/canvas-helpers.ts` **[pinned]**
-
-`dominantRed` and `getColorAtPoint` skip only `alpha === 0`, so a nearly
-invisible pixel counts at full weight. A weighting concern rather than a
-correctness bug, and the only helper that reports the colour back to the caller.
-They are the two places the distinction bites hardest, because the other two
-`alpha === 0` filters, in `hasDarkPixels()` and `hasRedPixels()`, answer a yes/no
-question where one nearly-invisible pixel is the same as one
-opaque one. The other half of the file, `getDarkPixelBounds()` and
-`getSelectionBounds()`, filters on `a !== 0` instead — a different question
-asked with a boolean rather than a weight.
-
-## P2 — the letterbox is still read as ink by two predicates and by two of the four cell colours
-
-`e2e/helpers/canvas-helpers.ts` — `hasDarkPixels()`, `getDarkPixelBounds()` and `isLetterboxCell()`
-
-The workspace canvas sits on a 20px checkerboard chosen from the resolved theme:
-`#f3f3f3` over `#fff` for light and `#121212` over `#000` for dark
-(`.chessboard-light` and `.chessboard-dark` in `src/index.scss`, switched by `renderContent()`'s
-workspace-canvas `className` in `src/components/Main/Main.tsx`). The document is contained inside it
-with a centred letterbox, so a clip that is not derived from the contain fit can straddle that
-checkerboard.
-
-`isLetterboxCell` excludes the two exact RGB triples `LETTERBOX_LIGHT_CELL` and
-`LETTERBOX_DARK_CELL`, and it is applied inside `getStrokeAnalysis` only. Two things
-remain:
-
-1. **The exclusion is two colours, and the checkerboard is four.** `#000` gaps and the
-   anti-aliased cell edges between the two cells are still classified as ink, so a
-   `getStrokeAnalysis` clip straddling the dark letterbox can still report segments and
-   a vertical spread it did not draw.
-2. **`hasDarkPixels` and `getDarkPixelBounds` are not letterbox-aware at all.** Under
-   the dark theme their threshold is satisfied by `#121212` and `#000` alone, so a wait
-   on either can be satisfied by a clip containing no stroke.
-
-**The app-theme precondition is enforced by the shared test fixture, not by
-`colorScheme`.** `e2e/fixtures/extended-test.ts` seeds `localStorage.theme` to `light` in a
-fresh context, and `extended-fixture.unit.test.ts` plus
-`pinned-theme-payload.unit.test.ts` guard that behavior. Playwright's `colorScheme` option
-only sets `prefers-color-scheme`; `ThemeContext` no longer reads that query. A test that
-switches the app to dark and then passes a capture containing workspace backdrop to one of
-these color-only helpers can still wrong-pass. `canvasRedrawClip` keeps the standard stroke
-clip inside the document; review custom clips in any dark-theme test separately. Setting
-`colorScheme: 'dark'` alone does not select the app's dark theme.
-
-Pinned by the `#000`-wash case
-`it('reads a pure #000 capture as ink, so the dark theme's gaps are the residual it leaves')`
-in `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts`, which asserts that a
-full black capture classifies as `{type: 'spray'}` on purpose. A fix removes that pin
-in the same change.
-
-Do not widen RGB thresholds to hide the residual: the dark checkerboard's `#000` gaps are
-the same color as the app's default black ink. A generic backdrop-aware fix needs spatial
-context (at least the resolved theme, capture origin and scale, and document bounds or a
-backdrop mask) so it can exclude backdrop by position without excluding black ink in the
-document. Otherwise, keep dark-theme captures out of color-only helper calls. Regression
-coverage for a future fix must retain true `#000` document ink while excluding dark cells,
-dark gaps, and antialiased checkerboard edges.
-
-## P2 — a CDP capture intermittently returns a screenshot of a page 87px shorter than the one measured
-
-`e2e/helpers/cdp-helpers.ts`
-
-**Signature.** `captureCanvasScreenshot` returns a plausible image of a page that is not the one
-the caller measured. In a 700px window, `window.innerHeight` reported 700 before the call and 613
-after; in a 900px window, 900 before and 813 after. **The same 87px both times**, with the capture
-the only thing between the two readings. The box before was 844x563 and after 844x476 — width and
-origin unchanged, height alone. The image looks correct, so nothing downstream can tell; the
-caller maps a stroke it measured under the old layout through the new one and the mismatch reads
-as a geometry bug in the app.
-
-**How it was found, and what it is not.** `e2e/viewport-drawing.spec.ts` reported a 32.5px /
-31.05px line-vs-cursor error at the `wide` viewport, which predicted the 763→676 box change
-exactly. The obvious suspect was the rail's new width, and that was wrong: measured per viewport,
-all three windows are **height-limited** (the fit never crosses modes, and width-limited at `wide`
-would need a 970px-tall window), the app's pointer→document mapping
-(`getLocalCoords()` in `src/hooks/usePointerPosition.ts`) and its `object-contain` paint agree
-exactly in CSS space, and painting the app's own document point back through its own fit returns
-the cursor to the decimal. The residual 3–5.5px is the brush's half-width. So the mapping is
-self-consistent and the geometry is fine; the capture is the liar.
-
-**Not fixed.** `captureBeyondViewport: false` is now passed explicitly, which is the documented
-scope and the obvious suspect, and it did **not** eliminate the drift: 1 failure in 15 repeats
-with it set. Across **50 controlled captures at a fixed viewport the drift did not reproduce at
-all** — not once through the full sequence (load, select draw, `drawLine`, `waitForCanvasRedraw`,
-marker injection, capture), which is what makes it a race rather than a scope problem, and why
-the CDP mechanism is still open. Settling it needs native tracing (`--trace` on a run that
-reproduces, or CDP tracing around the call), not more attempts to reproduce it in a loop.
-
-**What is done about the reporting.** `e2e/viewport-drawing.spec.ts` now re-measures the box
-across the capture and fails with _"the capture is of a DIFFERENT page than the one that was
-measured, so every offset below is meaningless"_ plus both boxes. That guard fired on the real
-drift during a 10x repeat run, so it is not theoretical. Before it, the same drift surfaced as a
-32.5px app geometry error, which would have sent the next agent to the drawing engine.
-
-**Do not "fix" this by widening a tolerance.** The same spec's tolerance is now DERIVED from the
-stroke's own geometry — `(lineWidth / 2) x containFit(box).scale + 2`, which is 6.7–8.4px and
-roughly a third of the fixed 25px it replaced — and there is a control asserting the widest
-derived tolerance stays below 25 so a later edit cannot silently re-widen it.
-
 ## Known-skip tests
 
-Two specs are `test.skip` by declaration:
+One spec is `test.skip` by declaration:
 
 - `e2e/export/photopea.spec.ts` — its `test.skip('exports to PSD and verifies in Photopea')`
   declaration. Round-trips through the external photopea.com, so it cannot run offline or in
   a sandboxed CI.
-- `e2e/viewport-drawing.spec.ts` — its unconditional `test.skip(true, …)` on the test
-  titled `line stays under cursor after window resize (normal, wide and narrow)`. Its
-  declaration's own reason is the intermittent CDP capture drift that `TEST-FLAKES.md`
-  §12 still records as open, behind an operator decision dated 2026-09-29.
 
 ## Still unverified
 
 **Not verified:**
 
-- A headed run of the whole suite. It was never re-measured here, and
-  `AGENTS.md` forbids it. The CDP fix removes the only headed-failing group and is
-  written to be mode-independent, so headed is expected to be green too — but that
-  is an inference from the assertions' shape, not a measurement. The operator-input
-  hazard that made headed runs untrustworthy is also why: a headed green run here
-  would not be strong evidence.
-- Whether the CDP capture scale reproduces on CI's headless Linux runner, a third
-  configuration never observed directly. It no longer matters for correctness — the
-  assertions no longer name a scale — but it is why the helper's comment still
-  describes the capture as "native device pixels" rather than a known factor.
+- A headed run of the whole suite. It was never measured here, and `AGENTS.md`
+  forbids it. The helper now uses Playwright's screenshot API, but its headed behavior
+  has not been measured. The operator-input hazard also makes a headed green run weak
+  evidence.
 - Any operator-input-caused failure. None has ever been reproduced here; the
   headless default is preventive.
 - The pixel baselines are verified against a **dev-server** build, because
@@ -464,54 +309,37 @@ Separately, `check-dpr.spec.ts`
 has test-scoped coverage at device scale factors 1 and 2, but the full suite is not 2x-clean as
 described below.
 
-This was raised against the review with a precondition attached: enabling a 2x project
-before `getStrokeAnalysis` was DPI-relative "trades a coverage gain for three new failure
-modes". **That precondition is now met for the stroke classifier** — its thresholds are
-CSS-pixel counts, the captured region is a required argument, and no call site can be
-DPI-blind. Two point-sampling specs that were in exactly that class (`levels.spec.ts`,
-`adjustments.spec.ts`) were CSS-pixel samples over a device-scaled capture, and are fixed
-here.
+**The suite as a whole is still not 2x-clean, and an earlier version of this entry claimed it was.**
+A full diagnostic forced `projects[].use.deviceScaleFactor` to 2 (project-level `use` overrides the
+top-level setting) with a temporary config, on code commit
+`de7bab05ff69c309b0087ff0cfd0b90bfe96e475`, run `2026-11-11T21-30-35-667Z-12916`. Of 689 tests,
+612 passed, 76 failed, and 1 was skipped. The failures span 21 spec files: the largest groups are
+`crop-history.spec.ts` (18), `export/visual-regression.spec.ts` (9),
+`single-row-column-marquee.spec.ts` (8), `color-sampler.spec.ts` (7), and
+`selection-gestures.spec.ts` (6); the other 28 failures span 16 specs. This supersedes the old
+256-pass/6-fail/2-skip measurement. The temporary config was diagnostic only; no permanent 2x
+project was added. The full suite has not been rerun. The export visual-regression spec passes all 13
+tests at 1x in run `2026-11-12T08-35-28-156Z-8469` and at 2x in run
+`2026-11-12T08-36-06-558Z-9702`; its nine failures in the initial focused 2x run are the same nine
+counted among the 45 previously unverified failures; the other four tests were already passing.
+After syncing the candidate with `main` at `d41be428`, combined focused runs pass all 33 tests
+across `single-row-column-marquee.spec.ts`, `color-sampler.spec.ts`, and
+`selection-gestures.spec.ts` at 1x (`2026-11-12T10-40-12-370Z-17587`) and at 2x
+(`2026-11-12T10-41-16-277Z-19355`). Each spec contributes 11 passing tests at both scales. The
+original diagnostic attributed eight, seven, and six failures to those three specs respectively;
+together with the nine export failures, these focused results clear 30 of the 45 previously
+unverified failures. The other 15 from that historical diagnostic remain unverified. This remainder
+is not a current full-suite result, and these scoped checks do not establish that the suite is
+2x-clean.
 
-**The suite as a whole is still not 2x-clean, and an earlier version of this entry
-claimed it was.** A prior run with `projects[].use.deviceScaleFactor` forced to 2 (the
-project-level `use` overrides the top-level one, so setting it at the top does nothing)
-measured 256 pass, 6 fail, 2 skipped. Its reported failures were
+Some test-scoped touch/mobile cases exist, but there is no dedicated project and coverage remains
+sparse across controls and gestures. Adding a project multiplies every run's cost and is a coverage
+decision, not a one-line change to `playwright.config.ts`.
 
-- `e2e/helpers/cdp-helpers.spec.ts` — the
-  `describe('captureCanvasScreenshot at an emulated deviceScaleFactor of 2')` block, which
-  exercises capture behavior under an emulated 2x device scale factor.
-- `e2e/erase-fill-eyedropper.spec.ts` — `the eyedropper sample size averages the clicked block`;
-  an eyedropper block average over a fixed-size sample, in image pixels.
-- `e2e/keyboard-shortcuts.spec.ts` and `e2e/responsive-shell.spec.ts` — one test each, which this
-  entry does not name.
-
-The reported `color-helpers.spec.ts` failure was not reproduced in a focused run. That spec now
-sets `deviceScaleFactor: 2` and the swatch test asserts that `window.devicePixelRatio` is actually 2;
-`npm run test:e2e:verbose -- e2e/helpers/color-helpers.spec.ts` passed all seven tests in run
-`2026-11-02T08-51-16-969Z-95889` against code commit
-`6a1cbe6cf9a1f6e6fccc94eb9f8a148cef0b73e7`. This focused result removes that test from the
-unresolved list; it does not revalidate the other failures or the old whole-suite totals.
-
-The full suite has not been remeasured at 2x since that run, so the current failure count is
-unknown. Some test-scoped touch/mobile cases exist, but there is no dedicated project and coverage
-remains sparse across controls and gestures. Adding a project multiplies every run's cost and is a
-coverage decision, not a one-line change to `playwright.config.ts`.
-
-`e2e/check-dpr.spec.ts` also asserts that the four presentation canvases' backing-store
-width and height equal the document dimensions multiplied by the expected device scale
-factor, at both 1x and 2x. Its `toleranceFor` assertion checks that a drawn line lands near
-the cursor using `imageBoundsToCss`, which is scale-agnostic by construction;
-the backing-store assertions, not the screenshot mapping, detect a mismatch at those two
-tested scale factors. The two export checks that read the store — `the export is independent
-of the shell layout` in
-`e2e/export/visual-regression.spec.ts`, and `setupExportTest()`'s backing-store read in
-`e2e/export/helpers.ts` — assert it is the DOCUMENT size, which is the correct invariant for
-export and says nothing about presentation. Broader high-DPI coverage remains open: these
-checks do not make the full suite 2x-clean, nor do they exercise mobile/touch input. The
-app side, and the app work that has to land first, is in
-`CANVAS-RESOLUTION-PLAN.md`. The display/export decoupling that used to gate raising the display
-resolution is done: export renders its own surface from `(layers, size, documentFrame)` in
-`src/contexts/export-canvas.ts` and no longer reads the visible canvas.
+`e2e/check-dpr.spec.ts` covers presentation-canvas backing dimensions at 1x and 2x, but broader
+HiDPI coverage remains open: those checks do not establish that the full suite is 2x-clean or
+exercise mobile/touch input. The focused run IDs above verify only their named specs; they do not
+replace a full-suite rerun.
 
 ## P3 — re-verification: the tablet band's option-row floor is no longer the panel's measured width
 
@@ -615,3 +443,17 @@ and **is not a defect here**:
   correct and every gate was passing in every one of them. A test suite that only fails
   on behaviour will not find this class, and a comment that over-credits what an
   assertion proves is invisible to `tsc`, to `eslint` and to a passing run.
+
+- **A prior P3 report treated raw partial-alpha samples as visible screenshot colors.** The
+  app-facing call sites of these sampling helpers use Playwright page screenshots or fully
+  opaque synthetic `ImageData`. The screenshot callers use Playwright's default
+  `omitBackground: false` and already contain the rendered composite (see the
+  [Playwright page API](https://playwright.dev/docs/api/class-page));
+  `file-roundtrip.spec.ts`'s `makeStroke` fixture sets every alpha byte to 255. The helper
+  integration spec `getColorAtPoint handles alpha channels (partial transparency)` also
+  creates a half-alpha offscreen PNG, but asserts only that the raw sample is present. The
+  alpha-1 counterexamples did not demonstrate a wrong-pass in an app-facing oracle. The helper
+  contract is raw-sample based: alpha zero means absent, any other alpha means present, and
+  stored RGB is not recomposited. Callers that need rendered color from a transparent raster
+  must composite against the intended backdrop first. The contract and tests now state that
+  explicitly.
