@@ -394,8 +394,11 @@ process.exitCode = 1;`
     ['output overflow after the terminal event', { inputError: false, hang: false, overflow: true }],
     ['an underscore content-filter terminal', { inputError: false, hang: false, reason: 'content_filter' }],
   ])('fails closed for a Kilo content-filter terminal after %s', async (_scenario, options) => {
+    const childPid = 4242;
+    const terminateWindowsProcessTreeImpl = vi.fn().mockResolvedValue(undefined);
     const spawnImpl = () => {
       const child = new EventEmitter();
+      child.pid = childPid;
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.stdin = new EventEmitter();
@@ -418,12 +421,18 @@ process.exitCode = 1;`
         model: 'model:free',
         prompt: 'prompt',
         timeoutMs: options.hang ? 20 : 1000,
+        platform: 'win32',
+        terminateWindowsProcessTreeImpl,
         spawnImpl,
       })
     ).resolves.toEqual({
       error: 'Kilo provider content policy rejected or filtered this request',
       contentPolicyRejected: true,
     });
+    expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledTimes(options.hang || options.overflow ? 1 : 0);
+    if (options.hang || options.overflow) {
+      expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(childPid);
+    }
   });
 
   it('prioritizes a policy rejection over a tool-activity error', async () => {
@@ -551,7 +560,14 @@ process.exitCode = 1;`
     };
 
     await expect(
-      runKiloCompletion({ command: process.execPath, model: 'model:free', prompt: 'prompt', timeoutMs: 25, spawnImpl })
+      runKiloCompletion({
+        command: process.execPath,
+        model: 'model:free',
+        prompt: 'prompt',
+        timeoutMs: 25,
+        platform: 'linux',
+        spawnImpl,
+      })
     ).resolves.toEqual({
       error: 'Kilo reported non-zero or invalid completion cost',
       exhaustSource: true,
