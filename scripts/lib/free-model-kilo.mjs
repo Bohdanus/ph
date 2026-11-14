@@ -349,6 +349,7 @@ export async function runKiloCompletion({
         let timer;
         let childClosed = false;
         let terminationError = null;
+        let terminationKillError = null;
         const cleanup = () => {
           clearTimeout(timer);
           clearTimeout(killTimer);
@@ -404,7 +405,9 @@ export async function runKiloCompletion({
                 if (!childClosed && child.exitCode == null && child.signalCode == null) {
                   try {
                     child.kill('SIGKILL');
-                  } catch {}
+                  } catch (killError) {
+                    terminationKillError = killError;
+                  }
                   killTimer = setTimeout(() => {
                     if (settled) return;
                     const bufferedEvents = parseEvents(Buffer.concat(chunks).toString('utf8')).events;
@@ -416,8 +419,11 @@ export async function runKiloCompletion({
                     const reportedContentPolicy = contentPolicyRejected(bufferedEvents, stderrText);
                     settled = true;
                     cleanup();
+                    const cause = terminationKillError
+                      ? new AggregateError([error, terminationKillError], 'Kilo process termination failed')
+                      : error;
                     reject(
-                      Object.assign(new Error('Kilo process-tree termination failed', { cause: error }), {
+                      Object.assign(new Error('Kilo process-tree termination failed', { cause }), {
                         code: 'KILO_PROCESS_TREE',
                         reportedCost,
                         contentPolicyRejected: reportedContentPolicy,
@@ -468,8 +474,12 @@ export async function runKiloCompletion({
         child.stdin.on('error', () => {
           inputError = true;
         });
-        child.once('error', () => {
+        child.once('error', (error) => {
           if (settled) return;
+          if (stopping && terminationError) {
+            terminationKillError = error;
+            return;
+          }
           settled = true;
           cleanup();
           reject(Object.assign(new Error('Kilo CLI could not be started'), { code: 'KILO_SPAWN' }));

@@ -1,5 +1,5 @@
 import type { Point } from '../contexts/general-types.ts';
-import type { ProcessorToolParams } from './toolProcessors.ts';
+import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
 export type FeatherMagneticLassoToolArgs = {
   points?: Point[];
@@ -65,6 +65,4 @@ export function magneticLassoAnchorSpan(frequency: number): number {
 
 export const featherMagneticLasso =
   ({ bitmap }: ProcessorToolParams) =>
-  () => {
-    return [bitmap];
-  };
+  (): ToolResult => [bitmap];

@@ -967,27 +967,18 @@ describe('stampBrushStroke', () => {
   });
 });
 
-describe('fail-closed tripwires (known gaps this hardens)', () => {
-  // Each block below asserts the behaviour we WANT from a missing input guard. It is
-  // wrapped in `it.fails` so it stays green while the gap is open; the moment the guard
-  // lands and the assertion starts passing, `it.fails` flips and the tripwire reports an
-  // unexpected pass, which is the signal to delete it. They are grouped so they are found
-  // and retired together rather than left to accumulate as silent green.
-  it.fails('returns 0 for a non-finite distance instead of reading NaN/Infinity into the coverage', () => {
-    // -Infinity currently slips past `distance < radius` and falls inside the core, reading
-    // as 1 coverage; NaN and +Infinity are already 0. Once distance is guarded, all three
-    // must be 0 and this tripwire turns red.
-    expect(tipAlphaAt(Number.NaN, 6, 50)).toBe(0);
-    expect(tipAlphaAt(Number.POSITIVE_INFINITY, 6, 50)).toBe(0);
-    expect(tipAlphaAt(Number.NEGATIVE_INFINITY, 6, 50)).toBe(0);
-  });
+describe('non-finite tip geometry', () => {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'returns zero for non-finite distance %s',
+    (distance) => {
+      expect(tipAlphaAt(distance, 6, 50)).toBe(0);
+    }
+  );
 
-  it.fails('returns 0 for a non-finite radius instead of covering the whole plane', () => {
-    // An infinite radius currently makes every distance `<= core`, so a +Infinity radius
-    // stamps full coverage everywhere. NaN and -Infinity are already 0; guarding radius
-    // to `> 0` will make +Infinity 0 too and flip this to an unexpected pass.
-    expect(tipAlphaAt(3, Number.NaN, 50)).toBe(0);
-    expect(tipAlphaAt(3, Number.POSITIVE_INFINITY, 50)).toBe(0);
-    expect(tipAlphaAt(3, Number.NEGATIVE_INFINITY, 50)).toBe(0);
-  });
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'returns zero for non-finite radius %s',
+    (radius) => {
+      expect(tipAlphaAt(3, radius, 50)).toBe(0);
+    }
+  );
 });
