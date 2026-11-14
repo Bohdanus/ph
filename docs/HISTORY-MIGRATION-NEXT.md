@@ -5,6 +5,45 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
+## Latest continuation reconciliation — 2026-11-14 17:33 UTC
+
+The designated local `main` worktree `.kilo/worktrees/landing-main-recovered-20261112` is clean at
+`422f28a67f784eab8ecdb0232b3503df52d80d2f`. The migration task has already been synced to that pin:
+sync commit `ac81869b3706ff6ae8dfe3d5aaf54358c7e04726` has first parent
+`47cbfdc3a01a0a09b1257fbc56e20571d9af68ab` and second parent
+`422f28a67f784eab8ecdb0232b3503df52d80d2f`; its reviewed tree was
+`18e1b9ae5be8c72162ca845ad4674c48e791d1c5`. A final candidate review caught stale text below and
+in the continuation plan that still instructed a future sync. This section and the plan's live
+status supersede the 14:40 and 16:43 snapshots; all earlier reconciliation sections are historical.
+The documentation correction descends from the sync commit; a fresh read-only follow-up found no
+remaining stale sync instruction. Fetch the exact final branch tip/tree and recheck landing
+preconditions before using the pinned wrapper. Do not perform another sync against the same main
+pin.
+
+After the sync, focused Chrome run `2026-11-14T17-21-08-096Z-15539` passed the single 23-degree
+fractional-frame test, and `npm run tsc` passed. This remains one test point for its exact two-raster
+fixture. The current scoped `repo:state -- --for-landing
+task/history-migration-continuation-20261114` check is clear for this branch; it reports four
+unrelated in-progress `AUTO_MERGE` findings, all preserved. `npm run main:landing -- status` reports
+main free of an owner record or Git operation, and `npm run swarm -- doctor --dry-run` reports no
+stale claims or locks. Re-run these checks immediately before landing.
+
+The 17:33 UTC post-cutoff refresh found no newer independent migration thread. Read-only Kilo SQLite
+search counted 26 `/ph` sessions updated since 16:43; seven distinct sessions had matching
+non-synthetic, non-ignored text for history-migration terms. Their matches were candidate reviews or
+unrelated `crop-history` references. Codex
+`state_5.sqlite` had ten `/ph` threads updated since 16:43: the active root
+`01a1791a-beaf-7eb2-8c7c-e10b483cf962`, its five Luna migration-review children, one pixel-oracle
+child of the unrelated CI-failure root, and three unrelated roots (stale-worktree salvage, CI
+failures, and free-model hardening). The title/first-message/preview query matched only the active
+root; the child classification came from spawn metadata and titles. This was a metadata search, not
+a full rollout transcript search of all ten threads. Copilot Chronicle had zero updated `/ph`
+sessions after 16:43. The earlier broad local scan and these refreshed results found no independent
+authority change. These are local-only bounds: remote/synced Codex history and remote/inaccessible
+Copilot sessions were not searched. The next implementation is still the separate
+typed text-source ownership lifecycle slice described below; `ph-71` is limited to the diagnostic
+fixture and must land before that work begins.
+
 ## Current Contract
 
 - `DurableConversionStatus` is `current | partial | unavailable`.
@@ -701,7 +740,7 @@ and focused follow-ups were also used; their first-difference and replay-fidelit
 reproduced locally and fixed. These diagnostics change neither logical replay authority nor product
 admission.
 
-### Continuation reconciliation — 2026-11-14 14:40 UTC
+### Historical continuation reconciliation — 2026-11-14 14:40 UTC (superseded)
 
 The designated local `main` worktree is clean at `108cc5d6477487ece41d89f9d85b5650d2144c6b`;
 live `git ls-remote` checks report both `origin/main` and `mirror/main` at the same SHA. The current
@@ -748,7 +787,7 @@ in §2. The browser sampling mechanism remains unproven. Reviews used Luna read-
 this continuation. The previous live checks found exact-free Kilo/OpenRouter inference unavailable;
 no model output substitutes for captured local test evidence.
 
-### Continuation reconciliation — 2026-11-14 16:43 UTC
+### Historical continuation reconciliation — 2026-11-14 16:43 UTC (superseded)
 
 **Live refs and drift.** The designated local `main` worktree
 `.kilo/worktrees/landing-main-recovered-20261112` is clean at
@@ -896,9 +935,10 @@ The current-state audit and its resolved/open findings are recorded in
 [History Migration Audit — 2026-11-07](HISTORY-MIGRATION-AUDIT-20261107.md).
 
 The latest refs, ancestry, and migration-specific cross-chat reconciliation are in
-[Continuation reconciliation — 2026-11-14 16:43 UTC](#continuation-reconciliation--2026-11-14-1643-utc).
-The diagnostic candidate must be reviewed, synced to the clean designated local main, and landed
-through the pinned wrapper. After that diagnostic claim is closed, start the separate typed text
+[Latest continuation reconciliation — 2026-11-14 17:33 UTC](#latest-continuation-reconciliation--2026-11-14-1733-utc).
+The diagnostic candidate has already been synced to the clean designated local main. After the
+final docs correction is reviewed, refresh the candidate tip/tree, verify the pinned landing
+preconditions, and land through the pinned wrapper. After that diagnostic claim is closed, start the separate typed text
 source-ownership slice described in HANDOFF §1; verify its owner before editing and do not change the
 `ownership-unproven` gate until its integration, lifecycle, failure, and production export proofs
 pass. Continue the wider fractional-frame matrix independently. Only after every presentation

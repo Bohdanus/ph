@@ -1,6 +1,6 @@
 # Continue durable history from current main
 
-## Live status — refreshed 2026-11-14 16:43 UTC
+## Live status — refreshed 2026-11-14 17:33 UTC
 
 This block and [`docs/HISTORY-MIGRATION-NEXT.md`](../../docs/HISTORY-MIGRATION-NEXT.md) are the
 current restart contract. Dated checkpoints and ownership snapshots below are historical; recheck
@@ -8,9 +8,14 @@ live refs, owners, and handoffs before acting on old branch or issue instruction
 
 - The designated local `main` worktree at
   `.kilo/worktrees/landing-main-recovered-20261112` is clean at
-  `422f28a67f784eab8ecdb0232b3503df52d80d2f`. This task branch remains at
-  `69d22e89a3d8b4e6921834cf98083a5f241f2fa8`, an ancestor of local `main` with 8 commits behind
-  and 0 ahead; merge the current local main into this branch before landing. Current live remote
+  `422f28a67f784eab8ecdb0232b3503df52d80d2f`. The task branch has already been synced to that
+  main pin: sync commit `ac81869b3706ff6ae8dfe3d5aaf54358c7e04726` has first parent
+  `47cbfdc3a01a0a09b1257fbc56e20571d9af68ab` and second parent
+  `422f28a67f784eab8ecdb0232b3503df52d80d2f`. Its reviewed tree was
+  `18e1b9ae5be8c72162ca845ad4674c48e791d1c5`. A final candidate review found stale restart wording
+  in this plan and `docs/HISTORY-MIGRATION-NEXT.md`; the corrected sync and landing instructions
+  passed a fresh read-only follow-up. The final docs commit will descend from the sync commit, so
+  refresh the exact candidate tip and tree before pinned landing. Current live remote
   pins are `origin/main=d0aa7bbf4037c2c98ebea80c9eef3aebb75b38e2` and
   `mirror/main=108cc5d6477487ece41d89f9d85b5650d2144c6b`. These refs diverged after `108cc5d`; do
   not push or merge the unrelated remote history as part of this task. The four local-main commits
@@ -36,8 +41,10 @@ live refs, owners, and handoffs before acting on old branch or issue instruction
   `2026-11-14T16-23-44-434Z-51411` preceded a title clarification; final run
   `2026-11-14T16-43-18-983Z-99538` passed `e2e/crop-history.spec.ts` test
   “a 23-degree fractional crop matches legacy pixels for two positioned raster layers” with exact
-  composite, bounds, and materialized-layer pixels. These are two runs of the same fixture, not two
-  matrix points; it closes only those inputs and does not establish export parity.
+  composite, bounds, and materialized-layer pixels. Post-sync focused run
+  `2026-11-14T17-21-08-096Z-15539` passed this one test; post-sync `npm run tsc` passed. These are
+  runs of the same fixture, not separate matrix points; it closes only those inputs and does not
+  establish export parity.
 - `ph-71` does not own the follow-on text-source work. After the diagnostic claim is reviewed and
   landed, open or claim a separate text-source lifecycle slice for the product-reachable in-place edit
   through `commitDirtyTool` (`useLayer.ts`) → `replaceLayerSource` → typed
@@ -62,12 +69,23 @@ live refs, owners, and handoffs before acting on old branch or issue instruction
   destructive `MERGE_HEAD`. Preserve those worktrees. Use the scoped
   `npm run repo:state -- --for-landing task/history-migration-continuation-20261114` gate and
   `npm run main:landing -- status` before landing; the full audit alone is not the landing decision.
+  The current scoped landing check is clear for this branch with four unrelated in-progress
+  `AUTO_MERGE` findings preserved. `main:landing -- status` reports no owner or Git operation on
+  main, and `swarm -- doctor --dry-run` reports no stale claims or locks.
 - Local Kilo, Codex, and Copilot history-search bounds and results are recorded in the continuation
   reconciliation in `docs/HISTORY-MIGRATION-NEXT.md`. Those scans found no newer independent
   migration implementation or authority decision; remote/synced Codex history and remote or
   inaccessible Copilot chats were not searched. Luna read-only reviews and free-model search results
   were treated as leads and checked against local source, Git refs, chat metadata, and captured tests.
   No model output substitutes for test evidence.
+  A post-cutoff local refresh at 17:33 UTC found no independent migration thread: Kilo had 26 `/ph`
+  sessions updated after 16:43, with seven sessions containing matching non-synthetic, non-ignored
+  text consisting of candidate reviews and unrelated crop-history references; Codex had ten
+  updated `/ph` threads: this root and five
+  spawned Luna migration reviewers, one pixel-oracle child of the unrelated CI-failure thread, and
+  three unrelated roots (stale-worktree salvage, CI failures, and free-model hardening). Copilot
+  Chronicle had zero updated `/ph` sessions. The Codex metadata query matched only this root and was
+  not a full rollout search. This does not extend the remote/synced history search.
 
 ## Historical checkpoint — 2026-10-29 (History-panel raster and blank-source proof)
 
