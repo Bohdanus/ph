@@ -1,6 +1,6 @@
 # Continue durable history from current main
 
-## Live status — refreshed 2026-11-14 17:33 UTC
+## Live status — refreshed 2026-11-14 18:03 UTC
 
 This block and [`docs/HISTORY-MIGRATION-NEXT.md`](../../docs/HISTORY-MIGRATION-NEXT.md) are the
 current restart contract. Dated checkpoints and ownership snapshots below are historical; recheck
@@ -8,19 +8,20 @@ live refs, owners, and handoffs before acting on old branch or issue instruction
 
 - The designated local `main` worktree at
   `.kilo/worktrees/landing-main-recovered-20261112` is clean at
-  `422f28a67f784eab8ecdb0232b3503df52d80d2f`. The task branch has already been synced to that
-  main pin: sync commit `ac81869b3706ff6ae8dfe3d5aaf54358c7e04726` has first parent
-  `47cbfdc3a01a0a09b1257fbc56e20571d9af68ab` and second parent
-  `422f28a67f784eab8ecdb0232b3503df52d80d2f`. Its reviewed tree was
-  `18e1b9ae5be8c72162ca845ad4674c48e791d1c5`. A final candidate review found stale restart wording
-  in this plan and `docs/HISTORY-MIGRATION-NEXT.md`; the corrected sync and landing instructions
-  passed a fresh read-only follow-up. The final docs commit will descend from the sync commit, so
-  refresh the exact candidate tip and tree before pinned landing. Current live remote
-  pins are `origin/main=d0aa7bbf4037c2c98ebea80c9eef3aebb75b38e2` and
-  `mirror/main=108cc5d6477487ece41d89f9d85b5650d2144c6b`. These refs diverged after `108cc5d`; do
-  not push or merge the unrelated remote history as part of this task. The four local-main commits
-  after `108cc5d` affect orchestration/CI tooling only, not durable-history source, renderer, E2E,
-  or migration docs.
+  `326d517478baeba0c4a28cccea2262a7e3e61bbc`. This task was synced to that pin in
+  `53cecaa5fe7faa5fe29234f3829bb707000e333f`, whose first parent is
+  `f49813c1f7e2b190990dc99649cdd9d737b496a2`, second parent is
+  `326d517478baeba0c4a28cccea2262a7e3e61bbc`, and tree is
+  `fa454a0ee5c3edf32d4b60a3704ca2a330957554`. Re-pin the exact branch tip and tree after the
+  remaining documentation update and immediately before landing. The `422f28a..326d517` main delta
+  changes 55 files; its only history-specific change is test coverage in
+  `src/contexts/__tests__/durable-export-adapter-parity.test.tsx`. That test now proves an unmatched
+  durable layer stays on the legacy serializer, durable composition is not called, and the unused
+  composite is not released. No history production source or `e2e/crop-history.spec.ts` changed.
+  Local remote heads are `origin/main=d0aa7bbf4037c2c98ebea80c9eef3aebb75b38e2` and
+  `mirror/main=108cc5d6477487ece41d89f9d85b5650d2144c6b`; local `main...origin/main` is `9 2`, and
+  `main...mirror/main` is `37 0`. The two origin-only commits change worktree/process tooling, not
+  migration code or tests. Do not push or merge the divergent remote history as part of this task.
 - `HistoryItem[]` and `replayHistory()` remain logical undo/redo authority. Durable state remains a
   gated presentation projection with legacy fallback. No production rendering or admission change is
   part of this diagnostic continuation.
@@ -41,10 +42,11 @@ live refs, owners, and handoffs before acting on old branch or issue instruction
   `2026-11-14T16-23-44-434Z-51411` preceded a title clarification; final run
   `2026-11-14T16-43-18-983Z-99538` passed `e2e/crop-history.spec.ts` test
   “a 23-degree fractional crop matches legacy pixels for two positioned raster layers” with exact
-  composite, bounds, and materialized-layer pixels. Post-sync focused run
-  `2026-11-14T17-21-08-096Z-15539` passed this one test; post-sync `npm run tsc` passed. These are
-  runs of the same fixture, not separate matrix points; it closes only those inputs and does not
-  establish export parity.
+  composite, bounds, and materialized-layer pixels. The 16:23 and 16:43 runs are two runs of that
+  same fixture, not separate matrix points; it closes only those inputs and does not establish
+  export parity. After the latest main sync, the durable-export adapter test passed all 15 cases and
+  focused `e2e/crop-history.spec.ts` run `2026-11-14T17-48-15-161Z-42927` exited 0. The sync commit
+  hook also passed `lint-staged`, `npm run tsc`, and `npm run build`.
 - `ph-71` does not own the follow-on text-source work. After the diagnostic claim is reviewed and
   landed, open or claim a separate text-source lifecycle slice for the product-reachable in-place edit
   through `commitDirtyTool` (`useLayer.ts`) → `replaceLayerSource` → typed
@@ -78,14 +80,23 @@ live refs, owners, and handoffs before acting on old branch or issue instruction
   inaccessible Copilot chats were not searched. Luna read-only reviews and free-model search results
   were treated as leads and checked against local source, Git refs, chat metadata, and captured tests.
   No model output substitutes for test evidence.
-  A post-cutoff local refresh at 17:33 UTC found no independent migration thread: Kilo had 26 `/ph`
-  sessions updated after 16:43, with seven sessions containing matching non-synthetic, non-ignored
-  text consisting of candidate reviews and unrelated crop-history references; Codex had ten
-  updated `/ph` threads: this root and five
-  spawned Luna migration reviewers, one pixel-oracle child of the unrelated CI-failure thread, and
-  three unrelated roots (stale-worktree salvage, CI failures, and free-model hardening). Copilot
-  Chronicle had zero updated `/ph` sessions. The Codex metadata query matched only this root and was
-  not a full rollout search. This does not extend the remote/synced history search.
+  A bounded local refresh found no independent migration implementation or authority change in the
+  searched records. In the fixed 17:33–17:53 UTC window, Kilo had five `/ph` sessions; the only
+  non-synthetic, non-ignored text match was this coordinator's free-completion review prompt
+  (`ses_e24df45f3ffevrLKjjMWfvDh17`). The broader query since 16:43 had counted 26 sessions and
+  seven distinct session IDs with matching text, using `history migration`, `durable history`,
+  `crop-history`, `HistoryItem[]`, `replayHistory`, `retained operation`, and
+  `REPLACE_LAYER_SOURCE_ACTION`; those results were candidate reviews or unrelated crop-history
+  references. Two later Kilo sessions, “Parallel e2e test hardening cron” and “Explore: PSD/TIFF
+  baseline gaps in visual-regression.spec.ts,” contained no matching terms. Codex's fixed-window
+  state query found two `/ph` thread rows; the candidate-review child and a CI-review child had no
+  history terms in their user/assistant rollout text. The active root updated at 17:56:40 UTC,
+  outside that window, and is this conversation. The later metadata query showed no separate
+  migration root; it did not scan every rollout. Copilot Chronicle had zero `/ph` sessions in the
+  fixed window. One free Kilo Nemotron response was non-empty and reported $0, but the local record
+  did not expose its finish reason; it was treated as a lead, not complete review evidence. These
+  store-specific searches do not cover remote/synced Codex history or remote/inaccessible Copilot
+  sessions.
 
 ## Historical checkpoint — 2026-10-29 (History-panel raster and blank-source proof)
 

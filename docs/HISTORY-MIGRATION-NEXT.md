@@ -5,44 +5,55 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
-## Latest continuation reconciliation — 2026-11-14 17:33 UTC
+## Latest continuation reconciliation — 2026-11-14 18:03 UTC
 
 The designated local `main` worktree `.kilo/worktrees/landing-main-recovered-20261112` is clean at
-`422f28a67f784eab8ecdb0232b3503df52d80d2f`. The migration task has already been synced to that pin:
-sync commit `ac81869b3706ff6ae8dfe3d5aaf54358c7e04726` has first parent
-`47cbfdc3a01a0a09b1257fbc56e20571d9af68ab` and second parent
-`422f28a67f784eab8ecdb0232b3503df52d80d2f`; its reviewed tree was
-`18e1b9ae5be8c72162ca845ad4674c48e791d1c5`. A final candidate review caught stale text below and
-in the continuation plan that still instructed a future sync. This section and the plan's live
-status supersede the 14:40 and 16:43 snapshots; all earlier reconciliation sections are historical.
-The documentation correction descends from the sync commit; a fresh read-only follow-up found no
-remaining stale sync instruction. Fetch the exact final branch tip/tree and recheck landing
-preconditions before using the pinned wrapper. Do not perform another sync against the same main
-pin.
+`326d517478baeba0c4a28cccea2262a7e3e61bbc`, after the local main landing completed. The main delta
+from `422f28a67f784eab8ecdb0232b3503df52d80d2f` changes 55 files. Its only history-specific change
+is `src/contexts/__tests__/durable-export-adapter-parity.test.tsx`: an unmatched durable layer stays
+on the legacy export selector, durable composition is not called, and the unused composite is not
+released. No history production source or `e2e/crop-history.spec.ts` changed in that delta. The
+focused adapter test passed all 15 cases after sync.
 
-After the sync, focused Chrome run `2026-11-14T17-21-08-096Z-15539` passed the single 23-degree
-fractional-frame test, and `npm run tsc` passed. This remains one test point for its exact two-raster
-fixture. The current scoped `repo:state -- --for-landing
-task/history-migration-continuation-20261114` check is clear for this branch; it reports four
-unrelated in-progress `AUTO_MERGE` findings, all preserved. `npm run main:landing -- status` reports
-main free of an owner record or Git operation, and `npm run swarm -- doctor --dry-run` reports no
-stale claims or locks. Re-run these checks immediately before landing.
+This candidate was synced to the new main pin in commit
+`53cecaa5fe7faa5fe29234f3829bb707000e333f` (first parent
+`f49813c1f7e2b190990dc99649cdd9d737b496a2`, second parent
+`326d517478baeba0c4a28cccea2262a7e3e61bbc`, tree
+`fa454a0ee5c3edf32d4b60a3704ca2a330957554`). The synced crop-history spec exited 0 in run
+`2026-11-14T17-48-15-161Z-42927`; the sync commit hook passed lint-staged, typecheck, and build.
+Refresh the final candidate tip/tree and landing preconditions after the docs update. The main delta
+is already in the candidate; do not sync it again unless local `main` moves.
 
-The 17:33 UTC post-cutoff refresh found no newer independent migration thread. Read-only Kilo SQLite
-search counted 26 `/ph` sessions updated since 16:43; seven distinct sessions had matching
-non-synthetic, non-ignored text for history-migration terms. Their matches were candidate reviews or
-unrelated `crop-history` references. Codex
-`state_5.sqlite` had ten `/ph` threads updated since 16:43: the active root
-`01a1791a-beaf-7eb2-8c7c-e10b483cf962`, its five Luna migration-review children, one pixel-oracle
-child of the unrelated CI-failure root, and three unrelated roots (stale-worktree salvage, CI
-failures, and free-model hardening). The title/first-message/preview query matched only the active
-root; the child classification came from spawn metadata and titles. This was a metadata search, not
-a full rollout transcript search of all ten threads. Copilot Chronicle had zero updated `/ph`
-sessions after 16:43. The earlier broad local scan and these refreshed results found no independent
-authority change. These are local-only bounds: remote/synced Codex history and remote/inaccessible
-Copilot sessions were not searched. The next implementation is still the separate
-typed text-source ownership lifecycle slice described below; `ph-71` is limited to the diagnostic
-fixture and must land before that work begins.
+Live remote heads remain `origin/main=d0aa7bbf4037c2c98ebea80c9eef3aebb75b38e2` and
+`mirror/main=108cc5d6477487ece41d89f9d85b5650d2144c6b`. The current local comparison is
+`main...origin/main = 9 2` and `main...mirror/main = 37 0`. Origin's two unique commits change
+worktree/process tooling, not migration source or tests. Do not merge or push the divergent remote
+history here.
+
+The bounded local refresh found no independent migration implementation or authority change in the
+searched records. In the fixed 17:33–17:53 UTC window, Kilo had five `/ph` sessions; the only
+non-synthetic, non-ignored text match was the coordinator's free-completion review prompt
+`ses_e24df45f3ffevrLKjjMWfvDh17`. A broader query since 16:43 counted 26 sessions and seven
+distinct session IDs with matching text, using `history migration`, `durable history`,
+`crop-history`, `HistoryItem[]`, `replayHistory`, `retained operation`, and
+`REPLACE_LAYER_SOURCE_ACTION`; those results were candidate reviews or unrelated crop-history
+references. Two later Kilo sessions, “Parallel e2e test hardening cron” and “Explore: PSD/TIFF
+baseline gaps in visual-regression.spec.ts,” contained no matching terms.
+
+Codex `state_5.sqlite` had two `/ph` thread rows in the fixed window; the candidate-review child and
+a CI-review child had no history terms in their user/assistant rollout text. The active root
+`01a1791a-beaf-7eb2-8c7c-e10b483cf962` updated at 17:56:40 UTC, outside that window, and is this
+conversation. A later metadata query showed no separate migration root; it did not scan every
+rollout. Copilot Chronicle had zero `/ph` sessions in the fixed window. One free Kilo Nemotron
+response was non-empty and reported $0, but the local record did not expose its finish reason; it
+was used as a lead, not complete review evidence. These store-specific results do not cover
+remote/synced Codex history or remote/inaccessible Copilot sessions.
+
+The next implementation remains the separate typed text-source ownership lifecycle slice described
+below. Keep the `ownership-unproven` gate closed until its append/navigation integration, runtime
+identity and lease lifecycle, failure/interleaving, and production canvas/PNG/PSD proofs pass.
+`ph-71` is limited to the diagnostic fixture in this candidate; land it before starting the
+follow-on slice, which needs a separate task and owner.
 
 ## Current Contract
 
@@ -935,7 +946,7 @@ The current-state audit and its resolved/open findings are recorded in
 [History Migration Audit — 2026-11-07](HISTORY-MIGRATION-AUDIT-20261107.md).
 
 The latest refs, ancestry, and migration-specific cross-chat reconciliation are in
-[Latest continuation reconciliation — 2026-11-14 17:33 UTC](#latest-continuation-reconciliation--2026-11-14-1733-utc).
+[Latest continuation reconciliation — 2026-11-14 18:03 UTC](#latest-continuation-reconciliation--2026-11-14-1803-utc).
 The diagnostic candidate has already been synced to the clean designated local main. After the
 final docs correction is reviewed, refresh the candidate tip/tree, verify the pinned landing
 preconditions, and land through the pinned wrapper. After that diagnostic claim is closed, start the separate typed text
