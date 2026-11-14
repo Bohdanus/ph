@@ -27,14 +27,17 @@ interleaves unranked fallback routes. See [`MODELS.md`](../MODELS.md).
 
 ### Operator-managed quarantine entries
 
-The shared local quarantine file (`.kilo/free-model-quarantine.json`) can contain manually
-maintained `permanent_ban` and `provider_ban` entries. Both apply only to their exact `source:model`
-key, so `provider_ban` blocks that model on that provider rather than every model from the provider.
-The pool honors these entries for up to 100 UTC calendar years, clamping a February 29 anniversary
-to February 28 when the target year is not a leap year. Automatic quarantine updates and
-`free:quarantine add` accept only transient reasons and cap the duration at 168 hours; the CLI
-defaults to six hours when `--hours` is omitted. They preserve an active operator ban for the same
-pair. Unknown reasons and out-of-range durations fail closed.
+The default shared quarantine file is `.kilo/free-model-quarantine.json`.
+
+The shared local quarantine file may contain manually maintained `permanent_ban` and `provider_ban`
+entries. Both apply only to their exact `source:model` pair; `provider_ban` does not disable the
+provider's other models. The pool honors these entries for up to 100 UTC calendar years, clamping a
+February 29 anniversary to February 28 when the target year is not a leap year. Automatic quarantine
+updates and the `free:quarantine add` command accept only transient reasons with a 168-hour maximum;
+they preserve an active operator ban for the same pair. Unknown reasons and out-of-range durations
+fail closed.
+
+The CLI defaults to six hours when `--hours` is omitted.
 
 ## Find credentials safely
 
