@@ -1021,6 +1021,36 @@ function operationIsClean(paths) {
   }
 }
 
+export async function runMergeReleaseAfterLanding(
+  paths,
+  owner,
+  { run = runChild, reportError = (message) => process.stderr.write(message + '\n') } = {}
+) {
+  const report = (message) => {
+    try {
+      reportError(message);
+    } catch {
+      // Diagnostics are non-blocking too: the merge and its commit already succeeded.
+    }
+  };
+  try {
+    const release = await run(process.execPath, [join(dirname(SCRIPT_PATH), 'merge-release.mjs')], {
+      cwd: paths.mainPath,
+      env: process.env,
+      onPid: (pid) => heartbeat(paths, owner, 'releasing claims for completed landing', pid),
+    });
+    if (release.code === 0) return true;
+    report('main-landing: merge claim cleanup exited nonzero; inspect swarm state.');
+    return false;
+  } catch (error) {
+    report(
+      'main-landing: merge claim cleanup could not run; inspect swarm state: ' +
+        safeText(error instanceof Error ? error.message : error, 240)
+    );
+    return false;
+  }
+}
+
 async function runPinnedLanding(paths, owner, pins, { run = runChild } = {}) {
   assertCleanPreflight(paths, pins);
   heartbeat(paths, owner, 'preparing reviewed merge', null);
@@ -1083,6 +1113,11 @@ async function runPinnedLanding(paths, owner, pins, { run = runChild } = {}) {
   if (commit.code !== 0)
     throw new Error('reviewed landing commit exited ' + commit.code + '; preserving state for recovery');
   if (!cleanMain(paths)) throw new Error('landing commit returned, but main is not clean; preserving owner record');
+
+  // The pinned flow prepares the merge with --no-commit and records it through the
+  // reviewed-commit helper, so Git does not invoke post-merge. Run the same non-blocking
+  // claim release explicitly after the committed result has passed its clean check.
+  await runMergeReleaseAfterLanding(paths, owner, { run });
 }
 
 export async function createReplacementMainWorktree(paths, owner, { run = runChild, onStep = () => {} } = {}) {

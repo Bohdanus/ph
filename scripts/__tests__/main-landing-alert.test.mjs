@@ -10,6 +10,7 @@ import {
   isOrphanAutoMergeState,
   observeOrphanAutoMerge,
   resetOrphanAutoMergeFailover,
+  runMergeReleaseAfterLanding,
   startWatcher,
 } from '../main-landing.mjs';
 
@@ -309,5 +310,44 @@ describe('persistent orphan AUTO_MERGE failover', () => {
     expect(reset).not.toHaveProperty('previousOwner');
     expect(reset).not.toHaveProperty('autoMergeFailoverStartedAt');
     expect(reset).not.toHaveProperty('autoMergeRecoveryPath');
+  });
+});
+
+describe('post-landing board claim cleanup', () => {
+  it('runs the shared merge-release script from the designated main path', async () => {
+    let invocation;
+    const paths = { mainPath: '/temporary/designated-main' };
+    const owner = { leaseId: 'landing-lease' };
+
+    await expect(
+      runMergeReleaseAfterLanding(paths, owner, {
+        run: async (command, args, options) => {
+          invocation = { command, args, options };
+          return { code: 0 };
+        },
+      })
+    ).resolves.toBe(true);
+
+    expect(invocation).toMatchObject({
+      command: process.execPath,
+      args: [join(import.meta.dirname, '../merge-release.mjs')],
+      options: { cwd: paths.mainPath, env: process.env },
+    });
+    expect(typeof invocation.options.onPid).toBe('function');
+  });
+
+  it('does not turn a claim-release failure into a failed landing', async () => {
+    const errors = [];
+    await expect(
+      runMergeReleaseAfterLanding(
+        { mainPath: '/temporary/designated-main' },
+        { leaseId: 'landing-lease' },
+        {
+          run: async () => ({ code: 1 }),
+          reportError: (message) => errors.push(message),
+        }
+      )
+    ).resolves.toBe(false);
+    expect(errors).toEqual(['main-landing: merge claim cleanup exited nonzero; inspect swarm state.']);
   });
 });
