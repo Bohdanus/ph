@@ -715,6 +715,21 @@ function openCodeReportedCosts(events) {
   );
 }
 
+function parseOpenCodeOutput(chunks) {
+  const events = [];
+  let malformedJsonl = false;
+  for (const line of Buffer.concat(chunks).toString('utf8').split(/\r?\n/).filter(Boolean)) {
+    try {
+      const event = JSON.parse(line);
+      if (event && typeof event === 'object' && !Array.isArray(event)) events.push(event);
+      else malformedJsonl = true;
+    } catch {
+      malformedJsonl = true;
+    }
+  }
+  return { events, malformedJsonl };
+}
+
 function openCodeErrorMetadata(value) {
   if (!value || typeof value !== 'object') return {};
   const metadata = value.error && typeof value.error === 'object' ? value.error : value;
@@ -997,6 +1012,9 @@ export async function runOpenCodeCompletion({
   maxTokens,
   timeoutMs,
   providerOwned = false,
+  spawnImpl = spawn,
+  platform = process.platform,
+  terminateWindowsProcessTreeImpl = terminateWindowsProcessTree,
 }) {
   if (isDisabledFreeModel(model)) {
     return { error: 'Nemotron model ID is not approved by free-model policy' };
@@ -1057,12 +1075,12 @@ export async function runOpenCodeCompletion({
         `Answer the attached request concisely (about ${profile.maxTokens} tokens or fewer). Do not use tools.`,
       ];
       const commandShim = resolveCommandShim(command, args, { env, cwd: directory });
-      const child = spawn(commandShim.command, commandShim.args, {
+      const child = spawnImpl(commandShim.command, commandShim.args, {
         cwd: directory,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,
-        detached: process.platform !== 'win32',
+        detached: platform !== 'win32',
         windowsHide: true,
         ...commandShim.spawnOptions,
       });
@@ -1072,20 +1090,39 @@ export async function runOpenCodeCompletion({
       let timedOut = false;
       let outputExceeded = false;
       let terminationError = null;
+      let childClosed = false;
       let killTimer;
       let killPromise = Promise.resolve();
       const stopChild = () => {
         if (stopping) return killPromise;
         stopping = true;
         clearTimeout(timer);
-        if (process.platform === 'win32') {
-          killPromise = terminateWindowsProcessTree(child.pid).catch((error) => {
+        if (platform === 'win32') {
+          if (child.exitCode != null || child.signalCode != null) {
+            terminationError = new Error(
+              'Windows process-tree termination could not be verified after the child exited'
+            );
+            return killPromise;
+          }
+          killPromise = terminateWindowsProcessTreeImpl(child.pid).catch((error) => {
             terminationError = error;
-            try {
-              child.kill('SIGKILL');
-            } catch {}
-            clearTimeout(timer);
-            reject(new Error(`OpenCode process termination failed: ${terminationError.message}`));
+            if (!childClosed && child.exitCode == null && child.signalCode == null) {
+              try {
+                child.kill('SIGKILL');
+              } catch {}
+              killTimer = setTimeout(() => {
+                const { events: bufferedEvents } = parseOpenCodeOutput(chunks);
+                const metadata = openCodeCompletionFailureMetadata(bufferedEvents);
+                const reportedCost = openCodeReportedCosts(bufferedEvents).some((cost) => !isExactZeroCost(cost));
+                const failure = new Error(`OpenCode process termination failed: ${terminationError.message}`, {
+                  cause: terminationError,
+                });
+                Object.assign(failure, metadata);
+                if (reportedCost) failure.reportedCost = true;
+                if (!metadata.contentPolicyRejected || reportedCost) failure.safetyStop = true;
+                reject(failure);
+              }, 2_000);
+            }
           });
           return killPromise;
         }
@@ -1128,21 +1165,12 @@ export async function runOpenCodeCompletion({
         reject(error);
       });
       child.once('close', (code, signal) => {
+        childClosed = true;
         clearTimeout(timer);
         void (async () => {
           if (stopping) await killPromise;
           clearTimeout(killTimer);
-          const parsed = [];
-          let malformedJsonl = false;
-          for (const line of Buffer.concat(chunks).toString('utf8').split(/\r?\n/).filter(Boolean)) {
-            try {
-              const event = JSON.parse(line);
-              if (event && typeof event === 'object' && !Array.isArray(event)) parsed.push(event);
-              else malformedJsonl = true;
-            } catch {
-              malformedJsonl = true;
-            }
-          }
+          const { events: parsed, malformedJsonl } = parseOpenCodeOutput(chunks);
           const metadata = openCodeCompletionFailureMetadata(parsed);
           const reportedCosts = openCodeReportedCosts(parsed);
           const processFailure = terminationError
@@ -1164,9 +1192,12 @@ export async function runOpenCodeCompletion({
             if (Object.keys(metadata).length > 0) {
               const error = new Error(processFailure);
               Object.assign(error, metadata);
+              if (terminationError && !metadata.contentPolicyRejected) error.safetyStop = true;
               throw error;
             }
-            throw new Error(processFailure);
+            const error = new Error(processFailure);
+            if (terminationError) error.safetyStop = true;
+            throw error;
           }
           if (code !== 0) {
             const type =
@@ -1545,8 +1576,13 @@ export async function completeWithFreeModel(prompt, options = {}) {
           maxTokens: routeMaxTokens,
           timeoutMs: routeTimeoutMs,
         });
-        if (result?.safetyStop || hasReportedNonZeroCost(result?.usage)) {
+        if (result?.reportedCost === true || hasReportedNonZeroCost(result?.usage)) {
           await stopForReportedCost(candidate);
+        }
+        if (result?.safetyStop) {
+          const error = new Error(result.error ?? 'Kilo completion safety stop');
+          error.safetyStop = true;
+          throw error;
         }
         if (isContentPolicyError(result)) stopForContentPolicy(candidate);
         if (result?.finishReason === 'length') {

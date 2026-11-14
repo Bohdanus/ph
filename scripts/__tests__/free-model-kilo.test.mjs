@@ -564,6 +564,7 @@ process.exitCode = 1;`
             error: 'Kilo reported non-zero or invalid completion cost',
             exhaustSource: true,
             safetyStop: true,
+            reportedCost: true,
           }
         );
       } finally {
@@ -658,9 +659,53 @@ setInterval(() => {}, 1000);`
         terminateWindowsProcessTreeImpl,
         spawnImpl,
       })
-    ).resolves.toEqual({ error: 'Kilo process-tree termination failed', exhaustSource: true });
+    ).resolves.toEqual({ error: 'Kilo process-tree termination failed', exhaustSource: true, safetyStop: true });
     expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(4242);
     expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'reported cost',
+      { type: 'step_finish', part: { reason: 'stop', cost: 0.01 } },
+      { reportedCost: true, safetyStop: true },
+    ],
+    [
+      'content-policy rejection',
+      { type: 'error', error: { type: 'content_filter', message: 'Blocked by policy' } },
+      { contentPolicyRejected: true },
+    ],
+  ])('preserves buffered Kilo %s when Windows tree termination times out', async (_label, event, expected) => {
+    let child;
+    const spawnImpl = () => {
+      child = new EventEmitter();
+      child.pid = 4242;
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = new EventEmitter();
+      child.stdin.end = () => {
+        child.stdout.emit('data', Buffer.from(JSON.stringify(event) + '\n'));
+        child.stdout.emit('data', Buffer.alloc(2 * MAX_KILO_OUTPUT_BYTES));
+      };
+      child.kill = vi.fn();
+      return child;
+    };
+    const terminateWindowsProcessTreeImpl = vi.fn(() => Promise.reject(new Error('taskkill failed')));
+
+    const result = await runKiloCompletion({
+      command: '/unused/kilo',
+      model: 'model:free',
+      prompt: 'prompt',
+      timeoutMs: 10_000,
+      platform: 'win32',
+      terminateWindowsProcessTreeImpl,
+      spawnImpl,
+    });
+
+    expect(result).toMatchObject({ error: 'Kilo process-tree termination failed', ...expected });
+    if (!expected.safetyStop) expect(result.safetyStop).toBeUndefined();
+    expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(4242);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
   });
 
   it.skipIf(process.platform !== 'win32')(

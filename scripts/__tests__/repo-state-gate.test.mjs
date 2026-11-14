@@ -766,7 +766,7 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.code).toBe(0);
     expect(r.out).toContain('landing scope clear for wt/candidate');
     expect(r.out).toContain('1 unrelated finding(s) remain reported and untouched');
-    expect(r.err).toContain(unrelated);
+    expect(r.err).toContain(unrelated.replaceAll('\\', '/'));
     const reportedPaths = r.err
       .split(/\r?\n/)
       .filter((line) => line.startsWith('    '))

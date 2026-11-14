@@ -233,7 +233,7 @@ describe('path validation', () => {
       mkdirSync(prefixSibling);
       mkdirSync(outside);
       writeFileSync(outsideFile, 'private');
-      symlinkSync(outside, link, 'dir');
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
 
       expect(validatePath(siblingFile, [allowed])).toBe(false);
       expect(validatePath(join(link, 'secret.jsonl'), [allowed])).toBe(false);
@@ -258,7 +258,7 @@ describe('path validation', () => {
         rollout,
         JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: 'needle' } })
       );
-      symlinkSync(outside, sessions, 'dir');
+      symlinkSync(outside, sessions, process.platform === 'win32' ? 'junction' : 'dir');
 
       await expect(searchCodexRollouts(codexHome, ['needle'], 0)).resolves.toEqual([]);
     } finally {
