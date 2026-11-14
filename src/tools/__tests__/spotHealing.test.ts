@@ -278,6 +278,21 @@ describe('spot healing processor', () => {
     });
   });
 
+  describe('source buffer isolation', () => {
+    it('samples the original raster after an earlier dab has changed the sampled texel', () => {
+      const canvas = run({
+        size: 4,
+        points: [
+          { x: 4, y: 0 },
+          { x: 4, y: 4 },
+        ],
+      });
+
+      // Earlier dabs heal source row 1 to 0; the final center still samples its original value, 20.
+      expect(at(canvas, 4, 4)).toEqual({ r: 20, g: 100, b: 100, a: 255 });
+    });
+  });
+
   describe('edge handling and clamping', () => {
     it('clamps a proximity sample that hangs off the top edge', () => {
       expect(() => run({ points: [{ x: 4, y: 0 }] })).not.toThrow();

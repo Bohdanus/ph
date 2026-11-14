@@ -257,13 +257,13 @@ describe('healing brush processor', () => {
     it('reads from the stroke start when aligned', () => {
       const canvas = run({ points: stroke, aligned: true });
 
-      expect(at(canvas, 6, 4)).not.toEqual(dest(6, 4));
+      expect(at(canvas, 7, 4)).toEqual({ r: 98, g: 118, b: 118, a: 255 });
     });
 
     it('reads from the stroke end when not aligned', () => {
       const canvas = run({ points: stroke, aligned: false });
 
-      expect(at(canvas, 6, 4)).not.toEqual(dest(6, 4));
+      expect(at(canvas, 7, 4)).toEqual({ r: 70, g: 130, b: 130, a: 255 });
     });
 
     it('puts every texel in the last dab at different healed values between the two modes', () => {

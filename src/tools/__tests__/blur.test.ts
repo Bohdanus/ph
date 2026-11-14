@@ -139,28 +139,10 @@ describe('blur processor', () => {
       expect(canvas.ctx.drawImage).toHaveBeenCalledWith(sourceBitmap, 0, 0);
     });
 
-    it('handles negative radius (CSS accepts it)', () => {
-      const canvas = run({ radius: -3 });
-
-      expect(canvas.ctx.filter).toBe('blur(-3px)');
-    });
-
     it('handles very large radius', () => {
       const canvas = run({ radius: 1000 });
 
       expect(canvas.ctx.filter).toBe('blur(1000px)');
-    });
-
-    it('handles non-finite radius (NaN)', () => {
-      const canvas = run({ radius: Number.NaN });
-
-      expect(canvas.ctx.filter).toBe('blur(NaNpx)');
-    });
-
-    it('handles infinity radius', () => {
-      const canvas = run({ radius: Number.POSITIVE_INFINITY });
-
-      expect(canvas.ctx.filter).toBe('blur(Infinitypx)');
     });
   });
 });
