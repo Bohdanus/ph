@@ -402,6 +402,39 @@ describe('claims are exclusive and leased', () => {
     b.close();
   });
 
+  it('keeps an unreadable claim lease live across claim and issue readers', () => {
+    const a = boardFor('a');
+    mkdirSync(a.identity.worktree, { recursive: true });
+    const { id } = a.createIssue({ title: 'unreadable lease', files: ['src/lease.ts'], holdFiles: false });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run('not-a-date', id);
+
+    const b = boardFor('b');
+    expect(b.liveClaimOrNull(id)?.agent_id).toBe('a');
+    expect(b.readyIssues().map((issue) => issue.id)).not.toContain(id);
+    expect(b.issuesForPath('src/lease.ts')[0]?.claimed_by).toBe('a');
+    expect(b.listIssues({ claimedBy: 'a' }).map((issue) => issue.id)).toContain(id);
+    expect(b.status().expiredClaims).toBe(0);
+    expect(b.health().claims.expired).toBe(0);
+    expect(b.doctor()).toEqual([]);
+    expect(() => b.claimIssue(id)).toThrow(/claimed by a/);
+    b.close();
+  });
+
+  it('uses JavaScript date parsing consistently when SQLite rejects a deadline string', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'different date parsers', files: ['src/parser.ts'], holdFiles: false });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run('0', id);
+
+    const b = boardFor('b');
+    expect(Number.isFinite(Date.parse('0'))).toBe(true);
+    expect(b.liveClaimOrNull(id)).toBeNull();
+    expect(b.issuesForPath('src/parser.ts')[0]?.claimed_by).toBeNull();
+    expect(b.listIssues({ claimedBy: 'a' }).map((issue) => issue.id)).not.toContain(id);
+    b.close();
+  });
+
   it('records the takeover in the log, with both agents named', () => {
     const a = boardFor('a');
     const { id } = a.createIssue({ title: 'stolen' });
@@ -461,6 +494,22 @@ describe('file locks make one-file-one-agent real', () => {
       expect(error.code).toBe(4);
       expect(error.message).toMatch(/src\/contexts\/StoreContext.tsx \(a\)/);
     }
+    b.close();
+  });
+
+  it('keeps a file lock with an unreadable expiry live instead of granting it twice', () => {
+    const a = boardFor('a');
+    mkdirSync(a.identity.worktree, { recursive: true });
+    a.holdFiles(['src/unreadable-lock.ts'], { leaseMs: 60_000 });
+    a.db
+      .prepare('UPDATE file_locks SET expires_at = ? WHERE path = ? AND agent_id = ?')
+      .run('not-a-date', 'src/unreadable-lock.ts', 'a');
+
+    const b = boardFor('b');
+    expect(b.liveLocks().map((lock) => lock.path)).toContain('src/unreadable-lock.ts');
+    expect(b.checkPath('src/unreadable-lock.ts').free).toBe(false);
+    expect(b.doctor()).toEqual([]);
+    expect(() => b.holdFiles(['src/unreadable-lock.ts'])).toThrow(/held by another agent/);
     b.close();
   });
 
