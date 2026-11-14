@@ -7,6 +7,7 @@ import {
   BRUSH_HARDNESS_MIN,
   BRUSH_OPACITY_DEFAULT,
   BRUSH_SIZE_DEFAULT,
+  BRUSH_SIZE_MAX,
   BRUSH_SIZE_MIN,
 } from '../../util/brush-engine.ts';
 import type { Size } from '../../contexts/general-types.ts';
@@ -83,8 +84,12 @@ afterEach(() => {
 });
 
 /** Runs the processor and returns the single canvas it must have produced. */
-const run = (overrides: Partial<HealingBrushToolArgs> = {}): RecordingOffscreenCanvas => {
-  const result = healingBrush({ size, bitmap: sourceBitmap })(args(overrides));
+const run = (overrides: Partial<HealingBrushToolArgs> = {}, canvasSize: Size = size): RecordingOffscreenCanvas => {
+  const bitmap =
+    canvasSize.width === size.width && canvasSize.height === size.height
+      ? sourceBitmap
+      : createMockImageBitmap(canvasSize.width, canvasSize.height);
+  const result = healingBrush({ size: canvasSize, bitmap })(args(overrides));
 
   expect(result).toHaveLength(1);
   const canvas = result[0] as unknown as RecordingOffscreenCanvas;
@@ -106,7 +111,7 @@ const at = (canvas: RecordingOffscreenCanvas, x: number, y: number) => {
 
 /** The destination colour under the stroke centre before healing. */
 const dest = (x: number, y: number) => ({
-  r: x * 20,
+  r: Math.min(255, x * 20),
   g: 100,
   b: y === 1 && x === 1 ? 160 : 100,
   a: 255,
@@ -363,6 +368,19 @@ describe('healing brush processor', () => {
         equivalentTo({ size: sizeValue }, { size: BRUSH_SIZE_DEFAULT });
       }
     );
+
+    it('clamps an over-range size to maximum behavior on a large canvas', () => {
+      const stroke = [{ x: 300, y: 5 }];
+      const source = { x: 1, y: 1 };
+      const canvasSize = { width: 600, height: 10 };
+      const oversized = run({ size: 5000, source, points: stroke }, canvasSize);
+      const maximum = run({ size: BRUSH_SIZE_MAX, source, points: stroke }, canvasSize);
+
+      expect(Array.from(oversized.buffer)).toEqual(Array.from(maximum.buffer));
+      // This point is 252px from the centre: outside the clamped 250px radius,
+      // but inside an unclamped 2500px radius.
+      expect(at(oversized, 48, 5)).toEqual(dest(48, 5));
+    });
 
     it('clamps under-range sizes to the minimum behavior', () => {
       equivalentTo({ size: 0 }, { size: BRUSH_SIZE_MIN });
