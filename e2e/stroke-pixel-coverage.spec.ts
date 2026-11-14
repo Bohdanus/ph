@@ -69,6 +69,19 @@ function compositedLuma(pixel: Pixel): number {
   return (0.299 * pixel.red + 0.587 * pixel.green + 0.114 * pixel.blue) * alpha + 255 * (1 - alpha);
 }
 
+function describeLumaGrid(pixels: Pixel[]): string {
+  const rows = [...new Set(pixels.map((pixel) => pixel.y))].sort((a, b) => a - b);
+  return rows
+    .map((y) => {
+      const row = pixels
+        .filter((pixel) => pixel.y === y)
+        .map((pixel) => `${pixel.x}:${compositedLuma(pixel).toFixed(1)}`)
+        .join(' ');
+      return `${y}: ${row}`;
+    })
+    .join('\n');
+}
+
 const hasInk = (pixel: Pixel): boolean => compositedLuma(pixel) < 245;
 const hasPartialCoverage = (pixel: Pixel): boolean => {
   const luma = compositedLuma(pixel);
@@ -128,25 +141,46 @@ function expectHalfIntegerCoverage(pixels: Pixel[], y: number, label: string): v
 
 function expectDiagonalCoverage(pixels: Pixel[], center: Point, label: string): void {
   // The outer ring is sampling margin; assert ink only near the known path center.
-  // The opposite corners should follow the diagonal while the mirrored corners stay clear.
+  // Track the diagonal's footprint and nearby clear cells without pinning platform-dependent
+  // antialiasing intensity to one absolute luma value.
+  const lumaGrid = describeLumaGrid(pixels);
   const atPathCenter = pixels.filter((pixel) => Math.abs(pixel.x - center.x) <= 1 && Math.abs(pixel.y - center.y) <= 1);
-  expect(atPathCenter.some(hasInk), `${label} leaves ink near the diagonal's center point`).toBe(true);
-  expect(atPathCenter.some(hasPartialCoverage), `${label} has antialiased edge coverage near its center`).toBe(true);
+  expect(atPathCenter.some(hasInk), `${label} leaves ink near the diagonal's center point\n${lumaGrid}`).toBe(true);
+  expect(
+    atPathCenter.some(hasPartialCoverage),
+    `${label} has antialiased edge coverage near its center\n${lumaGrid}`
+  ).toBe(true);
 
   const pixelAt = (x: number, y: number): Pixel | undefined => pixels.find((pixel) => pixel.x === x && pixel.y === y);
   const upperLeft = pixelAt(center.x - 2, center.y - 1);
   const lowerRight = pixelAt(center.x + 2, center.y + 1);
   const upperRight = pixelAt(center.x + 2, center.y - 1);
   const lowerLeft = pixelAt(center.x - 2, center.y + 1);
+  const upperLeftOutside = pixelAt(center.x - 2, center.y);
+  const lowerRightOutside = pixelAt(center.x + 2, center.y + 2);
 
-  expect(upperLeft, `${label} samples the upper-left side of the diagonal`).toBeDefined();
-  expect(compositedLuma(upperLeft!), `${label} follows the diagonal on its upper-left side`).toBeLessThan(90);
-  expect(lowerRight, `${label} samples the lower-right side of the diagonal`).toBeDefined();
-  expect(compositedLuma(lowerRight!), `${label} follows the diagonal on its lower-right side`).toBeLessThan(90);
-  expect(upperRight, `${label} samples the mirrored upper-right pixel`).toBeDefined();
-  expect(upperRight && isWhite(upperRight), `${label} leaves the mirrored upper-right pixel clear`).toBe(true);
-  expect(lowerLeft, `${label} samples the mirrored lower-left pixel`).toBeDefined();
-  expect(lowerLeft && isWhite(lowerLeft), `${label} leaves the mirrored lower-left pixel clear`).toBe(true);
+  expect(upperLeft, `${label} samples the upper-left side of the diagonal\n${lumaGrid}`).toBeDefined();
+  expect(hasInk(upperLeft!), `${label} has visible coverage on its upper-left path sample\n${lumaGrid}`).toBe(true);
+  expect(lowerRight, `${label} samples the lower-right side of the diagonal\n${lumaGrid}`).toBeDefined();
+  expect(hasInk(lowerRight!), `${label} has visible coverage on its lower-right path sample\n${lumaGrid}`).toBe(true);
+  expect(upperRight, `${label} samples the mirrored upper-right pixel\n${lumaGrid}`).toBeDefined();
+  expect(upperRight && isWhite(upperRight), `${label} leaves the mirrored upper-right pixel clear\n${lumaGrid}`).toBe(
+    true
+  );
+  expect(lowerLeft, `${label} samples the mirrored lower-left pixel\n${lumaGrid}`).toBeDefined();
+  expect(lowerLeft && isWhite(lowerLeft), `${label} leaves the mirrored lower-left pixel clear\n${lumaGrid}`).toBe(
+    true
+  );
+  expect(upperLeftOutside, `${label} samples beside the upper-left path pixel\n${lumaGrid}`).toBeDefined();
+  expect(
+    upperLeftOutside && isWhite(upperLeftOutside),
+    `${label} keeps the adjacent pixel outside the upper-left path clear\n${lumaGrid}`
+  ).toBe(true);
+  expect(lowerRightOutside, `${label} samples beside the lower-right path pixel\n${lumaGrid}`).toBeDefined();
+  expect(
+    lowerRightOutside && isWhite(lowerRightOutside),
+    `${label} keeps the adjacent pixel outside the lower-right path clear\n${lumaGrid}`
+  ).toBe(true);
 }
 
 test.describe('1px stroke pixel coverage', () => {
