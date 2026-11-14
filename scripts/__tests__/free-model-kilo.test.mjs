@@ -580,9 +580,10 @@ process.exitCode = 1;`
   );
 
   it('rejects a buffered invalid cost before returning a timeout error', async () => {
-    const killSignals = [];
+    const terminatedPids = [];
     const spawnImpl = () => {
       const child = new EventEmitter();
+      child.pid = 4242;
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.stdin = new EventEmitter();
@@ -591,11 +592,6 @@ process.exitCode = 1;`
           'data',
           Buffer.from(`${JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: false } })}\n`)
         );
-      };
-      child.kill = (signal) => {
-        killSignals.push(signal);
-        queueMicrotask(() => child.emit('close', null, signal));
-        return true;
       };
       return child;
     };
@@ -606,15 +602,17 @@ process.exitCode = 1;`
         model: 'model:free',
         prompt: 'prompt',
         timeoutMs: 25,
-        platform: 'linux',
+        platform: 'win32',
         spawnImpl,
+        terminateWindowsProcessTreeImpl: async (pid) => terminatedPids.push(pid),
       })
     ).resolves.toEqual({
       error: 'Kilo reported non-zero or invalid completion cost',
       exhaustSource: true,
       safetyStop: true,
+      reportedCost: true,
     });
-    expect(killSignals).toEqual(['SIGTERM']);
+    expect(terminatedPids).toEqual([4242]);
   });
 
   it('aborts a stalled request at its configured inference timeout', async () => {
