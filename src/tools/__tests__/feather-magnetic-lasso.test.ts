@@ -1,13 +1,38 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAGNETIC_LASSO_EDGE_CONTRAST_DEFAULT,
+  MAGNETIC_LASSO_EDGE_CONTRAST_MAX,
+  MAGNETIC_LASSO_EDGE_CONTRAST_MIN,
   MAGNETIC_LASSO_FREQUENCY_MAX,
   MAGNETIC_LASSO_FREQUENCY_MIN,
   featherMagneticLasso,
   magneticLassoAnchorSpan,
+  normalizeMagneticLassoEdgeContrast,
 } from '../featherMagneticLasso.ts';
 import type { ProcessorToolParams } from '../toolProcessors.ts';
 
 const bitmap = 'BITMAP' as unknown as ProcessorToolParams['bitmap'];
+
+describe('normalizeMagneticLassoEdgeContrast', () => {
+  it('matches Adobe’s 1–100% range and keeps the default within it', () => {
+    expect(MAGNETIC_LASSO_EDGE_CONTRAST_MIN).toBe(1);
+    expect(MAGNETIC_LASSO_EDGE_CONTRAST_MAX).toBe(100);
+    expect(MAGNETIC_LASSO_EDGE_CONTRAST_DEFAULT).toBeGreaterThanOrEqual(MAGNETIC_LASSO_EDGE_CONTRAST_MIN);
+    expect(MAGNETIC_LASSO_EDGE_CONTRAST_DEFAULT).toBeLessThanOrEqual(MAGNETIC_LASSO_EDGE_CONTRAST_MAX);
+  });
+
+  it.each([
+    [-10, MAGNETIC_LASSO_EDGE_CONTRAST_MIN],
+    [0, MAGNETIC_LASSO_EDGE_CONTRAST_MIN],
+    [1, MAGNETIC_LASSO_EDGE_CONTRAST_MIN],
+    [42.4, 42],
+    [99.6, MAGNETIC_LASSO_EDGE_CONTRAST_MAX],
+    [120, MAGNETIC_LASSO_EDGE_CONTRAST_MAX],
+    [Number.NaN, MAGNETIC_LASSO_EDGE_CONTRAST_DEFAULT],
+  ])('normalizes %s to %s', (value, expected) => {
+    expect(normalizeMagneticLassoEdgeContrast(value)).toBe(expected);
+  });
+});
 
 /**
  * Photoshop's Frequency is a RATE, not a distance: "A higher value anchors the selection

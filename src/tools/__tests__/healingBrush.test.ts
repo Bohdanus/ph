@@ -80,11 +80,16 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  RecordingOffscreenCanvas.instances = [];
 });
 
 /** Runs the processor and returns the single canvas it must have produced. */
-const run = (overrides: Partial<HealingBrushToolArgs> = {}): RecordingOffscreenCanvas => {
-  const result = healingBrush({ size, bitmap: sourceBitmap })(args(overrides));
+const run = (overrides: Partial<HealingBrushToolArgs> = {}, canvasSize: Size = size): RecordingOffscreenCanvas => {
+  const bitmap =
+    canvasSize.width === size.width && canvasSize.height === size.height
+      ? sourceBitmap
+      : createMockImageBitmap(canvasSize.width, canvasSize.height);
+  const result = healingBrush({ size: canvasSize, bitmap })(args(overrides));
 
   expect(result).toHaveLength(1);
   const canvas = result[0] as unknown as RecordingOffscreenCanvas;
@@ -106,7 +111,7 @@ const at = (canvas: RecordingOffscreenCanvas, x: number, y: number) => {
 
 /** The destination colour under the stroke centre before healing. */
 const dest = (x: number, y: number) => ({
-  r: x * 20,
+  r: Math.min(255, x * 20),
   g: 100,
   b: y === 1 && x === 1 ? 160 : 100,
   a: 255,
@@ -118,7 +123,7 @@ describe('healing brush processor', () => {
     expect(toolProcessors['healing-brush'].imageProcessor).toBe(healingBrush);
   });
 
-  it('stamps a full document-sized canvas and draws the source raster into it', () => {
+  it('allocates a full document-sized canvas and passes the source bitmap to drawImage', () => {
     const canvas = run();
 
     expect(canvas.width).toBe(size.width);
@@ -126,16 +131,22 @@ describe('healing brush processor', () => {
     expect(canvas.ctx.drawImage).toHaveBeenCalledWith(sourceBitmap, 0, 0);
   });
 
-  it('spaces its dabs at the tool constant', () => {
+  it('defines dab spacing as 25 percent of the tip diameter', () => {
     expect(HEALING_BRUSH_SPACING_PERCENT).toBe(25);
   });
 
   describe('the no-source and no-stroke states', () => {
-    it('is an exact no-op for a null source, and does NOT fill anything', () => {
+    it('does not heal when the clone source point is unset', () => {
       const canvas = run({ source: null });
 
       expect(canvas.ctx.getImageData).not.toHaveBeenCalled();
       expect(canvas.ctx.putImageData).not.toHaveBeenCalled();
+
+      for (let y = 0; y < size.height; y++) {
+        for (let x = 0; x < size.width; x++) {
+          expect(at(canvas, x, y), `(${x}, ${y})`).toEqual(dest(x, y));
+        }
+      }
     });
 
     it('is an exact no-op for an empty point list', () => {
@@ -199,7 +210,7 @@ describe('healing brush processor', () => {
 
       expect(at(canvas, 4, 4)).toEqual({ r: 31, g: 111, b: 171, a: 255 });
 
-      // The soft tip weights: center=1, N/S/E/W at distance 1 = ~0.5, corners at distance ~1.41 = ~0.25
+      // The soft tip weights: center=1, N/S/E/W at distance 1 = 0.5, corners at distance ~1.41 = ~0.20
       // Expected values computed from the actual algorithm
       expect(at(canvas, 3, 4)).toEqual({ r: 39, g: 109, b: 109, a: 255 });
       expect(at(canvas, 5, 4)).toEqual({ r: 79, g: 109, b: 109, a: 255 });
@@ -231,7 +242,7 @@ describe('healing brush processor', () => {
 
       const center = at(canvas, 4, 4);
       // With opacity 0.5, the correction is halved
-      // dest(4,4).r = 80, full correction = 31, so halfway = 55.5 -> 56
+      // dest(4,4).r = 80, full healing result = 31, so halfway = 55.5 -> 56
       expect(center.r).toBe(56);
       expect(center.g).toBe(106);
       expect(center.b).toBe(136);
@@ -242,10 +253,14 @@ describe('healing brush processor', () => {
       expect(center.r).toBeGreaterThan(31);
     });
 
-    it('still calls putImageData at zero opacity (processor does not early-return)', () => {
+    it('preserves all pixels at zero opacity', () => {
       const canvas = run({ opacity: 0 });
 
-      expect(canvas.ctx.putImageData).toHaveBeenCalled();
+      for (let y = 0; y < size.height; y++) {
+        for (let x = 0; x < size.width; x++) {
+          expect(at(canvas, x, y)).toEqual(dest(x, y));
+        }
+      }
     });
   });
 
@@ -330,17 +345,21 @@ describe('healing brush processor', () => {
       expect(at(canvas, 5, 5)).not.toEqual(dest(5, 5));
     });
 
-    it('handles a huge tip that covers the entire canvas', () => {
+    it('stamps a very large tip into distant quadrants of the canvas', () => {
       expect(() => run({ size: 500 })).not.toThrow();
 
       const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
 
-      for (let y = 0; y < size.height; y++) {
-        for (let x = 0; x < size.width; x++) {
-          if (x === 4 && y === 4) {
-            expect(at(canvas, x, y)).not.toEqual(dest(x, y));
-          }
-        }
+      expect(canvas.ctx.getImageData).toHaveBeenCalledWith(0, 0, size.width, size.height);
+      expect(canvas.ctx.putImageData).toHaveBeenCalledTimes(1);
+
+      for (const [x, y] of [
+        [1, 1],
+        [7, 1],
+        [1, 7],
+        [7, 7],
+      ] as const) {
+        expect(at(canvas, x, y), `(${x}, ${y})`).not.toEqual(dest(x, y));
       }
     });
   });
@@ -359,8 +378,20 @@ describe('healing brush processor', () => {
       }
     );
 
-    it('clamps an over-range size to the maximum and an under-range one to the minimum', () => {
-      equivalentTo({ size: 5000 }, { size: BRUSH_SIZE_MAX });
+    it('clamps an over-range size to maximum behavior on a large canvas', () => {
+      const stroke = [{ x: 300, y: 5 }];
+      const source = { x: 1, y: 1 };
+      const canvasSize = { width: 600, height: 10 };
+      const oversized = run({ size: 5000, source, points: stroke }, canvasSize);
+      const maximum = run({ size: BRUSH_SIZE_MAX, source, points: stroke }, canvasSize);
+
+      expect(Array.from(oversized.buffer)).toEqual(Array.from(maximum.buffer));
+      // This point is 252px from the centre: outside the clamped 250px radius,
+      // but inside an unclamped 2500px radius.
+      expect(at(oversized, 48, 5)).toEqual(dest(48, 5));
+    });
+
+    it('clamps under-range sizes to the minimum behavior', () => {
       equivalentTo({ size: 0 }, { size: BRUSH_SIZE_MIN });
       equivalentTo({ size: -40 }, { size: BRUSH_SIZE_MIN });
     });

@@ -413,59 +413,66 @@ describe('dabStep', () => {
 });
 
 describe('buildTipLut non-finite params', () => {
-  it('clamps non-finite size to MIN_TIP_SIZE (clamp returns lo for non-finite)', () => {
-    const ref = buildTipLut({ size: MIN_TIP_SIZE });
-    for (const size of [NaN, Infinity, -Infinity, -1, 0, 0.5, 0.99]) {
+  it('maps NaN and negative infinity to minimum size and positive infinity to maximum size', () => {
+    const min = buildTipLut({ size: MIN_TIP_SIZE });
+    const max = buildTipLut({ size: MAX_TIP_SIZE });
+    for (const size of [NaN, -Infinity, -1, 0, 0.5, 0.99]) {
       const lut = buildTipLut({ size });
-      expect(lut.radius).toBe(ref.radius);
-      expect(lut.halfX).toBe(ref.halfX);
-      expect(lut.halfY).toBe(ref.halfY);
-      expect(lut.lutX.length).toBe(ref.lutX.length);
+      expect(lut.radius).toBe(min.radius);
+      expect(lut.halfX).toBe(min.halfX);
+      expect(lut.halfY).toBe(min.halfY);
+      expect(lut.lutX.length).toBe(min.lutX.length);
     }
+    const upper = buildTipLut({ size: Infinity });
+    expect(upper.radius).toBe(max.radius);
+    expect(upper.halfX).toBe(max.halfX);
+    expect(upper.halfY).toBe(max.halfY);
+    expect(upper.lutX.length).toBe(max.lutX.length);
   });
 
-  it('clamps non-finite hardness to 0 (clamp returns lo for non-finite)', () => {
-    const ref = buildTipLut({ size: 20, hardness: 0 });
-    for (const hardness of [NaN, Infinity, -Infinity, -0.01, -1]) {
+  it('maps non-finite hardness to the corresponding endpoint', () => {
+    const min = buildTipLut({ size: 20, hardness: 0 });
+    for (const hardness of [NaN, -Infinity, -0.01, -1]) {
       const lut = buildTipLut({ size: 20, hardness });
       expect(lut.hard).toBe(false);
-      expect(lut.lutX.length).toBe(ref.lutX.length);
-      for (let i = 0; i < lut.lutX.length; i++) {
-        expect(lut.lutX[i]).toBeCloseTo(ref.lutX[i], 7);
-      }
-      for (let i = 0; i < lut.lutY.length; i++) {
-        expect(lut.lutY[i]).toBeCloseTo(ref.lutY[i], 7);
-      }
+      expect(lut.lutX).toEqual(min.lutX);
+      expect(lut.lutY).toEqual(min.lutY);
     }
+    const upper = buildTipLut({ size: 20, hardness: Infinity });
+    expect(upper.hard).toBe(true);
+    expect(upper.lutX[0]).toBe(1);
   });
 
-  it('clamps non-finite aspect to MIN_TIP_ASPECT (clamp returns lo for non-finite)', () => {
-    const ref = buildTipLut({ size: 40, aspect: MIN_TIP_ASPECT });
-    for (const aspect of [NaN, Infinity, -Infinity, -1, 0, 0.01, 0.049]) {
+  it('maps non-finite aspect to the corresponding endpoint', () => {
+    const min = buildTipLut({ size: 40, aspect: MIN_TIP_ASPECT });
+    const max = buildTipLut({ size: 40, aspect: MAX_TIP_ASPECT });
+    for (const aspect of [NaN, -Infinity, -1, 0, 0.01, 0.049]) {
       const lut = buildTipLut({ size: 40, aspect });
-      expect(lut.radiusX).toBeCloseTo(ref.radiusX, 10);
-      expect(lut.radiusY).toBeCloseTo(ref.radiusY, 10);
+      expect(lut.radiusX).toBeCloseTo(min.radiusX, 10);
+      expect(lut.radiusY).toBeCloseTo(min.radiusY, 10);
     }
+    const upper = buildTipLut({ size: 40, aspect: Infinity });
+    expect(upper.radiusX).toBeCloseTo(max.radiusX, 10);
+    expect(upper.radiusY).toBeCloseTo(max.radiusY, 10);
   });
 
-  it('clamps non-finite wetEdges to 0 (clamp returns lo for non-finite)', () => {
-    for (const wetEdges of [NaN, Infinity, -Infinity, -1]) {
-      const lut = buildTipLut({ size: 20, hardness: 0.5, wetEdges });
-      expect(lut.wetEdges).toBe(0);
+  it('maps non-finite wet edge values to the corresponding endpoint', () => {
+    for (const wetEdges of [NaN, -Infinity, -1]) {
+      expect(buildTipLut({ size: 20, hardness: 0.5, wetEdges }).wetEdges).toBe(0);
     }
+    expect(buildTipLut({ size: 20, hardness: 0.5, wetEdges: Infinity }).wetEdges).toBe(1);
   });
 
-  it('clamps non-finite powerGamma to 0.01 under power falloff', () => {
-    const ref = buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma: 0.01 });
-    for (const powerGamma of [NaN, Infinity, -Infinity, -1]) {
-      const lut = buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma });
-      for (let i = 0; i < lut.lutX.length; i++) {
-        expect(lut.lutX[i]).toBeCloseTo(ref.lutX[i], 7);
-      }
+  it('maps non-finite power gamma to the corresponding endpoint', () => {
+    const min = buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma: 0.01 });
+    const max = buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma: 64 });
+    for (const powerGamma of [NaN, -Infinity, -1]) {
+      expect(buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma }).lutX).toEqual(min.lutX);
     }
+    expect(buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma: Infinity }).lutX).toEqual(max.lutX);
   });
 
-  it('produces finite [0,1] samples for all clamped non-finite params at the default angle', () => {
+  it('produces finite [0,1] samples for non-finite params at the default angle', () => {
     const lut = buildTipLut({
       size: NaN,
       hardness: Infinity,
@@ -660,22 +667,5 @@ describe('sampleTip monotonicity across configurations', () => {
         expect(lut.lutY[0]).toBeCloseTo(0, 6);
       }
     }
-  });
-});
-
-describe('tripwires (it.fails: known gaps that should fail until fixed)', () => {
-  it.fails('clamps a non-finite angle in buildTipLut so sampleTip stays finite (src/util/brush-tip.ts)', () => {
-    const lut = buildTipLut({ size: 20, hardness: 0.5, angle: NaN });
-    for (let d = 0; d <= 10; d++) {
-      expect(Number.isFinite(sampleTip(lut, d, 0))).toBe(true);
-    }
-  });
-
-  it.fails('clamps a non-finite radius to the pixel minimum in dabStep (src/util/brush-types.ts)', () => {
-    expect(dabStep(NaN, 25)).toBe(1);
-  });
-
-  it.fails('treats non-finite spacing as 100% (maximum) rather than 0% in dabStep (src/util/brush-types.ts)', () => {
-    expect(dabStep(20, Infinity)).toBe(dabStep(20, 100));
   });
 });

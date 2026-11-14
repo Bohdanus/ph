@@ -17,7 +17,11 @@ import type { RepositionToolArgs } from './reposition.ts';
 import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelection.ts';
 import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
 import type { SingleColumnMarqueeToolArgs, SingleRowMarqueeToolArgs } from './singleRowColumnMarquee.ts';
-import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } from './featherMagneticLasso.ts';
+import {
+  MAGNETIC_LASSO_EDGE_CONTRAST_DEFAULT,
+  type FeatherMagneticLassoToolArgs,
+  type FeatherMagneticLassoToolSettings,
+} from './featherMagneticLasso.ts';
 import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
 import { ERASER_FLOW_DEFAULT, ERASER_HARDNESS_DEFAULT, ERASER_SPACING_PERCENT, type EraserToolArgs } from './eraser.ts';
 import type { FillToolArgs } from './fill.ts';
@@ -170,7 +174,7 @@ export const defaultSettings = {
   'feather-magnetic-lasso': {
     featherRadius: 12,
     magneticWidth: 18,
-    edgeContrast: 30,
+    edgeContrast: MAGNETIC_LASSO_EDGE_CONTRAST_DEFAULT,
     frequency: 40,
     snapStrength: 0.85,
     smoothing: 1.5,

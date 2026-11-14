@@ -41,12 +41,12 @@ describe('buildColorsFilter', () => {
     );
   });
 
-  it('propagates a non-finite saturation into the emitted string', () => {
+  it('falls back to neutral saturation for non-finite input', () => {
     expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.NaN })).toBe(
-      'grayscale(0%) sepia(0%) saturate(NaN%)'
+      'grayscale(0%) sepia(0%) saturate(100%)'
     );
     expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.POSITIVE_INFINITY })).toBe(
-      'grayscale(0%) sepia(0%) saturate(Infinity%)'
+      'grayscale(0%) sepia(0%) saturate(100%)'
     );
   });
 
@@ -60,25 +60,24 @@ describe('buildColorsFilter', () => {
     expect(factor).toBeLessThan(1);
   });
 
-  it('emits a negative saturate for saturation below the -100 floor', () => {
-    expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -200 }), 'saturate')).toBeLessThan(0);
+  it('clamps saturation to the slider endpoints before building valid CSS', () => {
+    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -200 })).toBe(
+      'grayscale(0%) sepia(0%) saturate(0%)'
+    );
+    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: 200 })).toBe(
+      buildColorsFilter({ grayscale: 0, sepia: 0, saturation: 100 })
+    );
   });
 
-  it('crosses zero exactly at -100, staying positive just above and negative just below', () => {
+  it('clamps grayscale and sepia to their slider ranges', () => {
+    expect(buildColorsFilter({ grayscale: -20, sepia: 140, saturation: 0 })).toBe(
+      'grayscale(0%) sepia(100%) saturate(100%)'
+    );
+  });
+
+  it('crosses zero exactly at -100 and stays non-negative below the slider floor', () => {
     expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -99 }), 'saturate')).toBeGreaterThan(0);
-    expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -101 }), 'saturate')).toBeLessThan(0);
-  });
-
-  it.fails('does not clamp NaN saturation to the neutral 100%', () => {
-    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.NaN })).toBe(
-      'grayscale(0%) sepia(0%) saturate(100%)'
-    );
-  });
-
-  it.fails('does not clamp Infinity saturation to the neutral 100%', () => {
-    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.POSITIVE_INFINITY })).toBe(
-      'grayscale(0%) sepia(0%) saturate(100%)'
-    );
+    expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -101 }), 'saturate')).toBe(0);
   });
 });
 
@@ -223,14 +222,14 @@ describe('buildLevelsFilter', () => {
   });
 
   it('strictly increases both CSS factors at each integer app slider step', () => {
-    for (const brightness of sliderTravel(BRIGHTNESS_SLIDER_RANGE)) {
+    for (const brightness of sliderTravel(BRIGHTNESS_SLIDER_RANGE).slice(0, -1)) {
       const [lower] = parseLevelsFilter(buildLevelsFilter({ brightness, contrast: 0 }));
       const [higher] = parseLevelsFilter(buildLevelsFilter({ brightness: brightness + 1, contrast: 0 }));
 
       expect(higher, `brightness ${brightness} does nothing`).toBeGreaterThan(lower);
     }
 
-    for (const contrast of sliderTravel(CONTRAST_SLIDER_RANGE)) {
+    for (const contrast of sliderTravel(CONTRAST_SLIDER_RANGE).slice(0, -1)) {
       const [, lower] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast }));
       const [, higher] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast: contrast + 1 }));
 
@@ -256,65 +255,24 @@ describe('buildLevelsFilter', () => {
     expect(0.5 + 0.5 / contrastFactor).toBe(0.75);
   });
 
-  it('propagates a non-finite adjustment into the emitted string rather than sanitising it', () => {
-    // This low-level builder remains unsanitized: the Levels tool normalizes its inputs before
-    // calling it, while `presentation-evaluator.ts` refuses malformed retained operations.
-    expect(buildLevelsFilter({ brightness: Number.NaN, contrast: 0 })).toBe('brightness(NaN%) contrast(100%)');
-    expect(buildLevelsFilter({ brightness: 0, contrast: Number.NaN })).toBe('brightness(100%) contrast(NaN%)');
-  });
-
-  it('propagates Infinity and -Infinity into the emitted string rather than sanitising them', () => {
-    expect(buildLevelsFilter({ brightness: Number.POSITIVE_INFINITY, contrast: 0 })).toBe(
-      'brightness(Infinity%) contrast(100%)'
-    );
-    expect(buildLevelsFilter({ brightness: Number.NEGATIVE_INFINITY, contrast: 0 })).toBe(
-      'brightness(-Infinity%) contrast(100%)'
-    );
+  it('uses neutral values for non-finite input and clamps finite values to slider travel', () => {
+    expect(buildLevelsFilter({ brightness: Number.NaN, contrast: 0 })).toBe('brightness(100%) contrast(100%)');
     expect(buildLevelsFilter({ brightness: 0, contrast: Number.POSITIVE_INFINITY })).toBe(
-      'brightness(100%) contrast(Infinity%)'
+      'brightness(100%) contrast(100%)'
     );
+    expect(buildLevelsFilter({ brightness: -200, contrast: -200 })).toBe('brightness(0%) contrast(50%)');
+    expect(buildLevelsFilter({ brightness: 200, contrast: 200 })).toBe('brightness(200%) contrast(200%)');
   });
 
-  it('emits a negative factor for values below the slider floor, which invalidates the CSS term', () => {
-    // Outside the slider travel the proportionate factor turns negative. The slider bounds
-    // keep these from reaching the emitted string in practice; this pins the mathematical
-    // behaviour rather than a sanitised result.
-    expect(parseLevelsFilter(buildLevelsFilter({ brightness: -200, contrast: 0 }))[0]).toBeLessThan(0);
-    expect(parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast: -200 }))[1]).toBeLessThan(0);
-  });
-
-  it('crosses zero exactly at the brightness floor, staying positive just above and negative just below', () => {
+  it('crosses zero exactly at the brightness floor and stays valid below it', () => {
     expect(parseLevelsFilter(buildLevelsFilter({ brightness: -149, contrast: 0 }))[0]).toBeGreaterThan(0);
     expect(parseLevelsFilter(buildLevelsFilter({ brightness: -150, contrast: 0 }))[0]).toBe(0);
-    expect(parseLevelsFilter(buildLevelsFilter({ brightness: -151, contrast: 0 }))[0]).toBeLessThan(0);
+    expect(parseLevelsFilter(buildLevelsFilter({ brightness: -151, contrast: 0 }))[0]).toBe(0);
   });
 
-  it.fails('does not clamp NaN brightness to 0', () => {
-    expect(buildLevelsFilter({ brightness: Number.NaN, contrast: 0 })).toBe('brightness(0%) contrast(100%)');
-  });
-
-  it.fails('does not clamp NaN contrast to 50', () => {
-    expect(buildLevelsFilter({ brightness: 0, contrast: Number.NaN })).toBe('brightness(100%) contrast(50%)');
-  });
-
-  it.fails('does not clamp Infinity brightness to 100', () => {
-    expect(buildLevelsFilter({ brightness: Number.POSITIVE_INFINITY, contrast: 0 })).toBe(
-      'brightness(100%) contrast(100%)'
-    );
-  });
-
-  it.fails('does not clamp Infinity contrast to 100', () => {
-    expect(buildLevelsFilter({ brightness: 0, contrast: Number.POSITIVE_INFINITY })).toBe(
-      'brightness(100%) contrast(100%)'
-    );
-  });
-
-  it('emits a negative factor for nothing on either travel, because a negative `brightness()` invalidates the whole string', () => {
-    // A browser DISCARDS an invalid `ctx.filter` assignment outright rather than applying
-    // its valid part, so one negative operand would drop the contrast term with it and the
-    // layer would draw unfiltered with nothing to say so — the failure
-    // `FilterArgumentUnrenderableError` exists to prevent. Dividing by the travel rather
-    // than scaling the slider is what keeps both controls non-negative.
+  it('emits valid non-negative factors throughout slider travel', () => {
+    // A browser discards an invalid filter assignment, so the negative slider endpoints must
+    // map to zero rather than a negative CSS multiplier.
     for (const brightness of sliderTravel(BRIGHTNESS_SLIDER_RANGE)) {
       expect(parseLevelsFilter(buildLevelsFilter({ brightness, contrast: 0 }))[0]).toBeGreaterThanOrEqual(0);
     }
@@ -375,22 +333,6 @@ describe('proportionateFactor', () => {
     expect(proportionateFactor(-150, 150)).toBe(0);
     expect(proportionateFactor(-151, 150)).toBeCloseTo(-1 / 150, 10);
   });
-
-  it.fails('does not clamp NaN to 0', () => {
-    expect(proportionateFactor(Number.NaN, 150)).toBe(0);
-  });
-
-  it.fails('does not clamp NaN to 1', () => {
-    expect(proportionateFactor(Number.NaN, 150)).toBe(1);
-  });
-
-  it.fails('does not clamp Infinity to 1', () => {
-    expect(proportionateFactor(Number.POSITIVE_INFINITY, 150)).toBe(1);
-  });
-
-  it.fails('does not clamp -Infinity to 0', () => {
-    expect(proportionateFactor(Number.NEGATIVE_INFINITY, 150)).toBe(0);
-  });
 });
 
 describe('expAdjustment', () => {
@@ -430,8 +372,7 @@ describe('expAdjustment', () => {
   });
 
   it('propagates a non-finite input rather than silently sanitising it', () => {
-    // This is the low-level math helper. The Colors processor normalizes tool args before it
-    // reaches this function; the raw helper and filter builder stay unsanitized.
+    // The curve remains a pure math helper; the shared CSS builder normalizes before using it.
     expect(expAdjustment(Number.NaN, SATURATION_EXPONENT)).toBeNaN();
   });
 
@@ -451,18 +392,6 @@ describe('expAdjustment', () => {
   it('crosses zero exactly at -100, staying positive just above and negative just below', () => {
     expect(expAdjustment(-99, SATURATION_EXPONENT)).toBeGreaterThan(0);
     expect(expAdjustment(-101, SATURATION_EXPONENT)).toBeLessThan(0);
-  });
-
-  it.fails('does not clamp NaN to 0', () => {
-    expect(expAdjustment(Number.NaN, SATURATION_EXPONENT)).toBe(0);
-  });
-
-  it.fails('does not clamp NaN to 1', () => {
-    expect(expAdjustment(Number.NaN, SATURATION_EXPONENT)).toBe(1);
-  });
-
-  it.fails('does not clamp Infinity to 1', () => {
-    expect(expAdjustment(Number.POSITIVE_INFINITY, SATURATION_EXPONENT)).toBe(1);
   });
 });
 

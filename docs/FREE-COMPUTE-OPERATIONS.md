@@ -25,6 +25,20 @@ receives a response-length instruction instead. Verify the resolved route, non-e
 reason, and cost. The runner ranks Nemotron first across eligible providers, then Xing 4.0, and
 interleaves unranked fallback routes. See [`MODELS.md`](../MODELS.md).
 
+### Operator-managed quarantine entries
+
+The default shared quarantine file is `.kilo/free-model-quarantine.json`.
+
+The shared local quarantine file may contain manually maintained `permanent_ban` and `provider_ban`
+entries. Both apply only to their exact `source:model` pair; `provider_ban` does not disable the
+provider's other models. The pool honors these entries for up to 100 UTC calendar years, clamping a
+February 29 anniversary to February 28 when the target year is not a leap year. Automatic quarantine
+updates and the `free:quarantine add` command accept only transient reasons with a 168-hour maximum;
+they preserve an active operator ban for the same pair. Unknown reasons and out-of-range durations
+fail closed.
+
+The CLI defaults to six hours when `--hours` is omitted.
+
 ## Find credentials safely
 
 If the operator says credentials were saved, search the relevant local chat before concluding they
@@ -34,18 +48,19 @@ into logs. Report only the provider, path, and whether authentication is availab
 
 ## Kilo Code
 
-When the Kilo adapter is explicitly invoked, it uses `kilo run`, which picks up the logged-in Kilo
-Gateway OAuth account used by the Kilo Code extension. The shared completion pool does not select
-Kilo candidates as fallback routes. The adapter discovers `kilo` on `PATH` and then checks common VS
-Code, Cursor, and Windsurf extension folders. If discovery misses the installed CLI, set
-`KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never read or
-print the Kilo auth database or JSON file.
+The shared completion pool selects eligible, verified-free Kilo routes in model-first provider
+order and invokes this adapter; Kilo is not a fallback-only route. `kilo run` uses the logged-in Kilo
+Gateway OAuth account used by the Kilo Code extension. The adapter discovers `kilo` on `PATH` and
+then checks common VS Code, Cursor, and Windsurf extension folders. If discovery misses the installed
+CLI, set `KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never
+read or print the Kilo auth database or JSON file.
 
 `kilo run` starts with `--pure` and the tracked `free-completion` agent. That profile denies every
 tool name. The prompt is piped through stdin, keeping it out of process arguments and avoiding
 Kilo's file-attachment and external-directory permission checks. Do not add `--auto`: it would
 broaden permissions beyond the tool-free profile. The runner verifies a clean JSON completion,
-rejects tool events and reported non-zero cost. Inference has a five-minute timeout. It
+rejects tool events and reported non-zero cost. Nemotron inference has a 12-minute timeout; other
+inference routes use five minutes. Catalog and quota checks use a separate 15-second timeout. It
 uses the public Kilo catalog only for model and exact-zero price discovery; it does not send
 inference requests anonymously to the public Gateway endpoint. The child environment is limited to
 runtime paths and locale settings, including the Kilo database selector; unrelated provider keys
@@ -69,8 +84,11 @@ The runner refreshes OpenRouter's public catalog and requires exact-zero pricing
 `GET /api/v1/key` only when routing reaches the first OpenRouter inference route, then uses the live
 `used`, `limit`, and `remaining` counters. OpenRouter notes the tier counter is not enforced for every
 account or endpoint and does not gate BYOK; this runner conservatively stops when its live counter
-reports zero. If remaining is zero, it stores the current UTC date and
-skips OpenRouter until the date changes; no scheduled reset is required. If the initial probe is
+reports zero. If remaining is zero, or an inference error carries the exact
+`openrouter_free_tier_daily` limit source, it stores the current UTC date and
+skips OpenRouter until the date changes, even if the refreshed counter temporarily reports
+positive remaining. A generic message match alone stops only the current run; a zero live counter
+still persists the date. No scheduled reset is required. If the initial probe is
 unknown, only one inference request is permitted in that run; a positive post-attempt refresh does
 not unlock another attempt. Quota-present retries require a positive initial probe. A positive quota
 allows one bounded same-route retry for a transient OpenRouter response (maximum wait 60 seconds).
@@ -80,8 +98,8 @@ stops OpenRouter. Longer waits for other failures stop the source. If a bounded 
 the pool rotates to another eligible OpenRouter model when a fresh quota check is still positive and
 the per-source attempt ceiling permits it. HTTP 401/402 exhausts
 OpenRouter for the run. An `openrouter_*` limit source or zero `X-RateLimit-Remaining` on a 429 identifies a platform
-rate limit and skips the source for that run without blaming the model. A zero daily counter persists today's
-exhaustion marker. Three confirmed upstream/model rate-limit failures (HTTP 429 or typed
+rate limit and skips the source for that run without blaming the model. A zero daily counter or exact
+`openrouter_free_tier_daily` limit source persists today's exhaustion marker. Three confirmed upstream/model rate-limit failures (HTTP 429 or typed
 `rate_limit_exceeded`) for the same OpenRouter model in three hours create a two-hour quarantine; 250
 confirmed model-attributable failures in seven days create a
 seven-day quarantine. Network errors, truncation, empty responses, and unresolved model IDs do not

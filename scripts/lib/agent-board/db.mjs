@@ -31,8 +31,9 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { relativePathInside } from '../path-identity.mjs';
 
 /**
  * v3, and the number is the union of two meanings that were numbered apart:
@@ -59,6 +60,12 @@ const SCHEMA_VERSION = 4;
  * a resolved defect as a reason to stay out of a file.
  */
 const LIVE_STATUSES = ['open', 'claimed', 'deferred'];
+
+/** Keep unreadable lease deadlines locked until an operator can inspect them. */
+function isLiveDeadline(value, at) {
+  const until = Date.parse(value);
+  return Number.isNaN(until) || until > at;
+}
 
 /**
  * Default lease. Long enough that an agent mid-refactor does not lose its
@@ -386,6 +393,11 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function isSqliteBusy(error) {
+  const code = error?.errcode;
+  return Number.isInteger(code) && (code & 0xff) === 5;
+}
+
 /**
  * Resolves the symlinks in a path that may not exist yet, by resolving its
  * deepest existing ancestor and re-attaching the rest. Returns null when even
@@ -414,6 +426,11 @@ function isMissingPath(error) {
   return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
 }
 
+function normalizeBoardPathSeparators(path) {
+  const value = String(path ?? '');
+  return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+}
+
 /**
  * True when a normalised path is NOT inside any worktree of this repository.
  *
@@ -424,9 +441,7 @@ function isMissingPath(error) {
  * matches.
  */
 function isOutsideRepoPath(path) {
-  const p = String(path ?? '')
-    .split('\\')
-    .join('/');
+  const p = normalizeBoardPathSeparators(path);
   return p.startsWith('/') || p === '..' || p.startsWith('../') || /^[a-z]:/i.test(p);
 }
 
@@ -553,24 +568,40 @@ export class Board {
   }
 
   /**
-   * Puts the database in WAL, once, and never fails the caller for it.
+   * Puts the database in WAL, once, and never fails the caller for transient
+   * lock contention.
    *
-   * The conversion is skipped when the database is already in WAL, which is
-   * every open after the first — so on a busy board the lock is not contended
-   * at all, and the retry is here for the one open that creates the file.
+   * Both reading and changing `journal_mode` can return SQLITE_BUSY while
+   * another process is converting the new database. The busy timeout does not
+   * cover every journal-mode lock, so each probe belongs inside the retry loop.
+   * If the mode remains locked after the bounded retries, skip the optimization:
+   * the board remains correct in whichever journal mode is already active.
    */
   enableWriteAheadLog({ attempts = 40, delayMs = 25 } = {}) {
-    if (this.currentJournalMode() === 'wal') return 'wal';
     for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        if (this.currentJournalMode() === 'wal') return 'wal';
+      } catch (error) {
+        if (!isSqliteBusy(error)) throw error;
+        sleepSync(delayMs);
+        continue;
+      }
+
       try {
         this.db.exec('PRAGMA journal_mode = WAL');
         if (this.currentJournalMode() === 'wal') return 'wal';
-      } catch {
+      } catch (error) {
+        if (!isSqliteBusy(error)) throw error;
         // Another process is converting it. Fall through and wait.
       }
       sleepSync(delayMs);
     }
-    return this.currentJournalMode();
+    try {
+      return this.currentJournalMode();
+    } catch (error) {
+      if (isSqliteBusy(error)) return null;
+      throw error;
+    }
   }
 
   currentJournalMode() {
@@ -1209,14 +1240,20 @@ export class Board {
     return this.db
       .prepare(
         `SELECT i.id, i.title, i.status, i.priority, i.origin, i.created_by AS agent_id,
-                (SELECT c.agent_id FROM claims c
-                  WHERE c.issue_id = i.id AND c.released_at IS NULL AND c.lease_until > ?) AS claimed_by
+                 c.agent_id AS claimed_by,
+                 c.issue_id AS claim_issue_id,
+                 c.lease_until AS claim_lease_until
            FROM issue_files f
            JOIN issues i ON i.id = f.issue_id
+           LEFT JOIN claims c ON c.issue_id = i.id AND c.released_at IS NULL
           WHERE f.path = ? AND i.status IN (${LIVE_STATUSES.map(() => '?').join(',')})
-          ORDER BY i.created_at ASC`
+           ORDER BY i.created_at ASC`
       )
-      .all(this.iso(at), normalized, ...LIVE_STATUSES);
+      .all(normalized, ...LIVE_STATUSES)
+      .map(({ claim_issue_id: claimIssueId, claim_lease_until: claimLeaseUntil, ...issue }) => ({
+        ...issue,
+        claimed_by: claimIssueId !== null && isLiveDeadline(claimLeaseUntil, at) ? issue.claimed_by : null,
+      }));
   }
 
   getIssue(id) {
@@ -1269,11 +1306,11 @@ export class Board {
   liveClaimOrNull(issueId, at = this.now()) {
     const row = this.liveClaim(issueId);
     if (!row) return null;
-    return Date.parse(row.lease_until) > at ? row : null;
+    return isLiveDeadline(row.lease_until, at) ? row : null;
   }
 
   isLive(claim, at = this.now()) {
-    return Boolean(claim) && claim.released_at === null && Date.parse(claim.lease_until) > at;
+    return Boolean(claim) && claim.released_at === null && isLiveDeadline(claim.lease_until, at);
   }
 
   /**
@@ -1283,6 +1320,7 @@ export class Board {
   listIssues({ status = null, scope = null, files = null, claimedBy = null, origin = null, limit = NO_LIMIT } = {}) {
     const where = [];
     const params = [];
+    const claimsFilterAt = claimedBy ? this.now() : null;
     if (status) {
       const list = Array.isArray(status)
         ? status
@@ -1304,16 +1342,6 @@ export class Board {
     if (origin) {
       where.push('origin = ?');
       params.push(origin);
-    }
-    if (claimedBy) {
-      // The lease, not just the row: an issue whose claim expired a
-      // millisecond ago is not being worked on by anybody, and
-      // `swarm list --claimed-by` saying otherwise sends the next agent round
-      // the loop to find work that is already free.
-      where.push(
-        `EXISTS (SELECT 1 FROM claims c WHERE c.issue_id = issues.id AND c.agent_id = ? AND c.released_at IS NULL AND c.lease_until > ?)`
-      );
-      params.push(claimedBy, this.iso());
     }
     if (files && files.length > 0) {
       /**
@@ -1342,9 +1370,22 @@ export class Board {
       }
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    return this.db
-      .prepare(`SELECT * FROM issues ${clause}`)
-      .all(...params)
+    // Join the unreleased claim in the same SQLite snapshot, then apply the
+    // same conservative parser as the conflict checks. SQLite's date parser
+    // does not have the same accepted-input set as Date.parse.
+    const claimJoin = claimedBy
+      ? 'JOIN claims c ON c.issue_id = issues.id AND c.agent_id = ? AND c.released_at IS NULL'
+      : '';
+    const claimColumns = claimedBy ? ', c.lease_until AS claim_lease_until' : '';
+    const rows = this.db
+      .prepare(`SELECT issues.*${claimColumns} FROM issues ${claimJoin} ${clause}`)
+      .all(...(claimedBy ? [claimedBy, ...params] : params));
+    const matching = claimedBy
+      ? rows
+          .filter((issue) => isLiveDeadline(issue.claim_lease_until, claimsFilterAt))
+          .map(({ claim_lease_until: _claimLeaseUntil, ...issue }) => issue)
+      : rows;
+    return matching
       .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority) || a.created_at.localeCompare(b.created_at))
       .slice(0, limit);
   }
@@ -1530,7 +1571,7 @@ export class Board {
     return this.db
       .prepare('SELECT * FROM file_locks WHERE released_at IS NULL')
       .all()
-      .filter((lock) => Date.parse(lock.expires_at) > at);
+      .filter((lock) => isLiveDeadline(lock.expires_at, at));
   }
 
   /**
@@ -1888,7 +1929,7 @@ export class Board {
       // No agents table yet, or no row.
     }
     this._pathRoots = [...roots]
-      .map((root) => `${String(root).split('\\').join('/').replace(/\/+$/, '')}/`)
+      .map((root) => `${normalizeBoardPathSeparators(root).replace(/\/+$/, '')}/`)
       .sort((a, b) => b.length - a.length);
     return this._pathRoots;
   }
@@ -1922,10 +1963,13 @@ export class Board {
     // it against the process's directory would turn the stored answer into an
     // absolute path that matches nothing.
     if (direct === undefined) return undefined;
-    const input = typed.split('\\').join('/');
-    const root = roots.find((candidate) => input.startsWith(candidate))?.slice(0, -1) ?? this.identity?.worktree;
+    const input = normalizeBoardPathSeparators(typed);
+    const root =
+      roots.find((candidate) => input.startsWith(candidate))?.replace(/\/$/, '') ??
+      roots.find((candidate) => relativePathInside(candidate, typed) !== null)?.replace(/\/$/, '') ??
+      this.identity?.worktree;
     const canonicalize = (candidate) => canonicalizeExistingPathCase(root, candidate);
-    if (!input.startsWith('/')) return canonicalize(direct);
+    if (!isAbsolute(typed)) return canonicalize(direct);
     if (direct !== input.replace(/^\.\//, '')) return canonicalize(direct);
     const resolved = resolveSymlinksBestEffort(path);
     if (resolved === null) return canonicalize(direct);
@@ -2234,7 +2278,7 @@ export class Board {
       byStatus[issue.status] = (byStatus[issue.status] ?? 0) + 1;
     const locks = this.liveLocks(at);
     const unreleased = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
-    const claims = unreleased.filter((claim) => Date.parse(claim.lease_until) > at);
+    const claims = unreleased.filter((claim) => isLiveDeadline(claim.lease_until, at));
     const mine = claims.filter((claim) => claim.agent_id === this.identity?.agentId);
     return {
       counts: byStatus,
@@ -2277,7 +2321,7 @@ export class Board {
     const goneAgents = new Set();
     const claims = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
     for (const claim of claims) {
-      const expired = Date.parse(claim.lease_until) <= at;
+      const expired = !isLiveDeadline(claim.lease_until, at);
       const gone = claim.worktree ? !existsDir(claim.worktree) : false;
       if (!expired && !gone) continue;
       if (gone) goneAgents.add(claim.agent_id);
@@ -2292,7 +2336,7 @@ export class Board {
     }
     const at2 = this.now();
     for (const lock of this.db.prepare('SELECT * FROM file_locks WHERE released_at IS NULL').all()) {
-      const expired = Date.parse(lock.expires_at) <= at2;
+      const expired = !isLiveDeadline(lock.expires_at, at2);
       /**
        * The dead-worktree test, for locks, which claims got and locks never did.
        *
@@ -2637,7 +2681,7 @@ export class Board {
     const taken = lockRows.taken ?? 0;
     const liveLocks = lockRows.live ?? 0;
     const unreleased = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
-    const live = unreleased.filter((claim) => Date.parse(claim.lease_until) > at);
+    const live = unreleased.filter((claim) => isLiveDeadline(claim.lease_until, at));
     const open = this.listIssues({ status: ['open', 'deferred'], limit: NO_LIMIT });
     const liveIssues = open.filter((issue) => !isImportedOrigin(issue.origin));
     return {
@@ -2790,19 +2834,32 @@ function collapseSegments(path) {
  */
 export function normalizePaths(paths, { worktree = null, roots = null } = {}) {
   const list = Array.isArray(paths) ? paths : [paths];
-  const prefixes = (roots ?? (worktree ? [worktree] : []))
-    .map((root) => `${String(root).split('\\').join('/').replace(/\/+$/, '')}/`)
+  const rootPaths = roots ?? (worktree ? [worktree] : []);
+  const prefixes = rootPaths
+    .map((root) => `${normalizeBoardPathSeparators(root).replace(/\/+$/, '')}/`)
     .sort((a, b) => b.length - a.length);
   const out = [];
   for (const raw of list) {
     if (typeof raw !== 'string') continue;
     const trimmed = raw.trim();
     if (!trimmed) continue;
-    let normalized = trimmed.split('\\').join('/').replace(/^\.\//, '');
+    let normalized = normalizeBoardPathSeparators(trimmed).replace(/^\.\//, '');
+    let matchedRoot = false;
     for (const prefix of prefixes) {
       if (normalized.startsWith(prefix)) {
         normalized = normalized.slice(prefix.length);
+        matchedRoot = true;
         break;
+      }
+    }
+    if (!matchedRoot && isAbsolute(trimmed)) {
+      for (const root of rootPaths) {
+        const relative = relativePathInside(root, trimmed);
+        if (relative !== null) {
+          normalized = relative;
+          matchedRoot = true;
+          break;
+        }
       }
     }
     // AFTER the prefix strip, so `a/b/../b/c` inside a worktree collapses too.

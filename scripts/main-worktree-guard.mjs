@@ -63,6 +63,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { samePath } from './lib/path-identity.mjs';
 
 /**
  * The environment variable that lets a commit be recorded in the main worktree.
@@ -140,14 +141,14 @@ export function registerMainWorktree(cwd = process.cwd(), { required = false, al
       branchRef !== 'refs/heads/main' &&
       (!allowDetached ||
         branchRef !== null ||
-        registeredGitDir !== gitDir ||
-        (registeredPath !== worktreePath && registeredIdentity !== readMainWorktreeIdentity(gitDir)))
+        !samePath(registeredGitDir, gitDir) ||
+        (!samePath(registeredPath, worktreePath) && registeredIdentity !== readMainWorktreeIdentity(gitDir)))
     ) {
       return false;
     }
     const worktreeIdentity = readMainWorktreeIdentity(gitDir);
     if (
-      registeredGitDir !== gitDir ||
+      !samePath(registeredGitDir, gitDir) ||
       !registeredIdentity ||
       !worktreeIdentity ||
       registeredIdentity !== worktreeIdentity
@@ -249,7 +250,7 @@ export function resolveWorktree(cwd = process.cwd()) {
     } catch {
       // Detached and unborn worktrees have no current branch identity.
     }
-    const isPrimaryWorktree = gitDir === commonDir;
+    const isPrimaryWorktree = samePath(gitDir, commonDir);
     const isMainWorktree = branchRef === 'refs/heads/main';
     let registeredMainGitDir = null;
     try {
@@ -278,11 +279,11 @@ export function resolveWorktree(cwd = process.cwd()) {
       registerMainWorktree(cwd);
     }
     const hasRegisteredMainIdentity =
-      registeredMainGitDir === gitDir &&
+      samePath(registeredMainGitDir, gitDir) &&
       Boolean(registeredMainIdentity) &&
       registeredMainIdentity === readMainWorktreeIdentity(gitDir);
     const isDesignatedMainWorktree =
-      isMainWorktree || hasRegisteredMainIdentity || (branchRef === null && registeredMainPath === worktreePath);
+      isMainWorktree || hasRegisteredMainIdentity || (branchRef === null && samePath(registeredMainPath, worktreePath));
     return {
       gitDir,
       commonDir,

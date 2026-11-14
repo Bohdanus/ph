@@ -64,10 +64,11 @@ describe('normalizeColorsToolArgs', () => {
     expect(normalizeColorsToolArgs({ ...baseArgs, sepia: 150 }).sepia).toBe(100);
   });
 
-  it('does not clamp saturation (allows any finite value)', () => {
+  it('clamps saturation to the slider range', () => {
     expect(normalizeColorsToolArgs({ ...baseArgs, saturation: -100 }).saturation).toBe(-100);
     expect(normalizeColorsToolArgs({ ...baseArgs, saturation: 0 }).saturation).toBe(0);
-    expect(normalizeColorsToolArgs({ ...baseArgs, saturation: 200 }).saturation).toBe(200);
+    expect(normalizeColorsToolArgs({ ...baseArgs, saturation: -200 }).saturation).toBe(-100);
+    expect(normalizeColorsToolArgs({ ...baseArgs, saturation: 200 }).saturation).toBe(100);
   });
 
   it('preserves toolName', () => {
@@ -137,6 +138,17 @@ describe('colors processor', () => {
 
     const canvas = result as unknown as PixelOffscreenCanvas;
     expect(canvas.ctx.filter).toContain('saturate(');
+  });
+
+  it('throws when the source bitmap is missing', () => {
+    expect(() =>
+      colors({ size, bitmap: undefined as unknown as BitmapSource })({
+        grayscale: 0,
+        sepia: 0,
+        saturation: 100,
+        toolName: 'color',
+      })
+    ).toThrow('Color tool requires a source bitmap');
   });
 });
 

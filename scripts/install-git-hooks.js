@@ -32,6 +32,7 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { samePath } from './lib/path-identity.mjs';
 
 import { registerMainWorktree } from './main-worktree-guard.mjs';
 
@@ -217,14 +218,6 @@ function hasLinkedWorktree(records, commonDir) {
       return existsSync(recordPath);
     }
   });
-}
-
-function samePath(left, right) {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
 }
 
 function isMainRecord(record) {

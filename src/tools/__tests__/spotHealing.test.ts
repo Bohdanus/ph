@@ -116,7 +116,7 @@ describe('spot healing processor', () => {
     expect(toolProcessors['spot-healing'].imageProcessor).toBe(spotHealing);
   });
 
-  it('stamps a full document-sized canvas and draws the source raster into it', () => {
+  it('allocates a full document-sized canvas and passes the source bitmap to drawImage', () => {
     const canvas = run();
 
     expect(canvas.width).toBe(size.width);
@@ -124,7 +124,7 @@ describe('spot healing processor', () => {
     expect(canvas.ctx.drawImage).toHaveBeenCalledWith(sourceBitmap, 0, 0);
   });
 
-  it('spaces its dabs at the tool constant', () => {
+  it('defines dab spacing as 25 percent of the tip diameter', () => {
     expect(SPOT_HEALING_SPACING_PERCENT).toBe(25);
   });
 
@@ -344,17 +344,21 @@ describe('spot healing processor', () => {
       expect(at(canvas, 8, 4)).toEqual({ r: 40, g: 100, b: 100, a: 255 });
     });
 
-    it('handles a huge tip that covers the entire canvas', () => {
+    it('stamps a very large tip into distant quadrants of the canvas', () => {
       expect(() => run({ size: 500 })).not.toThrow();
 
       const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
 
-      for (let y = 0; y < size.height; y++) {
-        for (let x = 0; x < size.width; x++) {
-          if (x === 4 && y === 4) {
-            expect(at(canvas, x, y)).not.toEqual(dest(x, y));
-          }
-        }
+      expect(canvas.ctx.getImageData).toHaveBeenCalledWith(0, 0, size.width, size.height);
+      expect(canvas.ctx.putImageData).toHaveBeenCalledTimes(1);
+
+      for (const [x, y] of [
+        [1, 1],
+        [7, 1],
+        [1, 7],
+        [7, 7],
+      ] as const) {
+        expect(at(canvas, x, y), `(${x}, ${y})`).not.toEqual(dest(x, y));
       }
     });
   });

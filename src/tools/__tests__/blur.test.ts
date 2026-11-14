@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { blur, type BlurToolArgs } from '../blur.ts';
+import { blur, normalizeBlurToolArgs, type BlurToolArgs } from '../blur.ts';
 import { sharpen } from '../sharpen.ts';
 import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
-import type { Size } from '../../contexts/general-types.ts';
+import type { BitmapSource, Size } from '../../contexts/general-types.ts';
 
 type PixelContext = ReturnType<typeof createPixelCanvasContext> & {
   getImageData: ReturnType<typeof vi.fn>;
@@ -17,6 +17,7 @@ type PixelContext = ReturnType<typeof createPixelCanvasContext> & {
 class RecordingOffscreenCanvas {
   static instances: RecordingOffscreenCanvas[] = [];
   readonly buffer: Uint8ClampedArray;
+  readonly filterValuesAtDraw: string[] = [];
   readonly ctx: PixelContext;
   width: number;
   height: number;
@@ -29,6 +30,7 @@ class RecordingOffscreenCanvas {
       ...createPixelCanvasContext(this),
       filter: '',
       drawImage: vi.fn(() => {
+        this.filterValuesAtDraw.push(this.ctx.filter);
         for (let y = 0; y < this.height; y++) {
           for (let x = 0; x < this.width; x++) {
             const offset = (y * this.width + x) * 4;
@@ -100,7 +102,7 @@ describe('blur processor', () => {
     expect(toolProcessors['blur'].imageProcessor).toBe(blur);
   });
 
-  it('stamps a full document-sized canvas and draws the source raster into it', () => {
+  it('allocates a full document-sized canvas and passes the source bitmap to drawImage', () => {
     const canvas = run();
 
     expect(canvas.width).toBe(size.width);
@@ -108,20 +110,29 @@ describe('blur processor', () => {
     expect(canvas.ctx.drawImage).toHaveBeenCalledWith(sourceBitmap, 0, 0);
   });
 
-  it('allocates exactly one document-sized output canvas distinct from the source bitmap', () => {
+  it('allocates exactly one document-sized output canvas', () => {
     const canvas = run();
 
     expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
     expect(canvas).toBe(RecordingOffscreenCanvas.instances[0]);
-    expect(canvas).not.toBe(sourceBitmap);
     expect(canvas.width).toBe(size.width);
     expect(canvas.height).toBe(size.height);
   });
 
-  it('sets the CSS filter string with the radius in pixels', () => {
+  it('throws when the source bitmap is missing', () => {
+    expect(() =>
+      blur({ size, bitmap: undefined as unknown as BitmapSource })({
+        radius: 5,
+        toolName: 'blur',
+      })
+    ).toThrow('Blur tool requires a source bitmap');
+  });
+
+  it('sets the CSS filter before drawing with the requested radius', () => {
     const canvas = run({ radius: 7 });
 
     expect(canvas.ctx.filter).toBe('blur(7px)');
+    expect(canvas.filterValuesAtDraw).toEqual(['blur(7px)']);
   });
 
   it('requires canvas filter support and throws when unsupported', () => {
@@ -139,10 +150,32 @@ describe('blur processor', () => {
       expect(canvas.ctx.drawImage).toHaveBeenCalledWith(sourceBitmap, 0, 0);
     });
 
-    it('handles very large radius', () => {
+    it('clamps radius above the slider maximum', () => {
       const canvas = run({ radius: 1000 });
 
-      expect(canvas.ctx.filter).toBe('blur(1000px)');
+      expect(canvas.ctx.filter).toBe('blur(100px)');
     });
+
+    it.each([-1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+      'uses a zero radius for invalid or negative values (%s)',
+      (radius) => {
+        const canvas = run({ radius });
+
+        expect(canvas.ctx.filter).toBe('blur(0px)');
+      }
+    );
+
+    it('normalizes blur arguments before retaining them', () => {
+      expect(normalizeBlurToolArgs(args({ radius: 200 }))).toEqual(args({ radius: 100 }));
+      expect(normalizeBlurToolArgs(args({ radius: Number.NaN }))).toEqual(args({ radius: 0 }));
+    });
+  });
+});
+
+describe('BlurToolArgs type', () => {
+  it('requires radius and toolName', () => {
+    const toolArgs: BlurToolArgs = { radius: 5, toolName: 'blur' };
+    expect(toolArgs.radius).toBe(5);
+    expect(toolArgs.toolName).toBe('blur');
   });
 });

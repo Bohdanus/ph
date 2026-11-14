@@ -12,6 +12,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { samePath } from '../lib/path-identity.mjs';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -219,29 +221,29 @@ function commitReviewedLanding(message) {
 
 function commitThroughMainLanding() {
   registerMainWorktree(dir, { required: true });
-  execFileSync(
-    process.execPath,
-    [
-      LANDING_WRAPPER_PATH,
-      'land',
-      '--main-sha',
-      process.env.KILO_EXPECTED_MAIN_SHA ?? '',
-      '--incoming-sha',
-      process.env.KILO_EXPECTED_INCOMING_SHA ?? '',
-      '--tree-sha',
-      process.env.KILO_EXPECTED_TREE_SHA ?? '',
-      '--branch',
-      process.env.KILO_EXPECTED_BRANCH ?? '',
-      '--chat',
-      process.env.KILO_EXPECTED_CHAT_ID ?? '',
-    ],
-    {
-      cwd: dir,
-      encoding: 'utf8',
-      maxBuffer: 32 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }
-  );
+  const args = [
+    'land',
+    '--main-sha',
+    process.env.KILO_EXPECTED_MAIN_SHA ?? '',
+    '--incoming-sha',
+    process.env.KILO_EXPECTED_INCOMING_SHA ?? '',
+    '--tree-sha',
+    process.env.KILO_EXPECTED_TREE_SHA ?? '',
+    '--branch',
+    process.env.KILO_EXPECTED_BRANCH ?? '',
+    '--chat',
+    process.env.KILO_EXPECTED_CHAT_ID ?? '',
+  ];
+  const runner = [
+    `import { main } from ${JSON.stringify(pathToFileURL(LANDING_WRAPPER_PATH).href)};`,
+    `process.exitCode = await main(${JSON.stringify(args)}, { cwd: process.cwd(), watcherStarter: async () => {} });`,
+  ].join('\n');
+  execFileSync(process.execPath, ['--input-type=module', '--eval', runner], {
+    cwd: dir,
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   return git(['rev-parse', 'HEAD']);
 }
 
@@ -353,9 +355,12 @@ describe('project main worktree detection', () => {
     gitAt(source, ['commit', '-qm', 'base']);
     gitAt(source, ['clone', '--separate-git-dir', commonGitDir, source, checkout]);
 
-    expect(realpathSync(resolve(checkout, gitAt(checkout, ['rev-parse', '--git-common-dir'])))).toBe(
-      realpathSync(commonGitDir)
-    );
+    expect(
+      samePath(
+        realpathSync(resolve(checkout, gitAt(checkout, ['rev-parse', '--git-common-dir']))),
+        realpathSync(commonGitDir)
+      )
+    ).toBe(true);
     expect(registerMainWorktree(checkout, { required: true })).toBe(true);
     expect(isProjectMainWorktree(checkout)).toBe(true);
   });

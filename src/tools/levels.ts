@@ -1,20 +1,14 @@
-import { buildLevelsFilter } from './functions.ts';
+import { buildLevelsFilter, normalizeLevelsFilterArgs } from './functions.ts';
 import type { ProcessorToolParams } from './toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 
 export type LevelsToolArgs = { brightness: number; contrast: number; toolName: 'levels' };
 
-/** Keep malformed runtime values neutral before they reach a filter or history operation. */
+/** Keep malformed and out-of-range values inside the Levels slider domain. */
 export function normalizeLevelsToolArgs(args: LevelsToolArgs): LevelsToolArgs {
-  const finiteOrNeutral = (value: number) => {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : 0;
-  };
-
   return {
     ...args,
-    brightness: finiteOrNeutral(args.brightness),
-    contrast: finiteOrNeutral(args.contrast),
+    ...normalizeLevelsFilterArgs(args),
   };
 }
 

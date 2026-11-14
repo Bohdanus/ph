@@ -28,6 +28,7 @@ export const DEFAULT_SPACING_PCT = 25;
 
 export const MIN_TIP_SIZE = 1;
 export const MAX_TIP_SIZE = 4096;
+export const MAX_TIP_RADIUS = MAX_TIP_SIZE / 2;
 export const MIN_TIP_ASPECT = 0.05;
 export const MAX_TIP_ASPECT = 20;
 
@@ -46,8 +47,13 @@ export type TipLut = {
   sin: number;
 };
 
+/** Clamps finite values to [lo, hi], maps NaN and -Infinity to lo, and +Infinity to hi. */
 export const clamp = (value: number, lo: number, hi: number): number => {
-  if (!Number.isFinite(value)) return lo;
+  if (!Number.isFinite(value)) {
+    if (value === Infinity) return hi;
+    if (value === -Infinity) return lo;
+    return lo;
+  }
   if (value < lo) return lo;
   if (value > hi) return hi;
   return value;
@@ -78,9 +84,11 @@ export const sampleTip = (lut: TipLut, dx: number, dy: number): number => {
   return a * (1 - k + k * a);
 };
 
+/** Always returns a finite step, bounding invalid radii to the supported tip-size range. */
 export const dabStep = (radius: number, spacingPct: number): number => {
   const pct = clamp(spacingPct, 0, 100);
-  return Math.max(1, Math.round((2 * radius * pct) / 100));
+  const safeRadius = clamp(radius, 0, MAX_TIP_RADIUS);
+  return Math.max(1, Math.round((2 * safeRadius * pct) / 100));
 };
 
 export type BlendFn = (backdrop: number, source: number) => number;

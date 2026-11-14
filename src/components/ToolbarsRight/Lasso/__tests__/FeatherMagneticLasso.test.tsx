@@ -400,6 +400,18 @@ describe('FeatherMagneticLasso toolbar', () => {
       }
     });
 
+    it('keeps Contrast within Adobe’s documented 1–100% range', () => {
+      render(<FeatherMagneticLasso />);
+      const contrast = getSlider(/^Contrast/);
+
+      expect(contrast).toHaveAttribute('min', '1');
+      expect(contrast).toHaveAttribute('max', '100');
+
+      fireEvent.change(contrast, { target: { value: '0' } });
+
+      expect(patchToolArgsMock).toHaveBeenLastCalledWith('feather-magnetic-lasso', { edgeContrast: 1 });
+    });
+
     it('toggles the checkbox settings with the space key and not with enter', async () => {
       render(<FeatherMagneticLasso />);
       const user = userEvent.setup();
