@@ -205,6 +205,14 @@ describe('spot healing processor', () => {
       expect(at(canvas, 4, 2)).toEqual(dest(4, 2));
       expect(at(canvas, 4, 6)).toEqual(dest(4, 6));
     });
+
+    it('extends the proximity sample beyond radius plus one for texels near the tip rim', () => {
+      const canvas = run({ size: 5, points: [{ x: 4, y: 4 }] });
+
+      // At (5,6), distance=sqrt(5), so distance+radius*0.75 (4.11) exceeds radius+1 (3.5).
+      // The resulting sample rounds to row 8; using the minimum distance alone would sample row 7.
+      expect(at(canvas, 5, 6)).toEqual({ r: 160, g: 100, b: 100, a: 255 });
+    });
   });
 
   describe('a soft tip blends with proximity-sampled texture across its rim', () => {

@@ -144,19 +144,20 @@ describe('healing brush processor', () => {
       expect(canvas.ctx.putImageData).not.toHaveBeenCalled();
     });
 
-    it('is a no-op that does not throw for a stroke entirely outside the canvas', () => {
-      expect(() =>
-        run({
-          size: 8,
-          points: [
-            { x: 40, y: 40 },
-            { x: 44, y: 44 },
-          ],
-        })
-      ).not.toThrow();
+    it('leaves every pixel unchanged for a stroke entirely outside the canvas', () => {
+      const canvas = run({
+        size: 8,
+        points: [
+          { x: 40, y: 40 },
+          { x: 44, y: 44 },
+        ],
+      });
 
-      const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
-      expect(canvas.ctx.putImageData).toHaveBeenCalled();
+      for (let y = 0; y < size.height; y++) {
+        for (let x = 0; x < size.width; x++) {
+          expect(at(canvas, x, y), `(${x}, ${y})`).toEqual(dest(x, y));
+        }
+      }
     });
   });
 
