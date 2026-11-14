@@ -5,11 +5,18 @@ import type { AutosaveMetadata } from '../../contexts/autosave-storage.ts';
 interface AutoSaveRecoveryBannerProps {
   metadata: AutosaveMetadata;
   recovering: boolean;
+  dismissError?: string | null;
   onRecover: () => Promise<void>;
   onDismiss: () => Promise<void>;
 }
 
-const AutoSaveRecoveryBanner = ({ metadata, recovering, onRecover, onDismiss }: AutoSaveRecoveryBannerProps) => {
+const AutoSaveRecoveryBanner = ({
+  metadata,
+  recovering,
+  dismissError = null,
+  onRecover,
+  onDismiss,
+}: AutoSaveRecoveryBannerProps) => {
   const { panelRef, handleKeyDown } = useDialogFocusContainment({ onEscape: onDismiss });
 
   const formattedTime = new Date(metadata.savedAt).toLocaleTimeString([], {
@@ -40,6 +47,11 @@ const AutoSaveRecoveryBanner = ({ metadata, recovering, onRecover, onDismiss }: 
               AutoSave found a recovery copy of your previous document.
             </p>
             <p className="m-0 text-xs text-gray-500 dark:text-gray-400">Saved at {formattedTime}</p>
+            {dismissError && (
+              <p className="m-0 mt-3 text-sm text-red-700 dark:text-red-300" role="alert">
+                {dismissError}
+              </p>
+            )}
           </div>
           <div className="flex items-center justify-end rounded-b border-t border-solid border-gray-200 p-4 dark:border-gray-700">
             <button

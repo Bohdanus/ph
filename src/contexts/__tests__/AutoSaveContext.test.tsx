@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createElement } from 'react';
 
@@ -133,8 +133,22 @@ vi.mock('../autosave-storage.ts', () => ({
 }));
 
 vi.mock('../../components/AutoSaveRecoveryBanner/AutoSaveRecoveryBanner.tsx', () => ({
-  default: ({ metadata }: { metadata: AutosaveMetadata }) => (
-    <div data-testid="mock-banner" data-filename={metadata.fileName} />
+  default: ({
+    metadata,
+    dismissError,
+    onDismiss,
+  }: {
+    metadata: AutosaveMetadata;
+    dismissError: string | null;
+    onDismiss: () => Promise<void>;
+  }) => (
+    <>
+      <div data-testid="mock-banner" data-filename={metadata.fileName} />
+      <button data-testid="mock-dismiss-button" onClick={() => void onDismiss()} type="button">
+        Dismiss
+      </button>
+      {dismissError && <div role="alert">{dismissError}</div>}
+    </>
   ),
 }));
 
@@ -859,6 +873,31 @@ describe('AutoSaveProvider: dismissAutosave', () => {
 
     expect(clearAutosaveMock).toHaveBeenCalledTimes(1);
     expect(api.autosaveMetadata).toBe(null);
+  });
+
+  it('keeps the recovery copy and reports a retryable error when clearing fails', async () => {
+    const storageError = new Error('transaction aborted');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    loadAutosaveMock.mockResolvedValue({ metadata: baseMetadata, buffer: new ArrayBuffer(8) });
+    clearAutosaveMock.mockRejectedValueOnce(storageError).mockResolvedValueOnce(undefined);
+    const { api } = mount();
+    await waitFor(() => expect(api.autosaveMetadata).toEqual(baseMetadata));
+
+    fireEvent.click(screen.getByTestId('mock-dismiss-button'));
+
+    await waitFor(() => {
+      expect(api.autosaveMetadata).toEqual(baseMetadata);
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not clear the recovery copy. Please try again.');
+    });
+    expect(consoleError).toHaveBeenCalledWith('AutoSave: Failed to dismiss recovery copy', storageError);
+
+    fireEvent.click(screen.getByTestId('mock-dismiss-button'));
+
+    await waitFor(() => {
+      expect(api.autosaveMetadata).toBe(null);
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+    expect(clearAutosaveMock).toHaveBeenCalledTimes(2);
   });
 });
 

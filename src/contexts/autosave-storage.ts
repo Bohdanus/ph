@@ -35,25 +35,26 @@ type DbState =
 let dbState: DbState = { status: 'unavailable' };
 
 if (typeof indexedDB !== 'undefined') {
-  dbState = {
-    status: 'opening',
-    ready: new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = () => {
-        request.result.createObjectStore(STORE_NAME, { keyPath: 'key' });
-      };
-      request.onsuccess = () => {
-        const db = request.result;
-        dbState = { status: 'ready', db };
-        resolve(db);
-      };
-      request.onerror = () => {
-        const error = new Error(request.error?.message ?? 'IndexedDB open failed');
-        dbState = { status: 'error', error };
-        reject(error);
-      };
-    }),
-  };
+  const ready = new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(STORE_NAME, { keyPath: 'key' });
+    };
+    request.onsuccess = () => {
+      const db = request.result;
+      dbState = { status: 'ready', db };
+      resolve(db);
+    };
+    request.onerror = () => {
+      const error = new Error(request.error?.message ?? 'IndexedDB open failed');
+      dbState = { status: 'error', error };
+      reject(error);
+    };
+  });
+  // Opening can fail before a caller requests the database. Mark the shared promise observed;
+  // callers still receive the same rejection through getDb().
+  void ready.catch(() => undefined);
+  dbState = { status: 'opening', ready };
 }
 
 async function getDb(): Promise<IDBDatabase> {
@@ -67,56 +68,116 @@ export async function saveAutosave(record: AutosaveRecord): Promise<void> {
   const db = await getDb();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
+    let settled = false;
+    const resolveOnce = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const rejectOnce = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
     const store = transaction.objectStore(STORE_NAME);
     store.put({ key: KEY_CURRENT, ...record });
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+    transaction.oncomplete = resolveOnce;
+    transaction.onerror = () => rejectOnce(transaction.error ?? new Error('Autosave save transaction failed'));
+    transaction.onabort = () => rejectOnce(transaction.error ?? new Error('Autosave save transaction aborted'));
   });
 }
 
 export async function loadAutosave(): Promise<AutosaveRecord | null> {
   const db = await getDb();
-  return new Promise((resolve, reject) => {
+  return new Promise<AutosaveRecord | null>((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readonly');
+    let settled = false;
+    const resolveOnce = (record: AutosaveRecord | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(record);
+    };
+    const rejectOnce = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    let record: AutosaveRecord | null = null;
     const store = transaction.objectStore(STORE_NAME);
     const request = store.get(KEY_CURRENT);
     request.onsuccess = () => {
       const result = request.result;
       if (!result) {
-        resolve(null);
         return;
       }
-      resolve({ metadata: result.metadata as AutosaveMetadata, buffer: result.buffer as ArrayBuffer });
+      record = { metadata: result.metadata as AutosaveMetadata, buffer: result.buffer as ArrayBuffer };
     };
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      rejectOnce(transaction.error ?? request.error ?? new Error('Autosave read request failed'));
+    };
+    transaction.oncomplete = () => resolveOnce(record);
+    transaction.onerror = () => rejectOnce(transaction.error ?? new Error('Autosave load transaction failed'));
+    transaction.onabort = () => rejectOnce(transaction.error ?? new Error('Autosave load transaction aborted'));
   });
 }
 
 export async function clearAutosave(): Promise<void> {
+  let db: IDBDatabase;
   try {
-    const db = await getDb();
-    await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction(STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      store.delete(KEY_CURRENT);
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error);
-    });
+    db = await getDb();
   } catch {
-    // If the database is unavailable or still opening, there is nothing to
-    // clear — resolve silently so callers are never blocked by a missing store.
+    // An unavailable database has no clearable record; transaction failures below still propagate.
+    return;
   }
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    let settled = false;
+    const resolveOnce = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const rejectOnce = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const store = transaction.objectStore(STORE_NAME);
+    store.delete(KEY_CURRENT);
+    transaction.oncomplete = resolveOnce;
+    transaction.onerror = () => rejectOnce(transaction.error ?? new Error('Autosave clear transaction failed'));
+    transaction.onabort = () => rejectOnce(transaction.error ?? new Error('Autosave clear transaction aborted'));
+  });
 }
 
 export async function hasAutosave(): Promise<boolean> {
   try {
     const db = await getDb();
-    return new Promise((resolve, reject) => {
+    return await new Promise<boolean>((resolve, reject) => {
       const transaction = db.transaction(STORE_NAME, 'readonly');
+      let settled = false;
+      const resolveOnce = (exists: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(exists);
+      };
+      const rejectOnce = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
       const store = transaction.objectStore(STORE_NAME);
       const request = store.count(KEY_CURRENT);
-      request.onsuccess = () => resolve(request.result > 0);
-      request.onerror = () => reject(request.error);
+      let exists = false;
+      request.onsuccess = () => {
+        exists = request.result > 0;
+      };
+      transaction.oncomplete = () => resolveOnce(exists);
+      request.onerror = () =>
+        rejectOnce(transaction.error ?? request.error ?? new Error('Autosave count request failed'));
+      transaction.onerror = () => rejectOnce(transaction.error ?? new Error('Autosave count transaction failed'));
+      transaction.onabort = () => rejectOnce(transaction.error ?? new Error('Autosave count transaction aborted'));
     });
   } catch {
     return false;

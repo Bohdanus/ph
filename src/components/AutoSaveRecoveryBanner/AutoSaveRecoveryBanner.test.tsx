@@ -74,6 +74,18 @@ describe('AutoSaveRecoveryBanner', () => {
     await waitFor(() => expect(onDismiss).toHaveBeenCalledTimes(1));
   });
 
+  it('calls onDismiss when Escape is pressed', async () => {
+    const onDismiss = vi.fn().mockResolvedValue(undefined);
+    render(
+      <AutoSaveRecoveryBanner metadata={baseMetadata} recovering={false} onRecover={noop} onDismiss={onDismiss} />
+    );
+
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledTimes(1));
+  });
+
   it('has role="alertdialog"', () => {
     render(<AutoSaveRecoveryBanner metadata={baseMetadata} recovering={false} onRecover={noop} onDismiss={noop} />);
 
@@ -91,5 +103,19 @@ describe('AutoSaveRecoveryBanner', () => {
     );
 
     expect(screen.getByText('Recovery Available')).toBeInTheDocument();
+  });
+
+  it('announces a failed dismissal so the recovery copy can be kept or dismissed again', () => {
+    render(
+      <AutoSaveRecoveryBanner
+        metadata={baseMetadata}
+        recovering={false}
+        dismissError="Could not clear the recovery copy. Please try again."
+        onRecover={noop}
+        onDismiss={noop}
+      />
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not clear the recovery copy. Please try again.');
   });
 });
