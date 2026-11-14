@@ -1420,13 +1420,22 @@ heartbeat` still exists and is still correct — it is the only thing that can
   claimed or not claimable · 4 file held by another agent · 5 self-verification
   refused.
 
-It is a command, not a gate, and no commit may be blocked on it. Exactly one thing
-calls it: `.husky/post-merge` runs `scripts/merge-release.mjs`, which releases the
-claims and locks of eligible worktrees the merge put on `main`, while reporting
-merged worktrees blocked by dirty state or other release conditions — non-blocking,
-because the merge is already recorded by the time a post-merge hook runs. Nothing else in
-`.husky/` reads the board, and nothing runs it on worktree creation or on a chat
-stopping.
+It is a command, not a gate, and no commit may be blocked on it. Two automatic paths run
+`scripts/merge-release.mjs`: `.husky/post-merge` after a completed Git merge, and
+`scripts/main-landing.mjs` after a pinned landing commit. The pinned landing prepares its
+merge with `--no-commit`, so Git does not invoke `post-merge` for that flow. The script acts
+only when the current checkout is on the base branch. It compares `ORIG_HEAD` with the
+previous entry in that branch's reflog; if they disagree or either is unavailable, it
+reports the transition as unproven and releases nothing. Otherwise it considers only clean
+branches newly reachable from the captured base-tip snapshot. It refuses duplicate branch
+checkouts because the board keys by branch, and a concurrent later landing cannot widen the
+captured snapshot. Board heartbeat age is not evidence that an editor stopped: a chat can
+remain open without running a swarm command. The script releases only the merged branch's
+own claims and locks, and the board refuses rows owned by another identity. A task checkout
+that fast-forwarded from `main`, or a later merge that sees an older landed branch, therefore
+cannot sweep unrelated claims. Both automatic callers are non-blocking after the merge is
+recorded. Nothing else in `.husky/` reads the board, and nothing runs this hook on worktree
+creation or on a chat stopping.
 
 ### Resource locking and releasing
 
@@ -1440,15 +1449,22 @@ deny each other a file.
 **Liveness is recency only.** `agents.last_pid` and `session_id` are written and
 never read — the one process-level signal the schema carries is consulted nowhere.
 
-**The two readers disagree about a malformed timestamp, and the board side is the
-dangerous one.** `board.mjs:isLive` treats one as **live**; `liveLocks`
-(`db.mjs`) treats it as **free**, because `NaN > at` is false — so the
-inventory can show a file held while `swarm check` calls it free. Unreachable
-today, since every writer goes through `msFromNow`, but a resource's safety rests
-on an invariant the code does not hold. Claims fail the other way: `doctor` tests
-`Date.parse(lease_until) <= at`, also false for `NaN`, so a malformed lease is
-neither live nor reclaimable and `swarm health` reports an expired count
-`swarm doctor` cannot reduce.
+**Unreadable lease deadlines fail closed.** The claim and lock checks use
+`isLiveDeadline`: a parseable future deadline is live, and an unparseable value
+is also treated as live because the board cannot prove that it expired. This
+keeps `liveClaimOrNull`, `liveLocks`, `swarm check`, and `doctor` from treating
+an unknown row as available while another reader treats it as occupied. An
+unreadable deadline is not auto-reclaimed: health counts an unreadable claim as
+live, and `doctor` does not treat an unreadable deadline as expired. It can
+still report a row when separate evidence, such as a missing holder worktree,
+makes it reclaimable. The raw `lease_until` and `expires_at` values are available
+through `swarm export`, which includes all claim and lock rows. Do not clear a
+row just because its deadline is malformed. First preserve its work and verify
+the holder's process tree has stopped. Then use `swarm release <issue> --force`
+for a claim or `swarm unlock <path> --force` for a file lock only after checking
+each affected holder. The normal writers still use `msFromNow`; this is a
+defensive boundary for corrupt or manually altered database rows, not a
+supported deadline format.
 
 A **claim** renews itself while its worktree exists, and `autoSweep` renews
 before it sweeps. The limit of that ordering: `doctor` also reclaims on **expiry**,
