@@ -425,16 +425,13 @@ describe('scanRepository covers every registered worktree, not one', () => {
     const path = addWorktree(repo, 'linked');
 
     const found = scanRepository(repo).worktrees;
-    const asPaths = (entries) => entries.map((w) => realpathSync(w.path)).sort();
-    expect(asPaths(found)).toEqual([realpathSync(repo), realpathSync(path)].sort());
-    // Compare directory identity because Git and Node can spell the same Windows
-    // checkout through its long and 8.3 path forms.
     expect(found).toHaveLength(2);
     expect(found.some((worktree) => samePath(worktree.path, repo))).toBe(true);
     expect(found.some((worktree) => samePath(worktree.path, path))).toBe(true);
 
-    const primary = found.find((w) => realpathSync(w.path) === realpathSync(repo));
-    const linked = found.find((w) => realpathSync(w.path) === realpathSync(path));
+    // Git and Node can spell the same Windows checkout through long and 8.3 paths.
+    const primary = found.find((worktree) => samePath(worktree.path, repo));
+    const linked = found.find((worktree) => samePath(worktree.path, path));
     expect(found.find((worktree) => samePath(worktree.path, repo))).toBe(primary);
     expect(found.find((worktree) => samePath(worktree.path, path))).toBe(linked);
     // The primary's git dir is the repository's own; a linked worktree's is a
@@ -766,7 +763,6 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.code).toBe(0);
     expect(r.out).toContain('landing scope clear for wt/candidate');
     expect(r.out).toContain('1 unrelated finding(s) remain reported and untouched');
-    expect(r.err).toContain(unrelated);
     const reportedPaths = r.err
       .split(/\r?\n/)
       .filter((line) => line.startsWith('    '))
@@ -1058,9 +1054,11 @@ describe("the third review's findings, pinned", () => {
     const boom = () => {
       throw new Error('Command failed: git diff --name-only --diff-filter=U -z');
     };
-    const found = scanRepository(repo, { unmergedOf: boom }).worktrees.find(
-      (w) => realpathSync(w.path) === realpathSync(path)
+    const found = scanRepository(repo, { unmergedOf: boom }).worktrees.find((worktree) =>
+      samePath(worktree.path, path)
     );
+    expect(found).toBeDefined();
+    if (!found) throw new Error('scan did not report the linked worktree');
     expect(samePath(found.path, path)).toBe(true);
     // The operation is still known — that is the point of recording rather than throwing.
     expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
@@ -1326,7 +1324,6 @@ describe('the cross-check must not invent worktrees either', () => {
     expect(isAbsolute(gitdir)).toBe(false);
 
     const resolved = resolveAdminDirFor(resolveCommonDir(repo), relative);
-    expect(realpathSync(resolved)).toBe(realpathSync(adminDir));
     expect(samePath(resolved, adminDir)).toBe(true);
     expect(readOperations(resolved).map((o) => o.operation)).toEqual(['merge']);
 
