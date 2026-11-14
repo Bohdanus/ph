@@ -10,6 +10,7 @@ import {
   normalBlend,
   MIN_TIP_SIZE,
   MAX_TIP_SIZE,
+  MAX_TIP_RADIUS,
   MIN_TIP_ASPECT,
   MAX_TIP_ASPECT,
   DEFAULT_SPACING_PCT,
@@ -17,6 +18,7 @@ import {
   type TipParams,
   type BlendLut,
 } from '../brush-types.ts';
+import { buildTipLut } from '../brush-tip.ts';
 
 describe('clamp', () => {
   it('returns the value when within bounds', () => {
@@ -35,10 +37,20 @@ describe('clamp', () => {
     expect(clamp(100, 0, 10)).toBe(10);
   });
 
-  it('returns lo for non-finite values', () => {
+  it('returns lo for NaN and negative infinity, and hi for positive infinity', () => {
     expect(clamp(NaN, 0, 10)).toBe(0);
-    expect(clamp(Infinity, 0, 10)).toBe(0);
+    expect(clamp(Infinity, 0, 10)).toBe(10);
     expect(clamp(-Infinity, 0, 10)).toBe(0);
+  });
+});
+
+describe('buildTipLut', () => {
+  it('uses zero rotation for non-finite brush angles', () => {
+    for (const angle of [NaN, Infinity, -Infinity]) {
+      const lut = buildTipLut({ angle });
+      expect(lut.cos).toBe(1);
+      expect(lut.sin).toBe(0);
+    }
   });
 });
 
@@ -69,24 +81,15 @@ describe('dabStep', () => {
     expect(dabStep(20, 10)).toBe(4);
   });
 
-  it('returns NaN for a NaN radius', () => {
-    // radius is not clamped in dabStep, only spacingPct is clamped
-    // Math.max(1, ...) clamps the final result to at least 1
-    expect(Number.isNaN(dabStep(NaN, 25))).toBe(true);
+  it('clamps non-finite radii to the supported brush range', () => {
+    expect(dabStep(NaN, 25)).toBe(1);
+    expect(dabStep(Infinity, 25)).toBe(dabStep(MAX_TIP_RADIUS, 25));
+    expect(dabStep(-Infinity, 25)).toBe(1);
   });
 
-  it('returns Infinity for an infinite radius', () => {
-    expect(dabStep(Infinity, 25)).toBe(Infinity);
-  });
-
-  it('returns the minimum step for a negative infinite radius', () => {
-    expect(dabStep(-Infinity, 25)).toBe(1); // max(1, -Infinity) = 1
-  });
-
-  it('treats non-finite spacing as 0% (clamped to minimum)', () => {
-    // clamp returns lo (0) for non-finite spacing
+  it('clamps non-finite spacing to the supported percentage range', () => {
     expect(dabStep(20, NaN)).toBe(1);
-    expect(dabStep(20, Infinity)).toBe(1);
+    expect(dabStep(20, Infinity)).toBe(dabStep(20, 100));
     expect(dabStep(20, -Infinity)).toBe(1);
   });
 });
@@ -285,12 +288,15 @@ describe('RGB and Rect types', () => {
   });
 });
 
-describe('tripwires (it.fails: known gaps)', () => {
-  it.fails('clamps a non-finite radius to the pixel minimum in dabStep', () => {
+describe('regression coverage for non-finite brush inputs', () => {
+  it('clamps a non-finite radius to the supported brush range in dabStep', () => {
     expect(dabStep(NaN, 25)).toBe(1);
+    expect(dabStep(Infinity, 25)).toBe(dabStep(MAX_TIP_RADIUS, 25));
+    expect(dabStep(-Infinity, 25)).toBe(1);
   });
 
-  it.fails('treats non-finite spacing as 100% (maximum) rather than 0% in dabStep', () => {
+  it('treats positive infinite spacing as 100% and negative infinity as 0%', () => {
     expect(dabStep(20, Infinity)).toBe(dabStep(20, 100));
+    expect(dabStep(20, -Infinity)).toBe(dabStep(20, 0));
   });
 });

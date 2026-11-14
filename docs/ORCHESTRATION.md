@@ -1449,15 +1449,22 @@ deny each other a file.
 **Liveness is recency only.** `agents.last_pid` and `session_id` are written and
 never read — the one process-level signal the schema carries is consulted nowhere.
 
-**The two readers disagree about a malformed timestamp, and the board side is the
-dangerous one.** `board.mjs:isLive` treats one as **live**; `liveLocks`
-(`db.mjs`) treats it as **free**, because `NaN > at` is false — so the
-inventory can show a file held while `swarm check` calls it free. Unreachable
-today, since every writer goes through `msFromNow`, but a resource's safety rests
-on an invariant the code does not hold. Claims fail the other way: `doctor` tests
-`Date.parse(lease_until) <= at`, also false for `NaN`, so a malformed lease is
-neither live nor reclaimable and `swarm health` reports an expired count
-`swarm doctor` cannot reduce.
+**Unreadable lease deadlines fail closed.** The claim and lock checks use
+`isLiveDeadline`: a parseable future deadline is live, and an unparseable value
+is also treated as live because the board cannot prove that it expired. This
+keeps `liveClaimOrNull`, `liveLocks`, `swarm check`, and `doctor` from treating
+an unknown row as available while another reader treats it as occupied. An
+unreadable deadline is not auto-reclaimed: health counts an unreadable claim as
+live, and `doctor` does not treat an unreadable deadline as expired. It can
+still report a row when separate evidence, such as a missing holder worktree,
+makes it reclaimable. The raw `lease_until` and `expires_at` values are available
+through `swarm export`, which includes all claim and lock rows. Do not clear a
+row just because its deadline is malformed. First preserve its work and verify
+the holder's process tree has stopped. Then use `swarm release <issue> --force`
+for a claim or `swarm unlock <path> --force` for a file lock only after checking
+each affected holder. The normal writers still use `msFromNow`; this is a
+defensive boundary for corrupt or manually altered database rows, not a
+supported deadline format.
 
 A **claim** renews itself while its worktree exists, and `autoSweep` renews
 before it sweeps. The limit of that ordering: `doctor` also reclaims on **expiry**,

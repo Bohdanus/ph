@@ -57,7 +57,7 @@ const REVIEWED = {
   },
   'free-model-kilo.test.mjs': {
     scope: 'Each fake Kilo CLI and configuration fixture uses a unique OS temp directory with finally cleanup.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=19 filesystem-write:rm=19 subprocess:spawnSync=1`,
+    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=20 filesystem-write:rm=20 subprocess:spawnSync=1`,
   },
   'free-model-pool-external.test.mjs': {
     scope:
@@ -66,8 +66,8 @@ const REVIEWED = {
   },
   'free-model-pool.test.mjs': {
     scope:
-      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams; PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
-    patterns: `filesystem-write:mkdtemp=30 filesystem-write:rm=30 filesystem-write:writeFile=15 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
+    patterns: `filesystem-write:mkdtemp=31 filesystem-write:rm=31 filesystem-write:writeFile=15 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -137,7 +137,7 @@ const REVIEWED = {
   'recover-stale-auto-merge.test.mjs': {
     scope:
       'Git and filesystem fixtures use temporary repositories and directories, including a stale target package script, symlinks, hostile merge/index markers, and a Node preload shim that rewrites a fixture marker; child Git commands use the fixture repository.',
-    patterns: `subprocess:execFileSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=38 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=4 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=2`,
+    patterns: `subprocess:execFileSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=40 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=4 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=2`,
   },
   'repo-state-gate.test.mjs': {
     scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',
@@ -201,6 +201,10 @@ const REVIEWED = {
   'windows-command-shim.test.mjs': {
     scope: 'Windows command lookup fixtures live in unique temporary directories and are removed after each test.',
     patterns: `filesystem-write:mkdirSync=1 filesystem-write:mkdtempSync=11 filesystem-write:writeFileSync=9 filesystem-write:rmSync=11`,
+  },
+  'windows-process-tree.test.mjs': {
+    scope: 'Process commands are mocked; tests do not create files, processes, or databases.',
+    patterns: '',
   },
 };
 

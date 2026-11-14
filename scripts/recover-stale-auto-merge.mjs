@@ -7,7 +7,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readlinkSync, unlinkSync } from 'node:fs';
+import { closeSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { samePath } from './lib/path-identity.mjs';
@@ -132,7 +132,7 @@ function worktreeContentStateSha256(root) {
       hash.update('\0');
     } else if (stat.isFile()) {
       hash.update('file\0');
-      hash.update(createHash('sha256').update(readFileSync(absolutePath)).digest());
+      hash.update(hashFileContents(absolutePath));
       hash.update('\0');
     } else {
       throw new Error(`Cannot pin preserved worktree content for non-file path: ${relativePath}`);
@@ -140,6 +140,22 @@ function worktreeContentStateSha256(root) {
   }
 
   return hash.digest('hex');
+}
+
+function hashFileContents(path) {
+  const fileHash = createHash('sha256');
+  const chunk = Buffer.allocUnsafe(64 * 1024);
+  const descriptor = openSync(path, 'r');
+  try {
+    while (true) {
+      const bytesRead = readSync(descriptor, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      fileHash.update(chunk.subarray(0, bytesRead));
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+  return fileHash.digest();
 }
 
 function parseArgs(argv) {
