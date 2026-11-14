@@ -1762,6 +1762,27 @@ describe('the schema this script writes', () => {
     expect(board.db.exec).not.toHaveBeenCalled();
   });
 
+  it('retries an extended busy error from WAL conversion', () => {
+    const board = new Board({ dir, identity: identityFor('wal-conversion-busy') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 517 });
+    const exec = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw busy;
+      })
+      .mockImplementationOnce(() => {});
+    board.db = { exec };
+    const currentJournalMode = vi
+      .spyOn(board, 'currentJournalMode')
+      .mockReturnValueOnce('delete')
+      .mockReturnValueOnce('delete')
+      .mockReturnValueOnce('wal');
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBe('wal');
+    expect(currentJournalMode).toHaveBeenCalledTimes(3);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
   it('does not hide non-busy errors from the WAL conversion', () => {
     const board = new Board({ dir, identity: identityFor('wal-error') });
     const ioError = Object.assign(new Error('disk I/O error'), { errcode: 10 });
