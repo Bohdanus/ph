@@ -65,6 +65,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { Board, resolveBoardDir } from './lib/agent-board/db.mjs';
 
@@ -421,6 +422,6 @@ function main() {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exitCode = main();
 }

@@ -151,8 +151,12 @@ const ROTATION_CURSOR_BODY = rotationCursorSvgSource
   .trim();
 const ROTATION_CURSOR_FALLBACKS = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'] as const;
 
-// The 128px artwork spans about 110px; 0.05 renders it at about 5.5px, one quarter of its previous width.
-const ROTATION_CURSOR_ICON_SCALE = 0.05;
+// The visible 128px artwork spans about 102px, so 0.2 renders it at about 20px.
+const ROTATION_CURSOR_ICON_SCALE = 0.2;
+const ROTATION_CURSOR_ANGLE_PRECISION = 100;
+const ROTATION_CURSOR_ANGLE_BUCKETS = 360 * ROTATION_CURSOR_ANGLE_PRECISION;
+const ROTATION_CURSOR_CACHE_LIMIT = 512;
+const ROTATION_CURSOR_CACHE = new Map<string, string>();
 
 function shortestAngleDelta(degrees: number): number {
   return ((((degrees + 180) % 360) + 360) % 360) - 180;
@@ -161,11 +165,30 @@ function shortestAngleDelta(degrees: number): number {
 function rotationCursorForPoint(point: Point, rect: RectXYSorted): string {
   const viewRotation = Number.isFinite(viewStateRef.current.rotation) ? viewStateRef.current.rotation : 0;
   const tangentAngle = angleFromCenter(rectCenter(rect), point) + viewRotation + 90;
-  // CSS resize fallbacks are four unoriented axes; the SVG keeps the exact tangent angle.
+  if (!Number.isFinite(tangentAngle)) return 'ew-resize';
+
+  const normalizedAngle = ((tangentAngle % 360) + 360) % 360;
+  const angleBucket = Math.round(normalizedAngle * ROTATION_CURSOR_ANGLE_PRECISION) % ROTATION_CURSOR_ANGLE_BUCKETS;
+  const angle = (angleBucket / ROTATION_CURSOR_ANGLE_PRECISION).toFixed(2);
+  // Derive the fallback before angle rounding so both sides of a midpoint retain their axis.
   const fallbackIndex = ((Math.round(tangentAngle / 45) % 4) + 4) % 4;
   const fallback = ROTATION_CURSOR_FALLBACKS[fallbackIndex] ?? 'ew-resize';
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><g transform="translate(32 32) rotate(${tangentAngle.toFixed(2)}) scale(${ROTATION_CURSOR_ICON_SCALE}) translate(-64 -64)">${ROTATION_CURSOR_BODY}</g></svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 32 32, ${fallback}`;
+  const cacheKey = `${angle}:${fallbackIndex}`;
+  const cachedCursor = ROTATION_CURSOR_CACHE.get(cacheKey);
+  if (cachedCursor) {
+    ROTATION_CURSOR_CACHE.delete(cacheKey);
+    ROTATION_CURSOR_CACHE.set(cacheKey, cachedCursor);
+    return cachedCursor;
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><g transform="translate(32 32) rotate(${angle}) scale(${ROTATION_CURSOR_ICON_SCALE}) translate(-64 -64)">${ROTATION_CURSOR_BODY}</g></svg>`;
+  const cursor = `url("data:image/svg+xml,${encodeURIComponent(svg)}") 32 32, ${fallback}`;
+  if (ROTATION_CURSOR_CACHE.size >= ROTATION_CURSOR_CACHE_LIMIT) {
+    const oldestAngle = ROTATION_CURSOR_CACHE.keys().next().value;
+    if (oldestAngle !== undefined) ROTATION_CURSOR_CACHE.delete(oldestAngle);
+  }
+  ROTATION_CURSOR_CACHE.set(cacheKey, cursor);
+  return cursor;
 }
 
 /**

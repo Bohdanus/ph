@@ -809,6 +809,8 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
     // `fix/1234`, or anyone
     // who passed `--agent 2026`, has an identity whose last segment parses as a pid.
     // An earlier version of `isHolderAlive` probed it, found nothing, and stole it.
+    // This subprocess-heavy case hit the 30s file budget once in a full 449-file run;
+    // it passed alone in 7.45s, so give only this case 60s for loaded Windows runners.
     for (const identity of ['fix/1234', '2026', 'somebody-else', 'e2e-run/branch/1234abc']) {
       const boardDir = tempBoard();
       try {
@@ -827,7 +829,7 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
         boardDir.cleanup();
       }
     }
-  });
+  }, 60_000);
 
   it('never creates the sentinel on disk', async () => {
     // A virtual path is the whole reason the board can hold a lock on something that

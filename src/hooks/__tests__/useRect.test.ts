@@ -574,7 +574,7 @@ describe('useRect', () => {
       [180, 180, 'ew-resize'],
       [225, 225, 'nwse-resize'],
       [270, 270, 'ns-resize'],
-      [315, -45, 'nesw-resize'],
+      [315, 315, 'nesw-resize'],
     ] as const)(
       'uses the exact %s-degree rotation cursor for the pointer position around the rect',
       (cursorAngle, expectedSvgAngle, fallback) => {
@@ -598,7 +598,7 @@ describe('useRect', () => {
         const svg = decodeURIComponent(encodedSvg!);
         expect(svg).toMatch(/^<svg\b[\s\S]*<\/svg>$/);
         expect(svg).toContain('width="64" height="64" viewBox="0 0 64 64"');
-        expect(svg).toContain(`rotate(${expectedSvgAngle.toFixed(2)}) scale(0.05) translate(-64 -64)`);
+        expect(svg).toContain(`rotate(${expectedSvgAngle.toFixed(2)}) scale(0.2) translate(-64 -64)`);
         expect(svg).toContain('stroke="#fff" stroke-width="23"');
         expect(svg).toContain('stroke="#000" stroke-width="13"');
         expect(svg).toContain('fill="#000" stroke="none"');
@@ -642,8 +642,10 @@ describe('useRect', () => {
 
       const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
       expect(encodedSvg).toBeDefined();
-      const expectedSvgAngle = tangentAngle < -90 ? tangentAngle + 360 : tangentAngle;
-      expect(decodeURIComponent(encodedSvg!)).toContain(`rotate(${expectedSvgAngle.toFixed(2)}) scale(0.05)`);
+      const normalizedAngle = ((tangentAngle % 360) + 360) % 360;
+      const angleBucket = Math.round(normalizedAngle * 100) % 36_000;
+      const expectedSvgAngle = (angleBucket / 100).toFixed(2);
+      expect(decodeURIComponent(encodedSvg!)).toContain(`rotate(${expectedSvgAngle}) scale(0.2)`);
       expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
     });
 
@@ -663,15 +665,60 @@ describe('useRect', () => {
 
         const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
-        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45.00) scale(0.05)');
+        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45.00) scale(0.2)');
       } finally {
         viewStateRef.current.rotation = originalViewRotation;
       }
     });
 
+    it('uses the pointer tangent around the center when the crop is already rotated', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+        rotation: 90,
+      });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 325, clientY: 175, target }));
+      });
+
+      const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+      expect(encodedSvg).toBeDefined();
+      expect(decodeURIComponent(encodedSvg!)).toContain('rotate(90.00) scale(0.2)');
+    });
+
+    it('wraps a two-decimal cursor angle at 360 degrees', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+      const cursorAtTangent = (tangentAngle: number) => {
+        const radians = ((tangentAngle - 90) * Math.PI) / 180;
+        const target = createMockTarget();
+
+        act(() => {
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({
+              clientX: 200 + Math.cos(radians) * 150,
+              clientY: 175 + Math.sin(radians) * 150,
+              target,
+            })
+          );
+        });
+
+        const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+        expect(encodedSvg).toBeDefined();
+        return decodeURIComponent(encodedSvg!);
+      };
+
+      expect(cursorAtTangent(-0.004)).toContain('rotate(0.00) scale(0.2)');
+      expect(cursorAtTangent(-0.006)).toContain('rotate(359.99) scale(0.2)');
+    });
+
     it.each([
-      [-45, '-45.00', 'nesw-resize'],
-      [405, '405.00', 'nwse-resize'],
+      [-45, '315.00', 'nesw-resize'],
+      [405, '45.00', 'nwse-resize'],
     ] as const)(
       'keeps the rotation fallback axis valid at %s degrees of canvas rotation',
       (viewRotation, angle, fallback) => {
@@ -690,7 +737,7 @@ describe('useRect', () => {
 
           const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
           expect(encodedSvg).toBeDefined();
-          expect(decodeURIComponent(encodedSvg!)).toContain(`rotate(${angle}) scale(0.05)`);
+          expect(decodeURIComponent(encodedSvg!)).toContain(`rotate(${angle}) scale(0.2)`);
           expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
         } finally {
           viewStateRef.current.rotation = originalViewRotation;
@@ -711,7 +758,7 @@ describe('useRect', () => {
 
       const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
       expect(encodedSvg).toBeDefined();
-      expect(decodeURIComponent(encodedSvg!)).toContain('rotate(126.87) scale(0.05)');
+      expect(decodeURIComponent(encodedSvg!)).toContain('rotate(126.87) scale(0.2)');
     });
 
     it('orients an arbitrary crop tangent after converting a zoomed, panned, rotated screen point to local coordinates', () => {
@@ -752,7 +799,7 @@ describe('useRect', () => {
 
         const encodedSvg = pointer.target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
-        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(171.87) scale(0.05)');
+        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(171.87) scale(0.2)');
         expect(pointer.target.style.cursor).toMatch(/\) 32 32, ew-resize$/);
       } finally {
         Object.assign(viewStateRef.current, originalViewState);
@@ -787,6 +834,91 @@ describe('useRect', () => {
       } finally {
         viewStateRef.current.rotation = originalViewRotation;
       }
+    });
+
+    it('keeps cache entries distinct when the rounded SVG angle straddles a CSS fallback midpoint', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+      const cursorAtTangent = (tangentAngle: number) => {
+        const radians = ((tangentAngle - 90) * Math.PI) / 180;
+        const target = createMockTarget();
+
+        act(() => {
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({
+              clientX: 200 + Math.cos(radians) * 150,
+              clientY: 175 + Math.sin(radians) * 150,
+              target,
+            })
+          );
+        });
+
+        return target.style.cursor;
+      };
+
+      const belowMidpoint = cursorAtTangent(22.496);
+      const aboveMidpoint = cursorAtTangent(22.504);
+
+      expect(belowMidpoint).toMatch(/\) 32 32, ew-resize$/);
+      expect(aboveMidpoint).toMatch(/\) 32 32, nwse-resize$/);
+      expect(decodeURIComponent(belowMidpoint.match(/data:image\/svg\+xml,([^"]+)/)?.[1] ?? '')).toContain(
+        'rotate(22.50) scale(0.2)'
+      );
+      expect(decodeURIComponent(aboveMidpoint.match(/data:image\/svg\+xml,([^"]+)/)?.[1] ?? '')).toContain(
+        'rotate(22.50) scale(0.2)'
+      );
+    });
+
+    it('bounds the rotation cursor cache and promotes recently used cursors', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+      const encode = vi.spyOn(globalThis, 'encodeURIComponent');
+      const cursorAtTangent = (tangentAngle: number) => {
+        const radians = ((tangentAngle - 90) * Math.PI) / 180;
+        const target = createMockTarget();
+        result.current.pointerHandlers.onPointerMove(
+          createPointerEvent({
+            clientX: 200 + Math.cos(radians) * 150,
+            clientY: 175 + Math.sin(radians) * 150,
+            target,
+          })
+        );
+        return target.style.cursor;
+      };
+
+      act(() => {
+        for (let index = 0; index < 512; index += 1) cursorAtTangent(80 + index / 100);
+      });
+      const afterFill = encode.mock.calls.length;
+
+      act(() => {
+        cursorAtTangent(80);
+      });
+      expect(encode).toHaveBeenCalledTimes(afterFill);
+
+      act(() => {
+        cursorAtTangent(85.12);
+      });
+      const afterEviction = encode.mock.calls.length;
+      expect(afterEviction).toBe(afterFill + 1);
+
+      act(() => {
+        cursorAtTangent(80);
+      });
+      expect(encode).toHaveBeenCalledTimes(afterEviction);
+
+      let evictedCursor = '';
+      act(() => {
+        evictedCursor = cursorAtTangent(80.01);
+      });
+      expect(encode).toHaveBeenCalledTimes(afterEviction + 1);
+      expect(decodeURIComponent(evictedCursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1] ?? '')).toContain(
+        'rotate(80.01) scale(0.2)'
+      );
     });
 
     it('orients resize cursors along rotated object edges', () => {
