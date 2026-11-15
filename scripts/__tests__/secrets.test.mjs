@@ -77,6 +77,7 @@ describe('secret key redaction', () => {
       console.log(JSON.stringify(keys.map((key) => ({
         object: sanitizeForOutput({ [key]: 'ordinary value' }),
         message: sanitizeErrorMessage('request failed: ' + key + '=ordinary value'),
+        directMessage: sanitizeErrorMessage(key + ' = ordinary value'),
       }))));
     `;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
@@ -91,10 +92,12 @@ describe('secret key redaction', () => {
       {
         object: { [nearMatchKey]: 'ordinary value' },
         message: `request failed: ${nearMatchKey}=ordinary value`,
+        directMessage: `${nearMatchKey} = ordinary value`,
       },
       {
         object: { [delimitedKey]: '***REDACTED***' },
         message: `request failed: ${delimitedKey}=ordinary value`,
+        directMessage: `${delimitedKey} = [REDACTED] value`,
       },
     ]);
   });
