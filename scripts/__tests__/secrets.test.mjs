@@ -71,15 +71,21 @@ describe('secret key redaction', () => {
   it('does not catastrophically backtrack on long near-match keys in object and text sanitization', () => {
     const sanitizerUrl = pathToFileURL(resolve('scripts/lib/secrets.mjs')).href;
     const keys = [`key${'1'.repeat(64)}x`, `key${'-11'.repeat(32)}-`];
+    const nearMisses = [
+      `${'key_'.repeat(16_000)}! = ordinary value`,
+      `${'key-'.repeat(16_000)}! = ordinary value`,
+      `${'key.'.repeat(16_000)}! = ordinary value`,
+    ];
     const source = `
       import { sanitizeErrorMessage, sanitizeForOutput } from ${JSON.stringify(sanitizerUrl)};
       const keys = ${JSON.stringify(keys)};
-      console.log(JSON.stringify(keys.map((key) => ({
+      const nearMisses = ${JSON.stringify(nearMisses)};
+      console.log(JSON.stringify({ cases: keys.map((key) => ({
         object: sanitizeForOutput({ [key]: 'ordinary value' }),
         message: sanitizeErrorMessage('request failed: ' + key + '=ordinary value'),
         directMessage: sanitizeErrorMessage(key + ' = ordinary value'),
         prefixedMessage: sanitizeErrorMessage('request failed: ' + key + ' = ordinary value'),
-      }))));
+      })), nearMissesUnchanged: nearMisses.every((nearMiss) => sanitizeErrorMessage(nearMiss) === nearMiss) }));
     `;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
       encoding: 'utf8',
@@ -89,20 +95,23 @@ describe('secret key redaction', () => {
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
     const [nearMatchKey, delimitedKey] = keys;
-    expect(JSON.parse(result.stdout.trim())).toEqual([
-      {
-        object: { [nearMatchKey]: 'ordinary value' },
-        message: `request failed: ${nearMatchKey}=ordinary value`,
-        directMessage: `${nearMatchKey} = ordinary value`,
-        prefixedMessage: `request failed: ${nearMatchKey} = ordinary value`,
-      },
-      {
-        object: { [delimitedKey]: '***REDACTED***' },
-        message: `request failed: ${delimitedKey}=[REDACTED] value`,
-        directMessage: `${delimitedKey} = [REDACTED] value`,
-        prefixedMessage: `request failed: ${delimitedKey} = [REDACTED] value`,
-      },
-    ]);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      cases: [
+        {
+          object: { [nearMatchKey]: 'ordinary value' },
+          message: `request failed: ${nearMatchKey}=ordinary value`,
+          directMessage: `${nearMatchKey} = ordinary value`,
+          prefixedMessage: `request failed: ${nearMatchKey} = ordinary value`,
+        },
+        {
+          object: { [delimitedKey]: '***REDACTED***' },
+          message: `request failed: ${delimitedKey}=[REDACTED] value`,
+          directMessage: `${delimitedKey} = [REDACTED] value`,
+          prefixedMessage: `request failed: ${delimitedKey} = [REDACTED] value`,
+        },
+      ],
+      nearMissesUnchanged: true,
+    });
   });
 
   const statelessGitHubToken = `ghs_123456_${'a'.repeat(40)}.${'b'.repeat(220)}.${'c'.repeat(240)}`;
