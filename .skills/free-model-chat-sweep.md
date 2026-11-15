@@ -192,11 +192,12 @@ Supported reasons are `rate_limit`, `provider_outage`, `model_unavailable`,
 `nvidia/nemotron-3-ultra-550b-a55b:free` route on OpenRouter and Kilo. Other Nemotron variants and
 providers remain blocked. The exact Kilo Nemotron route is excluded from automatic model-quarantine
 writes; a Kilo HTTP 429 still triggers the one-hour source cooldown described in `MODELS.md`.
-Persistent quarantine entries for that exact route require operator action. Migration v4 clears the
-former 168-hour `poor_performance` holds for that exact model on OpenRouter and Kilo after recovery
-and preserves active entries with other reasons. Later failures for other source/model pairs use the
-normal quarantine rules. On first use, the state file imports the three older Kilo quarantine entries
-with the 168-hour maximum expiry.
+Persistent quarantine entries for that exact route require operator action. Migration v4 removes
+legacy `poor_performance` entries for this exact model on OpenRouter and Kilo the first time it
+processes an older quarantine file; it preserves entries with other reasons, and entries added after
+the migration are unaffected. Later failures for other source/model pairs use the normal quarantine
+rules. On first use, the state file imports the three older Kilo quarantine entries with the 168-hour
+maximum expiry.
 The default file is the project-shared `.kilo/free-model-quarantine.json`, including when
 the command runs from a managed worktree; `FREE_MODEL_QUARANTINE_FILE` overrides it.
 Mutating commands take an adjacent exclusive lock and fail fast if another writer owns it.
