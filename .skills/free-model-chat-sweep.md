@@ -190,7 +190,9 @@ currently reads the daily free-model counter for OpenRouter.
 Supported reasons are `rate_limit`, `provider_outage`, `model_unavailable`,
 `poor_performance`, and `non_zero_cost`. Nemotron 3 Ultra is approved only for the exact
 `nvidia/nemotron-3-ultra-550b-a55b:free` route on OpenRouter and Kilo. Other Nemotron variants and
-providers remain blocked. Migration v4 clears the former 168-hour `poor_performance` holds for that
+providers remain blocked. The exact Kilo Nemotron route is never automatically quarantined; any
+quarantine for it is operator-managed as described in `MODELS.md`. Migration v4 clears the former
+168-hour `poor_performance` holds for that
 exact model on OpenRouter and Kilo after the route recovered. It preserves active quarantine entries
 with other reasons; later provider/model failures still use the normal quarantine rules. On first
 use, the state file imports the three older Kilo
