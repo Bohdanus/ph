@@ -426,15 +426,54 @@ describe('useRect', () => {
       initialProps: { rotation: 0 },
     });
 
+    for (const rotation of [30, 45, 0]) {
+      vi.mocked(ctx.fillRect).mockClear();
+      act(() => rerender({ rotation }));
+
+      expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 800, 600);
+
+      vi.mocked(ctx.fillRect).mockClear();
+      act(() => result.current.rectHandles.redraw());
+
+      expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 800, 600);
+    }
+  });
+
+  it('repaints the incremental base when the frame size or dim visibility changes', () => {
+    const props: UseRectProps = {
+      imageSize: { width: 800, height: 600 },
+      initialRect: { x1: 100, y1: 120, x2: 200, y2: 200 },
+      incrementalOverlay: true,
+      hideBlend: false,
+      containerRef: { current: testContext.containerElement },
+      overlayRef: { current: testContext.overlayCanvas },
+      onChangeEnd: vi.fn(),
+    };
+    const ctx = testContext.overlayCanvas.getContext('2d') as unknown as ReturnType<typeof createMockCanvasContext>;
+    const { rerender } = renderHook(({ imageSize, hideBlend }) => useRect({ ...props, imageSize, hideBlend }), {
+      initialProps: { imageSize: props.imageSize, hideBlend: false },
+    });
+
+    vi.mocked(ctx.clearRect).mockClear();
     vi.mocked(ctx.fillRect).mockClear();
-    act(() => rerender({ rotation: 30 }));
+    act(() => rerender({ imageSize: { width: 400, height: 300 }, hideBlend: false }));
 
-    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 400, 300);
 
+    vi.mocked(ctx.clearRect).mockClear();
     vi.mocked(ctx.fillRect).mockClear();
-    act(() => result.current.rectHandles.redraw());
+    act(() => rerender({ imageSize: { width: 400, height: 300 }, hideBlend: true }));
 
-    expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 400, 300);
+
+    vi.mocked(ctx.clearRect).mockClear();
+    vi.mocked(ctx.fillRect).mockClear();
+    act(() => rerender({ imageSize: { width: 400, height: 300 }, hideBlend: false }));
+
+    expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 400, 300);
   });
 
   it('returns false for pointer down on non-left button', () => {
