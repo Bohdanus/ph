@@ -31,16 +31,18 @@ const SECRET_PATTERNS = [
 
 const REDACTED_MARKER = '***REDACTED***';
 const SECRET_ASSIGNMENT_KEY_SOURCE =
-  '(?:(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|passphrase|password|passwd|secret|signature|sigv4|token)(?:[_-][A-Za-z0-9]+)*|(?:[A-Za-z0-9]+[_-])*(?:sig|hmac|key|key[_-]?id|access[_-]?key(?:[_-]?id)?|private[_-]?key)(?:[0-9]+)?(?:[_-][A-Za-z0-9]+)*)';
+  '(?:(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|passphrase|password|passwd|secret|signature|sigv4|token)(?:[_-][A-Za-z0-9]+)*|(?:[A-Za-z0-9]+[_-])*(?:sig|hmac|key|key[_-]?id|access[_-]?key(?:[_-]?id)?|private[_-]?key)(?:(?:[_-][A-Za-z0-9]+(?=[^A-Za-z0-9]|$))|[0-9])*)';
 const SECRET_ASSIGNMENT_KEY_PATTERN = new RegExp(`^(?:${SECRET_ASSIGNMENT_KEY_SOURCE})$`, 'i');
+const SECRET_ASSIGNMENT_KEY_HINT_SOURCE =
+  '(?:(?<![A-Za-z0-9])(?:api[_-]?key|access[_-]?token|auth(?:orization|entication)?|authtoken|bearer|client[_-]?secret|credentials?|passphrase|password|passwd|secret|signature|sigv4|token)(?=[_-]|$)|(?<![A-Za-z0-9])(?:sig|hmac|key|key[_-]?id|access[_-]?key(?:[_-]?id)?|private[_-]?key)(?=[_-]|[0-9]|$)|(?:apikey|api_key|accesstoken|access_token|authorization|credential|password|secret|signature))';
 const SECRET_ASSIGNMENT_PATTERN = new RegExp(
-  `(?<![\\w])(["']?(?:${SECRET_ASSIGNMENT_KEY_SOURCE})["']?\\s*[:=]\\s*)("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|[^\\s,;{}]+)`,
+  `(?<![\\w-])(["']?(?=[A-Za-z0-9_-]*(?<![A-Za-z0-9])(?:${SECRET_ASSIGNMENT_KEY_HINT_SOURCE}))[A-Za-z0-9_-]+["']?\\s*[:=]\\s*)("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|[^\\s,;{}]+)`,
   'gi'
 );
 const OPAQUE_ASSIGNMENT_PATTERN =
-  /(?<![\w])(["']?[^"'=\s,;{}]*[%+][^"'=\s,;{}]*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi;
+  /(?<![^"'=\s,;{}])(["']?[^"'=\s,;{}]*[%+][^"'=\s,;{}]*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi;
 const TEXT_ASSIGNMENT_PATTERN =
-  /(?<![\w])(["']?[A-Za-z0-9_%+.-]+["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi;
+  /(?<![A-Za-z0-9_%+.-])(["']?[A-Za-z0-9_%+.-]+["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi;
 const SENSITIVE_URL_PATTERN = /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+|\/[^\s"'<>]*[?#][^\s"'<>]*|[?#][^\s"'<>]+)/gi;
 // Preserve public SigV4 fields and numeric token counts after secrets; unknown query values remain fail-closed.
 const SAFE_SIGV4_QUERY_KEYS = new Set(['x-amz-algorithm', 'x-amz-date', 'x-amz-expires', 'x-amz-signedheaders']);
@@ -336,59 +338,63 @@ function redactUrlUserInfo(url) {
 
 function protectSensitiveUrlAssignments(input, depth = 0) {
   const replacements = [];
-  const value = input.replace(SENSITIVE_URL_PATTERN, (url) => {
-    const userInfo = redactUrlUserInfo(url);
-    const safeUrl = userInfo.value;
-    const queryStart = safeUrl.indexOf('?');
-    const hashStart = safeUrl.indexOf('#');
-    const hasQuery = queryStart >= 0 && (hashStart < 0 || queryStart < hashStart);
-    const pathEnd = hasQuery ? queryStart : hashStart < 0 ? safeUrl.length : hashStart;
-    const path = safeUrl.slice(0, pathEnd);
-    const redactedPath = redactTextAssignments(path, depth);
-    const pathContainsSecret = userInfo.redacted || redactedPath !== path;
-    const rawFragment = hashStart < 0 ? '' : safeUrl.slice(hashStart + 1);
-    const fragmentPreScan = hashStart < 0 ? null : redactUrlQueryAssignments(rawFragment, pathContainsSecret, depth);
-    const fragmentContainsSecret =
-      fragmentPreScan !== null &&
-      (fragmentPreScan.foundSecret || redactTextAssignments(fragmentPreScan.value) !== rawFragment);
+  const hasUrlMarker = input.includes('://') || input.includes('?') || input.includes('#');
+  const value = hasUrlMarker
+    ? input.replace(SENSITIVE_URL_PATTERN, (url) => {
+        const userInfo = redactUrlUserInfo(url);
+        const safeUrl = userInfo.value;
+        const queryStart = safeUrl.indexOf('?');
+        const hashStart = safeUrl.indexOf('#');
+        const hasQuery = queryStart >= 0 && (hashStart < 0 || queryStart < hashStart);
+        const pathEnd = hasQuery ? queryStart : hashStart < 0 ? safeUrl.length : hashStart;
+        const path = safeUrl.slice(0, pathEnd);
+        const redactedPath = redactTextAssignments(path, depth);
+        const pathContainsSecret = userInfo.redacted || redactedPath !== path;
+        const rawFragment = hashStart < 0 ? '' : safeUrl.slice(hashStart + 1);
+        const fragmentPreScan =
+          hashStart < 0 ? null : redactUrlQueryAssignments(rawFragment, pathContainsSecret, depth);
+        const fragmentContainsSecret =
+          fragmentPreScan !== null &&
+          (fragmentPreScan.foundSecret || redactTextAssignments(fragmentPreScan.value) !== rawFragment);
 
-    let query = '';
-    let queryContainsSecret = false;
-    if (hasQuery) {
-      const queryEnd = hashStart < 0 ? safeUrl.length : hashStart;
-      const redactedQuery = redactUrlQueryAssignments(
-        safeUrl.slice(queryStart + 1, queryEnd),
-        pathContainsSecret || fragmentContainsSecret,
-        depth
-      );
-      query = redactedQuery.value;
-      queryContainsSecret = redactedQuery.foundSecret;
-    }
+        let query = '';
+        let queryContainsSecret = false;
+        if (hasQuery) {
+          const queryEnd = hashStart < 0 ? safeUrl.length : hashStart;
+          const redactedQuery = redactUrlQueryAssignments(
+            safeUrl.slice(queryStart + 1, queryEnd),
+            pathContainsSecret || fragmentContainsSecret,
+            depth
+          );
+          query = redactedQuery.value;
+          queryContainsSecret = redactedQuery.foundSecret;
+        }
 
-    let fragment = '';
-    let fragmentChanged = false;
-    if (hashStart >= 0) {
-      const redactedFragmentAssignments = redactUrlQueryAssignments(
-        rawFragment,
-        pathContainsSecret || queryContainsSecret,
-        depth
-      );
-      const redactedFragmentValue = redactTextAssignments(redactedFragmentAssignments.value, depth);
-      fragment = `#${redactedFragmentValue}`;
-      fragmentChanged = redactedFragmentAssignments.foundSecret || redactedFragmentValue !== rawFragment;
-    }
-    if (!pathContainsSecret && !queryContainsSecret && !fragmentChanged) return safeUrl;
+        let fragment = '';
+        let fragmentChanged = false;
+        if (hashStart >= 0) {
+          const redactedFragmentAssignments = redactUrlQueryAssignments(
+            rawFragment,
+            pathContainsSecret || queryContainsSecret,
+            depth
+          );
+          const redactedFragmentValue = redactTextAssignments(redactedFragmentAssignments.value, depth);
+          fragment = `#${redactedFragmentValue}`;
+          fragmentChanged = redactedFragmentAssignments.foundSecret || redactedFragmentValue !== rawFragment;
+        }
+        if (!pathContainsSecret && !queryContainsSecret && !fragmentChanged) return safeUrl;
 
-    const sanitizedUrl = hasQuery ? `${redactedPath}?${query}${fragment}` : `${redactedPath}${fragment}`;
-    let markerIndex = replacements.length;
-    let marker = `__PH_SANITIZED_URL_${markerIndex}__`;
-    while (input.includes(marker) || replacements.some((replacement) => replacement.marker === marker)) {
-      markerIndex += 1;
-      marker = `__PH_SANITIZED_URL_${markerIndex}__`;
-    }
-    replacements.push({ marker, url: sanitizedUrl });
-    return marker;
-  });
+        const sanitizedUrl = hasQuery ? `${redactedPath}?${query}${fragment}` : `${redactedPath}${fragment}`;
+        let markerIndex = replacements.length;
+        let marker = `__PH_SANITIZED_URL_${markerIndex}__`;
+        while (input.includes(marker) || replacements.some((replacement) => replacement.marker === marker)) {
+          markerIndex += 1;
+          marker = `__PH_SANITIZED_URL_${markerIndex}__`;
+        }
+        replacements.push({ marker, url: sanitizedUrl });
+        return marker;
+      })
+    : input;
 
   return { value, replacements };
 }
