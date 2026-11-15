@@ -307,6 +307,15 @@ describe('toolDescriptions', () => {
         expect(adobeSources.length, `${name}: no Adobe documentation source found`).toBeGreaterThan(0);
       }
     });
+
+    it('cites Adobe for the temporary Eyedropper modifier on Brush and Pencil', () => {
+      const source =
+        'https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/choose-a-color-while-painting.html';
+
+      for (const name of ['brush', 'pencil'] as const) {
+        expect(toolDescriptions[name].sources).toContain(source);
+      }
+    });
   });
 
   describe('family disjointness', () => {
@@ -331,19 +340,43 @@ describe('toolDescriptions', () => {
     });
   });
 
-  it('qualifies the Smudge R shortcut against current and older Adobe sources', () => {
+  it('records the conflicting Adobe Smudge R sources without treating either as conclusive', () => {
     const smudge = toolDescriptions.smudge;
     const shortcut = smudge.shortcuts.find((item) => item.keys === 'R');
 
     expect(shortcut?.action).toMatch(
-      /current desktop Smudge guide says R cycles through retouching tools.*2023 guide labels Smudge with R.*2019 Photoshop reference lists R for Rotate View.*Keyboard Shortcuts and Menus dialog.*active binding/i
+      /current desktop Smudge guide says R cycles through retouching tools.*2024 Rotate View guide labels Rotate View as R.*2019 shortcut reference also assigns R to Rotate View.*default binding is unresolved.*Keyboard Shortcuts and Menus dialog/i
     );
     expect(smudge.sources).toEqual(
       expect.arrayContaining([
+        'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html',
         'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
+        'https://helpx.adobe.com/photoshop/using/tool-techniques/rotate-view-tool.html',
         'https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html',
       ])
     );
+  });
+
+  it('conditions shared tonal-tool cycling on Photoshop preference and preserves the active Exposure setting', () => {
+    const reference = 'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf';
+
+    for (const name of ['dodge', 'burn', 'sponge'] as const) {
+      const description = toolDescriptions[name];
+      const cycle = description.shortcuts.find((item) => item.keys === 'Shift+O');
+
+      expect(cycle?.action).toMatch(
+        /2019 shortcut reference says Shift\+O cycles.*when Use Shift Key for Tool Switch is enabled.*preference disabled, press O repeatedly to cycle/i
+      );
+      expect(description.sources).toContain(reference);
+    }
+
+    for (const name of ['dodge', 'burn'] as const) {
+      const digits = toolDescriptions[name].shortcuts.find((item) => item.keys === '0–9');
+      expect(digits?.action).toMatch(
+        /2019 shortcut reference says number keys 0–9 set Exposure.*With Airbrush enabled, Shift\+number adjusts Exposure/i
+      );
+      expect(digits?.action).not.toMatch(/Shift\+number to set Opacity/i);
+    }
   });
 
   it('separates Adobe Dodge/Burn Exposure digits from app shortcut support', () => {
@@ -355,7 +388,7 @@ describe('toolDescriptions', () => {
       const tool = name === 'dodge' ? 'Dodge' : 'Burn';
 
       expect(exposureShortcut?.action).toMatch(
-        /In Photoshop, number keys 0–9 set Exposure.*0 = 100%, 1 = 10%, and two quick digits set an exact percentage.*with Airbrush enabled, use Shift\+number/i
+        /2019 shortcut reference says number keys 0–9 set Exposure.*0 = 100%, 1 = 10%, and two quick digits set an exact percentage.*With Airbrush enabled, Shift\+number adjusts Exposure/i
       );
       expect(exposureShortcut?.action).toContain(`This app does not implement ${tool} Exposure digit shortcuts`);
       expect(description.sources).toContain(reference);

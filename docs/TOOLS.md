@@ -629,6 +629,7 @@ Sources:
 
 - <https://helpx.adobe.com/photoshop/using/painting-tools.html>
 - <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/brushes-presets/paint-with-brush-or-pencil-tool.html>
+- <https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/choose-a-color-while-painting.html>
 - <https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf>
 - <https://asktimgrey.com/2023/09/01/flow-versus-opacity-for-brushes>
 - <https://photoshopcafe.com/use-flow-opacity-photoshop-brushes>
@@ -707,6 +708,7 @@ Sources:
 
 - <https://helpx.adobe.com/photoshop/using/painting-tools.html>
 - <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/brushes-presets/paint-with-brush-or-pencil-tool.html>
+- <https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/choose-a-color-while-painting.html>
 - <https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf>
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/auto-erase-with-the-pencil-tool.html>
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html>
@@ -1350,7 +1352,7 @@ The Smudge tool simulates a finger through wet paint: it picks up the colour whe
 
 **Shortcuts**
 
-- `R` — The current desktop Smudge guide says R cycles through retouching tools; the 2023 guide labels Smudge with R; a 2019 Photoshop reference lists R for Rotate View. Adobe directs users to the Keyboard Shortcuts and Menus dialog to inspect the active binding. THIS APP binds R to Rotate View and has no Shift+R cycle for this family.
+- `R` — Adobe's current desktop Smudge guide says R cycles through retouching tools until Smudge appears. Adobe's 2024 Rotate View guide labels Rotate View as R, and its 2019 shortcut reference also assigns R to Rotate View. Because these first-party references conflict, the default binding is unresolved; check Photoshop's Keyboard Shortcuts and Menus dialog. This app assigns R to Rotate View and does not cycle the family with Shift+R.
 - `[` — Decreases the brush tip size by one pixel, and repeats as a scrub while the key is held.
 - `]` — Increases the brush tip size by one pixel, and repeats as a scrub while the key is held.
 
@@ -1371,7 +1373,9 @@ Implementation:
 Sources:
 
 - <https://helpx.adobe.com/photoshop/using/tool-techniques/smudge-tool.html>
+- <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html>
 - <https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf>
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/rotate-view-tool.html>
 - <https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html>
 - <https://www.adobe.com/products/photoshop/blend-colors.html>
 - <https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>
@@ -1405,8 +1409,8 @@ The Dodge tool comes from the darkroom: a printer holds light back under a finge
 **Shortcuts**
 
 - `O` — Selects the Dodge tool; the letter is shared with the Burn and Sponge tools in the same flyout.
-- `Shift+O` — Cycles through the tools that share the O shortcut, which reaches the Burn tool without leaving the canvas.
-- `0–9` — In Photoshop, number keys 0–9 set Exposure: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. With Airbrush enabled, use Shift+number to set Opacity. This app does not implement Dodge Exposure digit shortcuts.
+- `Shift+O` — Adobe’s 2019 shortcut reference says Shift+O cycles the Dodge, Burn and Sponge tools when Use Shift Key for Tool Switch is enabled; with that preference disabled, press O repeatedly to cycle.
+- `0–9` — Adobe’s 2019 shortcut reference says number keys 0–9 set Exposure: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. With Airbrush enabled, Shift+number adjusts Exposure. This app does not implement Dodge Exposure digit shortcuts.
 - `[` — Decreases the brush tip size by one pixel, and repeats as a scrub while the key is held.
 - `]` — Increases the brush tip size by one pixel, and repeats as a scrub while the key is held.
 
@@ -1462,8 +1466,8 @@ The Burn tool is the Dodge tool measured from the other end: instead of holding 
 
 **Shortcuts**
 
-- `0–9` — In Photoshop, number keys 0–9 set Exposure: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. With Airbrush enabled, use Shift+number to set Opacity. This app does not implement Burn Exposure digit shortcuts.
-- `Shift+O` — Cycles from the Dodge tool to the Burn tool, which share the O shortcut; press it again to reach the Sponge tool.
+- `0–9` — Adobe’s 2019 shortcut reference says number keys 0–9 set Exposure: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. With Airbrush enabled, Shift+number adjusts Exposure. This app does not implement Burn Exposure digit shortcuts.
+- `Shift+O` — Adobe’s 2019 shortcut reference says Shift+O cycles the Dodge, Burn and Sponge tools when Use Shift Key for Tool Switch is enabled; with that preference disabled, press O repeatedly to cycle.
 - `[` — Decreases the brush tip size by one pixel, and repeats as a scrub while the key is held.
 - `]` — Increases the brush tip size by one pixel, and repeats as a scrub while the key is held.
 
@@ -1521,7 +1525,7 @@ The Sponge tool subtly changes the colour saturation of an area. Saturate intens
 
 - `Shift+0–9` — The 2019 generic painting/editing shortcut reference says Shift+number sets Flow. This is historical generic evidence rather than a current Sponge-specific confirmation; for Airbrush, it does not establish whether that exception applies to the Sponge.
 - `O` — Selects the Dodge tool. Adobe lists the Dodge, the Burn and the Sponge as three rows with the same letter rather than one row, which puts the Dodge first; the Sponge is reached by cycling.
-- `Shift+O` — Cycles from the Dodge tool to the Burn tool and on to the Sponge, which share the O shortcut.
+- `Shift+O` — Adobe’s 2019 shortcut reference says Shift+O cycles the Dodge, Burn and Sponge tools when Use Shift Key for Tool Switch is enabled; with that preference disabled, press O repeatedly to cycle.
 - `Shift+Alt+D` — Sets the tool to Desaturate while the Sponge is active. Photoshop prints it Shift+Option+D on macOS.
 - `Shift+Alt+S` — Sets the tool to Saturate while the Sponge is active - and is Shadows on the Dodge and the Burn, on the same page of the same Adobe table, so the two tools share one key and Photoshop resolves it by which tool is selected. Photoshop prints it Shift+Option+S on macOS.
 - `[` — Decreases the brush tip size by one pixel, and repeats as a scrub while the key is held.

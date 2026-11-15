@@ -535,10 +535,10 @@ Two naming points, both of which changed my earlier draft. The brief's `Protect 
 for the current label verbatim. The recovered research's `Protect Texture` is a third spelling,
 attributed to Adobe's iPad documentation, which I could not open — see `## Unverified`.
 
-`O` selects the Dodge tool and `Shift+O` cycles the flyout, which is confirmed twice independently.
-The app binds `O` the same way — the `Dodge Tool` entry in `toolbar-mapping.ts` declares it, and the
-handler is the plain-`O` `useKeyDownShortcut` registration in
-`src/components/Common/AppKeyboardShortcuts.tsx`, whose cycle branch is `selectTonalTool()`.
+`O` selects the Dodge tool. Adobe's 2019 shortcut reference says `Shift+O` cycles the group only
+when the `Use Shift Key for Tool Switch` preference is enabled; otherwise, repeatedly pressing `O`
+cycles it. This app binds `Shift+O` unconditionally: its `selectTonalTool()` branch has no preference
+check, while the `Dodge Tool` entry in `toolbar-mapping.ts` declares the `O` binding.
 
 **Three more bindings Adobe has and the app does not: `Shift+Alt+S`, `Shift+Alt+M` and
 `Shift+Alt+H` set the tonal range while the tool is held.** They sit in Adobe's
@@ -747,7 +747,9 @@ The alternative reading is in `## Unverified` below.
 
 - <https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html> — the Grayscale-mode sentence; `Mode` semantics; `Flow` as "the rate of saturation change"; `Vibrance`'s only description; `O` on the Sponge page.
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/adjust-color-saturation-in-selected-image-areas.html> — the current desktop guide's Sponge Flow control; it does not state a numeric shortcut.
-- <https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf> — the 2019 generic painting/editing digit and Flow rules, including the Airbrush exception.
+- <https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf> — the 2019 default shortcut reference for shared-tool cycling preferences, Dodge/Burn tonal ranges, and generic painting/editing digit and Flow rules, including the Airbrush exception.
+- <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html> — the current Smudge guide's `R` instruction to cycle through retouching tools until Smudge appears.
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/rotate-view-tool.html> — Adobe's 2024 Rotate View guide labels Rotate View as `R`.
 - <https://helpx.adobe.com/photoshop/using/tool-techniques/sponge-tool.html> — the desktop bar enumeration including `Vibrance`; "select and hold the Dodge tool to show the other related tools".
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html> — the Dodge/Burn bar as `Range`/`Exposure`/`Airbrush`/`Protect Tones`, and the negative that `Tolerance` appears nowhere.
 - <https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html> — the per-mode grayscale contrast split.
@@ -1102,12 +1104,14 @@ a binding is **absent**, which is the stronger form of the same objection.
     Photoshop gradient property the app has no counterpart for; it is a Properties-panel control
     rather than an options-bar one, so it has no row, and it is noted here because the brief asked
     about the Methods and this is the other half of their behaviour.
-11. **The `R` keyboard shortcut for the Blur and the Sharpen, and only those two.** Adobe's current
-    desktop Smudge guide says `R` cycles through retouching tools until Smudge is selected
-    (<https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html>),
-    and Photoshop Elements' reference prints `R` for the three-tool group
-    (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>), so
-    the row is in the Smudge's `shortcuts`. The two CS-era sources that give the group `R`
+11. **The `R` shortcut is not established for the Blur or the Sharpen.** Adobe's current
+    desktop Smudge guide says `R` cycles through retouching tools until Smudge appears, while its
+    2024 Rotate View guide labels Rotate View as `R` and the 2019 Photoshop reference also lists
+    Rotate View as `R`. The Smudge entry therefore records both first-party claims and leaves the
+    default unresolved; do not infer `R` for Blur or Sharpen from their shared tool group. Photoshop
+    Elements' reference prints `R` for the three-tool group
+    (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>).
+    The two CS-era sources that give the group `R`
     (`flylib`, and the CS2 keyboard sheet on
     <https://alexandru2882.wordpress.com/wp-content/uploads/2016/10/2074975-adobe-photoshop-cs2-tools-and-basics.pdf>)
     now only corroborate it. **Still open: the Blur and the Sharpen.** Adobe's current Blur page
@@ -1134,7 +1138,7 @@ a binding is **absent**, which is the stronger form of the same objection.
     walkthrough describes a Mode menu with a limited list; Wikiversity and other secondary
     sources also report menus and choices, but none establish current availability or a complete
     current list. The data file omits the row until a current tool-specific source resolves it.
-14. **The Smudge R evidence is versioned.** Adobe's current 2026 desktop Smudge guide says to press R to cycle through retouching tools until Smudge appears; its 2023 guide labels Smudge with R but does not describe cycling. Adobe's Photoshop reference PDF, last updated in 2019, assigns R to Rotate View in its tool-switch table and omits Smudge from that table. Adobe's current [View keyboard shortcuts](https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html) article says to inspect the Keyboard Shortcuts and Menus dialog under Tools, but does not publish the binding. The data row preserves the current tool-specific instruction, discloses the older conflict, and points readers to the installed dialog; no current Photoshop installation was checked. Do not infer R for Blur or Sharpen, or Shift+R cycling.
+14. **The default Smudge `R` binding is unresolved across Adobe's first-party sources.** Adobe's current 2026 desktop Smudge guide says `R` cycles through retouching tools until Smudge appears. Adobe's 2024 Rotate View guide labels Rotate View as `R`, and its 2019 Photoshop reference also assigns `R` to Rotate View. Adobe's current [View keyboard shortcuts](https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html) article directs users to inspect the Keyboard Shortcuts and Menus dialog under Tools, but does not publish the binding. The data row states the conflict and points readers to the installed dialog; no current Photoshop installation was checked. Do not infer `R` for Blur or Sharpen, or `Shift+R` cycling.
 
     The 2019 PDF also lists the Dodge/Burn range keys, Exposure digit changes, brush-size brackets, and the shared-tool cycling preference. Its generic painting/editing row says number keys set opacity, tolerance, strength, or Exposure (0 = 100%, 1 = 10%, and two quick digits set an exact percentage); when Airbrush is enabled, Shift+number sets Exposure. Adobe’s current Dodge/Burn guide documents the controls but not these digit bindings. Locally, the app’s 0/1 handlers are gated by `opacityField`, which excludes Dodge/Burn; their implemented shortcuts are O/Shift+O and Shift+Alt+S/M/H. Keep the historical Photoshop mapping distinct from current app support. The third-party shortcut reproductions in the tool source arrays are secondary corroboration and do not replace current tool-specific documentation. For Sponge, Adobe’s 2026 guide documents Flow but no numeric binding. The shortcut data records Shift+number only as the 2019 generic Flow rule; whether its Airbrush exception applies to Sponge is unresolved. Do not infer that bare digits set Sponge Flow simply because its bar has Flow and no Opacity.
 
