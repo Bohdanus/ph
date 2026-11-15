@@ -1,0 +1,58 @@
+# Overnight salvage handoff — 2026-11-15
+
+## Current state
+
+`origin/main` and the designated local `main` both resolve to `3147e94497fe9f0f324da10173910c4da9da4910`. A direct `git ls-remote origin refs/heads/main` confirmed the remote tip. The crop-artifacts landing was pushed while this salvage pass was running.
+
+The cursor candidate is committed on `audit/salvage-overnight-20261115` as `4926a4247a7e4391934024069022978af1357110`, based on `b4ecf8ae28fc4361d28a1d0ff2eccb3252c2f1bf`. Its changes are in `src/hooks/useRect.ts` and `src/hooks/__tests__/useRect.test.ts`. It preserves the operator-required SVG scale `0.05`, uses the exact pointer tangent angle, selects among four CSS fallback axes, and tests diagonal crops, fallback boundaries, wrapped view rotations, and screen-to-local conversion under pan, zoom, and rotation.
+
+The candidate passed the focused Vitest suite (108 passed, 2 expected failures), `npm run tsc`, `npm run build`, `npm run lint:check` (exit 0 with ESLint warnings), and headless `npm run test:e2e -- e2e/crop-history.spec.ts --grep=rotation.cursor` (run `2026-11-15T11-08-02-480Z-27716`). Re-run all relevant gates after syncing to current `main`.
+
+Six tool-free Kilo Nemotron 3 Ultra completions ran in this continuation at reported cost `$0`, with zero OpenRouter attempts: three cursor reviews, one coordinate-transform adjudication, and two handoff consistency checks. The exact staged candidate review passed without blockers. One earlier negative-angle test warning was false: `atan2` canonicalizes the generated pointer angle, the expected SVG value follows that result, and the focused suite passes. `shortestAngleDelta` remains in place because crop drag logic uses it. One handoff review raised unrelated, unsupported claims; registered-worktree output and existing repository evidence disproved them, and a bounded factual re-review returned `NONE`.
+
+## Landing blocker
+
+`continue-salvage-20261115` still has `MERGE_HEAD=45fcf273f2321991ab2955db1c71442b81383adb` and nine staged paths, with no unmerged files. `npm run repo:state` reports this operation and blocks a landing. Its target predates current `main` at `3147e944`; do not commit, abort, resolve, or otherwise touch that worktree. `npm run main:landing -- status` reports the landing lease free. Continue independent work and wait for that operation to clear.
+
+Once `repo:state` is clear, refresh `origin/main`, sync the current main tip into the candidate in its own worktree, inspect the composed tree, obtain a fresh read-only Nemotron review, and rerun validation. Land only through `npm run main:landing -- land` with the reviewed parent, source commit, and tree pins. Then verify the merge parents/tree/trailer and remote `main`.
+
+## Worktree and branch disposition
+
+The latest read-only inventory against `origin/main` recorded 19 registered worktrees, 41 branch-only refs (29 ancestors and 12 unmatched patches), four at-risk worktrees, three in-use, three undecided, and nine clean landed disposal candidates. `npm run branches:orphan` reported no orphan branch names. Do not dispose worktrees as part of this salvage.
+
+The at-risk set is:
+
+- `audit-harvest-all-20261114`: seven staged files. A direct comparison with current `origin/main` shows its free-model pool and tests remove stronger settlement, quota, termination, and safety handling. Leave its staged index untouched; do not transplant it.
+- `continue-salvage-20261115`: the live merge described above.
+- `crop-rotation-cursor-geometry-20261115`: dirty alternate cursor changes use scale `0.2`, contrary to the operator's explicit `0.05` requirement. The exact-tangent behavior is salvaged in this candidate; preserve the source worktree.
+- `systemic-hardening-disposition-20261115`: only an untracked review JSON, with no tracked source delta. Its conclusions say current code is already represented; preserve the file and worktree.
+
+Keep the detached/dirty primary `ph` and `main-sync-` snapshots, the external pooled `swift-piper` checkout, the detached systemic-hardening branch review, and 31 `.kilo/worktrees` directories whose Git admin records are missing. Existing handoff evidence says metadata repair, pruning, moving, or removal is unsafe without quiescence and a coherent backup; none was attempted.
+
+The 12 unmatched local refs and 13 `origin/*` refs were checked against current `origin/main`; no additional safe source change was identified. The separate `wsl-mirror/main` ref is equivalent to current inventory, pixel-copy, and Bedrock work. The remote-only refs were `origin/audit/pipeline-continuation-20261111`, `origin/fix/dispose-worktree-main-ref-20261028`, `origin/fix/inventory-root-align-20261022`, `origin/fix/self-efficacy-ux-20261017`, `origin/reconcile/skills-20261025`, `origin/task/commit-free-docs-cleanup`, `origin/task/e2e-hardening-fresh-20261109`, `origin/task/e2e-hardening-next-20261105`, `origin/task/small-caps-reopen-20261106`, `origin/task/stale-work-followup-20261107`, `origin/task/toolbar-first-paint-fit-salvage-20261106`, `origin/test/e2e-committed-text-proof-20261110`, and `origin/test/magic-wand-loop-evidence`. Existing `docs/handoffs/merge-harvest-all-worktrees-20261114.md` records the older local unmatched-ref evidence.
+
+The ref-by-ref dispositions are:
+
+| Ref                                                                                            | Evidence and disposition                                                                                                                                                                          |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `origin/audit/pipeline-continuation-20261111`                                                  | Current `windows-platform-tests` workflow and `e2e-timeout-contract` tests cover the Windows script and E2E helper changes.                                                                       |
+| `origin/fix/dispose-worktree-main-ref-20261028`                                                | `git cherry` reports seven patch-equivalent commits and no new patch.                                                                                                                             |
+| `origin/fix/inventory-root-align-20261022`                                                     | Current `scripts/lib/worktree-inventory/location.mjs` supplies the shared canonical resolver to inventory and disposal code.                                                                      |
+| `origin/fix/self-efficacy-ux-20261017`                                                         | Current `FirstUseTour` has the tour, focus, ARIA, and highlight behavior with tests.                                                                                                              |
+| `origin/reconcile/skills-20261025`                                                             | Its older document moves/deletions are superseded by the current skills index and runtime loaders; no missing source content was identified.                                                      |
+| `origin/task/commit-free-docs-cleanup`                                                         | The 76-file snapshot deletes AutoSave and WSL material and rewrites current docs. Its quota wording conflicts with `MODELS.md`; do not cherry-pick it wholesale.                                  |
+| `origin/task/e2e-hardening-fresh-20261109` and `origin/test/e2e-committed-text-proof-20261110` | Their older text geometry, screenshot clipping, localhost normalization, and alpha checks are covered by newer current tests, including crop/alpha diagnostics and the text width oracle.         |
+| `origin/task/e2e-hardening-next-20261105`                                                      | Its crop parity, reorder waits, platform discovery, duplicate Red Eye assertion, and tablet touch changes are superseded by current crop, E2E runner, platform, and tablet reachability coverage. |
+| `origin/task/small-caps-reopen-20261106`                                                       | Its older `TextToolArea`/`useLayer` behavior removes current retry and failure handling; current implementation and tests are more complete.                                                      |
+| `origin/task/stale-work-followup-20261107`                                                     | Current selection-history tests and the `127.0.0.1` E2E server guard cover its undo and loopback changes.                                                                                         |
+| `origin/task/toolbar-first-paint-fit-salvage-20261106`                                         | Current `toolbar-fit-store.ts`, `SidebarLeft.tsx`, and tests cover first-paint fit.                                                                                                               |
+| `origin/test/magic-wand-loop-evidence`                                                         | Current tests cover closed-loop selection, blank-document selection, and deselection more fully.                                                                                                  |
+| `wsl-mirror/main`                                                                              | Its exact pixel-copy, inventory, and Bedrock changes are present in current `materialization.ts`, the shared inventory resolver, and Bedrock tests.                                               |
+
+The inventory has no registered `shape-rotation-handle` worktree. `feat/shape-rotation-handle` is an ancestor branch ref listed in the existing harvest handoff, not an omitted registered checkout. The older handoff also records that the binary cursor image was not selected and the SVG cursor is the current implementation; the operator's explicit `0.05` instruction in this task supersedes the historical `0.2` scale note there.
+
+## Runtime note
+
+The 31 dangling directories have `.git` pointers to missing admin records; the archived patches are not a coherent metadata backup. Follow [Recovering Git metadata](../ORCHESTRATION.md#recovering-git-metadata) before any recovery attempt. Do not repair, prune, move, or remove those directories during this salvage.
+
+The WSL Git binary cannot resolve this Windows checkout's absolute linked-worktree Git directory, and WSL has no native Node installation. The repository's Windows-worktree recovery guidance requires Git for Windows and Windows Node in this environment; validation used those binaries. Do not describe it as Linux-native validation.
