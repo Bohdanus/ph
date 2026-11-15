@@ -11,7 +11,7 @@ import type { Point } from '@/contexts/general-types.ts';
 // (the real top-left cursor is `nwse-resize`), and falsifiable only against the mock. `useRect.drag.test.ts`
 // already asserts `CURSOR_MAP[edge]` against this same real import; this file is the hover half.
 import { CURSOR_MAP } from '../../util/constants.ts';
-import { viewStateRef } from '../../contexts/view-state.ts';
+import { inverseViewPoint, viewStateRef, viewportCenter } from '../../contexts/view-state.ts';
 
 const usePointerPositionMock = vi.hoisted(() => {
   const mockData = {
@@ -565,17 +565,19 @@ describe('useRect', () => {
     });
 
     it.each([
-      [0, 'ew-resize'],
-      [45, 'nwse-resize'],
-      [90, 'ns-resize'],
-      [135, 'nesw-resize'],
-      [180, 'ew-resize'],
-      [225, 'nwse-resize'],
-      [270, 'ns-resize'],
-      [315, 'nesw-resize'],
+      [0, 0, 'ew-resize'],
+      [37, 37, 'nwse-resize'],
+      [45, 45, 'nwse-resize'],
+      [90, 90, 'ns-resize'],
+      [126.87, 126.87, 'nesw-resize'],
+      [135, 135, 'nesw-resize'],
+      [180, 180, 'ew-resize'],
+      [225, 225, 'nwse-resize'],
+      [270, 270, 'ns-resize'],
+      [315, -45, 'nesw-resize'],
     ] as const)(
-      'uses the %s-degree rotation cursor for the pointer position around the rect',
-      (cursorAngle, fallback) => {
+      'uses the exact %s-degree rotation cursor for the pointer position around the rect',
+      (cursorAngle, expectedSvgAngle, fallback) => {
         const { result } = renderUseRect({
           initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
           rotationEnabled: true,
@@ -596,13 +598,54 @@ describe('useRect', () => {
         const svg = decodeURIComponent(encodedSvg!);
         expect(svg).toMatch(/^<svg\b[\s\S]*<\/svg>$/);
         expect(svg).toContain('width="64" height="64" viewBox="0 0 64 64"');
-        expect(svg).toContain(`rotate(${cursorAngle}) scale(0.05) translate(-64 -64)`);
+        expect(svg).toContain(`rotate(${expectedSvgAngle.toFixed(2)}) scale(0.05) translate(-64 -64)`);
         expect(svg).toContain('stroke="#fff" stroke-width="23"');
         expect(svg).toContain('stroke="#000" stroke-width="13"');
         expect(svg).toContain('fill="#000" stroke="none"');
         expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
       }
     );
+
+    it.each([
+      [-158, 'ew-resize'],
+      [-157, 'nwse-resize'],
+      [-113, 'nwse-resize'],
+      [-112, 'ns-resize'],
+      [-68, 'ns-resize'],
+      [-67, 'nesw-resize'],
+      [-23, 'nesw-resize'],
+      [-22, 'ew-resize'],
+      [22, 'ew-resize'],
+      [23, 'nwse-resize'],
+      [67, 'nwse-resize'],
+      [68, 'ns-resize'],
+      [112, 'ns-resize'],
+      [113, 'nesw-resize'],
+      [157, 'nesw-resize'],
+      [158, 'ew-resize'],
+    ] as const)('selects the nearest CSS fallback axis at %s degrees', (tangentAngle, fallback) => {
+      const radians = ((tangentAngle - 90) * Math.PI) / 180;
+      const target = createMockTarget();
+      const pointer = {
+        clientX: 200 + Math.cos(radians) * 150,
+        clientY: 175 + Math.sin(radians) * 150,
+        target,
+      };
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(createPointerEvent(pointer));
+      });
+
+      const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+      expect(encodedSvg).toBeDefined();
+      const expectedSvgAngle = tangentAngle < -90 ? tangentAngle + 360 : tangentAngle;
+      expect(decodeURIComponent(encodedSvg!)).toContain(`rotate(${expectedSvgAngle.toFixed(2)}) scale(0.05)`);
+      expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
+    });
 
     it('includes canvas view rotation when orienting the cursor on screen', () => {
       const originalViewRotation = viewStateRef.current.rotation;
@@ -620,7 +663,127 @@ describe('useRect', () => {
 
         const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
-        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45) scale(0.05)');
+        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45.00) scale(0.05)');
+      } finally {
+        viewStateRef.current.rotation = originalViewRotation;
+      }
+    });
+
+    it.each([
+      [-45, '-45.00', 'nesw-resize'],
+      [405, '405.00', 'nwse-resize'],
+    ] as const)(
+      'keeps the rotation fallback axis valid at %s degrees of canvas rotation',
+      (viewRotation, angle, fallback) => {
+        const originalViewRotation = viewStateRef.current.rotation;
+        viewStateRef.current.rotation = viewRotation;
+        try {
+          const { result } = renderUseRect({
+            initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+            rotationEnabled: true,
+          });
+          const target = createMockTarget();
+
+          act(() => {
+            result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 25, target }));
+          });
+
+          const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+          expect(encodedSvg).toBeDefined();
+          expect(decodeURIComponent(encodedSvg!)).toContain(`rotate(${angle}) scale(0.05)`);
+          expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
+        } finally {
+          viewStateRef.current.rotation = originalViewRotation;
+        }
+      }
+    );
+
+    it('uses the crop diagonal angle instead of a fixed 45-degree step', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 350, clientY: 287.5, target }));
+      });
+
+      const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+      expect(encodedSvg).toBeDefined();
+      expect(decodeURIComponent(encodedSvg!)).toContain('rotate(126.87) scale(0.05)');
+    });
+
+    it('orients an arbitrary crop tangent after converting a zoomed, panned, rotated screen point to local coordinates', () => {
+      const originalViewState = { ...viewStateRef.current };
+      const viewRotation = 45;
+      const center = viewportCenter(800, 600);
+      const localPoint = { x: 350, y: 287.5 };
+      const relativeX = localPoint.x - center.x;
+      const relativeY = localPoint.y - center.y;
+      const viewScale = 2;
+      const viewRadians = (viewRotation * Math.PI) / 180;
+      const pointer = {
+        clientX: center.x + 80 + viewScale * (relativeX * Math.cos(viewRadians) - relativeY * Math.sin(viewRadians)),
+        clientY: center.y - 25 + viewScale * (relativeX * Math.sin(viewRadians) + relativeY * Math.cos(viewRadians)),
+        target: createMockTarget(),
+      };
+
+      Object.assign(viewStateRef.current, {
+        rotation: viewRotation,
+        zoom: viewScale,
+        panX: 80,
+        panY: -25,
+        fitScaleCompensation: 1,
+      });
+      usePointerPositionMock.mockData.getLocalCoords.mockImplementation((event: PointerEvent) =>
+        inverseViewPoint({ x: event.clientX, y: event.clientY }, viewStateRef.current, center)
+      );
+
+      try {
+        const { result } = renderUseRect({
+          initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+          rotationEnabled: true,
+        });
+
+        act(() => {
+          result.current.pointerHandlers.onPointerMove(createPointerEvent(pointer));
+        });
+
+        const encodedSvg = pointer.target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+        expect(encodedSvg).toBeDefined();
+        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(171.87) scale(0.05)');
+        expect(pointer.target.style.cursor).toMatch(/\) 32 32, ew-resize$/);
+      } finally {
+        Object.assign(viewStateRef.current, originalViewState);
+        usePointerPositionMock.mockData.getLocalCoords.mockReset();
+        usePointerPositionMock.mockData.getLocalCoords.mockImplementation((event: PointerEvent) => ({
+          x: event.clientX,
+          y: event.clientY,
+        }));
+      }
+    });
+
+    it.each([
+      [22.5, 'nwse-resize'],
+      [67.5, 'ns-resize'],
+      [112.5, 'nesw-resize'],
+      [157.5, 'ew-resize'],
+    ] as const)('uses the upper fallback axis at the exact %s-degree midpoint', (viewRotation, fallback) => {
+      const originalViewRotation = viewStateRef.current.rotation;
+      viewStateRef.current.rotation = viewRotation;
+      try {
+        const { result } = renderUseRect({
+          initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+          rotationEnabled: true,
+        });
+        const target = createMockTarget();
+
+        act(() => {
+          result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 25, target }));
+        });
+
+        expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
       } finally {
         viewStateRef.current.rotation = originalViewRotation;
       }

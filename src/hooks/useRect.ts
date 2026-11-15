@@ -149,25 +149,10 @@ const ROTATION_CURSOR_BODY = rotationCursorSvgSource
   .replace(/^\s*<svg\b[^>]*>/, '')
   .replace(/<\/svg>\s*$/, '')
   .trim();
-const ROTATION_CURSOR_FALLBACKS = [
-  'ew-resize',
-  'nwse-resize',
-  'ns-resize',
-  'nesw-resize',
-  'ew-resize',
-  'nwse-resize',
-  'ns-resize',
-  'nesw-resize',
-] as const;
-// The 128px artwork spans about 110px; this renders it at about 5.5px, one quarter of its previous width.
-// Transform order: center the 128px source, scale it to about 5.5px, rotate it, then place it at the 64px cursor center; the CSS hotspot is 32,32.
-const ROTATION_CURSOR_ICON_SCALE = 0.05;
+const ROTATION_CURSOR_FALLBACKS = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'] as const;
 
-const ROTATION_CURSORS = ROTATION_CURSOR_FALLBACKS.map((fallback, index) => {
-  const angle = index * 45;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><g transform="translate(32 32) rotate(${angle}) scale(${ROTATION_CURSOR_ICON_SCALE}) translate(-64 -64)">${ROTATION_CURSOR_BODY}</g></svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 32 32, ${fallback}`;
-});
+// The 128px artwork spans about 110px; 0.05 renders it at about 5.5px, one quarter of its previous width.
+const ROTATION_CURSOR_ICON_SCALE = 0.05;
 
 function shortestAngleDelta(degrees: number): number {
   return ((((degrees + 180) % 360) + 360) % 360) - 180;
@@ -176,8 +161,11 @@ function shortestAngleDelta(degrees: number): number {
 function rotationCursorForPoint(point: Point, rect: RectXYSorted): string {
   const viewRotation = Number.isFinite(viewStateRef.current.rotation) ? viewStateRef.current.rotation : 0;
   const tangentAngle = angleFromCenter(rectCenter(rect), point) + viewRotation + 90;
-  const direction = ((Math.round(tangentAngle / 45) % 8) + 8) % 8;
-  return ROTATION_CURSORS[direction] ?? 'ew-resize';
+  // CSS resize fallbacks are four unoriented axes; the SVG keeps the exact tangent angle.
+  const fallbackIndex = ((Math.round(tangentAngle / 45) % 4) + 4) % 4;
+  const fallback = ROTATION_CURSOR_FALLBACKS[fallbackIndex] ?? 'ew-resize';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><g transform="translate(32 32) rotate(${tangentAngle.toFixed(2)}) scale(${ROTATION_CURSOR_ICON_SCALE}) translate(-64 -64)">${ROTATION_CURSOR_BODY}</g></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 32 32, ${fallback}`;
 }
 
 /**
