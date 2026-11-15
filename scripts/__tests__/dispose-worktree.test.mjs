@@ -95,6 +95,7 @@ function greenState(overrides = {}) {
     prunableReason: null,
     tip: 'abc1234',
     mainHead: 'base-sha',
+    mainWorktreePath: '/repo',
     isPrimary: false,
     commonDir: '/repo/.git',
     modified: 0,
@@ -357,6 +358,11 @@ describe('dispose preflight', () => {
     const cases = [
       ['the target is not a worktree at all', { gitState: { found: false } }, 'unknown-worktree'],
       ['it is the main checkout', { gitState: greenState({ isPrimary: true }) }, 'main-worktree'],
+      [
+        'Git cannot identify a registered main worktree for post-removal commands',
+        { gitState: greenState({ mainWorktreePath: null }) },
+        'main-worktree-path-unavailable',
+      ],
       [
         'it is the base branch in a linked worktree of a bare repository',
         { gitState: greenState({ branch: 'main' }) },
@@ -750,9 +756,11 @@ describe('dispose execution', () => {
    */
   function harness(answers = {}) {
     const calls = [];
+    const cwdCalls = [];
     const writes = [];
     const answerCounts = new Map();
     const run = (cwd, args, opts = {}) => {
+      cwdCalls.push(cwd);
       calls.push(args);
       const key = args.join(' ');
       const answerKey = answers[key] === undefined ? `${args[0]} ${args[1]}` : key;
@@ -769,7 +777,7 @@ describe('dispose execution', () => {
         writes.push({ p, bytes: data.length });
       },
     };
-    return { run, fs, calls, writes };
+    return { run, fs, calls, cwdCalls, writes };
   }
 
   it('anchors the tip before it removes anything, so no gc can make it unreachable', () => {
@@ -1158,11 +1166,51 @@ describe('dispose execution', () => {
     expect(result.anchorRef).toBeNull();
   });
 
+  it('keeps the worktree without anchoring when the main cwd is unavailable', () => {
+    const h = harness();
+    const result = dispose('/repo', greenState({ mainWorktreePath: null }), { run: h.run, fs: h.fs });
+    const message = result.steps.join('\n');
+
+    expect(result).toMatchObject({ worktreeRemoved: false, branchDeleted: false, anchorRef: null });
+    expect(message).toContain('Git did not report a registered main worktree');
+    expect(h.calls.some((args) => args[0] === 'update-ref' || args[0] === 'worktree')).toBe(false);
+  });
+
   it('removes the worktree even when the branch deletion is refused, and reports both', () => {
     const h = harness({ 'branch -d fix/task': new Error('not fully merged') });
     const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs });
     expect(h.calls.some((c) => c.join(' ') === 'worktree remove /repo/.kilo/worktrees/task')).toBe(true);
     expect(result.branchDeleted).toBe(false);
+    expect(result.steps.join('\n')).toContain('could not delete it');
+    expect(result.steps.join('\n')).not.toContain('so it is unmerged');
+  });
+
+  it('deletes the branch from the registered main worktree after removing the target cwd', () => {
+    const target = '/repo/.kilo/worktrees/task';
+    const main = '/repo/main';
+    const h = harness();
+    const result = dispose(target, greenState({ absolutePath: target, mainWorktreePath: main }), {
+      run: h.run,
+      fs: h.fs,
+    });
+    const removeAt = h.calls.findIndex((args) => args[0] === 'worktree' && args[1] === 'remove');
+    const branchDeleteAt = h.calls.findIndex((args) => args[0] === 'branch' && args[1] === '-d');
+
+    expect(h.cwdCalls[removeAt]).toBe(target);
+    expect(branchDeleteAt).toBeGreaterThan(removeAt);
+    expect(h.cwdCalls[branchDeleteAt]).toBe(main);
+    expect(result).toMatchObject({ worktreeRemoved: true, branchDeleted: true });
+  });
+
+  it('reports a runner failure without labeling it an unmerged branch', () => {
+    const h = harness({ 'branch -d fix/task': new Error('spawnSync git ENOENT') });
+    const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs });
+    const message = result.steps.join('\n');
+
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(false);
+    expect(message).toContain('spawnSync git ENOENT');
+    expect(message).not.toContain('so it is unmerged');
   });
 });
 
@@ -1635,12 +1683,31 @@ describe('a bare name that identifies two worktrees identifies neither', () => {
   });
 
   it('still resolves a bare name that identifies exactly one worktree', () => {
+    const mainWorktreePath = join(TMP, 'main');
+    mkdirSync(mainWorktreePath, { recursive: true });
     const state = readGitState('/repo', 'task', {
-      list: () => [{ path: '/repo/.kilo/worktrees/task', branch: 'fix/task' }],
+      list: () => [
+        { path: mainWorktreePath, branch: 'main' },
+        { path: '/repo/.kilo/worktrees/task', branch: 'fix/task' },
+      ],
       run: () => ({ stdout: 'abc1234' }),
     });
     expect(state.found).toBe(true);
     expect(state.absolutePath).toBe('/repo/.kilo/worktrees/task');
+    expect(state.mainWorktreePath).toBe(mainWorktreePath);
+  });
+
+  it('does not treat a missing main worktree directory as a surviving cwd', () => {
+    const state = readGitState('/repo', 'task', {
+      list: () => [
+        { path: '/repo/missing-main', branch: 'main' },
+        { path: '/repo/.kilo/worktrees/task', branch: 'fix/task' },
+      ],
+      run: () => ({ stdout: 'abc1234' }),
+    });
+
+    expect(state.found).toBe(true);
+    expect(state.mainWorktreePath).toBeNull();
   });
 
   it('does not treat a failed worktree listing as proof that a directory is orphaned', () => {
