@@ -295,12 +295,12 @@ describe('CropToolArea', () => {
       expect(useRectProps.current!.overlayType).toBeUndefined();
     });
 
-    it('keeps rotated guides on the incremental painter with a cached color sampler', () => {
+    it('keeps rotated guides on the full canvas painter with a cached color sampler', () => {
       toolArgsState.toolArgs.angle = 15;
       render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
 
       expect(useRectProps.current!.externalOverlay).toBe(false);
-      expect(useRectProps.current!.incrementalOverlay).toBe(true);
+      expect(useRectProps.current!.incrementalOverlay).toBe(false);
       expect(useRectProps.current!.overlayColorForRect).toEqual(expect.any(Function));
       expect(useRectProps.current!.overlayType).toBe('ruleOfThirds');
     });
