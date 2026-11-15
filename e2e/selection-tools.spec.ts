@@ -1252,6 +1252,15 @@ test.describe('Rectangular Marquee Tool', () => {
       .toBe(true);
     await expect(page.getByTestId('undo-button')).toBeDisabled();
   });
+
+  test('rectangular marquee is reachable from the sidebar flyout by keyboard', async ({ page }) => {
+    await selectEllipticalMarqueeFromSidebar(page);
+    await openToolFlyoutViaKeyboard(page, 'rectangular-selection');
+    await navigateAndSelectInFlyout(page, 'rectangular-selection', 'Rectangular Marquee Tool');
+    await expect(
+      page.getByText('Drag to draw a rectangle. Hold Shift for a square, Alt to draw from the centre.')
+    ).toBeVisible();
+  });
 });
 
 test.describe('Quick selection', () => {
