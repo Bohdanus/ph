@@ -38,8 +38,9 @@ forgotten it. Two rows have weaker coverage than the table implies:
   `global-setup.ts`. `e2e/helpers/__tests__/global-setup.unit.test.ts` derives the
   Playwright spec tree and rejects direct headed overrides in CI. This is a
   source-level regression guard, not a runtime sandbox: dynamically constructed
-  options or an alternate test API can evade static detection, so keep headed
-  browser options out of specs and use only the operator-owned headed command.
+  options, an indirect alias of the imported test object, or an alternate test
+  API can evade static detection, so keep headed browser options out of specs
+  and use only the operator-owned headed command.
 
 ## Commands
 

@@ -58,15 +58,21 @@ function listPlaywrightSpecs(directory: string): string[] {
 function findPerSpecHeadedOverrides(source: string, fileName: string): string[] {
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const testNames = new Set<string>();
+  const testNamespaceNames = new Set<string>();
 
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
     const moduleName = statement.moduleSpecifier.text;
     if (moduleName !== '@playwright/test' && !/\/fixtures\/extended-test(?:\.ts)?$/.test(moduleName)) continue;
-    const bindings = statement.importClause?.namedBindings;
-    if (!bindings || !ts.isNamedImports(bindings)) continue;
-    for (const element of bindings.elements) {
-      if ((element.propertyName?.text ?? element.name.text) === 'test') testNames.add(element.name.text);
+    const importClause = statement.importClause;
+    if (importClause?.name) testNames.add(importClause.name.text);
+    const bindings = importClause?.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) {
+      testNamespaceNames.add(bindings.name.text);
+    } else if (bindings && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        if ((element.propertyName?.text ?? element.name.text) === 'test') testNames.add(element.name.text);
+      }
     }
   }
 
@@ -76,8 +82,11 @@ function findPerSpecHeadedOverrides(source: string, fileName: string): string[] 
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
       node.expression.name.text === 'use' &&
-      ts.isIdentifier(node.expression.expression) &&
-      testNames.has(node.expression.expression.text)
+      ((ts.isIdentifier(node.expression.expression) && testNames.has(node.expression.expression.text)) ||
+        (ts.isPropertyAccessExpression(node.expression.expression) &&
+          (node.expression.expression.name.text === 'test' || node.expression.expression.name.text === 'default') &&
+          ts.isIdentifier(node.expression.expression.expression) &&
+          testNamespaceNames.has(node.expression.expression.expression.text)))
     ) {
       const options = node.arguments[0];
       if (options && ts.isObjectLiteralExpression(options)) {
@@ -85,7 +94,10 @@ function findPerSpecHeadedOverrides(source: string, fileName: string): string[] 
           if (
             ts.isPropertyAssignment(property) &&
             ((ts.isIdentifier(property.name) && property.name.text === 'headless') ||
-              (ts.isStringLiteral(property.name) && property.name.text === 'headless')) &&
+              (ts.isStringLiteral(property.name) && property.name.text === 'headless') ||
+              (ts.isComputedPropertyName(property.name) &&
+                ts.isStringLiteral(property.name.expression) &&
+                property.name.expression.text === 'headless')) &&
             property.initializer.kind === ts.SyntaxKind.FalseKeyword
           ) {
             const { line } = sourceFile.getLineAndCharacterOfPosition(property.getStart(sourceFile));
@@ -116,6 +128,27 @@ describe('Playwright spec browser-mode policy', () => {
       const source = [`import { test } from '${moduleName}';`, 'test.use({ headless: false });'].join('\n');
       expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual(['nested/sample.spec.ts:2']);
     }
+  });
+
+  it('recognizes default and namespace imports of the test API', () => {
+    const cases = [
+      ["import fixtureTest from '../fixtures/extended-test';", 'fixtureTest.use({ headless: false });'],
+      ["import * as fixture from '../fixtures/extended-test';", 'fixture.default.use({ headless: false });'],
+      ["import * as playwright from '@playwright/test';", 'playwright.test.use({ headless: false });'],
+    ];
+
+    for (const [importStatement, useStatement] of cases) {
+      const source = [importStatement, useStatement].join('\n');
+      expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual(['nested/sample.spec.ts:2']);
+    }
+  });
+
+  it('recognizes a computed literal headless property', () => {
+    const source = ["import { test } from '../fixtures/extended-test';", "test.use({ ['headless']: false });"].join(
+      '\n'
+    );
+
+    expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual(['nested/sample.spec.ts:2']);
   });
 
   it('derives all Playwright specs and rejects per-spec headed overrides', () => {
