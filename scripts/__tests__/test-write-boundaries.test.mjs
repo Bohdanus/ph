@@ -65,8 +65,8 @@ const REVIEWED = {
   },
   'free-model-pool-external.test.mjs': {
     scope:
-      'External-provider, typed transient 5xx, Kilo cost-stop and source-cooldown, OpenRouter quota metadata and UTC-midnight rollover, and keyless catalog fixtures use unique OS temporary directories with finally cleanup.',
-    patterns: `filesystem-write:mkdtemp=11 filesystem-write:rm=11 filesystem-write:writeFile=1`,
+      'External-provider, typed transient 5xx, Kilo cost-stop and source-cooldown, OpenRouter quota metadata and complete/empty response handling, UTC-midnight rollover, and keyless catalog fixtures use unique OS temporary directories with finally cleanup.',
+    patterns: `filesystem-write:mkdtemp=14 filesystem-write:rm=14 filesystem-write:writeFile=1`,
   },
   'free-model-pool.test.mjs': {
     scope:
@@ -145,7 +145,7 @@ const REVIEWED = {
   },
   'repo-state-gate.test.mjs': {
     scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=19 filesystem-write:rmSync=7 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=20 filesystem-write:rmSync=9 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
   },
   'session-db-snapshot.test.mjs': {
     scope: 'Snapshot fixtures use temporary databases; copies are explicitly opened read-only.',
