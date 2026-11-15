@@ -456,6 +456,11 @@ describe('healing brush processor', () => {
           expect(at(canvas, x, y)).not.toEqual(dest(x, y));
         }
       }
+
+      // Pin source-mapped values at opposite sides of the last dab; the loop
+      // above detects untouched pixels but cannot detect a wrong source offset.
+      expect(at(canvas, 3, 4)).toEqual({ r: 18, g: 118, b: 118, a: 255 });
+      expect(at(canvas, 8, 4)).toEqual({ r: 118, g: 118, b: 118, a: 255 });
     });
 
     it('reads a fresh source buffer per call rather than a canvas that remembers', () => {
