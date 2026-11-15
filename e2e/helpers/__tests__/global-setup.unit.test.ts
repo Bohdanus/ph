@@ -63,7 +63,8 @@ function findPerSpecHeadedOverrides(source: string, fileName: string): string[] 
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
     const moduleName = statement.moduleSpecifier.text;
-    if (moduleName !== '@playwright/test' && !/\/fixtures\/extended-test(?:\.ts)?$/.test(moduleName)) continue;
+    const isExtendedTestModule = /\/fixtures\/extended-test(?:\.ts)?$/.test(moduleName);
+    if (moduleName !== '@playwright/test' && !isExtendedTestModule) continue;
     const importClause = statement.importClause;
     if (importClause?.name) testNames.add(importClause.name.text);
     const bindings = importClause?.namedBindings;
@@ -71,7 +72,10 @@ function findPerSpecHeadedOverrides(source: string, fileName: string): string[] 
       testNamespaceNames.add(bindings.name.text);
     } else if (bindings && ts.isNamedImports(bindings)) {
       for (const element of bindings.elements) {
-        if ((element.propertyName?.text ?? element.name.text) === 'test') testNames.add(element.name.text);
+        const importedName = element.propertyName?.text ?? element.name.text;
+        if (importedName === 'test' || (isExtendedTestModule && importedName === 'default')) {
+          testNames.add(element.name.text);
+        }
       }
     }
   }
@@ -130,9 +134,10 @@ describe('Playwright spec browser-mode policy', () => {
     }
   });
 
-  it('recognizes default and namespace imports of the test API', () => {
+  it('recognizes default, named-default, and namespace imports of the test API', () => {
     const cases = [
       ["import fixtureTest from '../fixtures/extended-test';", 'fixtureTest.use({ headless: false });'],
+      ["import { default as fixtureTest } from '../fixtures/extended-test';", 'fixtureTest.use({ headless: false });'],
       ["import * as fixture from '../fixtures/extended-test';", 'fixture.default.use({ headless: false });'],
       ["import * as playwright from '@playwright/test';", 'playwright.test.use({ headless: false });'],
     ];
