@@ -6,6 +6,8 @@
 
 The cursor candidate is committed on `audit/salvage-overnight-20261115` as `4926a4247a7e4391934024069022978af1357110`, based on `b4ecf8ae28fc4361d28a1d0ff2eccb3252c2f1bf`. Its changes are in `src/hooks/useRect.ts` and `src/hooks/__tests__/useRect.test.ts`. It preserves the operator-required SVG scale `0.05`, uses the exact pointer tangent angle, selects among four CSS fallback axes, and tests diagonal crops, fallback boundaries, wrapped view rotations, and screen-to-local conversion under pan, zoom, and rotation.
 
+The latest inventory lists this task branch as two commits ahead of `origin/main`, 17 behind, and clean. It is still in use and must not be disposed.
+
 The candidate passed the focused Vitest suite (108 passed, 2 expected failures), `npm run tsc`, `npm run build`, `npm run lint:check` (exit 0 with ESLint warnings), and headless `npm run test:e2e -- e2e/crop-history.spec.ts --grep=rotation.cursor` (run `2026-11-15T11-08-02-480Z-27716`). Re-run all relevant gates after syncing to current `main`.
 
 Six tool-free Kilo Nemotron 3 Ultra completions ran in this continuation at reported cost `$0`, with zero OpenRouter attempts: three cursor reviews, one coordinate-transform adjudication, and two handoff consistency checks. The exact staged candidate review passed without blockers. One earlier negative-angle test warning was false: `atan2` canonicalizes the generated pointer angle, the expected SVG value follows that result, and the focused suite passes. `shortestAngleDelta` remains in place because crop drag logic uses it. One handoff review raised unrelated, unsupported claims; registered-worktree output and existing repository evidence disproved them, and a bounded factual re-review returned `NONE`.
@@ -18,7 +20,7 @@ Once `repo:state` is clear, refresh `origin/main`, sync the current main tip int
 
 ## Worktree and branch disposition
 
-The latest read-only inventory against `origin/main` recorded 19 registered worktrees, 41 branch-only refs (29 ancestors and 12 unmatched patches), four at-risk worktrees, three in-use, three undecided, and nine clean landed disposal candidates. `npm run branches:orphan` reported no orphan branch names. Do not dispose worktrees as part of this salvage.
+The latest read-only inventory against `origin/main` recorded 19 registered worktrees, 41 branch-only refs (29 ancestors and 12 unmatched patches), four at-risk worktrees, two in-use, three undecided, one protected `keep` worktree for main landing, and nine clean landed disposal candidates. `npm run branches:orphan` reported no orphan branch names. Do not dispose worktrees as part of this salvage.
 
 The at-risk set is:
 
