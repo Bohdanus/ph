@@ -50,11 +50,15 @@ fast-forward operates on the current HEAD, and a concurrent branch switch in the
 check/merge window cannot be excluded atomically.
 
 The manual `Capture export baseline artifacts` workflow fills the Windows and macOS
-capture gap. Run it from `Bohdanus/ph` `main` and choose `all`, `linux`, `windows`, or
-`macos`. It checks out the exact workflow SHA, records and verifies the seven export
-images on each selected OS, then uploads OS-named artifacts and Playwright diagnostics
-for seven days. It has read-only repository permissions and does not commit or promote
-baselines. Sync the reviewed source `main` to mirror `main` before using it. Linux
+capture gap. Run its workflow definition from `Bohdanus/ph` `main` and choose `all`,
+`linux`, `windows`, or `macos`. Leave `source_sha` blank to capture the selected main
+revision, or provide a full commit SHA already available in the mirror to capture that
+exact revision. It records and verifies the seven export images on each selected OS,
+then uploads OS-named artifacts and Playwright diagnostics for seven days; artifact
+names include both the source and workflow SHAs. It has read-only repository
+permissions and does not commit or promote baselines. Sync the reviewed source `main`
+to mirror `main` before using it. Linux
+artifacts from this workflow support same-SHA cross-OS comparison only. Linux
 promotion remains available only through the separate guarded `--linux-baselines`
 workflow; Windows and macOS captures are evidence for review and must be proposed through
 the normal source-branch landing path.

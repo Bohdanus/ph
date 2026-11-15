@@ -10,7 +10,7 @@ The old branch's `capture-linux-baselines.yml` contains the useful idea: select 
 
 ## Salvaged capability
 
-`.github/workflows/capture-platform-export-baselines.yml` adds a manual `all|linux|windows|macos` capture path for `Bohdanus/ph` main. It checks out the exact workflow SHA, uses SHA-pinned actions and read-only repository permissions, maps OS names to the existing snapshot directories, runs capture and verification, checks for exactly seven regular PNGs, and uploads artifacts with SHA/run provenance. The workflow cannot commit or promote files. The existing guarded Linux promotion workflow is unchanged.
+`.github/workflows/capture-platform-export-baselines.yml` adds a manual `all|linux|windows|macos` capture path for `Bohdanus/ph`. The workflow definition must run from trusted mirror `main`; optional `source_sha` selects a full source commit already available in the mirror, defaulting to the workflow's main revision. It uses SHA-pinned actions and read-only repository permissions, maps OS names to the existing snapshot directories, runs capture and verification, checks for exactly seven regular PNGs, and uploads artifacts with both source and workflow SHA/run provenance. The workflow cannot commit or promote files. The existing guarded Linux promotion workflow is unchanged.
 
 Contract tests cover the mirror/ref guard, action pins, OS-to-snapshot mapping, allowlist and PNG signature checks, artifact-only behavior, and the two-run Playwright timeout budget on all three operating systems. The manual workflow is available on the mirror after the reviewed source main is synced there.
 

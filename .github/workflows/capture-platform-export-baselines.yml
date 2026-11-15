@@ -1,5 +1,5 @@
 name: Capture export baseline artifacts
-run-name: Export baselines (${{ inputs.platform }}) @ ${{ github.sha }}
+run-name: Export baselines (${{ inputs.platform }}) @ source ${{ inputs.source_sha || github.sha }}
 
 on:
   workflow_dispatch:
@@ -14,6 +14,11 @@ on:
           - linux
           - windows
           - macos
+      source_sha:
+        description: Full commit SHA to capture; leave blank to capture the selected main revision
+        required: false
+        type: string
+        default: ''
 
 concurrency:
   group: export-baselines-${{ github.ref }}-${{ inputs.platform }}
@@ -28,18 +33,34 @@ jobs:
     timeout-minutes: 2
     permissions:
       contents: read
+    outputs:
+      source_sha: ${{ steps.validate-target.outputs.source_sha }}
+      platforms: ${{ steps.validate-target.outputs.platforms }}
     steps:
-      - name: Require trusted mirror main
+      - name: Require trusted mirror main and resolve the capture revision
+        id: validate-target
         env:
           REPOSITORY: ${{ github.repository }}
           REF: ${{ github.ref }}
           PLATFORM: ${{ inputs.platform }}
+          SOURCE_SHA_INPUT: ${{ inputs.source_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
           [[ "${REPOSITORY,,}" == "bohdanus/ph" ]] || { echo "::error::Export baseline capture is restricted to Bohdanus/ph"; exit 1; }
           [[ "$REF" == "refs/heads/main" ]] || { echo "::error::Export baseline capture must run from trusted main"; exit 1; }
-          [[ "$PLATFORM" == "all" || "$PLATFORM" == "linux" || "$PLATFORM" == "windows" || "$PLATFORM" == "macos" ]] || { echo "::error::Unsupported platform: $PLATFORM"; exit 1; }
+          case "$PLATFORM" in
+            all) platforms='["linux","windows","macos"]' ;;
+            linux) platforms='["linux"]' ;;
+            windows) platforms='["windows"]' ;;
+            macos) platforms='["macos"]' ;;
+            *) echo "::error::Unsupported platform: $PLATFORM"; exit 1 ;;
+          esac
+          source_sha="${SOURCE_SHA_INPUT:-$WORKFLOW_SHA}"
+          [[ "$source_sha" =~ ^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$ ]] || { echo "::error::source_sha must be a full Git object ID"; exit 1; }
+          printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
+          printf 'platforms=%s\n' "$platforms" >> "$GITHUB_OUTPUT"
 
   capture:
     needs: validate
@@ -50,12 +71,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(inputs.platform == 'all' && '["linux","windows","macos"]' || format('["{0}"]', inputs.platform)) }}
+        platform: ${{ fromJSON(needs.validate.outputs.platforms) }}
     steps:
-      - name: Checkout exact workflow revision
+      - name: Checkout exact source commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.validate.outputs.source_sha }}
           persist-credentials: false
 
       - name: Setup Node
@@ -111,7 +132,7 @@ jobs:
       - name: Upload export baseline artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ matrix.platform }}-export-baselines-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ matrix.platform }}-export-baselines-source-${{ needs.validate.outputs.source_sha }}-workflow-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: e2e/export/visual-regression.spec.ts-snapshots/export-baselines/${{ matrix.platform == 'windows' && 'win32' || matrix.platform == 'macos' && 'darwin' || 'linux' }}/
           retention-days: 7
           if-no-files-found: error
@@ -120,7 +141,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ matrix.platform }}-baseline-diagnostics-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ matrix.platform }}-baseline-diagnostics-source-${{ needs.validate.outputs.source_sha }}-workflow-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             playwright-report/
             test-results/

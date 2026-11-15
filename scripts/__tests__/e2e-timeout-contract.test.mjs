@@ -301,7 +301,7 @@ describe('E2E timeout contract', () => {
     const playwrightTimeouts = readPlaywrightCiTimeouts();
     const playwrightRuns = readPlaywrightRunCommands(job);
 
-    expect(job).toContain('\'["linux","windows","macos"]\'');
+    expect(job).toContain('fromJSON(needs.validate.outputs.platforms)');
     expect(job).toContain("matrix.platform == 'linux' && 'ubuntu-latest'");
     expect(job).toContain("matrix.platform == 'windows' && 'windows-latest'");
     expect(job).toContain("matrix.platform == 'macos'");

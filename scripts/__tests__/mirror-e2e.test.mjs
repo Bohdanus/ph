@@ -183,29 +183,61 @@ describe('Linux baseline promotion workflow', () => {
 
 describe('cross-platform baseline artifact workflow', () => {
   it('restricts manual captures to the compute mirror trusted main revision', () => {
-    expect(platformBaselineWorkflow).toContain('workflow_dispatch:');
-    expect(platformBaselineWorkflow).not.toContain('repository_dispatch:');
+    const triggerSection = platformBaselineWorkflow.slice(0, platformBaselineWorkflow.indexOf('\n\nconcurrency:'));
+    expect(triggerSection.match(/^  [a-z_-]+:/gm)).toEqual(['  workflow_dispatch:']);
+    expect(platformBaselineWorkflow).toContain('required: true\n        type: choice');
+    expect(platformBaselineWorkflow).toContain("required: false\n        type: string\n        default: ''");
     expect(platformBaselineWorkflow).toContain('default: all');
     expect(platformBaselineWorkflow).toContain(
       'options:\n          - all\n          - linux\n          - windows\n          - macos'
     );
     expect(platformBaselineWorkflow).toContain('inputs.platform');
+    expect(platformBaselineWorkflow).toContain('concurrency:');
+    expect(platformBaselineWorkflow).toContain('group: export-baselines-${{ github.ref }}-${{ inputs.platform }}');
+    expect(platformBaselineWorkflow).toContain('cancel-in-progress: false');
+    expect(platformBaselineWorkflow).toContain('source_sha:');
+    expect(platformBaselineWorkflow).toContain('SOURCE_SHA_INPUT: ${{ inputs.source_sha }}');
+    expect(platformBaselineWorkflow).toContain('source_sha="${SOURCE_SHA_INPUT:-$WORKFLOW_SHA}"');
+    expect(platformBaselineWorkflow).toContain('^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$');
+    expect(platformBaselineWorkflow).toContain('printf \'source_sha=%s\\n\' "$source_sha" >> "$GITHUB_OUTPUT"');
+    expect(platformBaselineWorkflow).toContain('source_sha: ${{ steps.validate-target.outputs.source_sha }}');
+    expect(platformBaselineWorkflow).toContain('platforms: ${{ steps.validate-target.outputs.platforms }}');
+    expect(platformBaselineWorkflow).toContain('fromJSON(needs.validate.outputs.platforms)');
+    expect(platformBaselineWorkflow).toContain('all) platforms=\'["linux","windows","macos"]\'');
+    expect(platformBaselineWorkflow).toContain('linux) platforms=\'["linux"]\'');
+    expect(platformBaselineWorkflow).toContain('windows) platforms=\'["windows"]\'');
+    expect(platformBaselineWorkflow).toContain('macos) platforms=\'["macos"]\'');
     expect(platformBaselineWorkflow).toContain('REF: ${{ github.ref }}');
     expect(platformBaselineWorkflow).toContain('REPOSITORY: ${{ github.repository }}');
     expect(platformBaselineWorkflow).toContain('"${REPOSITORY,,}" == "bohdanus/ph"');
     expect(platformBaselineWorkflow).toContain('"$REF" == "refs/heads/main"');
     expect(platformBaselineWorkflow).toContain('needs: validate');
-    expect(platformBaselineWorkflow).toContain('ref: ${{ github.sha }}');
+    expect(platformBaselineWorkflow).toContain('ref: ${{ needs.validate.outputs.source_sha }}');
     expect(platformBaselineWorkflow).toContain('persist-credentials: false');
     expect(platformBaselineWorkflow).toContain('permissions:\n  contents: read');
-    expect(platformBaselineWorkflow).not.toMatch(/^\s+contents:\s*write\s*$/m);
+    expect(platformBaselineWorkflow).not.toMatch(/contents:\s*write/i);
   });
 
   it('captures, verifies, validates and uploads exact OS-specific PNG sets without promotion', () => {
     const captureJob = platformBaselineWorkflow.slice(platformBaselineWorkflow.indexOf('  capture:\n'));
     const actionPins = [...captureJob.matchAll(/^\s+uses:\s*[^@\s]+@([^\s#]+).*$/gm)].map((match) => match[1]);
+    const stepNames = [...captureJob.matchAll(/^\s+- name: ([^\r\n]+)$/gm)].map((match) => match[1]);
 
-    expect(captureJob).toContain('\'["linux","windows","macos"]\'');
+    expect(captureJob).toContain('fromJSON(needs.validate.outputs.platforms)');
+    expect(stepNames).toEqual([
+      'Checkout exact source commit',
+      'Setup Node',
+      'Install dependencies',
+      'Install Chrome',
+      'Record export baselines',
+      'Verify recorded baselines',
+      'Validate exact platform baseline set',
+      'Upload export baseline artifact',
+      'Upload Playwright diagnostics',
+    ]);
+    expect(captureJob).toContain('persist-credentials: false');
+    expect(captureJob).toContain("node-version-file: '.nvmrc'");
+    expect(captureJob).toContain("cache: 'npm'");
     expect(captureJob).toContain(
       "runs-on: ${{ matrix.platform == 'linux' && 'ubuntu-latest' || matrix.platform == 'windows' && 'windows-latest' || 'macos-latest' }}"
     );
@@ -230,11 +262,20 @@ describe('cross-platform baseline artifact workflow', () => {
     expect(validate).toBeGreaterThan(verify);
     expect(upload).toBeGreaterThan(validate);
     expect(captureJob).toContain(
-      'name: ${{ matrix.platform }}-export-baselines-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}'
+      'name: ${{ matrix.platform }}-export-baselines-source-${{ needs.validate.outputs.source_sha }}-workflow-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}'
     );
-    expect(captureJob).toContain('if-no-files-found: error');
-    expect(captureJob).toContain('retention-days: 7');
+    expect(captureJob).toContain(
+      'name: ${{ matrix.platform }}-baseline-diagnostics-source-${{ needs.validate.outputs.source_sha }}-workflow-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}'
+    );
+    const baselineUploadStart = captureJob.indexOf('- name: Upload export baseline artifact');
+    const diagnosticsUploadStart = captureJob.indexOf('- name: Upload Playwright diagnostics');
+    const baselineUpload = captureJob.slice(baselineUploadStart, diagnosticsUploadStart);
+    const diagnosticsUpload = captureJob.slice(diagnosticsUploadStart);
+    for (const upload of [baselineUpload, diagnosticsUpload]) expect(upload).toContain('retention-days: 7');
+    expect(baselineUpload).toContain('if-no-files-found: error');
+    expect(diagnosticsUpload).toContain('if-no-files-found: warn');
     const expectedFiles = /const expected = \[([\s\S]*?)\]\.sort\(\);/.exec(captureJob)?.[1];
+    expect(expectedFiles).toBeDefined();
     expect(
       expectedFiles
         ?.split(/\r?\n/)
@@ -249,6 +290,7 @@ describe('cross-platform baseline artifact workflow', () => {
       'drawing.svg.png',
       'drawing.webp.png',
     ]);
+    expect(captureJob).toContain('for (const name of expected)');
     expect(captureJob).toContain("signature !== '89504e470d0a1a0a'");
     expect(actionPins).toHaveLength(4);
     expect(actionPins.every((pin) => /^[a-f0-9]{40}$/.test(pin))).toBe(true);
