@@ -660,6 +660,19 @@ function isOpenRouterDailyQuotaError(payload) {
   );
 }
 
+function hasOpenRouterQuotaFailure(response, payload, finishReason) {
+  if (response?.status !== 200) return false;
+  const errors = responseErrorObjects(payload);
+  const embeddedLimit =
+    errors.length > 0 &&
+    (isOpenRouterDailyQuotaError(payload) ||
+      openRouterLimitSources(payload).some((source) => source.startsWith('openrouter_')));
+  // Structured error metadata describes this completion; a zero remaining header alone does not invalidate a completed answer.
+  const zeroPlatformRemainingOnIncompleteResponse =
+    openRouterPlatformRemaining(response) === 0 && finishReason !== 'stop';
+  return embeddedLimit || zeroPlatformRemainingOnIncompleteResponse;
+}
+
 function isModelAttributableOpenRouterFailure(response, payload) {
   const status = response?.status;
   if (isOpenRouterDailyQuotaError(payload)) return false;
@@ -1958,7 +1971,14 @@ export async function completeWithFreeModel(prompt, options = {}) {
         `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
       );
     }
-    if (candidate.source === 'openrouter' && response.ok && hasTransientOpenRouterProviderError(payload)) {
+    const choice = payload?.choices?.[0];
+    const content = choice?.message?.content;
+    const finishReason = choice?.finish_reason;
+    if (
+      candidate.source === 'openrouter' &&
+      response.ok &&
+      (hasTransientOpenRouterProviderError(payload) || hasOpenRouterQuotaFailure(response, payload, finishReason))
+    ) {
       errors.push(`${candidate.source}/${candidate.model}: ${failureReason(response, payload)}`);
       const retryDecision = await handleOpenRouterFailure({
         candidate,
@@ -1975,9 +1995,6 @@ export async function completeWithFreeModel(prompt, options = {}) {
       }
       continue;
     }
-    const choice = payload?.choices?.[0];
-    const content = choice?.message?.content;
-    const finishReason = choice?.finish_reason;
     if (response.ok && finishReason === 'length' && candidate.source === 'openrouter') {
       await refreshOpenRouterQuotaAfterAttempt();
     }
