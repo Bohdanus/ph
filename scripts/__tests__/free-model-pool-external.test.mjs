@@ -2415,7 +2415,7 @@ describe('provider rate-limit diagnostics', () => {
     }));
     const chat = vi.fn().mockResolvedValueOnce(
       new Response(
-        JSON.stringify({ choices: [{ message: { content: 'partial response' }, finish_reason: 'error' }] }),
+        JSON.stringify({ choices: [{ message: { content: 'partial response' }, finish_reason: 'length' }] }),
         {
           status: 200,
           headers: { 'content-type': 'application/json', 'x-ratelimit-remaining': '0' },
