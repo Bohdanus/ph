@@ -215,11 +215,21 @@ type Rect = { x: number; y: number; width: number; height: number };
 const selectionBlue = async (page: Page, clip: ViewportClip): Promise<SelectionBounds | null> =>
   getSelectionBounds(await page.screenshot({ clip }), SELECTION_COLOR_THRESHOLDS);
 
-/** Resolves once selection blue is inside `clip`. The suite's single poll loop. */
-const waitForSelectionBlue = (page: Page, clip: ViewportClip, description: string) =>
-  waitForCanvasPixels(page, clip, async (png) => (await getSelectionBounds(png, SELECTION_COLOR_THRESHOLDS)) !== null, {
-    description,
-  });
+/** Resolves with the successful capture's bounds once selection blue is inside `clip`. */
+const waitForSelectionBlue = async (page: Page, clip: ViewportClip, description: string): Promise<SelectionBounds> => {
+  let found: SelectionBounds | null = null;
+  await waitForCanvasPixels(
+    page,
+    clip,
+    async (png) => {
+      found = await getSelectionBounds(png, SELECTION_COLOR_THRESHOLDS);
+      return found !== null;
+    },
+    { description }
+  );
+  if (!found) throw new Error(`${description} resolved without selection-blue bounds`);
+  return found;
+};
 
 /** Resolves once selection blue has left `clip`. Same poll loop, negated predicate. */
 const waitForNoSelectionBlue = (page: Page, clip: ViewportClip, description: string) =>
@@ -494,7 +504,7 @@ test.describe('Selection tools', () => {
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
 
-    await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
+    const outline = await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
     // What this reads at rest is narrower than the test's name sounds, and that is a property of
     // the app rather than a choice made here. `borderMode: 'while-dragging'` (`useRect.ts:319`)
     // keeps the dashed border for the drag the ants stood down for and drops it once the gesture
@@ -504,7 +514,7 @@ test.describe('Selection tools', () => {
     // selection where the drag was", which is this test's intent and which the handles prove — and
     // it would still pass if the ants were switched off entirely. Asserting the border itself needs
     // `committedAntsOutline`, which the wand and the polygon below already use.
-    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
+    expectOutlineAround(outline, clip, overlayChromeAtRest(box, dragged));
   });
 
   test('Space repositions a live rectangular marquee before size adjustment resumes', async ({ page }) => {
@@ -549,8 +559,8 @@ test.describe('Selection tools', () => {
       { x: dragged.x, y: dragged.y },
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
-    await waitForSelectionBlue(page, clip, 'a selection outline before Deselect');
-    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
+    const outline = await waitForSelectionBlue(page, clip, 'a selection outline before Deselect');
+    expectOutlineAround(outline, clip, overlayChromeAtRest(box, dragged));
 
     const clearButton = page.getByRole('button', { name: 'Deselect', exact: true });
     await expect(clearButton).toBeEnabled();
@@ -592,8 +602,8 @@ test.describe('Selection tools', () => {
       { x: dragged.x, y: dragged.y },
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
-    await waitForSelectionBlue(page, clip, 'a selection outline before the tool switch');
-    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
+    const outline = await waitForSelectionBlue(page, clip, 'a selection outline before the tool switch');
+    expectOutlineAround(outline, clip, overlayChromeAtRest(box, dragged));
 
     // This is what makes the "and its darkening mask" half of the test non-vacuous: it proves
     // the region WAS inside the mask, so a later "the mask is gone" cannot pass because the
@@ -645,8 +655,8 @@ test.describe('Selection tools', () => {
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
 
-    await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
-    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
+    const outline = await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
+    expectOutlineAround(outline, clip, overlayChromeAtRest(box, dragged));
     await expect(copyButton, 'Copy with a committed selection').toBeEnabled();
     await expect(clearButton, 'Deselect with a committed selection').toBeEnabled();
 

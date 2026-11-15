@@ -423,14 +423,18 @@ describe('claims are exclusive and leased', () => {
     b.close();
   });
 
-  it('uses JavaScript date parsing consistently when SQLite rejects a deadline string', () => {
+  it('uses parsed deadline time when its text ordering disagrees with ISO UTC', () => {
     const a = boardFor('a');
     const { id } = a.createIssue({ title: 'different date parsers', files: ['src/parser.ts'], holdFiles: false });
     a.claimIssue(id, { leaseMs: 60_000 });
-    a.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run('0', id);
+    const deadline = 'Thu, 01 Jan 1970 00:00:00 GMT';
+    const now = a.iso();
+    expect(Date.parse(deadline)).toBe(0);
+    expect(Date.parse(deadline)).toBeLessThan(Date.parse(now));
+    expect(a.db.prepare('SELECT ? > ? AS later').get(deadline, now).later).toBe(1);
+    a.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run(deadline, id);
 
     const b = boardFor('b');
-    expect(Number.isFinite(Date.parse('0'))).toBe(true);
     expect(b.liveClaimOrNull(id)).toBeNull();
     expect(b.issuesForPath('src/parser.ts')[0]?.claimed_by).toBeNull();
     expect(b.listIssues({ claimedBy: 'a' }).map((issue) => issue.id)).not.toContain(id);
