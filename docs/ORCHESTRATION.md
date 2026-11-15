@@ -732,8 +732,13 @@ unreadable rather than as clean. `npm run dispose` refuses on exactly those inpu
 a report that answered them with exit 0 would be the surface a person trusts more.
 
 **Run the full report before you believe the repository is quiet.** The default command exits
-non-zero when anything is in progress; use it before a sweep, cleanup, or when you need to inspect
-the whole fleet. Its exit status is not a main-landing gate. For a main landing, run
+non-zero when operation markers, unresolved index paths, or unreadable worktree state need
+attention; use it before a sweep, cleanup, or when you need to inspect the whole fleet. An
+`AUTO_MERGE`-only finding is labeled as a marker without a primary operation marker, rather than
+as an active operation. The marker alone does not prove that an operation is active or stale; it
+remains visible and non-zero until its owner reviews it and completes or recovers the worktree.
+Use the owner-aware recovery procedure only after establishing that the marker is stale.
+The full report's exit status is not a main-landing gate. For a main landing, run
 `npm run repo:state -- --for-landing <source-branch>` as the operation-scope check, so an unrelated
 branch operation does not become a manual hard stop on an independent landing.
 
@@ -761,10 +766,10 @@ decisive reason is behavioural: a hook would block every push in the repository
 because _some other_ worktree is mid-merge, and a gate that punishes the whole swarm
 for one session's state gets `--no-verify`'d, after which it protects nothing.
 
-**It reports WHAT is in progress and never WHOSE it is.** git does not record that
-either, so `WORKTREES.json` carries a chat-recency signal for it. Establish the owner
-before you intervene: the worktree measured above was live, and an abort would have
-destroyed a session's in-flight work.
+**It reports Git operation markers and unresolved paths, but never WHOSE they are.**
+Git does not record that, so `WORKTREES.json` carries a chat-recency signal for them.
+Establish the owner before you intervene: the worktree measured above was live, and an
+abort would have destroyed a session's in-flight work.
 
 **`MERGE_HEAD` with an index that no longer has unmerged paths is the dangerous
 shape, and the report warns about it by name.** Every conflict resolved, nothing
@@ -772,7 +777,7 @@ committed. `git commit` lands an unattended resolution; `git merge --abort` thro
 resolution away. Both are one command away, and neither is distinguishable from the
 index alone. Decide in that worktree, from inside it — never from the main checkout.
 
-**`npm run dispose` refuses a worktree with an operation in progress**, because
+**`npm run dispose` refuses a worktree with operation markers or unresolved state**, because
 removing the worktree deletes the state files and there is no reflog entry and
 nothing for `git fsck` to recover. It also refuses when it could not read that state,
 and when no state was supplied for it at all: an absent signal is not a clear

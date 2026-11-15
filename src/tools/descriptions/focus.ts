@@ -184,7 +184,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       {
         keys: 'R',
         action:
-          'The current desktop Smudge guide says R cycles through retouching tools; the 2023 guide labels Smudge with R; a 2019 Photoshop reference lists R for Rotate View. Adobe directs users to the Keyboard Shortcuts and Menus dialog to inspect the active binding. THIS APP binds R to Rotate View and has no Shift+R cycle for this family.',
+          "Adobe's current desktop Smudge guide says R cycles through retouching tools until Smudge appears. Adobe's 2024 Rotate View guide labels Rotate View as R, and its 2019 shortcut reference also assigns R to Rotate View. Because these first-party references conflict, the default binding is unresolved; check Photoshop's Keyboard Shortcuts and Menus dialog. This app assigns R to Rotate View and does not cycle the family with Shift+R.",
       },
       {
         keys: '[',
@@ -211,7 +211,9 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       "This is the closest match in the family. The processor reads each covered pixel from the untouched source raster at the texel one dab-behind along the drag, never from the buffer it is writing, so colour travels exactly one segment per dab instead of compounding into a single streak; the falloff is the shared brush engine's tipAlphaAt, so the smudge's soft edge is the same edge the Brush, Eraser, Dodge, Burn and Clone Stamp stamp. Strength is a real per-dab coverage seeded at 50% as in Photoshop, and it is `partial` rather than `present` for one narrow reason: the bar lets the slider reach 0, where `SMUDGE_STRENGTH_MIN` is 0 and the module says so in caps, while every source that states a floor for this Strength puts it at 1%. The transport semantics are right, and the app matches Photoshop's layering rule without being told to: the stroke edits the active layer, which is exactly what Sample All Layers does not change. Three controls are missing rather than wrong. Mode has nowhere to live because no control anywhere in the app edits a layer's blend mode: `Layer.blendMode` is a data field the paint tool's own Mode select writes and the PSD importer sets, and a grep for `blendMode` across `src/components/` finds only that select - the Layers panel has no blend-mode control at all. Finger Painting needs an args field of its own before it can be a control, and it is a per-dab source selection rather than a setting on the same axis as the other three. Sample All Layers would need the composite, and the processor is handed one layer's bitmap. The Brush Preset Picker is partial rather than absent because this editor has one tip shape and no presets, though Size and Hardness - the preset's two live parameters - are both there. Alt is not bound to Finger Painting. There is no build-up while the button is held: the shared stroke hook appends a point to the drag on a pointer move and there is no timer and no dwell accumulation anywhere in it, so holding the brush still deposits nothing, and one stroke is one undo entry. That is the same absence this file calls the tool's defining interaction on the Dodge and the Burn, and it is why this tool is filed `partial` on the same bar rather than `implemented` - not because the drag misbehaves, which it does not, but because the interaction the tool exists for is not there.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/smudge-tool.html',
+      'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html',
       'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
+      'https://helpx.adobe.com/photoshop/using/tool-techniques/rotate-view-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html',
       'https://www.adobe.com/products/photoshop/blend-colors.html',
       'https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf',
@@ -273,12 +275,12 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       {
         keys: 'Shift+O',
         action:
-          'Cycles through the tools that share the O shortcut, which reaches the Burn tool without leaving the canvas.',
+          'Adobe’s 2019 shortcut reference says Shift+O cycles the Dodge, Burn and Sponge tools when Use Shift Key for Tool Switch is enabled; with that preference disabled, press O repeatedly to cycle.',
       },
       {
         keys: '0–9',
         action:
-          'In Photoshop, number keys 0–9 set Exposure: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. With Airbrush enabled, use Shift+number to set Opacity. This app does not implement Dodge Exposure digit shortcuts.',
+          'Adobe’s 2019 shortcut reference says number keys 0–9 set Exposure: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. With Airbrush enabled, Shift+number adjusts Exposure. This app does not implement Dodge Exposure digit shortcuts.',
       },
       {
         keys: '[',
@@ -365,12 +367,12 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       {
         keys: '0–9',
         action:
-          'In Photoshop, number keys 0–9 set Exposure: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. With Airbrush enabled, use Shift+number to set Opacity. This app does not implement Burn Exposure digit shortcuts.',
+          'Adobe’s 2019 shortcut reference says number keys 0–9 set Exposure: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. With Airbrush enabled, Shift+number adjusts Exposure. This app does not implement Burn Exposure digit shortcuts.',
       },
       {
         keys: 'Shift+O',
         action:
-          'Cycles from the Dodge tool to the Burn tool, which share the O shortcut; press it again to reach the Sponge tool.',
+          'Adobe’s 2019 shortcut reference says Shift+O cycles the Dodge, Burn and Sponge tools when Use Shift Key for Tool Switch is enabled; with that preference disabled, press O repeatedly to cycle.',
       },
       {
         keys: '[',
@@ -472,7 +474,8 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       },
       {
         keys: 'Shift+O',
-        action: 'Cycles from the Dodge tool to the Burn tool and on to the Sponge, which share the O shortcut.',
+        action:
+          'Adobe’s 2019 shortcut reference says Shift+O cycles the Dodge, Burn and Sponge tools when Use Shift Key for Tool Switch is enabled; with that preference disabled, press O repeatedly to cycle.',
       },
       {
         keys: 'Shift+Alt+D',
