@@ -74,10 +74,17 @@ describe('secret key redaction', () => {
     const source = `
       import { sanitizeErrorMessage, sanitizeForOutput } from ${JSON.stringify(sanitizerUrl)};
       const keys = ${JSON.stringify(keys)};
-      console.log(JSON.stringify(keys.map((key) => ({
+      const nearMisses = [
+        'key_'.repeat(16_000) + '! = ordinary value',
+        'key-'.repeat(16_000) + '! = ordinary value',
+        'key.'.repeat(16_000) + '! = ordinary value',
+      ];
+      console.log(JSON.stringify({ cases: keys.map((key) => ({
         object: sanitizeForOutput({ [key]: 'ordinary value' }),
         message: sanitizeErrorMessage('request failed: ' + key + '=ordinary value'),
-      }))));
+        directMessage: sanitizeErrorMessage(key + ' = ordinary value'),
+        prefixedMessage: sanitizeErrorMessage('request failed: ' + key + ' = ordinary value'),
+      })), nearMissesUnchanged: nearMisses.every((nearMiss) => sanitizeErrorMessage(nearMiss) === nearMiss) }));
     `;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
       encoding: 'utf8',
@@ -87,16 +94,23 @@ describe('secret key redaction', () => {
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
     const [nearMatchKey, delimitedKey] = keys;
-    expect(JSON.parse(result.stdout.trim())).toEqual([
-      {
-        object: { [nearMatchKey]: 'ordinary value' },
-        message: `request failed: ${nearMatchKey}=ordinary value`,
-      },
-      {
-        object: { [delimitedKey]: '***REDACTED***' },
-        message: `request failed: ${delimitedKey}=ordinary value`,
-      },
-    ]);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      cases: [
+        {
+          object: { [nearMatchKey]: 'ordinary value' },
+          message: `request failed: ${nearMatchKey}=ordinary value`,
+          directMessage: `${nearMatchKey} = ordinary value`,
+          prefixedMessage: `request failed: ${nearMatchKey} = ordinary value`,
+        },
+        {
+          object: { [delimitedKey]: '***REDACTED***' },
+          message: `request failed: ${delimitedKey}=[REDACTED] value`,
+          directMessage: `${delimitedKey} = [REDACTED] value`,
+          prefixedMessage: `request failed: ${delimitedKey} = [REDACTED] value`,
+        },
+      ],
+      nearMissesUnchanged: true,
+    });
   });
 
   const statelessGitHubToken = `ghs_123456_${'a'.repeat(40)}.${'b'.repeat(220)}.${'c'.repeat(240)}`;
@@ -122,9 +136,26 @@ describe('secret key redaction', () => {
 
   it.each(tokenCases)('redacts a standalone %s token in free text', (_kind, token) => {
     const message = `request failed: ${token}`;
-    expect(sanitizeErrorMessage(message)).not.toContain(token);
-    expect(sanitizeForOutput({ message }).message).not.toContain(token);
-    expect(redactSensitiveText(message)).not.toContain(token);
+    const replacement = token.startsWith('sk-') ? 'sk-***REDACTED***' : '***REDACTED***';
+    const expected = `request failed: ${replacement}`;
+
+    expect(sanitizeErrorMessage(message)).toBe(expected);
+    expect(sanitizeForOutput({ message })).toEqual({ message: expected });
+    expect(redactSensitiveText(message)).toBe('request failed: [REDACTED]');
+  });
+
+  it('redacts labeled AWS secret access keys and multi-digit credential suffixes', () => {
+    const awsSecret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+    expect(sanitizeErrorMessage(`AWS_SECRET_ACCESS_KEY=${awsSecret}`)).toBe('AWS_SECRET_ACCESS_KEY=[REDACTED]');
+    expect(sanitizeForOutput({ aws_secret_access_key: awsSecret })).toEqual({
+      aws_secret_access_key: '***REDACTED***',
+    });
+
+    for (const key of ['apiKey123', 'private_key_42']) {
+      const value = 'fixture-credential-value';
+      expect(sanitizeForOutput({ [key]: value })).toEqual({ [key]: '***REDACTED***' });
+      expect(sanitizeErrorMessage(`${key}=${value}`)).toBe(`${key}=[REDACTED]`);
+    }
   });
 
   it.each(tokenCases)('redacts an embedded %s token in free text', (_kind, token) => {
