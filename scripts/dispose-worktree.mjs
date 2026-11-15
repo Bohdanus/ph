@@ -69,9 +69,10 @@
  * THE ORDER OF OPERATIONS IS THE POINT
  * ------------------------------------
  * Anchor, then salvage, then remove the worktree, then delete the branch with
- * `-d`. The anchor (`refs/keep/disposed/<name>`) means no `git gc` can make a
- * disposed branch unreachable, which converts "irreversible" into "reversible
- * with one command" at the cost of a single ref. `git branch -d` refuses an
+ * `-d` from the registered main worktree. The anchor
+ * (`refs/keep/disposed/<name>`) keeps a disposed tip reachable through `git gc`,
+ * turning "irreversible" into "reversible with one command" at the cost of one
+ * ref. `git branch -d` refuses an
  * unmerged branch, and that refusal is the ordinary guard on the last step. A
  * generated `patchEquivalence: "absorbed"` disposal is the explicit exception:
  * it anchors first, then uses guarded `-D` because patch absorption does not
@@ -152,6 +153,8 @@ export const REFUSALS = {
     `No worktree named "${t}" in \`git worktree list\`. Name it exactly as \`git worktree list\` does.`,
   'main-worktree': () =>
     'This is the main checkout. It is never a deletion candidate — it is the landing site every other session resolves paths through.',
+  'main-worktree-path-unavailable': () =>
+    'Git did not report exactly one registered main worktree path. The disposer needs that surviving checkout to verify the base and delete the branch after removing this worktree.',
   detached: () => 'HEAD is detached, so there is no branch to delete and no name to anchor. Resolve the branch first.',
   'no-branch': () => 'This worktree reports no branch, so there is nothing safe to delete after the worktree goes.',
   locked: (reason) =>
@@ -490,6 +493,7 @@ export function preflight({
   // bare working directory. Protect the base branch independently of Git's
   // `isPrimary` marker so a stale inventory cannot classify it for removal.
   if (gitState.isPrimary || gitState.branch === 'main') refuse('main-worktree');
+  if (!keepBranch && !gitState.mainWorktreePath) refuse('main-worktree-path-unavailable');
   if (gitState.detached) refuse('detached');
   // `readGitState` writes one of two parenthesised placeholders when
   // `git worktree list --porcelain` gave no `branch` line. They are matched by
@@ -752,6 +756,11 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
   if (!match) return { found: false, known: entries.map((e) => basename(e.path)) };
 
   const absolutePath = match.path;
+  // After removal, the invoking cwd may be the directory Git just deleted.
+  // Capture a usable, surviving checkout from the same roster before mutation.
+  const mainWorktrees = entries.filter((entry) => entry.bare !== true && entry.branch === 'main');
+  const registeredMainPath = mainWorktrees.length === 1 ? mainWorktrees[0].path : null;
+  const mainWorktreePath = registeredMainPath && existsSync(registeredMainPath) ? registeredMainPath : null;
   let commonDir = '';
   let gitDir = '';
   try {
@@ -833,6 +842,7 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     prunableReason: match.prunableReason ?? null,
     tip,
     mainHead,
+    mainWorktreePath,
     isPrimary: commonDir !== '' && samePath(gitDir, commonDir),
     commonDir,
     modified,
@@ -1551,6 +1561,20 @@ export function dispose(
   } = {}
 ) {
   const steps = [];
+  if (!keepBranch && !gitState.mainWorktreePath) {
+    steps.push(
+      `KEPT worktree ${gitState.absolutePath}: Git did not report a registered main worktree to use after removal`
+    );
+    return {
+      steps,
+      branchDeleted: false,
+      worktreeRemoved: false,
+      anchorRef: null,
+      salvage: null,
+      branchKept: false,
+    };
+  }
+  const mainWorktreeCwd = gitState.mainWorktreePath ?? cwd;
   // NO ANCHOR WHEN THE BRANCH SURVIVES. The anchor exists so a deleted branch is
   // still reachable; a branch that is deliberately kept is already reachable,
   // and writing `refs/keep/disposed/<slug>` for it would put a ref that reads as
@@ -1575,7 +1599,7 @@ export function dispose(
   const noOpMergeBaseIsCurrent = () => {
     if (deleteReason !== 'merge-tree-no-op') return true;
     try {
-      return run(cwd, ['rev-parse', '--verify', 'main^{commit}']).stdout.trim() === expectedBaseHead;
+      return run(mainWorktreeCwd, ['rev-parse', '--verify', 'main^{commit}']).stdout.trim() === expectedBaseHead;
     } catch {
       return false;
     }
@@ -1695,9 +1719,9 @@ export function dispose(
       );
       return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept: true };
     }
+    const deleteFlag = deleteUnmergedBranch ? '-D' : '-d';
     try {
-      const deleteFlag = deleteUnmergedBranch ? '-D' : '-d';
-      run(cwd, ['branch', deleteFlag, gitState.branch]);
+      run(mainWorktreeCwd, ['branch', deleteFlag, gitState.branch]);
       branchDeleted = true;
       if (deleteUnmergedBranch) {
         steps.push(
@@ -1706,7 +1730,7 @@ export function dispose(
       } else steps.push(`deleted branch ${gitState.branch}`);
     } catch (err) {
       steps.push(
-        `KEPT branch ${gitState.branch}: git refused \`${deleteUnmergedBranch ? '-D' : '-d'}\`, so it is unmerged (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
+        `KEPT branch ${gitState.branch}: could not delete it with \`git branch ${deleteFlag}\` (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
       );
     }
   }
