@@ -1371,8 +1371,9 @@ export class Board {
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     // Join the unreleased claim in the same SQLite snapshot, then apply the
-    // same conservative parser as the conflict checks. SQLite's date parser
-    // does not have the same accepted-input set as Date.parse.
+    // same conservative parser as the conflict checks. These deadlines are
+    // TEXT, so SQLite's old `lease_until > ?` predicate compared strings; a
+    // non-ISO date string can sort opposite to the instant Date.parse reads.
     const claimJoin = claimedBy
       ? 'JOIN claims c ON c.issue_id = issues.id AND c.agent_id = ? AND c.released_at IS NULL'
       : '';

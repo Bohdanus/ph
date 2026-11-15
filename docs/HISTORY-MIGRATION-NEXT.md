@@ -185,19 +185,31 @@ decoded PSD background layer reports the same 11/4 result, and the PSD composite
 across 4 pixels. The fractional background raster uses PSD-local bounds `left=-19`, `top=-21`,
 `89x89`; the foreground uses `left=0`, `top=5`, `50x38`. A new same-backing experiment renders the
 background into one `89x89` canvas and applies explicit `51x46`, `89x46`, `51x89`, and `89x89` clip
-rectangles. Across all 2,346 original-frame pixels, those four common-backing clip outputs are
-byte-identical for both legacy and durable sources. For legacy, comparing the native-size surfaces
-to their corresponding common-backing clips gives 11 bytes/4 pixels (maximum delta 43) for the
-baseline and width-only cases, 5 bytes/2 pixels (maximum delta 1) for height-only, and zero for the
+rectangles. The original local Chrome run found the four common-backing clip outputs byte-identical
+for both legacy and durable sources across all 2,346 original-frame pixels. For legacy, comparing
+the native-size surfaces to their corresponding common-backing clips gives 11 bytes/4 pixels
+(maximum delta 43) for the baseline and width-only cases, 5 bytes/2 pixels (maximum delta 1) for
+height-only, and zero for the
 combined `89x89` case. The native width-only surface itself matches the frame baseline; the native
 height-only surface differs by 10 bytes/5 pixels, and the combined native surface differs by 11/4.
-Durable is exact for every comparison. In this fixture, explicit clip size does not reproduce the
+Durable is exact for every comparison. In this fixture, explicit clip size did not reproduce the
 legacy changes; the physical backing dimensions do, especially backing height. This localizes the
 first observed difference to the refused `drawLayerSource()` rasterization into differently sized
 canvases, but does not explain why the browser raster output depends on those dimensions. The
-mismatch is present before encoding; it is not a confirmed product-path failure. The focused run
-passed 1 test. Its physical backing-size matrix compares each result over the same 2,346 original-
-frame pixels. The legacy raw and rounded-`ImageData`-premultiplied results are:
+mismatch is present before encoding; it is not a confirmed product-path failure. The original local
+focused run passed one test. Its physical backing-size matrix compares each result over the same
+2,346 original-frame pixels. The legacy raw and rounded-`ImageData`-premultiplied results are:
+
+The explicit-clip result is browser-specific too. Linux Chrome mirror CI run `43634393828` checked
+source `8abd737bb0d182729f56ca71f5b0f3cb203e0024` and found 18 differing bytes across 7 pixels
+(maximum channel delta 28) between the legacy width-only clip (`89x46`) and baseline clip (`51x46`),
+both rendered on the same `89x89` backing. The differing frame-local cells were `(49,1)`, `(49,2)`,
+`(50,2)`, `(50,3)`, `(50,4)`, `(1,45)`, and `(50,45)`.
+This is a refused-path diagnostic control. The observed differences occur at or near the original-
+frame edges; this control does not identify why. Record its exact deltas and coverage, but do not
+require cross-platform equality.
+The product runtime, export, PNG, PSD-layer, and PSD-composite checks retain their separate exact
+parity and admission assertions.
 
 | Backing size | Legacy raw bytes/pixels/max | Legacy premultiplied bytes/pixels/max | Durable raw/premultiplied |
 | ------------ | --------------------------: | ------------------------------------: | ------------------------: |
