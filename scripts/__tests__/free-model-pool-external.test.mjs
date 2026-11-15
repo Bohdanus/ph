@@ -449,6 +449,114 @@ describe('lazy OpenRouter quota preflight', () => {
     expect(openRouterChatCalls).toHaveLength(0);
   });
 
+  it('records the quota probe start date when a zero initial counter arrives after UTC midnight', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-openrouter-quota-midnight-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const poolStateFile = join(directory, 'pool-state.json');
+    const chat = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          model: 'o1:free',
+          choices: [{ message: { content: 'quota reset' }, finish_reason: 'stop' }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    );
+    const keyInfo = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        ok: true,
+        json: async () => {
+          vi.setSystemTime(new Date('2026-11-15T00:00:01.000Z'));
+          return { data: { free_model_daily_requests: { used: 1000, limit: 1000, remaining: 0 } } };
+        },
+      }))
+      .mockImplementation(() => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 0, limit: 1000, remaining: 1000 } } }),
+      }));
+    const fetchImpl = catalogFetch({ kilo: [], openrouter: [openRouterRow('o1')], keyInfo, chat });
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-14T23:59:59.000Z'));
+    try {
+      await expect(
+        completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', quarantineFile, poolStateFile })
+      ).rejects.toThrow(/No free model completed/);
+      expect(chat).not.toHaveBeenCalled();
+      expect((await readFreeModelPoolState(poolStateFile)).openRouterExhaustedUtcDate).toBe('2026-11-14');
+
+      await expect(
+        completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', quarantineFile, poolStateFile })
+      ).resolves.toMatchObject({ source: 'openrouter', model: 'o1:free', content: 'quota reset' });
+      expect(keyInfo).toHaveBeenCalledTimes(2);
+      expect(chat).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('records the refreshed quota probe start date when a zero counter arrives after UTC midnight', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-openrouter-refresh-midnight-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const poolStateFile = join(directory, 'pool-state.json');
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: 'upstream rate limit' } }), {
+          status: 429,
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            model: 'o1:free',
+            choices: [{ message: { content: 'quota reset' }, finish_reason: 'stop' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      );
+    const keyInfo = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 1000, remaining: 990 } } }),
+      }))
+      .mockImplementationOnce(() => ({
+        ok: true,
+        json: async () => {
+          vi.setSystemTime(new Date('2026-11-15T00:00:01.000Z'));
+          return { data: { free_model_daily_requests: { used: 1000, limit: 1000, remaining: 0 } } };
+        },
+      }))
+      .mockImplementation(() => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 0, limit: 1000, remaining: 1000 } } }),
+      }));
+    const fetchImpl = catalogFetch({ kilo: [], openrouter: [openRouterRow('o1')], keyInfo, chat });
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-14T23:59:59.000Z'));
+    try {
+      await expect(
+        completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', quarantineFile, poolStateFile })
+      ).rejects.toThrow(/No free model completed/);
+      expect(chat).toHaveBeenCalledTimes(1);
+      expect((await readFreeModelPoolState(poolStateFile)).openRouterExhaustedUtcDate).toBe('2026-11-14');
+
+      await expect(
+        completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', quarantineFile, poolStateFile })
+      ).resolves.toMatchObject({ source: 'openrouter', model: 'o1:free', content: 'quota reset' });
+      expect(keyInfo).toHaveBeenCalledTimes(3);
+      expect(chat).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('does not skip OpenRouter when the daily quota still has capacity', async () => {
     const chat = vi.fn().mockResolvedValue({
       ok: true,
@@ -1397,14 +1505,16 @@ describe('provider rate-limit diagnostics', () => {
       const quarantineFile = join(directory, 'quarantine.json');
       const poolStateFile = join(directory, 'pool-state.json');
       const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+      const crossesUtcMidnight = _label === 'choice-level explicit daily quota metadata';
       const chat = vi
         .fn()
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify(payload), {
+        .mockImplementationOnce(async () => {
+          if (crossesUtcMidnight) vi.setSystemTime(new Date('2026-11-15T00:00:01.000Z'));
+          return new Response(JSON.stringify(payload), {
             status: 200,
             headers: { 'content-type': 'application/json', ...extraHeaders },
-          })
-        )
+          });
+        })
         .mockResolvedValueOnce(
           new Response(
             JSON.stringify({
@@ -1452,30 +1562,44 @@ describe('provider rate-limit diagnostics', () => {
         expect(poolState.modelFailures).toEqual({});
         if (explicitDailyQuota) {
           expect(poolState.openRouterExhaustedUtcDate).toBe(exhaustionUtcDate);
-          await expect(
-            completeWithFreeModel('prompt', {
-              fetchImpl,
-              openRouterKey: 'rk',
-              waitForRetryAfter,
-              quarantineFile,
-              poolStateFile,
-            })
-          ).rejects.toThrow(/No free model completed/);
-          expect(chat).toHaveBeenCalledTimes(1);
-          expect(keyInfo).toHaveBeenCalledTimes(2);
+          if (crossesUtcMidnight) {
+            await expect(
+              completeWithFreeModel('prompt', {
+                fetchImpl,
+                openRouterKey: 'rk',
+                waitForRetryAfter,
+                quarantineFile,
+                poolStateFile,
+              })
+            ).resolves.toMatchObject({ source: 'openrouter', model: 'r1:free', content: 'quota recovered' });
+            expect(chat).toHaveBeenCalledTimes(2);
+            expect(keyInfo).toHaveBeenCalledTimes(3);
+          } else {
+            await expect(
+              completeWithFreeModel('prompt', {
+                fetchImpl,
+                openRouterKey: 'rk',
+                waitForRetryAfter,
+                quarantineFile,
+                poolStateFile,
+              })
+            ).rejects.toThrow(/No free model completed/);
+            expect(chat).toHaveBeenCalledTimes(1);
+            expect(keyInfo).toHaveBeenCalledTimes(2);
 
-          vi.setSystemTime(new Date('2026-11-15T00:00:00.000Z'));
-          await expect(
-            completeWithFreeModel('prompt', {
-              fetchImpl,
-              openRouterKey: 'rk',
-              waitForRetryAfter,
-              quarantineFile,
-              poolStateFile,
-            })
-          ).resolves.toMatchObject({ source: 'openrouter', model: 'r1:free', content: 'quota recovered' });
-          expect(chat).toHaveBeenCalledTimes(2);
-          expect(keyInfo).toHaveBeenCalledTimes(3);
+            vi.setSystemTime(new Date('2026-11-15T00:00:00.000Z'));
+            await expect(
+              completeWithFreeModel('prompt', {
+                fetchImpl,
+                openRouterKey: 'rk',
+                waitForRetryAfter,
+                quarantineFile,
+                poolStateFile,
+              })
+            ).resolves.toMatchObject({ source: 'openrouter', model: 'r1:free', content: 'quota recovered' });
+            expect(chat).toHaveBeenCalledTimes(2);
+            expect(keyInfo).toHaveBeenCalledTimes(3);
+          }
         } else {
           expect(poolState.openRouterExhaustedUtcDate).toBeNull();
           if (messageOnlyDailyQuota) {
