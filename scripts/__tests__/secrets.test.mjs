@@ -71,15 +71,14 @@ describe('secret key redaction', () => {
   it('does not catastrophically backtrack on long near-match keys in object and text sanitization', () => {
     const sanitizerUrl = pathToFileURL(resolve('scripts/lib/secrets.mjs')).href;
     const keys = [`key${'1'.repeat(64)}x`, `key${'-11'.repeat(32)}-`];
-    const nearMisses = [
-      `${'key_'.repeat(16_000)}! = ordinary value`,
-      `${'key-'.repeat(16_000)}! = ordinary value`,
-      `${'key.'.repeat(16_000)}! = ordinary value`,
-    ];
     const source = `
       import { sanitizeErrorMessage, sanitizeForOutput } from ${JSON.stringify(sanitizerUrl)};
       const keys = ${JSON.stringify(keys)};
-      const nearMisses = ${JSON.stringify(nearMisses)};
+      const nearMisses = [
+        'key_'.repeat(16_000) + '! = ordinary value',
+        'key-'.repeat(16_000) + '! = ordinary value',
+        'key.'.repeat(16_000) + '! = ordinary value',
+      ];
       console.log(JSON.stringify({ cases: keys.map((key) => ({
         object: sanitizeForOutput({ [key]: 'ordinary value' }),
         message: sanitizeErrorMessage('request failed: ' + key + '=ordinary value'),

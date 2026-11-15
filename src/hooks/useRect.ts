@@ -830,10 +830,16 @@ export function useRect({
 
     if (incrementalOverlay) {
       const canvasSize = incrementalCanvasSizeRef.current;
+      const previous = lastIncrementalRectRef.current;
       const needsBasePaint =
         overlayPaintModeRef.current !== 'incremental' ||
         canvasSize.width !== ctx.canvas.width ||
-        canvasSize.height !== ctx.canvas.height;
+        canvasSize.height !== ctx.canvas.height ||
+        // Rotation changes the crop's rasterized footprint, and the first incremental paint has no
+        // prior bounds to restore. Repaint the backing store in either case so no stale pixels can
+        // survive outside the current crop.
+        previous === null ||
+        previous.angle !== angle;
       if (needsBasePaint) {
         clearCanvasBackingStore(ctx);
         if (!hideBlend) {
@@ -844,7 +850,6 @@ export function useRect({
         canvasSize.height = ctx.canvas.height;
         overlayPaintModeRef.current = 'incremental';
       } else {
-        const previous = lastIncrementalRectRef.current;
         if (previous) {
           const dirty = getCropPaintBounds(previous, previous.angle, previous.scale);
           ctx.clearRect(dirty.x, dirty.y, dirty.width, dirty.height);
