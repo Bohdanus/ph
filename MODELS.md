@@ -19,7 +19,10 @@ active quarantine, quota, authentication, pricing, or safety restrictions.
 **Current route status:** the exact Nemotron 3 Ultra `:free` route on OpenRouter is under a
 168-hour `poor_performance` quarantine through `2026-11-19T02:03:21.539Z`, added at operator
 direction on 2026-11-12. This hold applies only to OpenRouter. The exact Kilo route remains approved;
-check `npm run free:quarantine -- list` for current expiry state. Refresh live catalogs with
+automatic failure handling does not write persistent model-quarantine entries for this exact Kilo
+route. A Kilo HTTP 429 still applies the one-hour source cooldown described below. Explicit quarantine
+entries for the exact Kilo route remain operator-managed. Check
+`npm run free:quarantine -- list` for current expiry state. Refresh live catalogs with
 `node scripts/free-model-pool.mjs --list`; a catalog row does not prove authentication, quota, or
 capacity.
 
