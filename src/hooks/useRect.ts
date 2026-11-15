@@ -152,6 +152,8 @@ const ROTATION_CURSOR_BODY = rotationCursorSvgSource
 const ROTATION_CURSOR_FALLBACKS = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'] as const;
 // The visible 128px artwork spans about 102px, so 0.2 renders it at about 20px.
 const ROTATION_CURSOR_ICON_SCALE = 0.2;
+const ROTATION_CURSOR_ANGLE_PRECISION = 10;
+const ROTATION_CURSOR_ANGLE_BUCKETS = 360 * ROTATION_CURSOR_ANGLE_PRECISION;
 const ROTATION_CURSOR_CACHE_LIMIT = 512;
 const ROTATION_CURSOR_CACHE = new Map<string, string>();
 
@@ -162,8 +164,13 @@ function shortestAngleDelta(degrees: number): number {
 function rotationCursorForPoint(point: Point, rect: RectXYSorted): string {
   const viewRotation = Number.isFinite(viewStateRef.current.rotation) ? viewStateRef.current.rotation : 0;
   const tangentAngle = angleFromCenter(rectCenter(rect), point) + viewRotation + 90;
+  if (!Number.isFinite(tangentAngle)) return 'ew-resize';
+
   const normalizedAngle = ((tangentAngle % 360) + 360) % 360;
-  const angle = normalizedAngle.toFixed(1);
+  const angle = (
+    (Math.round(normalizedAngle * ROTATION_CURSOR_ANGLE_PRECISION) % ROTATION_CURSOR_ANGLE_BUCKETS) /
+    ROTATION_CURSOR_ANGLE_PRECISION
+  ).toFixed(1);
   const cachedCursor = ROTATION_CURSOR_CACHE.get(angle);
   if (cachedCursor) {
     ROTATION_CURSOR_CACHE.delete(angle);

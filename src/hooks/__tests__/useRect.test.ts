@@ -641,6 +641,24 @@ describe('useRect', () => {
       expect(decodeURIComponent(encodedSvg!)).toContain('rotate(90.0) scale(0.2)');
     });
 
+    it('wraps the rounded cursor angle at 360 degrees', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(
+          createPointerEvent({ clientX: 199.895, clientY: 25.00004, target })
+        );
+      });
+
+      const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+      expect(encodedSvg).toBeDefined();
+      expect(decodeURIComponent(encodedSvg!)).toContain('rotate(0.0) scale(0.2)');
+    });
+
     it('includes canvas view rotation when orienting the cursor on screen', () => {
       const originalViewRotation = viewStateRef.current.rotation;
       viewStateRef.current.rotation = 45;
