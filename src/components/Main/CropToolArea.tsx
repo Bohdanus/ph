@@ -609,7 +609,8 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     allowOutsideCanvas: true,
     // The frame-sized overlay canvas clips crop chrome at the document edge. At angle zero the
     // overflow-safe surface below owns the shade, guides and handles across the full crop rect;
-    // rotated crops keep the canvas painter, which repaints only the previous crop's dirty bounds.
+    // rotated crops keep the canvas painter, which restores previous crop bounds between
+    // stable-angle paints and repaints the backing store when the angle or canvas size changes.
     hideBlend: angle === 0,
     externalOverlay: angle === 0,
     incrementalOverlay: angle !== 0,

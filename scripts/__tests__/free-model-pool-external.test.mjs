@@ -2473,6 +2473,58 @@ describe('provider rate-limit diagnostics', () => {
     expect(keyInfo).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects a complete HTTP 200 OpenRouter answer with embedded daily quota metadata', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-openrouter-platform-embedded-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const poolStateFile = join(directory, 'pool-state.json');
+    const keyInfo = vi.fn(() => ({
+      ok: true,
+      json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+    }));
+    const chat = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          model: 'r1:free',
+          choices: [
+            {
+              message: { content: 'must not be returned' },
+              finish_reason: 'stop',
+              error: {
+                code: 429,
+                message: 'Daily free-model quota exhausted',
+                metadata: { limit_source: 'openrouter_free_tier_daily' },
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json', 'x-ratelimit-remaining': '0' },
+        }
+      )
+    );
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo,
+      chat,
+    });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', quarantineFile, poolStateFile })
+      ).rejects.toThrow(/No free model completed/);
+
+      expect(chat).toHaveBeenCalledTimes(1);
+      expect(keyInfo).toHaveBeenCalledTimes(2);
+      const poolState = await readFreeModelPoolState(poolStateFile);
+      expect(poolState.modelFailures).toEqual({});
+      expect(poolState.openRouterExhaustedUtcDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('stops after an empty HTTP 200 OpenRouter completion when the remaining header is zero', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-openrouter-platform-empty-'));
     const quarantineFile = join(directory, 'quarantine.json');
