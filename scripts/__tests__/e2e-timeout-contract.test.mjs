@@ -10,6 +10,10 @@ const baselineCaptureWorkflow = readFileSync(
   join(testDirectory, '../../.github/workflows/capture-linux-baselines.yml'),
   'utf8'
 );
+const platformBaselineCaptureWorkflow = readFileSync(
+  join(testDirectory, '../../.github/workflows/capture-platform-export-baselines.yml'),
+  'utf8'
+);
 const playwrightConfig = readFileSync(join(testDirectory, '../../playwright.config.ts'), 'utf8');
 const packageManifest = JSON.parse(readFileSync(join(testDirectory, '../../package.json'), 'utf8'));
 const packageLock = JSON.parse(readFileSync(join(testDirectory, '../../package-lock.json'), 'utf8'));
@@ -289,6 +293,29 @@ describe('E2E timeout contract', () => {
     expect(jobTimeoutMinutes - playwrightRuns.length * playwrightTimeouts.other).toBeGreaterThanOrEqual(
       minimumJobHeadroomMinutes
     );
+  });
+
+  it('keeps ten minutes of nominal job headroom after both baseline runs on every platform', () => {
+    const job = readJobBlock(platformBaselineCaptureWorkflow, 'capture');
+    const jobTimeoutMinutes = readFixedJobTimeoutMinutes(job, 'platform baseline capture');
+    const playwrightTimeouts = readPlaywrightCiTimeouts();
+    const playwrightRuns = readPlaywrightRunCommands(job);
+
+    expect(job).toContain('\'["linux","windows","macos"]\'');
+    expect(job).toContain("matrix.platform == 'linux' && 'ubuntu-latest'");
+    expect(job).toContain("matrix.platform == 'windows' && 'windows-latest'");
+    expect(job).toContain("matrix.platform == 'macos'");
+    expect(playwrightRuns).toEqual([
+      'npm run test:e2e:update-baselines -- --workers=1',
+      'npm run test:e2e -- e2e/export/visual-regression.spec.ts --workers=1',
+    ]);
+
+    for (const platform of ['linux', 'windows', 'macos']) {
+      const playwrightTimeoutMinutes = platform === 'macos' ? playwrightTimeouts.macos : playwrightTimeouts.other;
+      expect(jobTimeoutMinutes - playwrightRuns.length * playwrightTimeoutMinutes).toBeGreaterThanOrEqual(
+        minimumJobHeadroomMinutes
+      );
+    }
   });
 
   it('leaves the configured timeout in control of the npm scripts used by baseline capture', () => {
