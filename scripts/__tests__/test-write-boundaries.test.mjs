@@ -27,7 +27,7 @@ const REVIEWED = {
   'dispose-worktree.test.mjs': {
     scope:
       'Filesystem fixtures are created under unique OS temporary directories and cleaned up; child Git is test-controlled.',
-    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=17 filesystem-write:rmSync=5 filesystem-write:mkdirSync=23 filesystem-write:symlinkSync=2 filesystem-write:renameSync=2 subprocess:execFileSync=1 subprocess:spawnSync=1`,
+    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=17 filesystem-write:rmSync=5 filesystem-write:mkdirSync=24 filesystem-write:symlinkSync=2 filesystem-write:renameSync=2 subprocess:execFileSync=1 subprocess:spawnSync=1`,
   },
   'docs-index.test.mjs': {
     scope: 'Subprocess invocation is part of the docs-index contract; review its command and cwd.',
