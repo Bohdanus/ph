@@ -64,15 +64,16 @@ import { fileURLToPath } from 'node:url';
 import { samePath } from './lib/path-identity.mjs';
 import { abortCommand, findings, scanRepository } from './lib/git-operation-state.mjs';
 
-const USAGE = `repo:state — report git operations in progress, in every worktree.
+const USAGE = `repo:state — report operation markers and unresolved index entries in every worktree.
 
-  node scripts/repo-state-gate.mjs            report, exit 1 if any worktree is mid-operation
+  node scripts/repo-state-gate.mjs            report, exit 1 if any worktree needs operation-state attention
   node scripts/repo-state-gate.mjs --json     the same findings as JSON on stdout
   node scripts/repo-state-gate.mjs --for-landing <source-branch> [--json]
                                                report all operations; exit 1 only for landing-relevant or unknown state
 
-  By default, exits 0 only when the roster was read and nothing is in progress. Exits 1
-  otherwise, and says whether that is a worktree mid-operation or a state it could not read. With
+  By default, exits 0 only when the roster and operation state were read and no operation markers
+  or unresolved index entries remain. Exits 1 otherwise, and distinguishes active operations,
+  unpaired AUTO_MERGE markers, unresolved index paths, and unreadable state. With
   --for-landing, only the registered main checkout, the candidate branch, or unreadable/
   unknown worktree state blocks; all other findings are still reported but are non-blocking.
   Advisory: it never mutates or refuses anything on its own, and it is wired into no hook.
@@ -100,7 +101,8 @@ function describeWorktree(finding) {
   }
 
   for (const operation of finding.operations) {
-    lines.push(`    in progress: ${operation.operation}  [${operation.marker}]`);
+    if (operation.marker === 'AUTO_MERGE') lines.push('    AUTO_MERGE marker has no primary operation marker.');
+    else lines.push(`    in progress: ${operation.operation}  [${operation.marker}]`);
     if (operation.value) lines.push(`      ${operation.operation} target: ${operation.value}`);
   }
 
@@ -178,20 +180,23 @@ function describeWorktree(finding) {
   return lines.join('\n');
 }
 
-const REPORT_HEADER = `repo:state — a worktree below is mid-operation.
+const REPORT_HEADER = `repo:state — worktree Git state needs attention.
 
-No commit, branch name, or \`git status\` in the main checkout records this. It lives in
-that worktree's git directory, which is why a session that never opens the worktree
-cannot see it, and why an unattended \`git commit -a\` there can land a resolution
-nobody reviewed.
+The findings below may describe an active operation, an unpaired operation marker, or
+unresolved index paths. Git stores operation markers in each worktree's own git
+directory; the main checkout's \`git status\` cannot show them. A marker does not
+identify its owner or prove that its owner has stopped or that the marker is stale.
 
 Decide each worktree ON ITS OWN, and from inside it:
 
   git -C <worktree> status --short
   git -C <worktree> diff --name-only --diff-filter=U
 
-Then either finish the operation there, or abandon it deliberately. Do not resolve or
-repair any of it from the main checkout. See docs/ORCHESTRATION.md on landing.
+Handle each finding inside its own worktree. Never resolve or repair another worktree
+from the main checkout. For an AUTO_MERGE marker without a primary operation marker,
+establish the owner and inspect the worktree first; from that target worktree's root,
+use the owner-checked recovery procedure in docs/ORCHESTRATION.md only if the marker
+is stale.
 
 `;
 

@@ -154,6 +154,7 @@ export const paintDescriptions: Record<
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/brushes-presets/paint-with-brush-or-pencil-tool.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/choose-a-color-while-painting.html',
       'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       'https://asktimgrey.com/2023/09/01/flow-versus-opacity-for-brushes',
       'https://photoshopcafe.com/use-flow-opacity-photoshop-brushes',
@@ -330,6 +331,7 @@ export const paintDescriptions: Record<
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/brushes-presets/paint-with-brush-or-pencil-tool.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/choose-a-color-while-painting.html',
       'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/auto-erase-with-the-pencil-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
