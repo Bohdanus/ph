@@ -69,9 +69,10 @@
  * THE ORDER OF OPERATIONS IS THE POINT
  * ------------------------------------
  * Anchor, then salvage, then remove the worktree, then delete the branch with
- * `-d`. The anchor (`refs/keep/disposed/<name>`) means no `git gc` can make a
- * disposed branch unreachable, which converts "irreversible" into "reversible
- * with one command" at the cost of a single ref. `git branch -d` refuses an
+ * `-d` from the registered main worktree. The anchor
+ * (`refs/keep/disposed/<name>`) keeps a disposed tip reachable through `git gc`,
+ * turning "irreversible" into "reversible with one command" at the cost of one
+ * ref. `git branch -d` refuses an
  * unmerged branch, and that refusal is the ordinary guard on the last step. A
  * generated `patchEquivalence: "absorbed"` disposal is the explicit exception:
  * it anchors first, then uses guarded `-D` because patch absorption does not
@@ -152,6 +153,8 @@ export const REFUSALS = {
     `No worktree named "${t}" in \`git worktree list\`. Name it exactly as \`git worktree list\` does.`,
   'main-worktree': () =>
     'This is the main checkout. It is never a deletion candidate — it is the landing site every other session resolves paths through.',
+  'main-worktree-path-unavailable': () =>
+    'Git did not report exactly one registered main worktree path. The disposer needs that surviving checkout to verify the base and delete the branch after removing this worktree.',
   detached: () => 'HEAD is detached, so there is no branch to delete and no name to anchor. Resolve the branch first.',
   'no-branch': () => 'This worktree reports no branch, so there is nothing safe to delete after the worktree goes.',
   locked: (reason) =>
@@ -490,6 +493,7 @@ export function preflight({
   // bare working directory. Protect the base branch independently of Git's
   // `isPrimary` marker so a stale inventory cannot classify it for removal.
   if (gitState.isPrimary || gitState.branch === 'main') refuse('main-worktree');
+  if (!keepBranch && !gitState.mainWorktreePath) refuse('main-worktree-path-unavailable');
   if (gitState.detached) refuse('detached');
   // `readGitState` writes one of two parenthesised placeholders when
   // `git worktree list --porcelain` gave no `branch` line. They are matched by
@@ -752,6 +756,11 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
   if (!match) return { found: false, known: entries.map((e) => basename(e.path)) };
 
   const absolutePath = match.path;
+  // After removal, the invoking cwd may be the directory Git just deleted.
+  // Capture a usable, surviving checkout from the same roster before mutation.
+  const mainWorktrees = entries.filter((entry) => entry.bare !== true && entry.branch === 'main');
+  const registeredMainPath = mainWorktrees.length === 1 ? mainWorktrees[0].path : null;
+  const mainWorktreePath = registeredMainPath && existsSync(registeredMainPath) ? registeredMainPath : null;
   let commonDir = '';
   let gitDir = '';
   try {
@@ -833,6 +842,7 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     prunableReason: match.prunableReason ?? null,
     tip,
     mainHead,
+    mainWorktreePath,
     isPrimary: commonDir !== '' && samePath(gitDir, commonDir),
     commonDir,
     modified,
@@ -1352,28 +1362,39 @@ function anchor(cwd, gitState, { run = defaultRun } = {}) {
   const source = gitState.branch && !PLACEHOLDER_BRANCHES.has(gitState.branch) ? gitState.branch : gitState.name;
   const slug = refSlug(source);
   if (!slug) return null;
-  // The suffix is resolved through the INJECTED runner and the caller's cwd, so a
-  // dry run and the real disposal agree on the ref name, and a suite that
-  // injects its runner does not spawn a real `git` to find that out.
-  const ref = `${KEEP_REF_PREFIX}${slug}${anchorDisambiguation(cwd, slug, source, gitState.tip, run)}`;
+  // The ref selection is shared with dry-run. An existing ref that already names
+  // this tip is reused below; creating it again with an empty old value would
+  // fail and needlessly create a second recovery ref.
+  const selection = anchorRefSelection(cwd, slug, source, gitState.tip, run);
+  const { ref } = selection;
   try {
     run(cwd, ['check-ref-format', ref]);
   } catch {
     return null;
   }
+  if (selection.reusesExisting) return ref;
   // CREATE-IF-ABSENT, so the read above and this write are one atomic step in
   // git rather than two steps in this process.
   //
   // The empty old-value is the whole mechanism: `git update-ref <ref> <new> ''`
   // succeeds only if `<ref>` does not exist, and exits 128 if it does. Without
-  // it this was a read-then-write with a window between them, and the comment on
-  // `anchorDisambiguation` claimed a cross-process guarantee the code could not
-  // deliver. Proven on a scratch repo with two concurrent processes: both read
+  // it this was a read-then-write with a window between them, and a prior comment
+  // on ref selection claimed a cross-process guarantee the code could not deliver.
+  // Proven on a scratch repo with two concurrent processes: both read
   // "the slug is free", both wrote the BARE ref, and the loser's commit was gone
   // from every ref — with `dispose` reporting a successful anchor for both.
   try {
     run(cwd, ['update-ref', ref, gitState.tip, '']);
   } catch {
+    // Another disposer can create this exact primary ref after selection but
+    // before the create-only write. Reuse it when it now names the same tip,
+    // instead of adding a redundant fallback anchor.
+    try {
+      const existingTip = (run(cwd, ['rev-parse', '--verify', '--quiet', ref]).stdout ?? '').trim();
+      if (existingTip === gitState.tip) return ref;
+    } catch {
+      // If the primary ref cannot be verified, preserve the tip through fallback.
+    }
     // Lost the race, or the ref appeared between the read and here. The hash is a
     // compact name, not proof of uniqueness, so the fallback must also be
     // create-if-absent. If it already names this tip, reuse it; otherwise refuse
@@ -1551,6 +1572,20 @@ export function dispose(
   } = {}
 ) {
   const steps = [];
+  if (!keepBranch && !gitState.mainWorktreePath) {
+    steps.push(
+      `KEPT worktree ${gitState.absolutePath}: Git did not report a registered main worktree to use after removal`
+    );
+    return {
+      steps,
+      branchDeleted: false,
+      worktreeRemoved: false,
+      anchorRef: null,
+      salvage: null,
+      branchKept: false,
+    };
+  }
+  const mainWorktreeCwd = gitState.mainWorktreePath ?? cwd;
   // NO ANCHOR WHEN THE BRANCH SURVIVES. The anchor exists so a deleted branch is
   // still reachable; a branch that is deliberately kept is already reachable,
   // and writing `refs/keep/disposed/<slug>` for it would put a ref that reads as
@@ -1575,7 +1610,7 @@ export function dispose(
   const noOpMergeBaseIsCurrent = () => {
     if (deleteReason !== 'merge-tree-no-op') return true;
     try {
-      return run(cwd, ['rev-parse', '--verify', 'main^{commit}']).stdout.trim() === expectedBaseHead;
+      return run(mainWorktreeCwd, ['rev-parse', '--verify', 'main^{commit}']).stdout.trim() === expectedBaseHead;
     } catch {
       return false;
     }
@@ -1695,9 +1730,9 @@ export function dispose(
       );
       return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept: true };
     }
+    const deleteFlag = deleteUnmergedBranch ? '-D' : '-d';
     try {
-      const deleteFlag = deleteUnmergedBranch ? '-D' : '-d';
-      run(cwd, ['branch', deleteFlag, gitState.branch]);
+      run(mainWorktreeCwd, ['branch', deleteFlag, gitState.branch]);
       branchDeleted = true;
       if (deleteUnmergedBranch) {
         steps.push(
@@ -1706,7 +1741,7 @@ export function dispose(
       } else steps.push(`deleted branch ${gitState.branch}`);
     } catch (err) {
       steps.push(
-        `KEPT branch ${gitState.branch}: git refused \`${deleteUnmergedBranch ? '-D' : '-d'}\`, so it is unmerged (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
+        `KEPT branch ${gitState.branch}: could not delete it with \`git branch ${deleteFlag}\` (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
       );
     }
   }
@@ -1962,17 +1997,18 @@ function main(argv) {
  * would WRITE the ref, and a `--dry-run` that mutates the repository is not a dry
  * run. The slug rule lives in `refSlug()` for that reason.
  */
-function anchorRefFor(gitState, { run = defaultRun, cwd = process.cwd() } = {}) {
+export function anchorRefFor(gitState, { run = defaultRun, cwd = process.cwd() } = {}) {
+  if (!gitState.tip) return null;
   const source = gitState.branch && !PLACEHOLDER_BRANCHES.has(gitState.branch) ? gitState.branch : gitState.name;
   const slug = refSlug(source);
-  return slug ? `${KEEP_REF_PREFIX}${slug}${anchorDisambiguation(cwd, slug, source, gitState.tip, run)}` : null;
+  return slug ? anchorRefSelection(cwd, slug, source, gitState.tip, run).ref : null;
 }
 
 /**
  * The ref-name slug rule, in one place so the dry run and `anchor()` agree.
  *
- * NOT INJECTIVE, and that is the point of `anchorDisambiguation`. `/`, a space
- * and a run of anything else all collapse to one `-`, and `-` is itself a legal
+ * NOT INJECTIVE, which is why `anchorRefSelection` checks the existing tip:
+ * `/`, a space and a run of anything else all collapse to one `-`, and `-` is a legal
  * branch character, so `feat/marble`, `feat marble` and `feat-marble` all slug
  * to `feat-marble`. The anchor is the ONLY recovery point for a disposed branch,
  * so two collisions mean the second disposal overwrites the first's — and
@@ -1987,14 +2023,6 @@ function refSlug(source) {
   );
 }
 
-/**
- * The suffix that makes a slug unique, or '' when the slug is already free.
- *
- * A HASH, not a counter: it does not depend on what this process has seen, so
- * two disposals in two processes cannot both conclude the slug is free. `-g<hash>`
- * is 9 hex characters of the exact branch name, which is enough that a
- * deliberate collision is not what anyone is defending against.
- */
 /**
  * The suffix that makes a slug unique, or '' when the slug is already free.
  *
@@ -2013,8 +2041,8 @@ function refSlug(source) {
  * `feat-marble`. The anchor is the ONLY recovery point for a disposed branch, so
  * two collisions mean the second overwrites the first's.
  */
-function anchorDisambiguation(cwd, slug, source, tip, run) {
-  if (!slug) return '';
+function anchorRefSelection(cwd, slug, source, tip, run) {
+  if (!slug) return null;
   const ref = `${KEEP_REF_PREFIX}${slug}`;
   let current = null;
   try {
@@ -2024,13 +2052,13 @@ function anchorDisambiguation(cwd, slug, source, tip, run) {
   }
   // A free slug stays bare, so the common case writes the same ref it always
   // did and no recovery path anyone has written down moves.
-  if (!current) return '';
+  if (!current) return { ref, reusesExisting: false };
   // Re-anchoring the SAME COMMIT re-anchors it: the ref already points where it
-  // is about to point, and there is nothing to protect. The comparison is
-  // against the tip, not the branch name — `rev-parse --verify` resolves a ref
-  // to a commit, so comparing it to `source` would never be equal and would
-  // suffix every re-anchor of a branch that had been disposed once already.
-  if (tip && current === tip) return '';
+  // is about to point, and there is nothing to protect. Return the existing ref
+  // so the writer can reuse it without a create-only `update-ref` that must fail.
+  // Compare against the tip, not the branch name: `rev-parse` resolves the ref
+  // to a commit.
+  if (tip && current === tip) return { ref, reusesExisting: true };
   // HASHED OVER THE TIP, NOT THE NAME. Hashing the branch name fixed two
   // different names that slug alike and left the reachable case open: dispose
   // `feat/marble` at 457bfd4, let `git branch -d` refuse because the branch is
@@ -2042,7 +2070,7 @@ function anchorDisambiguation(cwd, slug, source, tip, run) {
     .update(`${source ?? ''} ${tip ?? ''}`)
     .digest('hex')
     .slice(0, 9);
-  return `-g${hash}`;
+  return { ref: `${ref}-g${hash}`, reusesExisting: false };
 }
 
 if (process.argv[1] && realpathIfExists(process.argv[1]) === realpathIfExists(fileURLToPath(import.meta.url))) {
