@@ -63,7 +63,7 @@ function findPerSpecHeadedOverrides(source: string, fileName: string): string[] 
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
     const moduleName = statement.moduleSpecifier.text;
-    const isExtendedTestModule = /\/fixtures\/extended-test(?:\.ts)?$/.test(moduleName);
+    const isExtendedTestModule = /\/fixtures\/extended-test(?:\.(?:ts|js))?$/.test(moduleName);
     if (moduleName !== '@playwright/test' && !isExtendedTestModule) continue;
     const importClause = statement.importClause;
     if (importClause?.name) testNames.add(importClause.name.text);
@@ -128,7 +128,7 @@ describe('Playwright spec browser-mode policy', () => {
   });
 
   it('recognizes the shared test API from nested specs and direct Playwright imports', () => {
-    for (const moduleName of ['../fixtures/extended-test', '@playwright/test']) {
+    for (const moduleName of ['../fixtures/extended-test', '../fixtures/extended-test.js', '@playwright/test']) {
       const source = [`import { test } from '${moduleName}';`, 'test.use({ headless: false });'].join('\n');
       expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual(['nested/sample.spec.ts:2']);
     }
