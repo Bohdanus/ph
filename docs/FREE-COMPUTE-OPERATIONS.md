@@ -99,7 +99,10 @@ stops OpenRouter. Longer waits for other failures stop the source. If a bounded 
 the pool rotates to another eligible OpenRouter model when a fresh quota check is still positive and
 the per-source attempt ceiling permits it. HTTP 401/402 exhausts
 OpenRouter for the run. An `openrouter_*` limit source or zero `X-RateLimit-Remaining` on a 429 identifies a platform
-rate limit and skips the source for that run without blaming the model. A zero daily counter or exact
+rate limit and skips the source for that run without blaming the model. An HTTP 200 response with
+non-empty text and `finish_reason: "stop"` may still be returned when the remaining header is zero;
+incomplete or empty HTTP 200 responses with zero remaining stop further OpenRouter attempts, and
+structured quota or limit errors still invalidate the response. A zero daily counter or exact
 `openrouter_free_tier_daily` limit source persists the UTC date when its quota probe or inference
 request started, respectively. Three confirmed upstream/model rate-limit failures (HTTP 429 or typed
 `rate_limit_exceeded`) for the same OpenRouter model in three hours create a two-hour quarantine; 250
@@ -243,7 +246,8 @@ Because failed requests can consume the daily cap, the runner refreshes quota af
 or incomplete attempt, including transport and response parsing failures, before another OpenRouter
 inference. A zero or unknown refreshed quota stops the source;
 terminal safety outcomes do not send another inference. At most one bounded transient retry is allowed per
-OpenRouter run. A platform `X-RateLimit-Remaining: 0` still stops OpenRouter for the run. After HTTP 200 is
+OpenRouter run. A zero `X-RateLimit-Remaining` header stops fallback and retries for an incomplete
+response; a complete non-empty HTTP 200 answer with `finish_reason: "stop"` may be returned. After HTTP 200 is
 committed, typed provider errors may appear in top-level `error.metadata` or `choices[].error.metadata`;
 transient rate-limit, overloaded, unavailable, and timeout types receive the same retry.
 `content_policy_violation` and `refusal` in the typed error metadata stop all provider fallback; see the

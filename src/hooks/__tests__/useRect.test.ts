@@ -410,6 +410,33 @@ describe('useRect', () => {
     expect(ctx.clearRect).toHaveBeenCalledWith(-50, -40, 100, 80);
   });
 
+  it('repaints the incremental base when crop rotation changes', () => {
+    const props: UseRectProps = {
+      imageSize: { width: 800, height: 600 },
+      initialRect: { x1: 100, y1: 120, x2: 200, y2: 200 },
+      incrementalOverlay: true,
+      rotationEnabled: true,
+      rotation: 0,
+      containerRef: { current: testContext.containerElement },
+      overlayRef: { current: testContext.overlayCanvas },
+      onChangeEnd: vi.fn(),
+    };
+    const ctx = testContext.overlayCanvas.getContext('2d') as unknown as ReturnType<typeof createMockCanvasContext>;
+    const { result, rerender } = renderHook(({ rotation }) => useRect({ ...props, rotation }), {
+      initialProps: { rotation: 0 },
+    });
+
+    vi.mocked(ctx.fillRect).mockClear();
+    act(() => rerender({ rotation: 30 }));
+
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 800, 600);
+
+    vi.mocked(ctx.fillRect).mockClear();
+    act(() => result.current.rectHandles.redraw());
+
+    expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 800, 600);
+  });
+
   it('returns false for pointer down on non-left button', () => {
     const { result } = renderUseRect();
     const event = createPointerEvent({ button: 1, target: createMockTarget() });
