@@ -1441,11 +1441,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
         stderr.write('OpenRouter daily free-model quota was exhausted earlier today; skipping this run.\n');
         return false;
       }
+      const quotaProbeStartedAt = Date.now();
       const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
       if (quota.reason === 'ok') {
         onOpenRouterQuota(quota);
         if (quota.remaining <= 0 || quota.used >= quota.limit) {
-          await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile });
+          await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: quotaProbeStartedAt });
           exhausted.add('openrouter');
           stderr.write('OpenRouter daily free-model quota is exhausted; skipping this run.\n');
           return false;
@@ -1472,11 +1473,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
     }
     openRouterQuotaCheckedAfterAttempt = openRouterAttempts;
     openRouterQuotaKnownPositive = false;
+    const quotaProbeStartedAt = Date.now();
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
       if (quota.remaining <= 0 || quota.used >= quota.limit) {
-        await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile });
+        await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: quotaProbeStartedAt });
         exhausted.add('openrouter');
         stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter routes.\n');
       } else {
@@ -1492,14 +1494,21 @@ export async function completeWithFreeModel(prompt, options = {}) {
     if (openRouterQuotaInitiallyUnknown || !openRouterQuotaKnownPositive) exhausted.add('openrouter');
     return openRouterQuotaKnownPositive && !exhausted.has('openrouter');
   };
-  const handleOpenRouterFailure = async ({ candidate, response, payload, quotaWasPositive, retryAttempt }) => {
+  const handleOpenRouterFailure = async ({
+    candidate,
+    response,
+    payload,
+    quotaWasPositive,
+    retryAttempt,
+    requestStartedAt,
+  }) => {
     const status = response?.status;
     const transientServerFailure = Number.isInteger(status) && status >= 500 && status <= 599;
     const transientTypedFailure = status === 200 && hasTransientOpenRouterProviderError(payload);
     const dailyQuotaFailure = isOpenRouterDailyQuotaError(payload);
     const limitSources = openRouterLimitSources(payload);
     if (limitSources.includes('openrouter_free_tier_daily')) {
-      await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile });
+      await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: requestStartedAt });
     }
     if (status === 401 || status === 402) {
       exhausted.add('openrouter');
@@ -1883,6 +1892,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
     const quotaWasPositive = candidate.source === 'openrouter' && openRouterQuotaKnownPositive;
     const effectiveMaxTokens = routeMaxTokens;
     let response;
+    const requestStartedAt = Date.now();
     try {
       response = await fetchImpl(url, {
         method: 'POST',
@@ -1921,6 +1931,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
         payload: null,
         quotaWasPositive,
         retryAttempt: candidate.retryAttempt === true,
+        requestStartedAt,
       });
       if (retryDecision.retry) {
         openRouterRetryUsed = true;
@@ -1955,6 +1966,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
         payload,
         quotaWasPositive,
         retryAttempt: candidate.retryAttempt === true,
+        requestStartedAt,
       });
       if (retryDecision.retry) {
         openRouterRetryUsed = true;
@@ -2015,6 +2027,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
       payload,
       quotaWasPositive,
       retryAttempt: candidate.retryAttempt === true,
+      requestStartedAt,
     });
     if (
       response.status === 401 ||

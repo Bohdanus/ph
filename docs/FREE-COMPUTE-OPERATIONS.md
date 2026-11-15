@@ -84,10 +84,11 @@ The runner refreshes OpenRouter's public catalog and requires exact-zero pricing
 `GET /api/v1/key` only when routing reaches the first OpenRouter inference route, then uses the live
 `used`, `limit`, and `remaining` counters. OpenRouter notes the tier counter is not enforced for every
 account or endpoint and does not gate BYOK; this runner conservatively stops when its live counter
-reports zero. If remaining is zero, or an inference error carries the exact
-`openrouter_free_tier_daily` limit source, it stores the current UTC date and
-skips OpenRouter until the date changes, even if the refreshed counter temporarily reports
-positive remaining. A generic message match alone stops only the current run; a zero live counter
+reports zero. If remaining is zero, it stores the UTC date when that quota probe started; if an
+inference error carries the exact `openrouter_free_tier_daily` limit source, it stores the UTC date
+when that request started. A slow response that crosses midnight therefore does not extend the
+quota stop into the next day. OpenRouter is skipped while the stored date is today, even if the refreshed counter
+temporarily reports positive remaining. A generic message match alone stops only the current run; a zero live counter
 still persists the date. No scheduled reset is required. If the initial probe is
 unknown, only one inference request is permitted in that run; a positive post-attempt refresh does
 not unlock another attempt. Quota-present retries require a positive initial probe. A positive quota
@@ -99,7 +100,8 @@ the pool rotates to another eligible OpenRouter model when a fresh quota check i
 the per-source attempt ceiling permits it. HTTP 401/402 exhausts
 OpenRouter for the run. An `openrouter_*` limit source or zero `X-RateLimit-Remaining` on a 429 identifies a platform
 rate limit and skips the source for that run without blaming the model. A zero daily counter or exact
-`openrouter_free_tier_daily` limit source persists today's exhaustion marker. Three confirmed upstream/model rate-limit failures (HTTP 429 or typed
+`openrouter_free_tier_daily` limit source persists the UTC date when its quota probe or inference
+request started, respectively. Three confirmed upstream/model rate-limit failures (HTTP 429 or typed
 `rate_limit_exceeded`) for the same OpenRouter model in three hours create a two-hour quarantine; 250
 confirmed model-attributable failures in seven days create a
 seven-day quarantine. Network errors, truncation, empty responses, and unresolved model IDs do not
