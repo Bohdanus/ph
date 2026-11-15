@@ -566,15 +566,13 @@ describe('useRect', () => {
 
     it.each([
       [0, 'ew-resize'],
-      [45, 'nwse-resize'],
+      [37, 'nwse-resize'],
       [90, 'ns-resize'],
-      [135, 'nesw-resize'],
+      [126.87, 'nesw-resize'],
       [180, 'ew-resize'],
-      [225, 'nwse-resize'],
       [270, 'ns-resize'],
-      [315, 'nesw-resize'],
     ] as const)(
-      'uses the %s-degree rotation cursor for the pointer position around the rect',
+      'uses the exact %s-degree rotation angle for the pointer position around the rect',
       (cursorAngle, fallback) => {
         const { result } = renderUseRect({
           initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
@@ -596,13 +594,70 @@ describe('useRect', () => {
         const svg = decodeURIComponent(encodedSvg!);
         expect(svg).toMatch(/^<svg\b[\s\S]*<\/svg>$/);
         expect(svg).toContain('width="64" height="64" viewBox="0 0 64 64"');
-        expect(svg).toContain(`rotate(${cursorAngle}) scale(0.05) translate(-64 -64)`);
+        expect(svg).toContain(`rotate(${cursorAngle.toFixed(1)}) scale(0.2) translate(-64 -64)`);
         expect(svg).toContain('stroke="#fff" stroke-width="23"');
         expect(svg).toContain('stroke="#000" stroke-width="13"');
         expect(svg).toContain('fill="#000" stroke="none"');
         expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
       }
     );
+
+    it.each([
+      [200, 150, 350, 287.5, 126.9],
+      [100, 200, 225, 350, 153.4],
+    ] as const)(
+      'uses the diagonal angle for a %sx%s crop instead of a fixed 45-degree step',
+      (width, height, clientX, clientY, angle) => {
+        const { result } = renderUseRect({
+          initialRect: { x1: 100, y1: 100, x2: 100 + width, y2: 100 + height },
+          rotationEnabled: true,
+        });
+        const target = createMockTarget();
+
+        act(() => {
+          result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX, clientY, target }));
+        });
+
+        const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+        expect(encodedSvg).toBeDefined();
+        expect(decodeURIComponent(encodedSvg!)).toContain(`rotate(${angle.toFixed(1)}) scale(0.2)`);
+      }
+    );
+
+    it('uses the pointer tangent around the center when the crop is already rotated', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+        rotation: 90,
+      });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 325, clientY: 175, target }));
+      });
+
+      const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+      expect(encodedSvg).toBeDefined();
+      expect(decodeURIComponent(encodedSvg!)).toContain('rotate(90.0) scale(0.2)');
+    });
+
+    it('wraps the rounded cursor angle at 360 degrees', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(
+          createPointerEvent({ clientX: 199.895, clientY: 25.00004, target })
+        );
+      });
+
+      const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+      expect(encodedSvg).toBeDefined();
+      expect(decodeURIComponent(encodedSvg!)).toContain('rotate(0.0) scale(0.2)');
+    });
 
     it('includes canvas view rotation when orienting the cursor on screen', () => {
       const originalViewRotation = viewStateRef.current.rotation;
@@ -620,7 +675,7 @@ describe('useRect', () => {
 
         const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
-        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45) scale(0.05)');
+        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45.0) scale(0.2)');
       } finally {
         viewStateRef.current.rotation = originalViewRotation;
       }
