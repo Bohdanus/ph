@@ -40,6 +40,7 @@ import {
   KEEP_REF_PREFIX,
   MAX_INVENTORY_AGE_MS,
   PLACEHOLDER_BRANCHES,
+  anchorRefFor,
   dispose,
   isRegenerableIgnored,
   locateInventory,
@@ -1814,11 +1815,85 @@ describe('the anchor is the only recovery point, so it may not be overwritten', 
     expect(calls.some((c) => c[0] === 'worktree' && c[1] === 'remove')).toBe(true);
   });
 
-  it('re-anchors the SAME branch without a suffix, because there is nothing to protect', () => {
-    const h = harness({ [`rev-parse --verify --quiet ${KEEP_REF_PREFIX}fix-task`]: 'abc1234' });
-    dispose('/repo', greenState({ branch: 'fix/task', tip: 'abc1234' }), { run: h.run, fs: h.fs });
-    const written = h.calls.find((c) => c[0] === 'update-ref');
-    expect(written[1]).toBe(`${KEEP_REF_PREFIX}fix-task`);
+  it('reuses an existing same-tip anchor without attempting a create-only update', () => {
+    const baseRef = `${KEEP_REF_PREFIX}fix-task`;
+    const h = harness({ [`rev-parse --verify --quiet ${baseRef}`]: 'abc1234' });
+    const state = greenState({ branch: 'fix/task', tip: 'abc1234' });
+    const dryRunRef = anchorRefFor(state, { run: h.run, cwd: '/repo' });
+    const result = dispose('/repo', state, {
+      run: h.run,
+      fs: h.fs,
+    });
+
+    expect(dryRunRef).toBe(baseRef);
+    expect(result.anchorRef).toBe(dryRunRef);
+    expect(h.calls.some((c) => c[0] === 'update-ref')).toBe(false);
+  });
+
+  it('does not predict an anchor when the tip is unavailable', () => {
+    const h = harness();
+
+    expect(anchorRefFor(greenState({ tip: null }), { run: h.run, cwd: '/repo' })).toBeNull();
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('reuses the primary anchor when another disposer creates it at the same tip', () => {
+    const baseRef = `${KEEP_REF_PREFIX}fix-task`;
+    let updateAttempted = false;
+    const calls = [];
+    const run = (cwd, args) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[3] === baseRef) {
+        return { stdout: updateAttempted ? 'abc1234' : '' };
+      }
+      if (args[0] === 'update-ref' && args[1] === baseRef) {
+        updateAttempted = true;
+        throw new Error('primary ref created concurrently');
+      }
+      return { stdout: '' };
+    };
+    const result = dispose('/repo', greenState({ branch: 'fix/task', tip: 'abc1234' }), {
+      run,
+      fs: { mkdirSync() {}, writeFileSync() {} },
+    });
+
+    expect(result.anchorRef).toBe(baseRef);
+    expect(calls.filter((c) => c[0] === 'update-ref')).toEqual([['update-ref', baseRef, 'abc1234', '']]);
+    expect(calls.some((c) => c[0] === 'update-ref' && c[1] !== baseRef)).toBe(false);
+    expect(result.worktreeRemoved).toBe(true);
+  });
+
+  it('uses a hashed fallback when a different tip wins the primary-ref race', () => {
+    const baseRef = `${KEEP_REF_PREFIX}fix-task`;
+    let updateAttempted = false;
+    let fallbackRef = null;
+    const calls = [];
+    const run = (cwd, args) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[3] === baseRef) {
+        return { stdout: updateAttempted ? 'different-tip' : '' };
+      }
+      if (args[0] === 'update-ref' && args[1] === baseRef) {
+        updateAttempted = true;
+        throw new Error('primary ref created concurrently at a different tip');
+      }
+      if (args[0] === 'update-ref' && args[1] !== baseRef) {
+        fallbackRef = args[1];
+      }
+      return { stdout: '' };
+    };
+    const result = dispose('/repo', greenState({ branch: 'fix/task', tip: 'abc1234' }), {
+      run,
+      fs: { mkdirSync() {}, writeFileSync() {} },
+    });
+
+    expect(fallbackRef).toMatch(new RegExp(`^${baseRef}-g[0-9a-f]{9}$`));
+    expect(result.anchorRef).toBe(fallbackRef);
+    expect(calls.filter((c) => c[0] === 'update-ref')).toEqual([
+      ['update-ref', baseRef, 'abc1234', ''],
+      ['update-ref', fallbackRef, 'abc1234', ''],
+    ]);
+    expect(result.worktreeRemoved).toBe(true);
   });
 });
 
