@@ -660,13 +660,14 @@ function isOpenRouterDailyQuotaError(payload) {
   );
 }
 
-function hasOpenRouterPlatformQuotaError(response, payload, finishReason) {
+function hasOpenRouterQuotaFailure(response, payload, finishReason) {
   if (response?.status !== 200) return false;
   const errors = responseErrorObjects(payload);
   const embeddedLimit =
     errors.length > 0 &&
     (isOpenRouterDailyQuotaError(payload) ||
       openRouterLimitSources(payload).some((source) => source.startsWith('openrouter_')));
+  // Structured error metadata describes this completion; a zero remaining header alone does not invalidate a completed answer.
   const zeroPlatformRemainingOnIncompleteResponse =
     openRouterPlatformRemaining(response) === 0 && finishReason !== 'stop';
   return embeddedLimit || zeroPlatformRemainingOnIncompleteResponse;
@@ -1976,7 +1977,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
     if (
       candidate.source === 'openrouter' &&
       response.ok &&
-      (hasTransientOpenRouterProviderError(payload) || hasOpenRouterPlatformQuotaError(response, payload, finishReason))
+      (hasTransientOpenRouterProviderError(payload) || hasOpenRouterQuotaFailure(response, payload, finishReason))
     ) {
       errors.push(`${candidate.source}/${candidate.model}: ${failureReason(response, payload)}`);
       const retryDecision = await handleOpenRouterFailure({
