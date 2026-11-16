@@ -2961,6 +2961,44 @@ describe('lease renewal when two agents share a branch', () => {
     expect(lock.released_at).toBeNull();
   });
 
+  it('renews claims and file locks in one transaction before sweeping', () => {
+    const ownerWorktree = join(dir, 'wt-atomic-renew-owner');
+    const sweeperWorktree = join(dir, 'wt-atomic-renew-sweeper');
+    mkdirSync(ownerWorktree, { recursive: true });
+    mkdirSync(sweeperWorktree, { recursive: true });
+    const owner = openAs('feat/atomic-renew', ownerWorktree);
+    const sweeper = openAs('feat/atomic-renew-sweeper', sweeperWorktree);
+    sweeper.db.exec('PRAGMA busy_timeout=0');
+    const { id } = owner.createIssue({ title: 'renew both leases together' });
+    owner.claimIssue(id);
+    owner.holdFiles(['src/atomic-renew.ts']);
+    advance(DEFAULT_LEASE_MS + 1);
+
+    const transactionStates = [];
+    const renewClaims = owner.renewOwnClaims.bind(owner);
+    const renewLocks = owner.renewOwnLocks.bind(owner);
+    owner.renewOwnClaims = (options) => {
+      transactionStates.push(owner.db.isTransaction);
+      const renewed = renewClaims(options);
+      // A concurrent doctor must not reclaim the expired lock in the interval
+      // after its claim is renewed but before the lock renewal runs.
+      expect(() => sweeper.doctor()).toThrow(/database is locked/i);
+      return renewed;
+    };
+    owner.renewOwnLocks = (options) => {
+      transactionStates.push(owner.db.isTransaction);
+      return renewLocks(options);
+    };
+
+    const result = owner.autoSweep();
+
+    expect(transactionStates).toEqual([true, true]);
+    expect(result.renewed).toEqual([id]);
+    expect(result.renewedFiles).toEqual(['src/atomic-renew.ts']);
+    expect(result.released).toEqual([]);
+    expect(sweeper.doctor()).toEqual([]);
+  });
+
   it('uses the same supplied timestamp to evaluate locks and claims', () => {
     const ownerWorktree = join(dir, 'wt-doctor-clock-owner');
     mkdirSync(ownerWorktree, { recursive: true });

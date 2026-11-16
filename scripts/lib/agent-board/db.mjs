@@ -2677,8 +2677,34 @@ export class Board {
    */
   autoSweep({ at = this.now(), dryRun = false } = {}) {
     if (dryRun) return { renewed: [], renewedFiles: [], released: this.doctor({ at, dryRun, record: false }) };
-    const renewed = this.renewOwnClaims({ at });
-    const renewedFiles = this.renewOwnLocks({ at });
+    const agentId = this.identity?.agentId;
+    const worktree = this.identity?.worktree;
+    const canRenew = Boolean(agentId && worktree && existsDir(worktree));
+    const claimsNeedRenewal =
+      canRenew &&
+      this.db
+        .prepare(
+          'SELECT lease_until FROM claims WHERE released_at IS NULL AND agent_id = ? AND (worktree IS NULL OR worktree = ?)'
+        )
+        .all(agentId, worktree)
+        .some((claim) => needsLeaseRenewal(claim.lease_until, at, DEFAULT_LEASE_MS));
+    const locksNeedRenewal =
+      canRenew &&
+      this.db
+        .prepare('SELECT expires_at FROM file_locks WHERE released_at IS NULL AND agent_id = ? AND worktree = ?')
+        .all(agentId, worktree)
+        .some((lock) => needsLeaseRenewal(lock.expires_at, at, DEFAULT_LEASE_MS));
+
+    let renewed = [];
+    let renewedFiles = [];
+    if (claimsNeedRenewal || locksNeedRenewal) {
+      // A sweep between these two renewals could reclaim the still-expired lock
+      // after seeing its claim renewed. Keep both lease sets under one writer lock.
+      ({ renewed, renewedFiles } = this.transaction(() => ({
+        renewed: this.renewOwnClaims({ at }),
+        renewedFiles: this.renewOwnLocks({ at }),
+      })));
+    }
     const released = this.doctor({ at, dryRun, record: true });
     return { renewed, renewedFiles, released };
   }
