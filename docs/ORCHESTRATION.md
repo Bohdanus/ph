@@ -1476,6 +1476,15 @@ each affected holder. The normal writers still use `msFromNow`; this is a
 defensive boundary for corrupt or manually altered database rows, not a
 supported deadline format.
 
+`swarm doctor --dry-run --json` also returns an `anomalies` list for active
+claims and locks with unreadable deadlines. These rows remain reserved because
+the deadline alone cannot establish that the holder stopped. A separate
+`findings` entry, such as a missing worktree, is independent reclaim evidence;
+the dry run does not release anything. A command from the matching branch and
+worktree can renew a worktree-scoped malformed lease, replacing its unreadable
+deadline with a valid one. Legacy claims with no recorded worktree retain their
+existing renewal rule; locks without a worktree cannot be renewed this way.
+
 A **claim** renews itself while its worktree exists, and `autoSweep` renews
 before it sweeps. The limit of that ordering: `doctor` also reclaims on **expiry**,
 and renewal only fires when a `swarm` command runs, so it protects an agent that
@@ -1492,9 +1501,12 @@ agent extended a dead colleague's lease and released it in one invocation.
 `--version` return before the board is even built. Four things are worth knowing, because each
 is a way to hold a lock and lose it:
 
-- **Your own rows only.** The `WHERE` clause names your `agent_id`. A lock cannot be kept
-  alive by a peer, and `acquired_at` is deliberately left alone so the log records when the
-  lock was taken rather than when it was last touched.
+- **Your branch and worktree only.** Board identity is the branch, so two sessions on one
+  branch in different worktrees share an `agent_id`. Lock renewal also matches the recorded
+  worktree, preventing one checkout from extending another checkout's locks. Locks without
+  a recorded worktree are not renewed because their holder cannot be established. The
+  `acquired_at` field is deliberately left alone so the log records when the lock was taken
+  rather than when it was last touched.
 - **A worktree path must resolve.** `renewOwnLocks` bails when `identity.worktree` is falsy.
   **That is not the `main`-checkout or detached case**, which is what this section claimed for
   years: `resolveIdentity` fills the field from `git rev-parse --show-toplevel`, which succeeds

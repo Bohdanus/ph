@@ -149,25 +149,13 @@ const ROTATION_CURSOR_BODY = rotationCursorSvgSource
   .replace(/^\s*<svg\b[^>]*>/, '')
   .replace(/<\/svg>\s*$/, '')
   .trim();
-const ROTATION_CURSOR_FALLBACKS = [
-  'ew-resize',
-  'nwse-resize',
-  'ns-resize',
-  'nesw-resize',
-  'ew-resize',
-  'nwse-resize',
-  'ns-resize',
-  'nesw-resize',
-] as const;
-// The 128px artwork spans about 110px; this renders it at about 5.5px, one quarter of its previous width.
-// Transform order: center the 128px source, scale it to about 5.5px, rotate it, then place it at the 64px cursor center; the CSS hotspot is 32,32.
-const ROTATION_CURSOR_ICON_SCALE = 0.05;
-
-const ROTATION_CURSORS = ROTATION_CURSOR_FALLBACKS.map((fallback, index) => {
-  const angle = index * 45;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><g transform="translate(32 32) rotate(${angle}) scale(${ROTATION_CURSOR_ICON_SCALE}) translate(-64 -64)">${ROTATION_CURSOR_BODY}</g></svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 32 32, ${fallback}`;
-});
+const ROTATION_CURSOR_FALLBACKS = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'] as const;
+// The visible 128px artwork spans about 102px, so 0.2 renders it at about 20px.
+const ROTATION_CURSOR_ICON_SCALE = 0.2;
+const ROTATION_CURSOR_ANGLE_PRECISION = 10;
+const ROTATION_CURSOR_ANGLE_BUCKETS = 360 * ROTATION_CURSOR_ANGLE_PRECISION;
+const ROTATION_CURSOR_CACHE_LIMIT = 512;
+const ROTATION_CURSOR_CACHE = new Map<string, string>();
 
 function shortestAngleDelta(degrees: number): number {
   return ((((degrees + 180) % 360) + 360) % 360) - 180;
@@ -176,8 +164,30 @@ function shortestAngleDelta(degrees: number): number {
 function rotationCursorForPoint(point: Point, rect: RectXYSorted): string {
   const viewRotation = Number.isFinite(viewStateRef.current.rotation) ? viewStateRef.current.rotation : 0;
   const tangentAngle = angleFromCenter(rectCenter(rect), point) + viewRotation + 90;
-  const direction = ((Math.round(tangentAngle / 45) % 8) + 8) % 8;
-  return ROTATION_CURSORS[direction] ?? 'ew-resize';
+  if (!Number.isFinite(tangentAngle)) return 'ew-resize';
+
+  const normalizedAngle = ((tangentAngle % 360) + 360) % 360;
+  const angle = (
+    (Math.round(normalizedAngle * ROTATION_CURSOR_ANGLE_PRECISION) % ROTATION_CURSOR_ANGLE_BUCKETS) /
+    ROTATION_CURSOR_ANGLE_PRECISION
+  ).toFixed(1);
+  const cachedCursor = ROTATION_CURSOR_CACHE.get(angle);
+  if (cachedCursor) {
+    ROTATION_CURSOR_CACHE.delete(angle);
+    ROTATION_CURSOR_CACHE.set(angle, cachedCursor);
+    return cachedCursor;
+  }
+
+  const fallbackIndex = ((Math.round(Number(angle) / 45) % 4) + 4) % 4;
+  const fallback = ROTATION_CURSOR_FALLBACKS[fallbackIndex] ?? 'ew-resize';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><g transform="translate(32 32) rotate(${angle}) scale(${ROTATION_CURSOR_ICON_SCALE}) translate(-64 -64)">${ROTATION_CURSOR_BODY}</g></svg>`;
+  const cursor = `url("data:image/svg+xml,${encodeURIComponent(svg)}") 32 32, ${fallback}`;
+  if (ROTATION_CURSOR_CACHE.size >= ROTATION_CURSOR_CACHE_LIMIT) {
+    const oldestAngle = ROTATION_CURSOR_CACHE.keys().next().value;
+    if (oldestAngle !== undefined) ROTATION_CURSOR_CACHE.delete(oldestAngle);
+  }
+  ROTATION_CURSOR_CACHE.set(angle, cursor);
+  return cursor;
 }
 
 /**
@@ -842,10 +852,16 @@ export function useRect({
 
     if (incrementalOverlay) {
       const canvasSize = incrementalCanvasSizeRef.current;
+      const previous = lastIncrementalRectRef.current;
       const needsBasePaint =
         overlayPaintModeRef.current !== 'incremental' ||
         canvasSize.width !== ctx.canvas.width ||
-        canvasSize.height !== ctx.canvas.height;
+        canvasSize.height !== ctx.canvas.height ||
+        // Rotation changes the crop's rasterized footprint, and the first incremental paint has no
+        // prior bounds to restore. Repaint the backing store in either case so no stale pixels can
+        // survive outside the current crop.
+        previous === null ||
+        previous.angle !== angle;
       if (needsBasePaint) {
         clearCanvasBackingStore(ctx);
         if (!hideBlend) {
@@ -856,7 +872,6 @@ export function useRect({
         canvasSize.height = ctx.canvas.height;
         overlayPaintModeRef.current = 'incremental';
       } else {
-        const previous = lastIncrementalRectRef.current;
         if (previous) {
           const dirty = getCropPaintBounds(previous, previous.angle, previous.scale);
           ctx.clearRect(dirty.x, dirty.y, dirty.width, dirty.height);

@@ -1,0 +1,57 @@
+# Overnight salvage handoff — 2026-11-15
+
+## Current state
+
+`origin/main` and the designated local `main` resolve to `6c0feebc3f3a4fb4ae83d9c158b7fe8734f0ba1a`; a direct `git ls-remote origin refs/heads/main` confirmed that tip at 2026-11-15 16:35 UTC.
+
+`audit/salvage-overnight-20261115` contains candidate commit `caf7f6112b66bb5164e07dba8d854fff9f23dd80` and integration merge `639429ed44760c63dc0b8bf8255743025bba8d74`, with parents `caf7f6` and `6c0fee` and tree `40f38d43f770975b3a6093b2a075ed623a04335c`. The merge has the required `Chat: 01a1d75d-5f67-7a90-9378-e07cf74634d4` trailer.
+
+The merge retains the expanded `useRect` cursor regression tests, six Windows-safe `pathToFileURL` CLI entrypoint fixes, the direct CLI orphan-branches regression test, and the related test inventory updates. The candidate's earlier cursor implementation used scale `0.05` and hundredth-degree angles. Latest `origin/main` already provides the requested standard-size cursor (`0.2` artwork scale) and pointer-derived angle at tenth-degree precision, so the merge keeps the newer main implementation and adapts the expanded tests to it. The old handoff's claim that `0.05` was operator-required was incorrect.
+
+Validation on the final candidate tree: `npm run tsc` and `npm run build` passed; `npm run lint:check` passed with existing ESLint warnings; full Vitest passed (449 files, 13,261 passed, 203 expected failures, 22 skipped); the focused crop/cursor suite passed (174 passed, 2 expected failures); the targeted headless crop E2E passed (`2026-11-15T16-14-41-092Z-436`); and the orphan-branches plus test-write-boundaries tests passed (15 tests). The scanner classification was updated to `execFileSync=12` and `rmSync=6` for the direct CLI regression test.
+
+Twenty-two earlier tool-free Kilo Nemotron 3 Ultra completions reported `$0` cost and no OpenRouter inference attempts. A fresh Kilo review request in this continuation exceeded its 12-minute timeout and produced no usable review; the runner then reported an OpenRouter quota snapshot of 704/1000 used (296 remaining) before it was stopped. That attempt is not counted as a completed review.
+
+The task-branch merge commit records why the merge-takeover guard's whole-file warning was bypassed: the candidate cursor implementation was explicitly superseded by the incoming main implementation. Both sides were compared, expanded tests were retained, and the repository validation gates were run separately before committing.
+
+## Landing blocker
+
+`continue-salvage-20261115` still has `MERGE_HEAD=45fcf273f2321991ab2955db1c71442b81383adb`, 12 staged/unstaged paths, and no unmerged paths in the last inspection. `npm run repo:state` reports this as the only mid-operation worktree and blocks landing. Its owner/session liveness is not exposed through this Codex host; do not commit, abort, resolve, or otherwise take over that merge without structured proof that its owner and process tree are dead.
+
+`npm run main:landing -- status` reports the landing lease free, but the lease does not override the `repo:state` hold. Recheck `repo:state`, `origin/main`, and the candidate diff when the external merge clears; only then prepare the pinned landing in the designated main worktree. Do not merge or push `main` while this operation remains.
+
+The overnight-sweep procedure requires a persistent hourly `cron_create`. This host exposes neither `cron_create` nor Kilo `agent_manager`, so no recurring overnight run can be armed here. The worktree, branch, and this handoff preserve the current state for a resumed run.
+
+## Worktree and branch disposition
+
+The latest full read-only inventory snapshot, `2026-11-15T15:27:22.517Z`, recorded 20 worktrees, zero ready to land, 12 disposal candidates, 2 at risk, 3 in use, 2 undecided, and 6 holding uncommitted work. It recorded 42 branch-only refs (12 unmatched patches and 30 ancestors), zero live writer chats, and 3 worktrees derived live. `npm run branches:orphan` reported 12 unmatched local refs. No worktree, branch, or dangling metadata directory was removed.
+
+The at-risk worktrees are `audit-harvest-all-20261114` and `systemic-hardening-disposition-20261115`. The former's staged process-termination change is superseded by stronger current-main handling; the latter contains an untracked review JSON but no unique tracked source delta. Preserve both.
+
+`continue-salvage-20261115` is the active merge blocker above. Also preserve the dirty/detached primary `ph` and `main-sync-` snapshots, external pooled `swift-piper`, and 31 `.kilo/worktrees` directories with missing Git admin records. No metadata repair, pruning, moving, or disposal was attempted.
+
+The ref-by-ref dispositions are:
+
+| Ref                                                                                            | Evidence and disposition                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `origin/audit/pipeline-continuation-20261111`                                                  | Current `windows-platform-tests` workflow and `e2e-timeout-contract` tests cover the Windows script and E2E helper changes.                                                                                                                                                             |
+| `origin/fix/dispose-worktree-main-ref-20261028`                                                | `git cherry` reports seven patch-equivalent commits and no new patch.                                                                                                                                                                                                                   |
+| `origin/fix/inventory-root-align-20261022`                                                     | Current `scripts/lib/worktree-inventory/location.mjs` supplies the shared canonical resolver to inventory and disposal code.                                                                                                                                                            |
+| `origin/fix/self-efficacy-ux-20261017`                                                         | Current `FirstUseTour` has the tour, focus, ARIA, and highlight behavior with tests.                                                                                                                                                                                                    |
+| `origin/reconcile/skills-20261025`                                                             | Its older document moves/deletions are superseded by the current skills index and runtime loaders; no missing source content was identified.                                                                                                                                            |
+| `origin/task/commit-free-docs-cleanup`                                                         | The 76-file snapshot deletes AutoSave and WSL material and rewrites current docs. Its quota wording conflicts with `MODELS.md`; do not cherry-pick it wholesale.                                                                                                                        |
+| `origin/task/e2e-hardening-fresh-20261109` and `origin/test/e2e-committed-text-proof-20261110` | Their older text geometry, screenshot clipping, localhost normalization, and alpha checks are covered by newer current tests, including crop/alpha diagnostics and the text width oracle.                                                                                               |
+| `origin/task/e2e-hardening-next-20261105`                                                      | Its crop parity, reorder waits, platform discovery, duplicate Red Eye assertion, and tablet touch changes are superseded by current crop, E2E runner, platform, and tablet reachability coverage.                                                                                       |
+| `origin/task/small-caps-reopen-20261106`                                                       | Its older `TextToolArea`/`useLayer` behavior removes current retry and failure handling; current implementation and tests are more complete.                                                                                                                                            |
+| `origin/task/stale-work-followup-20261107`                                                     | Current selection-history tests and the `127.0.0.1` E2E server guard cover its undo and loopback changes.                                                                                                                                                                               |
+| `origin/task/toolbar-first-paint-fit-salvage-20261106`                                         | Current `toolbar-fit-store.ts`, `SidebarLeft.tsx`, and tests cover first-paint fit.                                                                                                                                                                                                     |
+| `origin/test/magic-wand-loop-evidence`                                                         | Current tests cover closed-loop selection, blank-document selection, and deselection more fully.                                                                                                                                                                                        |
+| `wsl-mirror/main`                                                                              | Five `git cherry` patches are unmatched, but content comparison found no safe unique delta: current main has stronger Bedrock/pixel tests and inventory checks; its SQL `char(92)` difference is equivalent; the remaining snapshot drops current search safety, behavior, or coverage. |
+
+There is no registered `shape-rotation-handle` worktree. `feat/shape-rotation-handle` is an ancestor branch ref listed in the existing harvest handoff, not an omitted checkout. The older handoff also records that the binary cursor image was not selected and SVG is the current implementation; its scale note is superseded by current `origin/main`.
+
+## Runtime note
+
+The 31 dangling directories have `.git` pointers to missing admin records; the archived patches are not a coherent metadata backup. Follow [Recovering Git metadata](../ORCHESTRATION.md#recovering-git-metadata) before any recovery attempt. Do not repair, prune, move, or remove those directories during this salvage.
+
+The WSL Git binary cannot resolve this Windows checkout's absolute linked-worktree Git directory, and WSL has no native Node installation. Repository work and validation therefore used Git for Windows and Windows Node; do not describe it as Linux-native validation. The active host also provides no persistent scheduler or Kilo agent-manager interface, as noted above.

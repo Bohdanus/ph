@@ -6,6 +6,7 @@ import { isIP } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { completeWithFreeModel } from './free-model-pool.mjs';
 import { toUnicode as punycodeToUnicode } from 'node:punycode';
 import { sanitizeErrorMessage, sanitizeForLogging } from './lib/secrets.mjs';
@@ -981,7 +982,7 @@ export async function main(
   return degraded ? 5 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .then((code) => {
       process.exitCode = code;

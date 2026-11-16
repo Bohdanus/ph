@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { collectOrphanBranches, main, report } from '../orphan-branches.mjs';
 
 vi.setConfig({ testTimeout: 20_000 });
@@ -107,6 +107,24 @@ describe('a branch nobody holds', () => {
     } finally {
       write.mockRestore();
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('runs as a directly invoked CLI with a Windows file path', () => {
+    const root = fixture();
+    try {
+      const scriptPath = resolve(process.cwd(), 'scripts/orphan-branches.mjs');
+      const stdout = execFileSync(process.execPath, [scriptPath, '--json'], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+      expect(JSON.parse(stdout)).toMatchObject({
+        base: 'main',
+        count: 1,
+        branches: [{ name: 'orphan' }],
+      });
+    } finally {
+      rmSync(root, rmOptions);
     }
   });
 

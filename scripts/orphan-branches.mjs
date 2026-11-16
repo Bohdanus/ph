@@ -30,6 +30,7 @@
  * exit 0 is the surface a person trusts most.
  */
 import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 
@@ -148,7 +149,7 @@ function valueOf(argv, flag) {
   return at === -1 ? null : (argv[at + 1] ?? null);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (err) {
