@@ -1441,8 +1441,8 @@ export interface CaptureRegion {
   width: number;
   /** `[CSS]` — pixel height of the same clip. */
   height: number;
-  /** Spatial mask for the exact capture; backdrop colors can be identical to document ink. */
-  mask: PixelMask;
+  /** Spatial mask for the exact capture; backdrop colors can be identical to document ink. Defaults to whole capture. */
+  mask?: PixelMask;
 }
 
 /**
@@ -1518,7 +1518,7 @@ export async function getStrokeAnalysis(
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { width, height, data } = imageData;
   const scale = captureScale(width, height, region);
-  const scanRegion = imageBoundsForMask(imageData, region.mask);
+  const scanRegion = imageBoundsForMask(imageData, region.mask ?? WHOLE_CAPTURE);
   if (!scanRegion) return null;
 
   const occupiedColumns = new Set<number>();
