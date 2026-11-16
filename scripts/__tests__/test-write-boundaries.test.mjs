@@ -8,8 +8,8 @@ const TEST_DIRECTORY = join(import.meta.dirname, '.');
 const REVIEWED = {
   'agent-board.test.mjs': {
     scope:
-      'Temporary board directories and in-memory/test-owned databases; malformed-lease fixtures preserve holder directories, and CLI children use the test board.',
-    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=10 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=21 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
+      'Temporary board directories and test-owned databases; malformed-lease fixtures preserve holder directories, dead-worktree tests remove/recreate only temporary holders, and CLI children use the test board.',
+    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=11 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=29 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
   },
   'agents-citations.test.mjs': {
     scope: 'Subprocess invocation is part of the citation/tooling contract; review its command and cwd.',
