@@ -1303,7 +1303,9 @@ export async function run(
         const output = [
           findings.length === 0
             ? 'nothing stale: no expired or missing-worktree holdings'
-            : `${flags.dry_run ? 'would release' : 'released'} ${findings.length} stale holding(s):`,
+            : `${flags.dry_run ? 'found' : 'released'} ${findings.length} ${flags.dry_run ? 'stale release candidate(s)' : 'stale holding(s)'}${
+                flags.dry_run ? ' (rechecked before release)' : ''
+              }:`,
           ...findings.map(
             (finding) =>
               `  ${finding.kind} ${finding.issue ?? finding.path} — ${finding.agent}${
