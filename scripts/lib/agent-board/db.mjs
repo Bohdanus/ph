@@ -67,6 +67,12 @@ function isLiveDeadline(value, at) {
   return Number.isNaN(until) || until > at;
 }
 
+/** Renew any deadline that cannot safely be shown to have ample time left. */
+function needsLeaseRenewal(value, at, leaseMs) {
+  const until = Date.parse(value);
+  return Number.isNaN(until) || until - at < leaseMs / 2;
+}
+
 /**
  * Default lease. Long enough that an agent mid-refactor does not lose its
  * claim to a heartbeat it did not think to send, short enough that an
@@ -2424,6 +2430,39 @@ export class Board {
   }
 
   /**
+   * List active claims and locks whose deadlines cannot be parsed.
+   *
+   * These rows stay reserved. This read is diagnostic only; it never releases
+   * a row or infers that its holder has stopped.
+   */
+  unreadableLeaseDeadlines() {
+    const anomalies = [];
+    for (const claim of this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL ORDER BY issue_id').all()) {
+      if (!Number.isNaN(Date.parse(claim.lease_until))) continue;
+      anomalies.push({
+        kind: 'unreadable-claim-deadline',
+        issue: claim.issue_id,
+        agent: claim.agent_id,
+        worktree: claim.worktree,
+        deadline: claim.lease_until,
+      });
+    }
+    for (const lock of this.db
+      .prepare('SELECT * FROM file_locks WHERE released_at IS NULL ORDER BY path, agent_id')
+      .all()) {
+      if (!Number.isNaN(Date.parse(lock.expires_at))) continue;
+      anomalies.push({
+        kind: 'unreadable-lock-deadline',
+        path: lock.path,
+        agent: lock.agent_id,
+        worktree: lock.worktree,
+        deadline: lock.expires_at,
+      });
+    }
+    return anomalies;
+  }
+
+  /**
    * Keeps this agent's own claims alive, using the only liveness signal nobody
    * has to remember to send.
    *
@@ -2470,12 +2509,23 @@ export class Board {
     const mine = this.db
       .prepare('SELECT * FROM claims WHERE released_at IS NULL AND agent_id = ? AND (worktree IS NULL OR worktree = ?)')
       .all(agentId, worktree)
-      .filter((claim) => Date.parse(claim.lease_until) - at < leaseMs / 2);
+      .filter((claim) => needsLeaseRenewal(claim.lease_until, at, leaseMs));
+    const renewed = [];
     for (const claim of mine) {
-      this.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run(until, claim.issue_id);
+      // Another process may renew, release, or reassign the row after SELECT.
+      // Compare its owner, worktree, and old deadline so a stale renewal cannot
+      // shorten a newer lease or resurrect a released claim.
+      const result = this.db
+        .prepare(
+          `UPDATE claims SET lease_until = ?
+           WHERE issue_id = ? AND agent_id = ? AND worktree IS ? AND lease_until IS ? AND released_at IS NULL`
+        )
+        .run(until, claim.issue_id, agentId, claim.worktree, claim.lease_until);
+      if (result.changes === 0) continue;
       this.addEvent('claim.renew', { issue: claim.issue_id, message: 'lease extended by presence' });
+      renewed.push(claim.issue_id);
     }
-    return mine.map((claim) => claim.issue_id);
+    return renewed;
   }
 
   /**
@@ -2521,15 +2571,26 @@ export class Board {
     if (!worktree || !existsDir(worktree)) return [];
     const until = msFromNow(leaseMs, at);
     const mine = this.db
-      .prepare('SELECT path, expires_at FROM file_locks WHERE released_at IS NULL AND agent_id = ?')
-      .all(agentId)
-      .filter((lock) => Date.parse(lock.expires_at) - at < leaseMs / 2);
+      .prepare(
+        'SELECT path, worktree, expires_at FROM file_locks WHERE released_at IS NULL AND agent_id = ? AND worktree = ?'
+      )
+      .all(agentId, worktree)
+      .filter((lock) => needsLeaseRenewal(lock.expires_at, at, leaseMs));
     if (mine.length === 0) return [];
+    const renewed = [];
     for (const lock of mine) {
-      this.db
-        .prepare('UPDATE file_locks SET expires_at = ? WHERE path = ? AND agent_id = ?')
-        .run(until, lock.path, agentId);
+      // The old deadline participates in this compare-and-set so a concurrent
+      // re-hold or renewal cannot be overwritten by this SELECT's stale row.
+      const result = this.db
+        .prepare(
+          `UPDATE file_locks SET expires_at = ?
+           WHERE path = ? AND agent_id = ? AND worktree IS ? AND expires_at IS ? AND released_at IS NULL`
+        )
+        .run(until, lock.path, agentId, worktree, lock.expires_at);
+      if (result.changes === 0) continue;
+      renewed.push(lock.path);
     }
+    if (renewed.length === 0) return [];
     /**
      * ONE event for the whole batch, not one per file, and with no `path`.
      *
@@ -2541,10 +2602,10 @@ export class Board {
      * published number in this repository.
      */
     this.addEvent('lock.renew', {
-      message: `${mine.length} file(s)`,
-      data: { files: mine.map((lock) => lock.path) },
+      message: `${renewed.length} file(s)`,
+      data: { files: renewed },
     });
-    return mine.map((lock) => lock.path);
+    return renewed;
   }
 
   /**

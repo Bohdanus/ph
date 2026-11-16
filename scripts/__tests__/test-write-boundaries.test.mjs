@@ -9,7 +9,7 @@ const REVIEWED = {
   'agent-board.test.mjs': {
     scope:
       'Temporary board directories and in-memory/test-owned databases; malformed-lease fixtures preserve holder directories, and CLI children use the test board.',
-    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=9 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=18 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
+    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=10 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=21 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
   },
   'agents-citations.test.mjs': {
     scope: 'Subprocess invocation is part of the citation/tooling contract; review its command and cwd.',
@@ -66,7 +66,7 @@ const REVIEWED = {
   'free-model-pool-external.test.mjs': {
     scope:
       'External-provider, typed transient 5xx, Kilo cost-stop and source-cooldown, OpenRouter quota metadata and UTC-midnight rollover, and keyless catalog fixtures use unique OS temporary directories with finally cleanup.',
-    patterns: `filesystem-write:mkdtemp=11 filesystem-write:rm=11 filesystem-write:writeFile=1`,
+    patterns: `filesystem-write:mkdtemp=12 filesystem-write:rm=12 filesystem-write:writeFile=1`,
   },
   'free-model-pool.test.mjs': {
     scope:
@@ -145,7 +145,7 @@ const REVIEWED = {
   },
   'repo-state-gate.test.mjs': {
     scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=19 filesystem-write:rmSync=7 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=20 filesystem-write:rmSync=9 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
   },
   'session-db-snapshot.test.mjs': {
     scope: 'Snapshot fixtures use temporary databases; copies are explicitly opened read-only.',

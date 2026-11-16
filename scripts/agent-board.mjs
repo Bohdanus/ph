@@ -1299,20 +1299,28 @@ export async function run(
 
       case 'doctor': {
         const findings = board.doctor({ dryRun: Boolean(flags.dry_run) });
-        emit(
-          { findings },
+        const anomalies = board.unreadableLeaseDeadlines();
+        const output = [
           findings.length === 0
-            ? 'nothing stale: every claim and lock is live'
-            : [
-                `${flags.dry_run ? 'would release' : 'released'} ${findings.length} stale holding(s):`,
-                ...findings.map(
-                  (finding) =>
-                    `  ${finding.kind} ${finding.issue ?? finding.path} — ${finding.agent}${
-                      finding.worktree ? ` (${finding.worktree} is gone)` : ''
-                    }`
-                ),
-              ].join('\n')
-        );
+            ? 'nothing stale: no expired or missing-worktree holdings'
+            : `${flags.dry_run ? 'would release' : 'released'} ${findings.length} stale holding(s):`,
+          ...findings.map(
+            (finding) =>
+              `  ${finding.kind} ${finding.issue ?? finding.path} — ${finding.agent}${
+                finding.worktree ? ` (${finding.worktree} is gone)` : ''
+              }`
+          ),
+        ];
+        if (anomalies.length > 0) {
+          output.push(
+            `${anomalies.length} unreadable lease deadline(s); the deadline alone is treated as live and is not reclaim evidence:`,
+            ...anomalies.map(
+              (anomaly) =>
+                `  ${anomaly.kind} ${anomaly.issue ?? anomaly.path} — ${anomaly.agent} (deadline ${JSON.stringify(anomaly.deadline)})`
+            )
+          );
+        }
+        emit({ findings, anomalies }, output.join('\n'));
         return 0;
       }
 
