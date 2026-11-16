@@ -3,7 +3,7 @@ import {
   type BoundingBox,
   CANVAS_REDRAW_POLL_INTERVAL_MS,
   CANVAS_REDRAW_TIMEOUT_MS,
-  canvasOffsetToDocument,
+  documentToCanvasOffset,
   DEFAULT_LINE_CLIP,
   type DominantColor,
   drawLine,
@@ -15,20 +15,25 @@ import {
   hasRedPixels,
   type ImageDataResult,
   isBuffer,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
   loadImageData,
   takeLineScreenshot,
 } from './helpers/canvas-helpers';
-import { cssPointToImage } from './helpers/screenshot-scale';
-import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { cssPointToImage, viewportClip, type ViewportClipOptions } from './helpers/screenshot-scale';
+import { waitForCanvasPixels } from './helpers/canvas-redraw';
+import { documentClipInBox } from './helpers/document-sampling';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
 /** `#960000`, the deterministic red fixture every spec here strokes with. */
 const STROKE_COLOR = '#960000';
+
+/**
+ * Document-space coordinates for the standard test line.
+ * Mirrors the box-relative LINE_* constants (150,150 to 350,150) but expressed in
+ * the 800x600 document space so they are layout-independent.
+ */
+const DOC_LINE_START = { x: 150, y: 150 } as const;
+const DOC_LINE_END = { x: 350, y: 150 } as const;
 
 /**
  * The centre of the stroke in the image `takeLineScreenshot` returns, which crops the
@@ -37,6 +42,22 @@ const STROKE_COLOR = '#960000';
  * spans x 30..230 on row 30 and (130,30) is the middle of the line.
  */
 const STROKE_MIDDLE = { x: 130, y: 30 } as const;
+
+/**
+ * Computes the viewport clip around the document-space line.
+ * 20px padding around the line in box space, matching the pattern in `color.spec.ts`
+ * and `adjustments.spec.ts`.
+ */
+function computeLevelsClip(box: BoundingBox): ViewportClipOptions {
+  const start = documentToCanvasOffset(box, DOC_LINE_START.x, DOC_LINE_START.y);
+  const end = documentToCanvasOffset(box, DOC_LINE_END.x, DOC_LINE_END.y);
+  return viewportClip({
+    x: box.x + Math.min(start.x, end.x) - 20,
+    y: box.y + Math.min(start.y, end.y) - 20,
+    width: Math.abs(end.x - start.x) + 40,
+    height: Math.abs(end.y - start.y) + 40,
+  } as const);
+}
 
 /**
  * Samples a point given in CSS pixels within the line capture.
@@ -71,17 +92,12 @@ async function sampleCssPoint(
 
 type CanvasPixel = { red: number; green: number; blue: number; alpha: number };
 
-async function levelsStrokeCenterDocumentPoint(page: Page, box: BoundingBox) {
-  const documentSize = await getWorkspaceCanvas(page).evaluate((canvas) => {
-    if (!(canvas instanceof HTMLCanvasElement)) {
-      throw new Error('Workspace canvas locator did not resolve to an HTMLCanvasElement');
-    }
-    return {
-      width: canvas.width,
-      height: canvas.height,
-    };
-  });
-  return canvasOffsetToDocument(box, (LINE_START_X + LINE_END_X) / 2, LINE_START_Y, documentSize);
+function levelsStrokeCenterDocumentPoint(): { x: number; y: number } {
+  // The center of the stroke in document space is the midpoint of DOC_LINE_START and DOC_LINE_END
+  return {
+    x: (DOC_LINE_START.x + DOC_LINE_END.x) / 2,
+    y: DOC_LINE_START.y,
+  };
 }
 
 async function readWorkspacePixel(page: Page, point: { x: number; y: number }): Promise<CanvasPixel> {
@@ -102,7 +118,7 @@ async function readWorkspacePixel(page: Page, point: { x: number; y: number }): 
 }
 
 async function waitForRedStroke(page: Page, box: BoundingBox): Promise<void> {
-  await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'red pixels' });
+  await waitForCanvasPixels(page, documentClipInBox(box), hasRedPixels, { description: 'red pixels' });
 }
 
 /**
@@ -139,7 +155,8 @@ async function readRedLine(
   name: string,
   testInfo: TestInfo,
   isSettled: (observed: DominantColor) => boolean,
-  failureMessage: string
+  failureMessage: string,
+  clip?: ViewportClipOptions
 ): Promise<DominantColor> {
   let observed: DominantColor | null = null;
   let attempt = 0;
@@ -148,7 +165,9 @@ async function readRedLine(
       .poll(
         async () => {
           attempt += 1;
-          observed = await dominantRed(await takeLineScreenshot(page, box, `${name}-attempt-${attempt}`, testInfo));
+          observed = await dominantRed(
+            await takeLineScreenshot(page, box, `${name}-attempt-${attempt}`, testInfo, clip)
+          );
           return observed !== null && isSettled(observed);
         },
         {
@@ -214,14 +233,18 @@ async function openLevelsTool(page: Page): Promise<void> {
   await page.getByTestId('image-menu-adjustments-brightness-contrast-button').click();
 }
 
-async function drawLevelsStroke(page: Page, box: BoundingBox, opacity = 0.8): Promise<void> {
+async function drawLevelsStroke(page: Page, box: BoundingBox, opacity = 0.8): Promise<{ clip: ViewportClipOptions }> {
   await clickToolButton(page, 'draw');
   await setForegroundColor(page, STROKE_COLOR, true);
   const opacitySlider = page.locator('#alpha-slider');
   await opacitySlider.fill(String(opacity));
   await expect(opacitySlider).toHaveValue(String(opacity));
-  await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+  const start = documentToCanvasOffset(box, DOC_LINE_START.x, DOC_LINE_START.y);
+  const end = documentToCanvasOffset(box, DOC_LINE_END.x, DOC_LINE_END.y);
+  await drawLine(page, box, start.x, start.y, end.x, end.y);
   await waitForRedStroke(page, box);
+  const clip = computeLevelsClip(box);
+  return { clip };
 }
 
 // The Levels sliders are labelled by a <label for> plus a live value suffix, so their
@@ -258,6 +281,7 @@ test.describe('Levels adjustment', () => {
     // is the only way to get a like-for-like pair: the pre-change colour is not
     // recoverable after the fact.
     const adjustedBox = await remeasureCanvasBox(page);
+    const clip = computeLevelsClip(adjustedBox);
 
     const original = await readRedLine(
       page,
@@ -265,7 +289,8 @@ test.describe('Levels adjustment', () => {
       'levels-original',
       testInfo,
       () => true,
-      'Red line not found on the original stroke through the post-open geometry'
+      'Red line not found on the original stroke through the post-open geometry',
+      clip
     );
     // Without this, both direction assertions compare a reading against itself.
     expect(
@@ -287,7 +312,8 @@ test.describe('Levels adjustment', () => {
       'levels-brightness',
       testInfo,
       (observed) => observed.red < original.red && observed.red === MEASURED_BRIGHTNESS_MINUS_20_RED,
-      'Brightness -20 must darken the line to the exact integer expected from the deterministic fixture'
+      'Brightness -20 must darken the line to the exact integer expected from the deterministic fixture',
+      clip
     );
     expect(afterBrightness.red, 'brightness -20 makes the line darker, not lighter').toBeLessThan(original.red);
     expect(afterBrightness.red, 'brightness -20 is measured at the exact deterministic result').toBe(
@@ -303,7 +329,7 @@ test.describe('Levels adjustment', () => {
     expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
     await drawLevelsStroke(page, box!);
-    const documentPoint = await levelsStrokeCenterDocumentPoint(page, box!);
+    const documentPoint = levelsStrokeCenterDocumentPoint();
 
     // Image ▸ Adjustments ▸ Brightness/Contrast is the item that selects the Levels panel.
     await openLevelsTool(page);
@@ -314,6 +340,7 @@ test.describe('Levels adjustment', () => {
     // See the brightness test: one clip rect for both readings, measured after the
     // panel opened, with the pre-change reading re-taken through it.
     const adjustedBox = await remeasureCanvasBox(page);
+    const clip = computeLevelsClip(adjustedBox);
 
     const original = await readRedLine(
       page,
@@ -321,7 +348,8 @@ test.describe('Levels adjustment', () => {
       'levels-original-contrast',
       testInfo,
       () => true,
-      'Red line not found on the original stroke through the post-open geometry'
+      'Red line not found on the original stroke through the post-open geometry',
+      clip
     );
     // Without this, both direction assertions compare a reading against itself.
     expect(
@@ -342,7 +370,8 @@ test.describe('Levels adjustment', () => {
       'levels-contrast',
       testInfo,
       (observed) => observed.red > original.red,
-      'Contrast +50 must brighten the line'
+      'Contrast +50 must brighten the line',
+      clip
     );
     expect(afterContrast.red, 'contrast +50 makes the line more contrasty, so its red rises').toBeGreaterThan(
       original.red
@@ -363,18 +392,20 @@ test.describe('Levels adjustment', () => {
 
     await drawLevelsStroke(page, box!, 0.8);
 
-    const original = await takeLineScreenshot(page, box!, 'levels-minus-100-original', testInfo);
+    const clip = computeLevelsClip(box!);
+    const original = await takeLineScreenshot(page, box!, 'levels-minus-100-original', testInfo, clip);
     expect(await hasRedPixels(original), 'The stroke should be red before the adjustment').toBe(true);
     // `hasDarkPixels` needs all three channels under 60, and no unadjusted pixel of this
     // stroke is: its red channel remains 206. So the
     // state waited for below cannot have existed before the slider moved.
     expect(
-      await hasDarkPixels(original, await lineScreenshotPixelMask(page, box!)),
+      await hasDarkPixels(original, await lineScreenshotPixelMask(page, box!, clip)),
       'The unadjusted stroke should have no dark pixel'
     ).toBe(false);
 
     await openLevelsTool(page);
     const adjustedBox = await remeasureCanvasBox(page);
+    const adjustedClip = computeLevelsClip(adjustedBox);
 
     const brightness = page.getByRole('slider', { name: /Brightness/ });
     await expect(brightness).toBeVisible();
@@ -383,11 +414,11 @@ test.describe('Levels adjustment', () => {
 
     // A genuine wait for the repaint: the state being waited for did not exist before
     // the slider moved.
-    await waitForCanvasPixels(page, canvasRedrawClip(adjustedBox), hasDarkPixels, {
+    await waitForCanvasPixels(page, documentClipInBox(adjustedBox), hasDarkPixels, {
       description: 'the stroke darkened at brightness -150',
     });
 
-    const after = await takeLineScreenshot(page, adjustedBox, 'levels-minus-100', testInfo);
+    const after = await takeLineScreenshot(page, adjustedBox, 'levels-minus-100', testInfo, adjustedClip);
     expect(
       await hasDarkPixels(after, await lineScreenshotPixelMask(page, adjustedBox)),
       'brightness(0%) must leave the stroke dark'
@@ -414,11 +445,13 @@ test.describe('Levels adjustment', () => {
 
     await drawLevelsStroke(page, box!);
 
-    const before = await dominantRed(await takeLineScreenshot(page, box!, 'levels-default-before', testInfo));
+    const clip = computeLevelsClip(box!);
+    const before = await dominantRed(await takeLineScreenshot(page, box!, 'levels-default-before', testInfo, clip));
     expect(before, 'the stroke should be present before opening Levels').not.toBeNull();
 
     await openLevelsTool(page);
     const adjustedBox = await remeasureCanvasBox(page);
+    const adjustedClip = computeLevelsClip(adjustedBox);
 
     const after = await readRedLine(
       page,
@@ -426,7 +459,8 @@ test.describe('Levels adjustment', () => {
       'levels-default-after',
       testInfo,
       () => true,
-      'Red line not found after opening Levels without moving a slider'
+      'Red line not found after opening Levels without moving a slider',
+      adjustedClip
     );
 
     expect(after.red, 'opening Levels must not change the dominant red').toBe(before!.red);
@@ -444,6 +478,7 @@ test.describe('Levels adjustment', () => {
 
     await openLevelsTool(page);
     const adjustedBox = await remeasureCanvasBox(page);
+    const adjustedClip = computeLevelsClip(adjustedBox);
 
     const brightness = page.getByRole('slider', { name: /Brightness/ });
     await expect(brightness).toBeVisible();
@@ -454,7 +489,8 @@ test.describe('Levels adjustment', () => {
       'levels-original-brightness-150',
       testInfo,
       () => true,
-      'Red line not found on the original stroke through the post-open geometry'
+      'Red line not found on the original stroke through the post-open geometry',
+      adjustedClip
     );
     expect(
       original.red,
@@ -470,7 +506,8 @@ test.describe('Levels adjustment', () => {
       'levels-brightness-150',
       testInfo,
       (observed) => observed.red > original.red && observed.red === 255,
-      'Brightness +150 must drive the red channel to clipped white'
+      'Brightness +150 must drive the red channel to clipped white',
+      adjustedClip
     );
     expect(after.red, 'brightness +150 makes the line brighter, not darker').toBeGreaterThan(original.red);
     expect(after.red, 'brightness +150 clips the red channel to 255').toBe(255);
@@ -485,10 +522,11 @@ test.describe('Levels adjustment', () => {
     expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
     await drawLevelsStroke(page, box!);
-    const documentPoint = await levelsStrokeCenterDocumentPoint(page, box!);
+    const documentPoint = levelsStrokeCenterDocumentPoint();
 
     await openLevelsTool(page);
     const adjustedBox = await remeasureCanvasBox(page);
+    const adjustedClip = computeLevelsClip(adjustedBox);
 
     const contrast = page.getByRole('slider', { name: /Contrast/ });
     await expect(contrast).toBeVisible();
@@ -499,7 +537,8 @@ test.describe('Levels adjustment', () => {
       'levels-original-contrast-minus-50',
       testInfo,
       () => true,
-      'Red line not found on the original stroke through the post-open geometry'
+      'Red line not found on the original stroke through the post-open geometry',
+      adjustedClip
     );
     expect(
       original.red,
@@ -525,7 +564,8 @@ test.describe('Levels adjustment', () => {
             page,
             adjustedBox,
             `levels-contrast-minus-50-attempt-${sampleAttempt}`,
-            testInfo
+            testInfo,
+            adjustedClip
           );
           const sample = await sampleCssPoint(screenshot, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 0, {
             ignoreNearWhite: false,
@@ -567,6 +607,7 @@ test.describe('Levels adjustment', () => {
 
     await openLevelsTool(page);
     const adjustedBox = await remeasureCanvasBox(page);
+    const adjustedClip = computeLevelsClip(adjustedBox);
 
     const brightness = page.getByRole('slider', { name: /Brightness/ });
     const contrast = page.getByRole('slider', { name: /Contrast/ });
@@ -579,7 +620,8 @@ test.describe('Levels adjustment', () => {
       'levels-original-combined',
       testInfo,
       () => true,
-      'Red line not found on the original stroke through the post-open geometry'
+      'Red line not found on the original stroke through the post-open geometry',
+      adjustedClip
     );
     expect(
       original.red,
@@ -597,7 +639,8 @@ test.describe('Levels adjustment', () => {
       'levels-combined',
       testInfo,
       (observed) => observed.red > original.red && observed.red === 255,
-      'Brightness +75 and Contrast +50 must clip the red channel to 255'
+      'Brightness +75 and Contrast +50 must clip the red channel to 255',
+      adjustedClip
     );
     expect(after.red, 'combined adjustment drives the red to clipped white').toBe(255);
   });
