@@ -67,6 +67,16 @@ function isLiveDeadline(value, at) {
   return Number.isNaN(until) || until > at;
 }
 
+/** Renew any deadline that cannot safely be shown to have ample time left. */
+function needsLeaseRenewal(value, at, leaseMs) {
+  const until = Date.parse(value);
+  return Number.isNaN(until) || until - at < leaseMs / 2;
+}
+
+function sameLeaseGeneration(actual, expected, fields) {
+  return fields.every((field) => actual[field] === expected[field]);
+}
+
 /**
  * Default lease. Long enough that an agent mid-refactor does not lose its
  * claim to a heartbeat it did not think to send, short enough that an
@@ -1533,26 +1543,54 @@ export class Board {
     return this.claimIssue(id, { leaseMs, agent: who });
   }
 
-  releaseClaim(id, { agent, force = false, reason = null } = {}) {
+  releaseClaim(id, { agent, force = false, reason = null, expected = null, expectedLocks = null } = {}) {
     const who = agent ?? this.identity?.agentId;
     const at = this.now();
     return this.transaction(() => {
       this.getIssue(id);
       const claim = this.db.prepare('SELECT * FROM claims WHERE issue_id = ? AND released_at IS NULL').get(id);
       if (!claim) return { id, released: false, reason: 'no live claim' };
+      if (expected && !sameLeaseGeneration(claim, expected, ['agent_id', 'worktree', 'claimed_at', 'lease_until'])) {
+        return { id, released: false, reason: 'claim changed since it was inspected' };
+      }
+      if (expected) {
+        const expired = !isLiveDeadline(claim.lease_until, this.now());
+        const gone = claim.worktree ? !existsDir(claim.worktree) : false;
+        if (!expired && !gone) return { id, released: false, reason: 'claim is live' };
+      }
       if (claim.agent_id !== who && !force) {
         throw new BoardError(`${id} is claimed by ${claim.agent_id}, not by ${who}; pass --force to take it`, {
           code: 3,
           detail: { id, holder: claim },
         });
       }
-      this.db
-        .prepare('UPDATE claims SET released_at = ?, lease_until = ? WHERE issue_id = ?')
-        .run(this.iso(), this.iso(), id);
+      const releasedAt = this.iso();
+      const update = expected
+        ? this.db
+            .prepare(
+              `UPDATE claims SET released_at = ?, lease_until = ?
+               WHERE issue_id = ? AND agent_id = ? AND worktree IS ? AND claimed_at = ? AND lease_until = ?
+                 AND released_at IS NULL`
+            )
+            .run(
+              releasedAt,
+              releasedAt,
+              id,
+              expected.agent_id,
+              expected.worktree,
+              expected.claimed_at,
+              expected.lease_until
+            )
+        : this.db
+            .prepare('UPDATE claims SET released_at = ?, lease_until = ? WHERE issue_id = ?')
+            .run(releasedAt, releasedAt, id);
+      if (expected && update.changes === 0) {
+        return { id, released: false, reason: 'claim changed since it was inspected' };
+      }
       // The locks go through the pairing table, so a file this agent is still
       // using for ANOTHER live claim survives. Dropping them by `issue_id` is
       // what told the next agent a file was free while it was being edited.
-      const freed = this.releaseIssueLocksInTransaction(id, at);
+      const freed = this.releaseIssueLocksInTransaction(id, { expectedLocks });
       if (['claimed'].includes(currentStatus(this.db, id))) {
         this.db.prepare('UPDATE issues SET status = ?, updated_at = ? WHERE id = ?').run('open', this.iso(), id);
       }
@@ -1754,7 +1792,8 @@ export class Board {
 
   /**
    * Undoes one issue's hold on its files — and releases the underlying lock
-   * ONLY when no other pairing still needs it.
+   * ONLY when no other pairing still needs it. A sweep may also require the
+   * lock's inspected generation to remain unchanged and independently stale.
    *
    * A lock exists because an agent is IN a file. A pairing says which issues
    * that is for, and the lock outlives any one of them.
@@ -1770,10 +1809,29 @@ export class Board {
    * Closed is the right cut-off because closing releases the pairings itself:
    * verified, finished work is the one state in which nobody is editing.
    */
-  releaseIssueLocksInTransaction(issueId) {
+  releaseIssueLocksInTransaction(issueId, { expectedLocks = null } = {}) {
     const pairings = this.db.prepare('SELECT * FROM issue_locks WHERE issue_id = ?').all(issueId);
     const freed = [];
     for (const pairing of pairings) {
+      const expected = expectedLocks?.find((lock) => lock.path === pairing.path && lock.agent_id === pairing.agent_id);
+      // A pairing or lock created/renewed since the sweep began is active state.
+      // Keep its attribution as well as the lock itself.
+      if (expectedLocks && !expected) continue;
+      if (expected) {
+        const lock = this.db
+          .prepare('SELECT * FROM file_locks WHERE path = ? AND agent_id = ? AND released_at IS NULL')
+          .get(pairing.path, pairing.agent_id);
+        if (!lock) {
+          this.db.prepare('DELETE FROM issue_locks WHERE issue_id = ? AND path = ?').run(issueId, pairing.path);
+          continue;
+        }
+        if (!sameLeaseGeneration(lock, expected, ['path', 'agent_id', 'worktree', 'acquired_at', 'expires_at'])) {
+          continue;
+        }
+        const expired = !isLiveDeadline(lock.expires_at, this.now());
+        const gone = lock.worktree ? !existsDir(lock.worktree) : false;
+        if (!expired && !gone) continue;
+      }
       this.db.prepare('DELETE FROM issue_locks WHERE issue_id = ? AND path = ?').run(issueId, pairing.path);
       const stillInUse = this.db
         .prepare(
@@ -1783,9 +1841,26 @@ export class Board {
         )
         .all(pairing.path, pairing.agent_id);
       if (stillInUse.length > 0) continue;
-      this.db
-        .prepare('UPDATE file_locks SET released_at = ? WHERE path = ? AND agent_id = ? AND released_at IS NULL')
-        .run(this.iso(), pairing.path, pairing.agent_id);
+      const releasedAt = this.iso();
+      const update = expected
+        ? this.db
+            .prepare(
+              `UPDATE file_locks SET released_at = ?
+               WHERE path = ? AND agent_id = ? AND worktree IS ? AND acquired_at = ? AND expires_at = ?
+                 AND released_at IS NULL`
+            )
+            .run(
+              releasedAt,
+              expected.path,
+              expected.agent_id,
+              expected.worktree,
+              expected.acquired_at,
+              expected.expires_at
+            )
+        : this.db
+            .prepare('UPDATE file_locks SET released_at = ? WHERE path = ? AND agent_id = ? AND released_at IS NULL')
+            .run(releasedAt, pairing.path, pairing.agent_id);
+      if (expected && update.changes === 0) continue;
       freed.push(pairing.path);
       this.addEvent('lock.release', {
         issue: issueId,
@@ -1819,7 +1894,7 @@ export class Board {
    * gone; `cascade` is an issue closing or being released and taking its
    * paired locks with it.
    */
-  releaseFiles(paths, { agent, force = false, reason = 'requested' } = {}) {
+  releaseFiles(paths, { agent, force = false, reason = 'requested', expected = null } = {}) {
     const who = agent ?? this.identity?.agentId;
     const list = this.canonicalPaths(paths);
     return this.transaction(() => {
@@ -1828,6 +1903,17 @@ export class Board {
       for (const path of list) {
         const rows = this.db.prepare('SELECT * FROM file_locks WHERE path = ? AND released_at IS NULL').all(path);
         for (const row of rows) {
+          if (
+            expected &&
+            !sameLeaseGeneration(row, expected, ['path', 'agent_id', 'worktree', 'acquired_at', 'expires_at'])
+          ) {
+            continue;
+          }
+          if (expected) {
+            const expired = !isLiveDeadline(row.expires_at, this.now());
+            const gone = row.worktree ? !existsDir(row.worktree) : false;
+            if (!expired && !gone) continue;
+          }
           if (row.agent_id !== who && !force) {
             /**
              * Report the holder instead of skipping in silence.
@@ -1842,9 +1928,26 @@ export class Board {
             blocked.push({ path, agent_id: row.agent_id });
             continue;
           }
-          this.db
-            .prepare('UPDATE file_locks SET released_at = ? WHERE path = ? AND agent_id = ?')
-            .run(this.iso(), path, row.agent_id);
+          const releasedAt = this.iso();
+          const update = expected
+            ? this.db
+                .prepare(
+                  `UPDATE file_locks SET released_at = ?
+                   WHERE path = ? AND agent_id = ? AND worktree IS ? AND acquired_at = ? AND expires_at = ?
+                     AND released_at IS NULL`
+                )
+                .run(
+                  releasedAt,
+                  expected.path,
+                  expected.agent_id,
+                  expected.worktree,
+                  expected.acquired_at,
+                  expected.expires_at
+                )
+            : this.db
+                .prepare('UPDATE file_locks SET released_at = ? WHERE path = ? AND agent_id = ?')
+                .run(releasedAt, path, row.agent_id);
+          if (expected && update.changes === 0) continue;
           /**
            * The pairings go with the lock. Leaving them is not a harmless leak:
            * the "still in use" predicate counts a surviving pairing on a
@@ -2306,86 +2409,75 @@ export class Board {
    */
   doctor({ at = this.now(), dryRun = false, record = true } = {}) {
     const findings = [];
+    const staleRows = [];
     /**
-     * The agents already reported as gone, so the same abandonment is not
-     * counted twice.
-     *
-     * A claim taken with `--issue` and its file lock are ONE event, and the
-     * release loop below proves it: `releaseClaim` cascades into
-     * `releaseIssueLocksInTransaction`, so a second finding would name a release
-     * that already happened, and the log would report two reclaimments for one
-     * abandoned agent. The `hold <path>` with no `--issue` form that the
-     * dead-worktree test below exists for writes NO claim at all, so its holder
-     * is not in this set and its lock is still reported — which is the whole
-     * point of adding the test rather than extending the claim's.
+     * Claims and file locks have independent generations. Snapshot the locks
+     * used by each stale claim so the cascade can release only the rows that
+     * have not been renewed since this scan.
      */
-    const goneAgents = new Set();
+    const lockRows = this.db.prepare('SELECT * FROM file_locks WHERE released_at IS NULL').all();
+    const locksByOwnerAndPath = new Map(lockRows.map((lock) => [`${lock.agent_id}\0${lock.path}`, lock]));
+    // Claims and locks must be judged at one scan instant. Reading the clock
+    // again here can make a lease crossing its deadline appear stale for one
+    // resource and live for the other; it also ignores an explicitly supplied
+    // timestamp used by dry-run callers and deterministic tests.
+    const at2 = at;
     const claims = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
     for (const claim of claims) {
       const expired = !isLiveDeadline(claim.lease_until, at);
       const gone = claim.worktree ? !existsDir(claim.worktree) : false;
       if (!expired && !gone) continue;
-      if (gone) goneAgents.add(claim.agent_id);
-      findings.push({
+      const finding = {
         kind: gone ? 'dead-worktree' : 'expired-lease',
         issue: claim.issue_id,
         agent: claim.agent_id,
         worktree: claim.worktree,
         lease_until: claim.lease_until,
         releaseable: true,
-      });
+      };
+      findings.push(finding);
+      const expectedLocks = this.db
+        .prepare('SELECT path, agent_id FROM issue_locks WHERE issue_id = ? AND agent_id = ?')
+        .all(claim.issue_id, claim.agent_id)
+        .map(({ path, agent_id }) => locksByOwnerAndPath.get(`${agent_id}\0${path}`))
+        .filter(
+          (lock) =>
+            lock && (!isLiveDeadline(lock.expires_at, at2) || (lock.worktree ? !existsDir(lock.worktree) : false))
+        );
+      staleRows.push({ finding, expected: claim, expectedLocks });
     }
-    const at2 = this.now();
-    for (const lock of this.db.prepare('SELECT * FROM file_locks WHERE released_at IS NULL').all()) {
+    for (const lock of lockRows) {
       const expired = !isLiveDeadline(lock.expires_at, at2);
-      /**
-       * The dead-worktree test, for locks, which claims got and locks never did.
-       *
-       * `file_locks.worktree` has been written on every hold since the column
-       * existed and was read by NOTHING — not by `doctor`, not by `liveLocks`,
-       * not by any predicate in this file. So the one reclaimable-by-fact
-       * holding had no fact-based reclaim, and the only thing that could ever
-       * free it was a 45-minute timer. The case that hurt is the form
-       * `AGENTS.md:110` prescribes: `hold <path>` with no `--issue` writes no
-       * `issue_locks` row, so the claim cascade in the release loop below has
-       * nothing to find, and a dead session's lock refused `hold` (exit 4) and
-       * `check` (exit 1) for the rest of its window while naming a branch that
-       * no longer existed.
-       *
-       * Safe for the same reason it is safe for claims: the worktree is written
-       * from the holder's own identity, so it is the HOLDER's directory, and a
-       * directory that is gone is not coming back to renew anything.
-       *
-       * And skipped when the CLAIM loop already reported this agent as gone —
-       * see `goneAgents`. `expired-lock` is untouched by that: a lapsed lock is
-       * a lapsed lock whatever the claim is doing, and the release loop needs
-       * the row to release it.
-       */
+      // Claims and locks have independent leases. Include this row even when
+      // the same agent has a stale claim: it may be an unrelated standalone
+      // hold, and the claim cascade may skip it or may already have released it.
+      // The expected generation prevents the release pass from removing a row
+      // that a live holder renewed after the scan.
       const gone = lock.worktree ? !existsDir(lock.worktree) : false;
       if (!expired && !gone) continue;
-      if (gone && goneAgents.has(lock.agent_id)) continue;
-      findings.push({
+      const finding = {
         kind: gone ? 'dead-worktree-lock' : 'expired-lock',
         path: lock.path,
         agent: lock.agent_id,
         worktree: lock.worktree,
         releaseable: true,
-      });
+      };
+      findings.push(finding);
+      staleRows.push({ finding, expected: lock });
     }
-    // A sweep is a fact about the swarm and the log is the only place it can be
-    // seen from another session. But it is recorded ONLY when it released
-    // something, because the sweep now runs on every command: an event per
-    // invocation turned a six-event board into one that was two-thirds sweep
-    // noise, which is the same flood the tailing fix was written for, and it
-    // made `health` inflate the very number it was reporting.
-    if (record && !dryRun && findings.length > 0) {
-      this.addEvent('doctor.run', {
-        message: findings.length ? `${findings.length} stale holding(s) released` : 'nothing stale',
-      });
-    }
-    if (!dryRun) {
-      for (const finding of findings) {
-        if (finding.issue) this.releaseClaim(finding.issue, { agent: finding.agent, force: true });
+    if (dryRun) return findings;
+
+    const releasedFindings = [];
+    for (const { finding, expected, expectedLocks } of staleRows) {
+      if (finding.issue) {
+        const result = this.releaseClaim(finding.issue, {
+          agent: finding.agent,
+          force: true,
+          expected,
+          expectedLocks,
+        });
+        if (result.released) releasedFindings.push(finding);
+      } else if (finding.path) {
         /**
          * NO `force` here, and that is the whole point of the line.
          *
@@ -2417,10 +2509,56 @@ export class Board {
          * because adding it back would re-open the hole the paragraph above
          * documents, in exchange for nothing this change needs.
          */
-        if (finding.path) this.releaseFiles([finding.path], { agent: finding.agent, reason: 'swept' });
+        const result = this.releaseFiles([finding.path], {
+          agent: finding.agent,
+          reason: 'swept',
+          expected,
+        });
+        if (result.released.includes(finding.path)) releasedFindings.push(finding);
       }
     }
-    return findings;
+
+    // A sweep is recorded only when compare-and-swap actually reclaimed a
+    // holding; a lease refreshed since the scan is not a sweep.
+    if (record && releasedFindings.length > 0) {
+      this.addEvent('doctor.run', {
+        message: `${releasedFindings.length} stale holding(s) released`,
+      });
+    }
+    return releasedFindings;
+  }
+
+  /**
+   * List active claims and locks whose deadlines cannot be parsed.
+   *
+   * These rows stay reserved. This read is diagnostic only; it never releases
+   * a row or infers that its holder has stopped.
+   */
+  unreadableLeaseDeadlines() {
+    const anomalies = [];
+    for (const claim of this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL ORDER BY issue_id').all()) {
+      if (!Number.isNaN(Date.parse(claim.lease_until))) continue;
+      anomalies.push({
+        kind: 'unreadable-claim-deadline',
+        issue: claim.issue_id,
+        agent: claim.agent_id,
+        worktree: claim.worktree,
+        deadline: claim.lease_until,
+      });
+    }
+    for (const lock of this.db
+      .prepare('SELECT * FROM file_locks WHERE released_at IS NULL ORDER BY path, agent_id')
+      .all()) {
+      if (!Number.isNaN(Date.parse(lock.expires_at))) continue;
+      anomalies.push({
+        kind: 'unreadable-lock-deadline',
+        path: lock.path,
+        agent: lock.agent_id,
+        worktree: lock.worktree,
+        deadline: lock.expires_at,
+      });
+    }
+    return anomalies;
   }
 
   /**
@@ -2470,12 +2608,23 @@ export class Board {
     const mine = this.db
       .prepare('SELECT * FROM claims WHERE released_at IS NULL AND agent_id = ? AND (worktree IS NULL OR worktree = ?)')
       .all(agentId, worktree)
-      .filter((claim) => Date.parse(claim.lease_until) - at < leaseMs / 2);
+      .filter((claim) => needsLeaseRenewal(claim.lease_until, at, leaseMs));
+    const renewed = [];
     for (const claim of mine) {
-      this.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run(until, claim.issue_id);
+      // Another process may renew, release, or reassign the row after SELECT.
+      // Compare its owner, worktree, and old deadline so a stale renewal cannot
+      // shorten a newer lease or resurrect a released claim.
+      const result = this.db
+        .prepare(
+          `UPDATE claims SET lease_until = ?
+           WHERE issue_id = ? AND agent_id = ? AND worktree IS ? AND lease_until IS ? AND released_at IS NULL`
+        )
+        .run(until, claim.issue_id, agentId, claim.worktree, claim.lease_until);
+      if (result.changes === 0) continue;
       this.addEvent('claim.renew', { issue: claim.issue_id, message: 'lease extended by presence' });
+      renewed.push(claim.issue_id);
     }
-    return mine.map((claim) => claim.issue_id);
+    return renewed;
   }
 
   /**
@@ -2521,15 +2670,26 @@ export class Board {
     if (!worktree || !existsDir(worktree)) return [];
     const until = msFromNow(leaseMs, at);
     const mine = this.db
-      .prepare('SELECT path, expires_at FROM file_locks WHERE released_at IS NULL AND agent_id = ?')
-      .all(agentId)
-      .filter((lock) => Date.parse(lock.expires_at) - at < leaseMs / 2);
+      .prepare(
+        'SELECT path, worktree, expires_at FROM file_locks WHERE released_at IS NULL AND agent_id = ? AND worktree = ?'
+      )
+      .all(agentId, worktree)
+      .filter((lock) => needsLeaseRenewal(lock.expires_at, at, leaseMs));
     if (mine.length === 0) return [];
+    const renewed = [];
     for (const lock of mine) {
-      this.db
-        .prepare('UPDATE file_locks SET expires_at = ? WHERE path = ? AND agent_id = ?')
-        .run(until, lock.path, agentId);
+      // The old deadline participates in this compare-and-set so a concurrent
+      // re-hold or renewal cannot be overwritten by this SELECT's stale row.
+      const result = this.db
+        .prepare(
+          `UPDATE file_locks SET expires_at = ?
+           WHERE path = ? AND agent_id = ? AND worktree IS ? AND expires_at IS ? AND released_at IS NULL`
+        )
+        .run(until, lock.path, agentId, worktree, lock.expires_at);
+      if (result.changes === 0) continue;
+      renewed.push(lock.path);
     }
+    if (renewed.length === 0) return [];
     /**
      * ONE event for the whole batch, not one per file, and with no `path`.
      *
@@ -2541,10 +2701,10 @@ export class Board {
      * published number in this repository.
      */
     this.addEvent('lock.renew', {
-      message: `${mine.length} file(s)`,
-      data: { files: mine.map((lock) => lock.path) },
+      message: `${renewed.length} file(s)`,
+      data: { files: renewed },
     });
-    return mine.map((lock) => lock.path);
+    return renewed;
   }
 
   /**

@@ -1477,6 +1477,8 @@ describe('provider rate-limit diagnostics', () => {
       {
         choices: [
           {
+            message: { content: 'partial response' },
+            finish_reason: 'error',
             error: {
               code: 429,
               message: 'Daily free-model quota exhausted',
@@ -2401,6 +2403,74 @@ describe('provider rate-limit diagnostics', () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it('stops OpenRouter on an HTTP 200 partial completion with zero platform remaining', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-openrouter-platform-partial-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const poolStateFile = join(directory, 'pool-state.json');
+    const keyInfo = vi.fn(() => ({
+      ok: true,
+      json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+    }));
+    const chat = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: 'partial response' }, finish_reason: 'length' }] }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json', 'x-ratelimit-remaining': '0' },
+        }
+      )
+    );
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo,
+      chat,
+    });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', quarantineFile, poolStateFile })
+      ).rejects.toThrow(/No free model completed/);
+
+      expect(chat).toHaveBeenCalledTimes(1);
+      expect(keyInfo).toHaveBeenCalledTimes(2);
+      const poolState = await readFreeModelPoolState(poolStateFile);
+      expect(poolState.modelFailures).toEqual({});
+      expect(poolState.openRouterExhaustedUtcDate).toBeNull();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('returns a complete HTTP 200 OpenRouter answer when the remaining header is zero', async () => {
+    const chat = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          model: 'r1:free',
+          choices: [{ message: { content: 'complete answer' }, finish_reason: 'stop' }],
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json', 'x-ratelimit-remaining': '0' },
+        }
+      )
+    );
+    const keyInfo = vi.fn(() => ({
+      ok: true,
+      json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+    }));
+    const fetchImpl = catalogFetch({ kilo: [], openrouter: [openRouterRow('r1')], keyInfo, chat });
+
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).resolves.toMatchObject({
+      source: 'openrouter',
+      model: 'r1:free',
+      content: 'complete answer',
+      finishReason: 'stop',
+    });
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(keyInfo).toHaveBeenCalledTimes(1);
   });
 
   it.each([

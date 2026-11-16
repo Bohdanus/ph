@@ -732,8 +732,13 @@ unreadable rather than as clean. `npm run dispose` refuses on exactly those inpu
 a report that answered them with exit 0 would be the surface a person trusts more.
 
 **Run the full report before you believe the repository is quiet.** The default command exits
-non-zero when anything is in progress; use it before a sweep, cleanup, or when you need to inspect
-the whole fleet. Its exit status is not a main-landing gate. For a main landing, run
+non-zero when operation markers, unresolved index paths, or unreadable worktree state need
+attention; use it before a sweep, cleanup, or when you need to inspect the whole fleet. An
+`AUTO_MERGE`-only finding is labeled as a marker without a primary operation marker, rather than
+as an active operation. The marker alone does not prove that an operation is active or stale; it
+remains visible and non-zero until its owner reviews it and completes or recovers the worktree.
+Use the owner-aware recovery procedure only after establishing that the marker is stale.
+The full report's exit status is not a main-landing gate. For a main landing, run
 `npm run repo:state -- --for-landing <source-branch>` as the operation-scope check, so an unrelated
 branch operation does not become a manual hard stop on an independent landing.
 
@@ -761,10 +766,10 @@ decisive reason is behavioural: a hook would block every push in the repository
 because _some other_ worktree is mid-merge, and a gate that punishes the whole swarm
 for one session's state gets `--no-verify`'d, after which it protects nothing.
 
-**It reports WHAT is in progress and never WHOSE it is.** git does not record that
-either, so `WORKTREES.json` carries a chat-recency signal for it. Establish the owner
-before you intervene: the worktree measured above was live, and an abort would have
-destroyed a session's in-flight work.
+**It reports Git operation markers and unresolved paths, but never WHOSE they are.**
+Git does not record that, so `WORKTREES.json` carries a chat-recency signal for them.
+Establish the owner before you intervene: the worktree measured above was live, and an
+abort would have destroyed a session's in-flight work.
 
 **`MERGE_HEAD` with an index that no longer has unmerged paths is the dangerous
 shape, and the report warns about it by name.** Every conflict resolved, nothing
@@ -772,7 +777,7 @@ committed. `git commit` lands an unattended resolution; `git merge --abort` thro
 resolution away. Both are one command away, and neither is distinguishable from the
 index alone. Decide in that worktree, from inside it — never from the main checkout.
 
-**`npm run dispose` refuses a worktree with an operation in progress**, because
+**`npm run dispose` refuses a worktree with operation markers or unresolved state**, because
 removing the worktree deletes the state files and there is no reflog entry and
 nothing for `git fsck` to recover. It also refuses when it could not read that state,
 and when no state was supplied for it at all: an absent signal is not a clear
@@ -1471,6 +1476,17 @@ each affected holder. The normal writers still use `msFromNow`; this is a
 defensive boundary for corrupt or manually altered database rows, not a
 supported deadline format.
 
+`swarm doctor --dry-run --json` also returns an `anomalies` list for active
+claims and locks with unreadable deadlines. These rows remain reserved because
+the deadline alone cannot establish that the holder stopped. A separate
+`findings` entry, such as a missing worktree, is independent reclaim evidence;
+the dry run does not release anything. A command from the matching branch and
+worktree can renew a worktree-scoped malformed lease, replacing its unreadable
+deadline with a valid one. Legacy claims with no recorded worktree retain their
+existing renewal rule; locks without a worktree cannot be renewed this way.
+The dry run lists point-in-time candidates; a later sweep rechecks the lease
+generation, so a candidate renewed in between is kept.
+
 A **claim** renews itself while its worktree exists, and `autoSweep` renews
 before it sweeps. The limit of that ordering: `doctor` also reclaims on **expiry**,
 and renewal only fires when a `swarm` command runs, so it protects an agent that
@@ -1487,9 +1503,12 @@ agent extended a dead colleague's lease and released it in one invocation.
 `--version` return before the board is even built. Four things are worth knowing, because each
 is a way to hold a lock and lose it:
 
-- **Your own rows only.** The `WHERE` clause names your `agent_id`. A lock cannot be kept
-  alive by a peer, and `acquired_at` is deliberately left alone so the log records when the
-  lock was taken rather than when it was last touched.
+- **Your branch and worktree only.** Board identity is the branch, so two sessions on one
+  branch in different worktrees share an `agent_id`. Lock renewal also matches the recorded
+  worktree, preventing one checkout from extending another checkout's locks. Locks without
+  a recorded worktree are not renewed because their holder cannot be established. The
+  `acquired_at` field is deliberately left alone so the log records when the lock was taken
+  rather than when it was last touched.
 - **A worktree path must resolve.** `renewOwnLocks` bails when `identity.worktree` is falsy.
   **That is not the `main`-checkout or detached case**, which is what this section claimed for
   years: `resolveIdentity` fills the field from `git rev-parse --show-toplevel`, which succeeds
@@ -1502,11 +1521,18 @@ is a way to hold a lock and lose it:
   half-lease threshold. That threshold is what makes it safe to reason about: a lock is never
   extended before it is half gone, so a stale row cannot be kept alive by a command that has
   nothing to do with the file.
-- **The sweep is no longer the hazard it was.** `doctor` releases each expired row through
-  `releaseFiles([finding.path], { agent: finding.agent, reason: 'swept' })` — with **no
-  `force`** — so the `agent_id !== who` guard still applies and a live holder on the same path
-  is not swept out from under itself. The key is `(path, agent_id)`, so two live rows on one
-  path are schema-legal, and `doctor` iterates every live row rather than the first.
+- **The sweep releases the generation it inspected.** Claims and locks are rechecked inside
+  their write transaction, and the update matches the inspected owner, worktree, and lease
+  timestamps. If another command renewed or replaced a row after the scan, the sweep leaves it
+  alone and does not report a release. A stale claim cascade releases only paired locks that are
+  independently stale; a live file lock survives even when the claim lease has expired. Each
+  standalone lock remains an independent candidate even when its agent also has a stale claim.
+  `releaseFiles` still runs without `force`, and the `(path, agent_id)` key allows two rows for one
+  path; `doctor` iterates every inspected row rather than the first.
+
+This closes the scan-then-release race between separate board processes. It does not extend the
+lease of an agent that stops running `swarm` for half a lease; the owner still needs an activity
+signal for work that can run longer than the renewal window.
 
 What is left is the same limit a claim has: an agent that stops running `swarm` for a
 half-lease loses its locks, and the fix is an activity signal rather than a longer TTL.

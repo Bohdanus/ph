@@ -30,13 +30,26 @@ import {
 } from '../mirror-e2e.mjs';
 import { validateE2ESpec } from '../validate-e2e-spec.mjs';
 
-const baselineWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/capture-linux-baselines.yml'), 'utf8');
-const platformBaselineWorkflow = readFileSync(
-  resolve(process.cwd(), '.github/workflows/capture-platform-export-baselines.yml'),
-  'utf8'
+function normalizeWorkflowText(text) {
+  return text.replace(/\r\n?/g, '\n');
+}
+
+function readWorkflow(path) {
+  return normalizeWorkflowText(readFileSync(path, 'utf8'));
+}
+
+const baselineWorkflow = readWorkflow(resolve(process.cwd(), '.github/workflows/capture-linux-baselines.yml'));
+const platformBaselineWorkflow = readWorkflow(
+  resolve(process.cwd(), '.github/workflows/capture-platform-export-baselines.yml')
 );
-const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
-const focusedWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/focused-e2e.yml'), 'utf8');
+const ciWorkflow = readWorkflow(resolve(process.cwd(), '.github/workflows/ci.yml'));
+const focusedWorkflow = readWorkflow(resolve(process.cwd(), '.github/workflows/focused-e2e.yml'));
+const workflowFiles = [
+  ['capture-linux-baselines.yml', baselineWorkflow],
+  ['capture-platform-export-baselines.yml', platformBaselineWorkflow],
+  ['ci.yml', ciWorkflow],
+  ['focused-e2e.yml', focusedWorkflow],
+];
 
 function runGit(cwd, args, input) {
   const commandArgs = basename(cwd) === 'mirror.git' ? ['-c', 'safe.bareRepository=all', ...args] : args;
@@ -182,6 +195,30 @@ describe('Linux baseline promotion workflow', () => {
 });
 
 describe('cross-platform baseline artifact workflow', () => {
+  it('normalizes Windows CRLF checkouts before inspecting workflow sections', () => {
+    const workflowDirectory = mkdtempSync(join(tmpdir(), 'mirror-e2e-workflows-'));
+    try {
+      const windowsWorkflows = new Map();
+      for (const [filename, workflow] of workflowFiles) {
+        const workflowPath = join(workflowDirectory, filename);
+        writeFileSync(workflowPath, workflow.replace(/\n/g, '\r\n'));
+        const windowsWorkflow = readWorkflow(workflowPath);
+        expect(windowsWorkflow, `${filename} should preserve its contents after newline normalization`).toBe(workflow);
+        windowsWorkflows.set(filename, windowsWorkflow);
+      }
+      const windowsWorkflow = windowsWorkflows.get('capture-platform-export-baselines.yml');
+      const concurrencyIndex = windowsWorkflow.indexOf('\n\nconcurrency:');
+      const captureIndex = windowsWorkflow.indexOf('  capture:\n');
+      expect(concurrencyIndex).toBeGreaterThan(0);
+      expect(captureIndex).toBeGreaterThan(0);
+      const triggerSection = windowsWorkflow.slice(0, concurrencyIndex);
+      expect(triggerSection.match(/^  [a-z_-]+:/gm)).toEqual(['  workflow_dispatch:']);
+      expect(windowsWorkflow.slice(captureIndex)).toContain('fromJSON(needs.validate.outputs.platforms)');
+    } finally {
+      rmSync(workflowDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('restricts manual captures to the compute mirror trusted main revision', () => {
     const triggerSection = platformBaselineWorkflow.slice(0, platformBaselineWorkflow.indexOf('\n\nconcurrency:'));
     expect(triggerSection.match(/^  [a-z_-]+:/gm)).toEqual(['  workflow_dispatch:']);

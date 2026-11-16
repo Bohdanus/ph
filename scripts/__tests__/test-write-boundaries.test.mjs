@@ -9,7 +9,7 @@ const REVIEWED = {
   'agent-board.test.mjs': {
     scope:
       'Temporary board directories and in-memory/test-owned databases; malformed-lease fixtures preserve holder directories, and CLI children use the test board.',
-    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=9 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=18 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
+    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=10 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=21 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
   },
   'agents-citations.test.mjs': {
     scope: 'Subprocess invocation is part of the citation/tooling contract; review its command and cwd.',
@@ -65,8 +65,8 @@ const REVIEWED = {
   },
   'free-model-pool-external.test.mjs': {
     scope:
-      'External-provider, typed transient 5xx, Kilo cost-stop and source-cooldown, OpenRouter quota metadata and UTC-midnight rollover, and keyless catalog fixtures use unique OS temporary directories with finally cleanup.',
-    patterns: `filesystem-write:mkdtemp=11 filesystem-write:rm=11 filesystem-write:writeFile=1`,
+      'External-provider, typed transient 5xx, Kilo cost-stop and source-cooldown, OpenRouter quota metadata and UTC-midnight rollover, and keyless catalog fixtures use unique OS temporary directories with finally cleanup; keyless catalog fixture files are removed with their temporary directory.',
+    patterns: `filesystem-write:mkdtemp=12 filesystem-write:rm=12 filesystem-write:writeFile=1`,
   },
   'free-model-pool.test.mjs': {
     scope:
@@ -122,8 +122,9 @@ const REVIEWED = {
     patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=54 filesystem-write:mkdirSync=20 filesystem-write:copyFileSync=2 filesystem-write:chmodSync=28 filesystem-write:rmSync=7 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
   },
   'mirror-e2e.test.mjs': {
-    scope: 'Mirror and git fixtures use temporary repositories and directories.',
-    patterns: `subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=7 filesystem-write:mkdirSync=4 filesystem-write:rmSync=11`,
+    scope:
+      'Mirror and git fixtures use temporary repositories; the workflow newline regression uses a temporary CRLF fixture.',
+    patterns: `subprocess:spawnSync=3 filesystem-write:mkdtempSync=3 filesystem-write:writeFileSync=8 filesystem-write:mkdirSync=4 filesystem-write:rmSync=12`,
   },
   'orphan-branches.test.mjs': {
     scope:
@@ -145,8 +146,9 @@ const REVIEWED = {
     patterns: `subprocess:execFileSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=40 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=4 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=2`,
   },
   'repo-state-gate.test.mjs': {
-    scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=19 filesystem-write:rmSync=7 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
+    scope:
+      'Git and filesystem fixtures use temporary repositories; child cwd and environment are reviewed, and fixture repo/worktree paths are removed only within scratch roots cleaned by afterEach.',
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=20 filesystem-write:rmSync=9 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
   },
   'session-db-snapshot.test.mjs': {
     scope: 'Snapshot fixtures use temporary databases; copies are explicitly opened read-only.',

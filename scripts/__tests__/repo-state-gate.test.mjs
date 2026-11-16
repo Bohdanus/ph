@@ -210,9 +210,11 @@ describe('readOperations reads what git actually writes', () => {
     // The refusal-free direction: a conflicting merge exits non-zero, and this test
     // needs the state that failure leaves behind rather than the failure itself.
     const operations = readOperations(resolveGitDir(repo));
+    expect(existsSync(join(resolveGitDir(repo), 'AUTO_MERGE'))).toBe(true);
     expect(operations).toEqual([
       { operation: 'merge', marker: 'MERGE_HEAD', value: git(repo, 'rev-parse', 'theirs').trim() },
     ]);
+    expect(report(repo).err).toContain('in progress: merge  [MERGE_HEAD]');
   });
 
   it('reports the paths the index cannot resolve, which porcelain calls modifications', () => {
@@ -224,6 +226,22 @@ describe('readOperations reads what git actually writes', () => {
     // parser in `worktree-inventory` treats a non-`??` line as modified.
     expect(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' })).toContain('UU f.txt');
     expect(unmergedPaths(repo)).toEqual(['f.txt']);
+  });
+
+  it('keeps unresolved index paths blocking when no operation marker remains', () => {
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    mergeThatConflicts(repo, 'theirs');
+    const gitDir = resolveGitDir(repo);
+    rmSync(join(gitDir, 'MERGE_HEAD'), { force: true });
+    rmSync(join(gitDir, 'AUTO_MERGE'), { force: true });
+
+    const r = report(repo);
+
+    expect(readOperations(gitDir)).toEqual([]);
+    expect(unmergedPaths(repo)).toEqual(['f.txt']);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('unmerged in the index: 1 path(s)');
+    expect(r.err).toContain('no operation marker');
   });
 
   it('reports nothing for a worktree with no operation in progress', () => {
@@ -686,23 +704,28 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(unmergedPaths(repo)).toEqual([]);
   });
 
-  it('names the unmerged paths and detects AUTO_MERGE as an unnamed in-progress operation', () => {
+  it('names unmerged paths and reports AUTO_MERGE as an unpaired marker', () => {
     const repo = addConflictingBranch(makeRepo(), 'theirs');
     const path = addWorktree(repo, 'linked');
     // The merge is started IN the linked worktree, so the conflict belongs to it, and
     // then `MERGE_HEAD` is removed by hand — the shape a half-finished `git merge
     // --quit`, a hand-unwound merge, or an `am` with a gone queue leaves behind.
-    // `AUTO_MERGE` survives this removal, so the fallback reports the operation
-    // as in-progress rather than as marker-less.
+    // `AUTO_MERGE` survives this removal, so the report identifies the marker
+    // without claiming that it proves an active operation.
     git(path, 'checkout', '-B', 'wt/linked');
     mergeThatConflicts(path, 'theirs');
     rmSync(join(resolveGitDir(path), 'MERGE_HEAD'), { force: true });
 
     const r = report(repo);
     expect(r.code).toBe(1);
-    // The operation IS detected — AUTO_MERGE is present even with no primary marker.
+    // The marker IS detected — AUTO_MERGE is present even with no primary marker.
     expect(r.err).toContain('AUTO_MERGE');
-    expect(r.err).toContain('in-progress');
+    expect(r.err).toContain('AUTO_MERGE marker has no primary operation marker');
+    expect(r.err).toMatch(
+      /A marker does not\s+identify its owner or prove that its owner has stopped or that the marker is stale/
+    );
+    expect(r.err).not.toContain('orphan');
+    expect(r.err).not.toContain('mid-operation');
     expect(r.err).toContain('f.txt');
     // No abort command is named for the unnamed operation, so no destructive
     // warning fires — the operator is told to decide by hand.
@@ -712,7 +735,7 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.err).not.toContain('repo:state:recover-auto-merge');
   });
 
-  it('prints guarded recovery preflight for a clean orphan marker in a non-main worktree', () => {
+  it('keeps default repo state blocking and prints guarded recovery preflight for an AUTO_MERGE-only marker', () => {
     const repo = makeRepo();
     const path = addWorktree(repo, 'linked');
     const tree = git(path, 'rev-parse', 'HEAD^{tree}');
@@ -720,7 +743,10 @@ describe('the report says which remedy applies, and warns about the destructive 
 
     const r = report(repo);
     expect(r.code).toBe(1);
+    expect(r.err).not.toContain('in progress:');
+    expect(r.err).toContain('AUTO_MERGE marker has no primary operation marker');
     expect(r.err).toContain('unique `branch refs/heads/main` entry in `git worktree list --porcelain`');
+    expect(r.err).toContain("from that target worktree's root");
     expect(r.err).toContain('keeping the current directory at this target worktree root');
     expect(r.err).toContain(
       'node "<absolute-main-worktree>/scripts/recover-stale-auto-merge.mjs" --expected-head "$(git rev-parse HEAD)"'
@@ -786,6 +812,27 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(reportedPaths).toHaveLength(1);
     expect(r.err).toContain('unrelated worktree; preserved and non-blocking');
     expect(r.err).toContain('MERGE_HEAD');
+  });
+
+  it('reports an unrelated unpaired AUTO_MERGE marker while allowing the scoped landing', () => {
+    const repo = makeRepo();
+    addWorktree(repo, 'candidate');
+    const unrelated = addWorktree(repo, 'unrelated');
+    const marker = join(resolveGitDir(unrelated), 'AUTO_MERGE');
+    writeFileSync(marker, `${git(unrelated, 'rev-parse', 'HEAD^{tree}').trim()}\n`);
+
+    const r = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.err).toContain('AUTO_MERGE marker has no primary operation marker');
+    expect(r.err).toContain('unrelated worktree; preserved and non-blocking');
+    expect(existsSync(marker)).toBe(true);
   });
 
   it('does not let a preserved non-designated main worktree veto the registered main landing checkout', () => {

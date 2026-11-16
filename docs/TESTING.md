@@ -34,10 +34,12 @@ forgotten it. Two rows have weaker coverage than the table implies:
 - `--debug` is an **`ask`**, not a `deny`, at the permission layer, so approving
   the prompt is possible — and the `global-setup.ts` argv guard throws anyway, so
   the run still does not start headed. Layered, not open.
-- `test.use({ headless: false })` **inside a single spec file is blocked by
-  nothing.** `global-setup.ts` inspects the _project_ scope and names the per-spec
-  hole explicitly. Read the table's last row as "do not do this", not as
-  "something will stop you".
+- `test.use({ headless: false })` inside a spec is below the scope visible to
+  `global-setup.ts`. `e2e/helpers/__tests__/global-setup.unit.test.ts` derives the
+  Playwright spec tree and rejects direct headed overrides in CI. This is a
+  source-level regression guard, not a runtime sandbox: dynamically constructed
+  options or an alternate test API can evade static detection, so keep headed
+  browser options out of specs and use only the operator-owned headed command.
 
 ## Commands
 
