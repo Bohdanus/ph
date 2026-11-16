@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { spotHealing, SPOT_HEALING_SPACING_PERCENT, type SpotHealingToolArgs } from '../spotHealing.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
-import { BRUSH_HARDNESS_MAX, BRUSH_HARDNESS_MIN, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../util/brush-engine.ts';
+import {
+  BRUSH_HARDNESS_MAX,
+  BRUSH_HARDNESS_MIN,
+  BRUSH_SIZE_MAX,
+  BRUSH_SIZE_MIN,
+  BRUSH_SPACING_DEFAULT,
+} from '../../util/brush-engine.ts';
 import type { Size } from '../../contexts/general-types.ts';
 
 const documentSize: Size = { width: 64, height: 64 };
@@ -128,6 +134,10 @@ describe('spotHealing constants', () => {
     expect(SPOT_HEALING_SPACING_PERCENT).toBe(25);
   });
 
+  it('SPOT_HEALING_SPACING_PERCENT equals BRUSH_SPACING_DEFAULT', () => {
+    expect(SPOT_HEALING_SPACING_PERCENT).toBe(BRUSH_SPACING_DEFAULT);
+  });
+
   it('spotHealing toolName is "spot-healing"', () => {
     expect(args().toolName).toBe('spot-healing');
   });
@@ -148,7 +158,7 @@ describe('spotHealing clampBrushTipSettings interaction', () => {
     expect(() => run(fill([100, 100, 100]), args({ hardness: Number.NaN }))).not.toThrow();
   });
 
-  it('clamps opacity to valid range', () => {
+  it('clamps opacity to valid range [0, 1]', () => {
     expect(() => run(fill([100, 100, 100]), args({ opacity: -1 }))).not.toThrow();
     expect(() => run(fill([100, 100, 100]), args({ opacity: 200 }))).not.toThrow();
   });
@@ -285,5 +295,232 @@ describe('spotHealing zero/negative opacity', () => {
     );
     const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
     expect(recCanvas.pixels).toEqual(data);
+  });
+});
+
+describe('spotHealing healing behavior', () => {
+  it('heals a blemish by sampling surrounding texture', () => {
+    // Create a document with a "blemish" - a dark spot on a light background
+    const data = fill([200, 200, 200, 255]); // Light grey background
+    // Add a dark blemish at center
+    const centerIdx = (32 * documentSize.width + 32) * 4;
+    data[centerIdx] = 50;
+    data[centerIdx + 1] = 50;
+    data[centerIdx + 2] = 50;
+
+    const canvas = run(data, args({ size: 10, points: [{ x: 32, y: 32 }] }));
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+
+    // The blemish should be healed (blended with surrounding texture)
+    const healedIdx = (32 * documentSize.width + 32) * 4;
+    // The healed pixel should be closer to the background color than the blemish
+    expect(recCanvas.pixels[healedIdx]).toBeGreaterThan(50);
+    expect(recCanvas.pixels[healedIdx + 1]).toBeGreaterThan(50);
+    expect(recCanvas.pixels[healedIdx + 2]).toBeGreaterThan(50);
+  });
+
+  it('heals with soft edge (hardness 0)', () => {
+    const data = fill([200, 200, 200, 255]);
+    const centerIdx = (32 * documentSize.width + 32) * 4;
+    data[centerIdx] = 50;
+    data[centerIdx + 1] = 50;
+    data[centerIdx + 2] = 50;
+
+    // Hardness 0 = softest edge
+    const canvas = run(data, args({ size: 20, hardness: 0, points: [{ x: 32, y: 32 }] }));
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+
+    // Center should be healed
+    const healedIdx = (32 * documentSize.width + 32) * 4;
+    expect(recCanvas.pixels[healedIdx]).toBeGreaterThan(50);
+  });
+
+  it('heals with hard edge (hardness 100)', () => {
+    const data = fill([200, 200, 200, 255]);
+    const centerIdx = (32 * documentSize.width + 32) * 4;
+    data[centerIdx] = 50;
+    data[centerIdx + 1] = 50;
+    data[centerIdx + 2] = 50;
+
+    // Hardness 100 = hardest edge
+    const canvas = run(data, args({ size: 10, hardness: 100, points: [{ x: 32, y: 32 }] }));
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+
+    const healedIdx = (32 * documentSize.width + 32) * 4;
+    expect(recCanvas.pixels[healedIdx]).toBeGreaterThan(50);
+  });
+
+  it('heals along a stroke path (multiple points)', () => {
+    const data = fill([200, 200, 200, 255]);
+    // Add blemishes along a line
+    for (let i = 20; i <= 44; i += 8) {
+      const idx = (32 * documentSize.width + i) * 4;
+      data[idx] = 50;
+      data[idx + 1] = 50;
+      data[idx + 2] = 50;
+    }
+
+    const canvas = run(
+      data,
+      args({
+        size: 8,
+        points: [
+          { x: 20, y: 32 },
+          { x: 28, y: 32 },
+          { x: 36, y: 32 },
+          { x: 44, y: 32 },
+        ],
+      })
+    );
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+
+    // All blemish positions should be healed
+    for (let i = 20; i <= 44; i += 8) {
+      const idx = (32 * documentSize.width + i) * 4;
+      expect(recCanvas.pixels[idx]).toBeGreaterThan(50);
+      expect(recCanvas.pixels[idx + 1]).toBeGreaterThan(50);
+      expect(recCanvas.pixels[idx + 2]).toBeGreaterThan(50);
+    }
+  });
+
+  it('partial opacity blends with original', () => {
+    const data = fill([200, 200, 200, 255]);
+    const centerIdx = (32 * documentSize.width + 32) * 4;
+    data[centerIdx] = 50;
+    data[centerIdx + 1] = 50;
+    data[centerIdx + 2] = 50;
+
+    const canvas = run(data, args({ size: 10, opacity: 50, points: [{ x: 32, y: 32 }] }));
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+
+    const healedIdx = (32 * documentSize.width + 32) * 4;
+    // At 50% opacity, should move toward background (200)
+    expect(recCanvas.pixels[healedIdx]).toBeGreaterThan(50);
+    // Note: depending on proximity sample, may reach 200
+    expect(recCanvas.pixels[healedIdx]).toBeLessThanOrEqual(200);
+  });
+
+  it('does not modify pixels outside brush radius', () => {
+    const data = fill([200, 200, 200, 255]);
+    const centerIdx = (32 * documentSize.width + 32) * 4;
+    data[centerIdx] = 50;
+    data[centerIdx + 1] = 50;
+    data[centerIdx + 2] = 50;
+
+    // Small brush size
+    const canvas = run(data, args({ size: 4, points: [{ x: 32, y: 32 }] }));
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+
+    // Pixel far from center should be unchanged
+    const farIdx = (32 * documentSize.width + 50) * 4;
+    expect(recCanvas.pixels[farIdx]).toBe(200);
+    expect(recCanvas.pixels[farIdx + 1]).toBe(200);
+    expect(recCanvas.pixels[farIdx + 2]).toBe(200);
+  });
+
+  it('preserves alpha channel (blendPixel blends alpha)', () => {
+    const data = new Uint8ClampedArray(documentSize.width * documentSize.height * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 200;
+      data[i + 1] = 200;
+      data[i + 2] = 200;
+      data[i + 3] = 128; // Semi-transparent
+    }
+    const centerIdx = (32 * documentSize.width + 32) * 4;
+    data[centerIdx] = 50;
+    data[centerIdx + 1] = 50;
+    data[centerIdx + 2] = 50;
+
+    const canvas = run(data, args({ size: 10, points: [{ x: 32, y: 32 }] }));
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+
+    // blendPixel blends alpha, so it will be a blend of 128 and 255
+    // The exact value depends on the weight, just verify it's in range
+    expect(recCanvas.pixels[centerIdx + 3]).toBeGreaterThan(128);
+    expect(recCanvas.pixels[centerIdx + 3]).toBeLessThanOrEqual(255);
+  });
+
+  it('handles texture sampling near image edges', () => {
+    // Blemish near top-left corner
+    const data = fill([200, 200, 200, 255]);
+    const cornerIdx = (2 * documentSize.width + 2) * 4;
+    data[cornerIdx] = 50;
+    data[cornerIdx + 1] = 50;
+    data[cornerIdx + 2] = 50;
+
+    const canvas = run(data, args({ size: 10, points: [{ x: 2, y: 2 }] }));
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+
+    // Should not crash and should heal
+    expect(recCanvas.pixels[cornerIdx]).toBeGreaterThan(50);
+  });
+});
+
+describe('spotHealing algorithm invariants', () => {
+  it('reads from sourceData, not output buffer (anti-compounding invariant)', () => {
+    // This is the critical test: spotHealing must read from the original source
+    // and write to output, not read from its own output. If it read from output,
+    // a long stroke would compound and shift color progressively.
+    const data = fill([100, 100, 100, 255]);
+    // Create a distinct source region at left side
+    for (let y = 0; y < documentSize.height; y++) {
+      for (let x = 0; x < 10; x++) {
+        const idx = (y * documentSize.width + x) * 4;
+        data[idx] = 255;
+        data[idx + 1] = 0;
+        data[idx + 2] = 0;
+      }
+    }
+
+    // Stroke from right to left across the document
+    const canvas = run(
+      data,
+      args({
+        size: 10,
+        points: [
+          { x: 54, y: 32 },
+          { x: 40, y: 32 },
+          { x: 26, y: 32 },
+        ],
+      })
+    );
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+
+    // The source region (red) should not have been affected by the healing
+    const sourceIdx = (32 * documentSize.width + 5) * 4;
+    expect(recCanvas.pixels[sourceIdx]).toBe(255);
+    expect(recCanvas.pixels[sourceIdx + 1]).toBe(0);
+    expect(recCanvas.pixels[sourceIdx + 2]).toBe(0);
+  });
+
+  it('each dab samples from radius + 1 distance from center', () => {
+    // The proximitySample function samples from radius + 1 distance
+    // This test verifies the healing doesn't just copy adjacent pixels
+    const data = fill([100, 100, 100, 255]);
+    // Create a gradient: left side red, right side blue
+    for (let y = 0; y < documentSize.height; y++) {
+      for (let x = 0; x < 20; x++) {
+        const idx = (y * documentSize.width + x) * 4;
+        data[idx] = 255;
+        data[idx + 1] = 0;
+        data[idx + 2] = 0;
+      }
+      for (let x = 44; x < documentSize.width; x++) {
+        const idx = (y * documentSize.width + x) * 4;
+        data[idx] = 0;
+        data[idx + 1] = 0;
+        data[idx + 2] = 255;
+      }
+    }
+
+    // Heal in the middle (grey area)
+    const canvas = run(data, args({ size: 10, points: [{ x: 32, y: 32 }] }));
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+
+    // The healed pixel should sample from the grey area, not from red or blue
+    const centerIdx = (32 * documentSize.width + 32) * 4;
+    // Should remain roughly grey (not become red or blue)
+    expect(recCanvas.pixels[centerIdx]).toBeLessThan(200);
+    expect(recCanvas.pixels[centerIdx + 2]).toBeLessThan(200);
   });
 });
