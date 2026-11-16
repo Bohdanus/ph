@@ -115,6 +115,19 @@ async function readViewGeometryAtZoomArea(
   });
 }
 
+async function waitForTwoAnimationFrames(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      })
+  );
+}
+
 async function readViewAttributes(page: Page): Promise<ViewAttributes> {
   const workspace = page.getByTestId('workspace-container');
   return workspace.evaluate((node) => {
@@ -545,6 +558,9 @@ test.describe('Zoomed pointer tools', () => {
     await expect
       .poll(async () => Number(await zoomArea.getAttribute('data-workspace-fit-scale')))
       .not.toBe(initialFitScale);
+    // The fit indicator and StoreProvider reconcile this resize through separate RAF callbacks.
+    // Let that scheduled work finish before this test starts a zoom gesture.
+    await waitForTwoAnimationFrames(page);
     const metrics = await workspace.evaluate((node) => {
       const element = node as HTMLElement;
       const rect = element.getBoundingClientRect();
