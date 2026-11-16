@@ -14,6 +14,8 @@ The old branch's `capture-linux-baselines.yml` contains the useful idea: select 
 
 Contract tests cover the mirror/ref guard, action pins, OS-to-snapshot mapping, allowlist and PNG signature checks, artifact-only behavior, and the two-run Playwright timeout budget on all three operating systems. The manual workflow is available on the mirror after the reviewed source main is synced there.
 
+A separate pointer test from the old branch combined nonzero client borders, scrollbar-shrunken dimensions, fit geometry, and `getLocalCoords`. Main already covered fractional client metrics and scrollbar-driven resize recomputation, but not that combined mapping path. The missing integration case is reimplemented in `src/hooks/__tests__/usePointerPosition.test.ts`; the old helper and duplicate coverage were not transplanted.
+
 ## Rejected changes from the old branch
 
 The other old branch changes are already superseded or are unsafe to transplant. Current main contains the cross-platform E2E matrix, focused runs, richer crop/history diagnostics, and the robust pointer-capture cleanup. The old branch's pointer implementation is weaker. Its changes to screenshot thresholds and color filters loosen assertions without reproducing the old CI failures. Its coverage-floor reduction and smaller flood-fill sample count weaken unrelated gates. The mirror run `40140807034` failed on Linux/Windows E2E and audit; it does not establish that the later branch tip was green.

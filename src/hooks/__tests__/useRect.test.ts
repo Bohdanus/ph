@@ -410,6 +410,75 @@ describe('useRect', () => {
     expect(ctx.clearRect).toHaveBeenCalledWith(-50, -40, 100, 80);
   });
 
+  it('restores the dimmed frame before cutting out a rotated crop on a full repaint', () => {
+    const initialRect = { x1: 100, y1: 120, x2: 200, y2: 200 };
+    const ctx = testContext.overlayCanvas.getContext('2d') as unknown as ReturnType<typeof createMockCanvasContext>;
+    const { result } = renderUseRect({ initialRect, rotationEnabled: true, rotation: 30 });
+    const paintOrder: string[] = [];
+    let dimmedFramePainted = false;
+    let cropCutoutPainted = false;
+    let cropRestoreSeen = false;
+
+    vi.mocked(ctx.clearRect).mockClear();
+    vi.mocked(ctx.fillRect).mockClear();
+    vi.mocked(ctx.save).mockClear();
+    vi.mocked(ctx.restore).mockClear();
+    vi.mocked(ctx.translate).mockClear();
+    vi.mocked(ctx.rotate).mockClear();
+    vi.mocked(ctx.clearRect).mockImplementation((x, y, width, height) => {
+      if (x === 0 && y === 0 && width === ctx.canvas.width && height === ctx.canvas.height) {
+        paintOrder.push('backing store clear');
+      }
+      if (x === -50 && y === -40 && width === 100 && height === 80) {
+        paintOrder.push('rotated crop cutout');
+        cropCutoutPainted = true;
+      }
+    });
+    vi.mocked(ctx.fillRect).mockImplementation((x, y, width, height) => {
+      if (x === 0 && y === 0 && width === 800 && height === 600) {
+        paintOrder.push('dimmed frame');
+        dimmedFramePainted = true;
+      }
+    });
+    vi.mocked(ctx.save).mockImplementation(() => {
+      if (dimmedFramePainted && !cropCutoutPainted) paintOrder.push('crop save');
+    });
+    vi.mocked(ctx.restore).mockImplementation(() => {
+      if (cropCutoutPainted && !cropRestoreSeen) {
+        paintOrder.push('crop restore');
+        cropRestoreSeen = true;
+      }
+    });
+    vi.mocked(ctx.translate).mockImplementation((x, y) => {
+      if (cropCutoutPainted && !cropRestoreSeen) {
+        paintOrder.push('handle transform before crop restore');
+      } else if (!cropCutoutPainted && x === 150 && y === 160) {
+        paintOrder.push('crop center');
+      }
+    });
+    vi.mocked(ctx.rotate).mockImplementation((angle) => {
+      if (cropCutoutPainted && !cropRestoreSeen) {
+        paintOrder.push('handle transform before crop restore');
+      } else if (!cropCutoutPainted && angle === Math.PI / 6) {
+        paintOrder.push('crop rotation');
+      }
+    });
+
+    act(() => result.current.rectHandles.redraw());
+
+    expect(ctx.translate).toHaveBeenCalledWith(150, 160);
+    expect(ctx.rotate).toHaveBeenCalledWith(Math.PI / 6);
+    expect(paintOrder).toEqual([
+      'backing store clear',
+      'dimmed frame',
+      'crop save',
+      'crop center',
+      'crop rotation',
+      'rotated crop cutout',
+      'crop restore',
+    ]);
+  });
+
   it('returns false for pointer down on non-left button', () => {
     const { result } = renderUseRect();
     const event = createPointerEvent({ button: 1, target: createMockTarget() });
