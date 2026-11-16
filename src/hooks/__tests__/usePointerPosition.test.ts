@@ -285,17 +285,19 @@ describe('usePointerPosition', () => {
       expect(result.current.getLocalCoords(event)).toEqual({ x: 10, y: 20 });
     });
 
-    it('uses the bordered client viewport origin for pointer mapping beside scrollbars', () => {
+    it('maps pointer coordinates from the bordered client viewport after a scrollbar shrinks it', () => {
       const { el } = createContainer({ left: 50, top: 25, width: 415, height: 220 });
-      setClientViewport(el, { left: 2, top: 3, width: 400, height: 200, offsetWidth: 415, offsetHeight: 220 });
+      // Match the classic 15px scrollbar fixture below: the border box stays 415px wide
+      // while the client viewport shrinks from 400px to 385px.
+      setClientViewport(el, { left: 2, top: 3, width: 385, height: 200, offsetWidth: 415, offsetHeight: 220 });
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
       const dimensions = result.current.dimensionsRef.current;
 
       expect(dimensions).toMatchObject({
-        outerWidth: 400,
+        outerWidth: 385,
         outerHeight: 200,
         scale: 2,
-        offsetX: 100,
+        offsetX: 92.5,
         offsetY: 0,
       });
 
