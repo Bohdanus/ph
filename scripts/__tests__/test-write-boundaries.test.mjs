@@ -100,8 +100,8 @@ const REVIEWED = {
   },
   'main-worktree-guard.test.mjs': {
     scope:
-      'Git and hook fixtures use temporary repositories, including forced duplicate-main recovery and a watcher retry after one pre-creation failure; review child cwd and any environment passed to subprocesses.',
-    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=45 filesystem-write:mkdtempSync=10 filesystem-write:writeFileSync=35 filesystem-write:rmSync=13 filesystem-write:mkdirSync=5`,
+      'Git and hook fixtures use temporary repositories, including foreign reuse of a stale main path, forced duplicate-main recovery, and a watcher retry after one pre-creation failure; review child cwd and any environment passed to subprocesses.',
+    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=49 filesystem-write:mkdtempSync=12 filesystem-write:writeFileSync=35 filesystem-write:rmSync=16 filesystem-write:mkdirSync=5`,
   },
   'main-landing-alert.test.mjs': {
     scope:
@@ -118,8 +118,8 @@ const REVIEWED = {
   },
   'merge-takeover-guard.test.mjs': {
     scope:
-      'Temporary repositories model the owner-tracked landing wrapper; project markers, installer stubs, hook scripts, and process environment changes remain isolated to each temporary repository.',
-    patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=54 filesystem-write:mkdirSync=20 filesystem-write:copyFileSync=2 filesystem-write:chmodSync=28 filesystem-write:rmSync=7 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
+      'Temporary repositories model the owner-tracked landing wrapper; project markers, prepared-merge state, installer stubs, hook scripts, and process environment changes remain isolated to each temporary repository.',
+    patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=58 filesystem-write:mkdirSync=23 filesystem-write:copyFileSync=2 filesystem-write:chmodSync=28 filesystem-write:rmSync=7 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=5 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
   },
   'mirror-e2e.test.mjs': {
     scope:
