@@ -2,19 +2,17 @@ import { expect, type Dialog, type Page, test, type TestInfo, useAppDefaultTheme
 import { readFile } from 'node:fs/promises';
 import {
   type BoundingBox,
+  documentToCanvasOffset,
   drawLine,
   getColorAtPoint,
   getWorkspaceCanvas,
   hasRedPixels,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
   loadImageData,
   type ImageDataResult,
   scanPixelsForBounds,
 } from './helpers/canvas-helpers';
 import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { documentClipInBox } from './helpers/document-sampling';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
@@ -517,12 +515,26 @@ async function createDocumentWithBackground(
   await captureWorkspace(page, testInfo, `document-opacity-${String(opacity).replace('.', '-')}`);
 }
 
+/**
+ * Document-space coordinates for the standard test line.
+ * Mirrors the box-relative LINE_* constants (150,150 to 350,150) but expressed in
+ * the 800x600 document space so they are layout-independent.
+ */
+const DOC_LINE_START = { x: 150, y: 150 } as const;
+const DOC_LINE_END = { x: 350, y: 150 } as const;
+
+/** Wrapper for `hasRedPixels` to accept the mask parameter from `waitForCanvasPixels`. */
+const hasRedPixelsWithMask = async (screenshot: Buffer | ImageDataResult, _mask: unknown): Promise<boolean> =>
+  hasRedPixels(screenshot);
+
 /** Draws a line and waits for it to reach the backing store. */
 async function drawAndWait(page: Page, box: BoundingBox, testInfo: TestInfo, name: string): Promise<void> {
   await clickToolButton(page, 'draw');
   await setForegroundColor(page, '#cc0000', true);
-  await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-  await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'red pixels' });
+  const start = documentToCanvasOffset(box, DOC_LINE_START.x, DOC_LINE_START.y);
+  const end = documentToCanvasOffset(box, DOC_LINE_END.x, DOC_LINE_END.y);
+  await drawLine(page, box, start.x, start.y, end.x, end.y);
+  await waitForCanvasPixels(page, documentClipInBox(box), hasRedPixelsWithMask, { description: 'red pixels' });
   await testInfo.attach(name, {
     body: await captureWorkspace(page, testInfo, name),
     contentType: 'image/png',
