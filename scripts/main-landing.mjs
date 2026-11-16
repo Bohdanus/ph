@@ -65,7 +65,7 @@ function gitResult(args, cwd = process.cwd(), env = process.env) {
     cwd,
     env,
     encoding: 'utf8',
-    timeout: 20_000,
+    timeout: 60_000,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
