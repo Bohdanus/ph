@@ -419,7 +419,21 @@ describe('claims are exclusive and leased', () => {
     expect(b.status().expiredClaims).toBe(0);
     expect(b.health().claims.expired).toBe(0);
     expect(b.doctor()).toEqual([]);
+    expect(b.unreadableLeaseDeadlines()).toEqual([
+      {
+        kind: 'unreadable-claim-deadline',
+        issue: id,
+        agent: 'a',
+        worktree: a.identity.worktree,
+        deadline: 'not-a-date',
+      },
+    ]);
     expect(() => b.claimIssue(id)).toThrow(/claimed by a/);
+    expect(a.renewOwnClaims()).toEqual([id]);
+    expect(
+      Date.parse(a.db.prepare('SELECT lease_until FROM claims WHERE issue_id = ?').get(id).lease_until)
+    ).toBeGreaterThan(clock);
+    expect(b.unreadableLeaseDeadlines()).toEqual([]);
     b.close();
   });
 
@@ -555,7 +569,23 @@ describe('file locks make one-file-one-agent real', () => {
     expect(b.liveLocks().map((lock) => lock.path)).toContain('src/unreadable-lock.ts');
     expect(b.checkPath('src/unreadable-lock.ts').free).toBe(false);
     expect(b.doctor()).toEqual([]);
+    expect(b.unreadableLeaseDeadlines()).toEqual([
+      {
+        kind: 'unreadable-lock-deadline',
+        path: 'src/unreadable-lock.ts',
+        agent: 'a',
+        worktree: a.identity.worktree,
+        deadline: 'not-a-date',
+      },
+    ]);
     expect(() => b.holdFiles(['src/unreadable-lock.ts'])).toThrow(/held by another agent/);
+    expect(a.renewOwnLocks()).toEqual(['src/unreadable-lock.ts']);
+    expect(
+      Date.parse(
+        a.db.prepare('SELECT expires_at FROM file_locks WHERE path = ?').get('src/unreadable-lock.ts').expires_at
+      )
+    ).toBeGreaterThan(clock);
+    expect(b.unreadableLeaseDeadlines()).toEqual([]);
     b.close();
   });
 
@@ -2557,6 +2587,42 @@ describe('the command line', () => {
     expect(JSON.parse((await cli(['doctor', '--dry-run', '--json'])).out).findings).toEqual([]);
   });
 
+  it('reports unreadable lease deadlines without releasing them', async () => {
+    const a = boardFor('a');
+    mkdirSync(a.identity.worktree, { recursive: true });
+    const { id } = a.createIssue({ title: 'unreadable deadline', holdFiles: false });
+    a.claimIssue(id);
+    a.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run('invalid-deadline', id);
+
+    const dead = boardFor('dead');
+    const { id: deadId } = dead.createIssue({ title: 'missing worktree evidence', holdFiles: false });
+    dead.claimIssue(deadId);
+    rmSync(dead.identity.worktree, { recursive: true, force: true });
+
+    const dry = await cli(['doctor', '--dry-run', '--json']);
+    expect(dry.code).toBe(0);
+    const report = JSON.parse(dry.out);
+    expect(report.findings).toMatchObject([
+      { kind: 'dead-worktree', issue: deadId, agent: 'dead', worktree: dead.identity.worktree, releaseable: true },
+    ]);
+    expect(report.anomalies).toEqual([
+      {
+        kind: 'unreadable-claim-deadline',
+        issue: id,
+        agent: 'a',
+        worktree: a.identity.worktree,
+        deadline: 'invalid-deadline',
+      },
+    ]);
+    expect(a.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(id).released_at).toBeNull();
+    expect(a.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(deadId).released_at).toBeNull();
+
+    const human = await cli(['doctor', '--dry-run']);
+    expect(human.out).toContain('would release');
+    expect(human.out).toContain('deadline alone is treated as live');
+    expect(human.out).toContain('invalid-deadline');
+  });
+
   it('emits valid JSON for EVERY machine-facing command, driven from the list', async () => {
     const { id } = JSON.parse((await cli(['new', 'json shaped', '--json'])).out);
     await cli(['claim', id, '--files', 'src/json.ts', '--json']);
@@ -2826,6 +2892,45 @@ describe('lease renewal when two agents share a branch', () => {
     );
     expect(Date.parse(leases.get('ph-1'))).toBeGreaterThan(clock);
     expect(Date.parse(leases.get('ph-2'))).toBeLessThan(clock);
+  });
+
+  it('does not renew a same-branch lock from a different worktree', () => {
+    const mine = join(dir, 'wt-lock-owner');
+    const theirs = join(dir, 'wt-lock-peer');
+    mkdirSync(mine, { recursive: true });
+    mkdirSync(theirs, { recursive: true });
+
+    const a = openAs('feat/shared-locks', mine);
+    const b = openAs('feat/shared-locks', theirs);
+    a.holdFiles(['src/worktree-scoped-lock.ts']);
+    a.db
+      .prepare('UPDATE file_locks SET expires_at = ? WHERE path = ? AND agent_id = ?')
+      .run('not-a-date', 'src/worktree-scoped-lock.ts', 'feat/shared-locks');
+
+    advance(DEFAULT_LEASE_MS + 1000);
+    expect(b.renewOwnLocks()).toEqual([]);
+    const after = a.db
+      .prepare('SELECT expires_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/worktree-scoped-lock.ts', 'feat/shared-locks').expires_at;
+    expect(after).toBe('not-a-date');
+    expect(b.unreadableLeaseDeadlines()).toEqual([
+      {
+        kind: 'unreadable-lock-deadline',
+        path: 'src/worktree-scoped-lock.ts',
+        agent: 'feat/shared-locks',
+        worktree: mine,
+        deadline: 'not-a-date',
+      },
+    ]);
+
+    expect(a.renewOwnLocks()).toEqual(['src/worktree-scoped-lock.ts']);
+    expect(
+      Date.parse(
+        a.db
+          .prepare('SELECT expires_at FROM file_locks WHERE path = ? AND agent_id = ?')
+          .get('src/worktree-scoped-lock.ts', 'feat/shared-locks').expires_at
+      )
+    ).toBeGreaterThan(clock);
   });
 
   it("still releases the dead worktree's claim, and keeps the live one", () => {

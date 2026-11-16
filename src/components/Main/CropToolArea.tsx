@@ -608,11 +608,12 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     // of snapping back to the frame edge.
     allowOutsideCanvas: true,
     // The frame-sized overlay canvas clips crop chrome at the document edge. At angle zero the
-    // overflow-safe surface below owns the shade, guides and handles across the full crop rect;
-    // rotated crops keep the canvas painter, which repaints only the previous crop's dirty bounds.
+    // overflow-safe surface below owns the shade, guides and handles across the full crop rect.
+    // Rotated crops use the canvas painter and repaint its full backing store on each frame so
+    // rotation and same-angle moves cannot leave stale rasterized pixels outside the crop.
     hideBlend: angle === 0,
     externalOverlay: angle === 0,
-    incrementalOverlay: angle !== 0,
+    incrementalOverlay: false,
     hideBorder: angle === 0,
     hideHandles: angle === 0,
     hideRotationHandle: angle === 0,

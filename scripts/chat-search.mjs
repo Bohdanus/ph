@@ -25,6 +25,7 @@
  * provider. Databases are opened read-only.
  */
 
+import { pathToFileURL } from 'node:url';
 import { executeChatSearch } from './lib/chat-search.mjs';
 import { sanitizeErrorMessage } from './lib/secrets.mjs';
 
@@ -199,7 +200,7 @@ export async function main(
   return code;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .then((code) => {
       process.exitCode = code;
