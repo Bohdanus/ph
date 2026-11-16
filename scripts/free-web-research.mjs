@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import { completeWithFreeModel } from './free-model-pool.mjs';
 import {
   fetchUrl,
@@ -342,7 +343,7 @@ ${result.content}
   return degraded ? 5 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .then((code) => {
       process.exitCode = code;
