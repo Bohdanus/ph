@@ -122,8 +122,9 @@ const REVIEWED = {
     patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=54 filesystem-write:mkdirSync=20 filesystem-write:copyFileSync=2 filesystem-write:chmodSync=28 filesystem-write:rmSync=7 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
   },
   'mirror-e2e.test.mjs': {
-    scope: 'Mirror and git fixtures use temporary repositories and directories.',
-    patterns: `subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=7 filesystem-write:mkdirSync=4 filesystem-write:rmSync=11`,
+    scope:
+      'Mirror and git fixtures use temporary repositories; the workflow newline regression uses a temporary CRLF fixture.',
+    patterns: `subprocess:spawnSync=3 filesystem-write:mkdtempSync=3 filesystem-write:writeFileSync=8 filesystem-write:mkdirSync=4 filesystem-write:rmSync=12`,
   },
   'orphan-branches.test.mjs': {
     scope:
