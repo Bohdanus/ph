@@ -1539,13 +1539,15 @@ export class Board {
     return this.claimIssue(id, { leaseMs, agent: who });
   }
 
-  releaseClaim(id, { agent, force = false, reason = null } = {}) {
+  releaseClaim(id, { agent, force = false, reason = null, expectedLeaseUntil } = {}) {
     const who = agent ?? this.identity?.agentId;
     const at = this.now();
     return this.transaction(() => {
       this.getIssue(id);
       const claim = this.db.prepare('SELECT * FROM claims WHERE issue_id = ? AND released_at IS NULL').get(id);
       if (!claim) return { id, released: false, reason: 'no live claim' };
+      if (expectedLeaseUntil !== undefined && claim.lease_until !== expectedLeaseUntil)
+        return { id, released: false, reason: 'lease changed' };
       if (claim.agent_id !== who && !force) {
         throw new BoardError(`${id} is claimed by ${claim.agent_id}, not by ${who}; pass --force to take it`, {
           code: 3,
@@ -1825,7 +1827,7 @@ export class Board {
    * gone; `cascade` is an issue closing or being released and taking its
    * paired locks with it.
    */
-  releaseFiles(paths, { agent, force = false, reason = 'requested' } = {}) {
+  releaseFiles(paths, { agent, force = false, reason = 'requested', expectedLease = null } = {}) {
     const who = agent ?? this.identity?.agentId;
     const list = this.canonicalPaths(paths);
     return this.transaction(() => {
@@ -1834,6 +1836,8 @@ export class Board {
       for (const path of list) {
         const rows = this.db.prepare('SELECT * FROM file_locks WHERE path = ? AND released_at IS NULL').all(path);
         for (const row of rows) {
+          if (expectedLease && (row.worktree !== expectedLease.worktree || row.expires_at !== expectedLease.expires_at))
+            continue;
           if (row.agent_id !== who && !force) {
             /**
              * Report the holder instead of skipping in silence.
@@ -2341,9 +2345,8 @@ export class Board {
         releaseable: true,
       });
     }
-    const at2 = this.now();
     for (const lock of this.db.prepare('SELECT * FROM file_locks WHERE released_at IS NULL').all()) {
-      const expired = !isLiveDeadline(lock.expires_at, at2);
+      const expired = !isLiveDeadline(lock.expires_at, at);
       /**
        * The dead-worktree test, for locks, which claims got and locks never did.
        *
@@ -2375,6 +2378,7 @@ export class Board {
         path: lock.path,
         agent: lock.agent_id,
         worktree: lock.worktree,
+        expires_at: lock.expires_at,
         releaseable: true,
       });
     }
@@ -2384,14 +2388,17 @@ export class Board {
     // invocation turned a six-event board into one that was two-thirds sweep
     // noise, which is the same flood the tailing fix was written for, and it
     // made `health` inflate the very number it was reporting.
-    if (record && !dryRun && findings.length > 0) {
-      this.addEvent('doctor.run', {
-        message: findings.length ? `${findings.length} stale holding(s) released` : 'nothing stale',
-      });
-    }
+    const reclaimed = [];
     if (!dryRun) {
       for (const finding of findings) {
-        if (finding.issue) this.releaseClaim(finding.issue, { agent: finding.agent, force: true });
+        if (finding.issue) {
+          const result = this.releaseClaim(finding.issue, {
+            agent: finding.agent,
+            force: true,
+            expectedLeaseUntil: finding.lease_until,
+          });
+          if (result.released) reclaimed.push(finding);
+        }
         /**
          * NO `force` here, and that is the whole point of the line.
          *
@@ -2423,10 +2430,20 @@ export class Board {
          * because adding it back would re-open the hole the paragraph above
          * documents, in exchange for nothing this change needs.
          */
-        if (finding.path) this.releaseFiles([finding.path], { agent: finding.agent, reason: 'swept' });
+        if (finding.path) {
+          const result = this.releaseFiles([finding.path], {
+            agent: finding.agent,
+            reason: 'swept',
+            expectedLease: { worktree: finding.worktree, expires_at: finding.expires_at },
+          });
+          if (result.released.includes(finding.path)) reclaimed.push(finding);
+        }
       }
     }
-    return findings;
+    if (record && !dryRun && reclaimed.length > 0) {
+      this.addEvent('doctor.run', { message: `${reclaimed.length} stale holding(s) released` });
+    }
+    return dryRun ? findings : reclaimed;
   }
 
   /**

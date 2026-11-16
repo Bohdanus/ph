@@ -2933,6 +2933,73 @@ describe('lease renewal when two agents share a branch', () => {
     ).toBeGreaterThan(clock);
   });
 
+  it('does not release a lock renewed after doctor observed its expired deadline', () => {
+    const ownerWorktree = join(dir, 'wt-lock-race-owner');
+    const sweeperWorktree = join(dir, 'wt-lock-race-sweeper');
+    mkdirSync(ownerWorktree, { recursive: true });
+    mkdirSync(sweeperWorktree, { recursive: true });
+
+    const owner = openAs('feat/lock-race', ownerWorktree);
+    const sweeper = openAs('feat/sweeper', sweeperWorktree);
+    owner.holdFiles(['src/renewed-during-sweep.ts']);
+    advance(DEFAULT_LEASE_MS + 1);
+
+    const releaseFiles = sweeper.releaseFiles.bind(sweeper);
+    sweeper.releaseFiles = (...args) => {
+      // Model another process renewing after doctor selected its stale row but
+      // before the sweep's release transaction begins.
+      expect(owner.renewOwnLocks()).toEqual(['src/renewed-during-sweep.ts']);
+      return releaseFiles(...args);
+    };
+
+    expect(sweeper.doctor()).toEqual([]);
+
+    const lock = owner.db
+      .prepare('SELECT expires_at, released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/renewed-during-sweep.ts', 'feat/lock-race');
+    expect(Date.parse(lock.expires_at)).toBeGreaterThan(clock);
+    expect(lock.released_at).toBeNull();
+  });
+
+  it('uses the same supplied timestamp to evaluate locks and claims', () => {
+    const ownerWorktree = join(dir, 'wt-doctor-clock-owner');
+    mkdirSync(ownerWorktree, { recursive: true });
+    const owner = openAs('feat/doctor-clock', ownerWorktree);
+    owner.holdFiles(['src/doctor-clock.ts'], { leaseMs: 60_000 });
+
+    const findings = owner.doctor({ at: clock + 60_001, dryRun: true });
+
+    expect(findings.map((finding) => finding.path)).toEqual(['src/doctor-clock.ts']);
+  });
+
+  it('does not release a claim renewed after doctor observed its expired deadline', () => {
+    const ownerWorktree = join(dir, 'wt-claim-race-owner');
+    const sweeperWorktree = join(dir, 'wt-claim-race-sweeper');
+    mkdirSync(ownerWorktree, { recursive: true });
+    mkdirSync(sweeperWorktree, { recursive: true });
+
+    const owner = openAs('feat/claim-race', ownerWorktree);
+    const sweeper = openAs('feat/claim-sweeper', sweeperWorktree);
+    const { id } = owner.createIssue({ title: 'renew during sweep' });
+    owner.claimIssue(id);
+    advance(DEFAULT_LEASE_MS + 1);
+
+    const releaseClaim = sweeper.releaseClaim.bind(sweeper);
+    sweeper.releaseClaim = (...args) => {
+      // Model another process renewing after doctor selected its stale row but
+      // before the sweep's claim-release transaction begins.
+      expect(owner.renewOwnClaims()).toEqual([id]);
+      return releaseClaim(...args);
+    };
+
+    expect(sweeper.doctor()).toEqual([]);
+
+    const claim = owner.db.prepare('SELECT lease_until, released_at FROM claims WHERE issue_id = ?').get(id);
+    expect(Date.parse(claim.lease_until)).toBeGreaterThan(clock);
+    expect(claim.released_at).toBeNull();
+    expect(owner.getIssue(id).status).toBe('claimed');
+  });
+
   it("still releases the dead worktree's claim, and keeps the live one", () => {
     // The other half of the contract, and the reason the ordering exists:
     // scoping renewal must not make a dead colleague's claim immortal, AND a
