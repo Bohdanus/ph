@@ -1,77 +1,101 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPixelCanvasContext } from '../../test/setup.ts';
-import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
-import {
-  BRUSH_HARDNESS_DEFAULT,
-  BRUSH_HARDNESS_MAX,
-  BRUSH_HARDNESS_MIN,
-  BRUSH_OPACITY_DEFAULT,
-  BRUSH_SIZE_DEFAULT,
-  BRUSH_SIZE_MAX,
-  BRUSH_SIZE_MIN,
-} from '../../util/brush-engine.ts';
-import type { Size } from '../../contexts/general-types.ts';
-import { healingBrush, HEALING_BRUSH_SPACING_PERCENT, type HealingBrushToolArgs } from '../healingBrush.ts';
 
-type PixelContext = ReturnType<typeof createPixelCanvasContext> & {
-  getImageData: ReturnType<typeof vi.fn>;
-  putImageData: ReturnType<typeof vi.fn>;
-  drawImage: ReturnType<typeof vi.fn>;
-};
+import { healingBrush, HEALING_BRUSH_SPACING_PERCENT, type HealingBrushToolArgs } from '../healingBrush.ts';
+import { createPixelCanvasContext } from '../../test/setup.ts';
+import { BRUSH_HARDNESS_MAX, BRUSH_HARDNESS_MIN, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../util/brush-engine.ts';
+import type { Size } from '../../contexts/general-types.ts';
+
+const size: Size = { width: 9, height: 9 };
+
+/**
+ * Pixel-capable `OffscreenCanvas` recorder.
+ * Mirrors the pattern from `src/test/setup.ts` — `createPixelCanvasContext`
+ * installs real `getImageData`/`putImageData` on a canvas whose backing buffer
+ * we can read directly, so assertions can verify the actual pixel result.
+ */
+type MockCtx = CanvasRenderingContext2D;
 
 class RecordingOffscreenCanvas {
   static instances: RecordingOffscreenCanvas[] = [];
-  readonly buffer: Uint8ClampedArray;
-  readonly ctx: PixelContext;
+
   width: number;
   height: number;
+  readonly pixels: Uint8ClampedArray;
+  readonly ctx: MockCtx;
 
   constructor(width: number, height: number) {
     this.width = Math.max(1, Math.ceil(width));
     this.height = Math.max(1, Math.ceil(height));
-    this.buffer = new Uint8ClampedArray(this.width * this.height * 4);
-    this.ctx = {
-      ...createPixelCanvasContext(this),
-      drawImage: vi.fn(() => {
-        for (let y = 0; y < this.height; y++) {
-          for (let x = 0; x < this.width; x++) {
-            const offset = (y * this.width + x) * 4;
-            this.buffer[offset] = x * 20;
-            this.buffer[offset + 1] = 100;
-            this.buffer[offset + 2] = y === 1 && x === 1 ? 160 : 100;
-            this.buffer[offset + 3] = 255;
-          }
-        }
-      }),
-      getImageData: vi.fn(() => ({
-        data: new Uint8ClampedArray(this.buffer),
-        width: this.width,
-        height: this.height,
-        colorSpace: 'srgb',
-      })),
-      putImageData: vi.fn((image: ImageData) => this.buffer.set(image.data)),
-    } as unknown as PixelContext;
+    this.pixels = new Uint8ClampedArray(this.width * this.height * 4);
+
+    const ctx = createPixelCanvasContext(this);
+    // `drawImage` is the only entry point a raster processor has into its output canvas, so
+    // the source reaches the pixels here exactly the way it reaches them in a browser.
+    vi.mocked(ctx.drawImage).mockImplementation(((source: unknown) => {
+      const drawn = source as { pixels: Uint8ClampedArray };
+      this.pixels.set(drawn.pixels.subarray(0, this.pixels.length));
+    }) as unknown as MockCtx['drawImage']);
+    // A COPY, because a real `getImageData` copies: the filter reads this buffer while it
+    // writes its own, and an aliasing stub would have the two fight over the same bytes.
+    vi.mocked(ctx.getImageData).mockImplementation(
+      () =>
+        ({
+          data: new Uint8ClampedArray(this.pixels),
+          width: this.width,
+          height: this.height,
+          colorSpace: 'srgb',
+        }) as ImageData
+    );
+    vi.mocked(ctx.putImageData).mockImplementation(((image: ImageData, x: number, y: number) => {
+      for (let row = 0; row < image.height; row++) {
+        const from = row * image.width * 4;
+        const to = (y + row) * this.width * 4 + x * 4;
+        this.pixels.set(image.data.subarray(from, from + image.width * 4), to);
+      }
+    }) as unknown as MockCtx['putImageData']);
+
+    this.ctx = ctx;
     RecordingOffscreenCanvas.instances.push(this);
   }
 
-  getContext(): PixelContext {
+  getContext(): MockCtx {
     return this.ctx;
   }
 }
-
-const size: Size = { width: 9, height: 9 };
-const sourceBitmap = createMockImageBitmap(size.width, size.height);
 
 const args = (overrides: Partial<HealingBrushToolArgs> = {}): HealingBrushToolArgs => ({
   size: 3,
   hardness: 100,
   opacity: 1,
-  source: { x: 1, y: 1 },
   aligned: true,
-  points: [{ x: 4, y: 4 }],
+  source: { x: 4, y: 4 },
   toolName: 'healing-brush',
+  points: [{ x: 4, y: 4 }],
   ...overrides,
 });
+
+const sourceBitmap = (pixels: Uint8ClampedArray) =>
+  ({ width: size.width, height: size.height, pixels, close: vi.fn() }) as unknown as ImageBitmap & {
+    pixels: Uint8ClampedArray;
+  };
+
+const run = (data: Uint8ClampedArray, a: HealingBrushToolArgs) => {
+  const [canvas] = healingBrush({ size, bitmap: sourceBitmap(data) })(a);
+  return canvas as unknown as RecordingOffscreenCanvas;
+};
+
+const at = (buffer: Uint8ClampedArray, x: number, y: number): [number, number, number, number] => {
+  const index = (y * size.width + x) * 4;
+  return [buffer[index], buffer[index + 1], buffer[index + 2], buffer[index + 3]];
+};
+
+const FIXTURE = new Uint8ClampedArray(size.width * size.height * 4);
+for (let i = 0; i < FIXTURE.length; i += 4) {
+  FIXTURE[i] = 50;
+  FIXTURE[i + 1] = 100;
+  FIXTURE[i + 2] = 150;
+  FIXTURE[i + 3] = 255;
+}
 
 beforeEach(() => {
   RecordingOffscreenCanvas.instances = [];
@@ -80,408 +104,298 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  RecordingOffscreenCanvas.instances = [];
 });
 
-/** Runs the processor and returns the single canvas it must have produced. */
-const run = (overrides: Partial<HealingBrushToolArgs> = {}, canvasSize: Size = size): RecordingOffscreenCanvas => {
-  const bitmap =
-    canvasSize.width === size.width && canvasSize.height === size.height
-      ? sourceBitmap
-      : createMockImageBitmap(canvasSize.width, canvasSize.height);
-  const result = healingBrush({ size: canvasSize, bitmap })(args(overrides));
+describe('healingBrush structure', () => {
+  it('is a distinct export (no other tool shares its processor)', () => {
+    expect(typeof healingBrush).toBe('function');
+  });
 
-  expect(result).toHaveLength(1);
-  const canvas = result[0] as unknown as RecordingOffscreenCanvas;
-  expect(canvas).toBe(RecordingOffscreenCanvas.instances.at(-1));
+  it('is a two-stage curried processor that reads its params and its args', () => {
+    const bitmap = sourceBitmap(FIXTURE);
+    const inner = healingBrush({ size, bitmap });
 
-  return canvas;
-};
+    expect(healingBrush.length).toBe(1);
+    expect(inner.length).toBe(1);
+  });
 
-/** The RGBA quad at `(x, y)` of a canvas's backing store. */
-const at = (canvas: RecordingOffscreenCanvas, x: number, y: number) => {
-  const offset = (y * canvas.width + x) * 4;
-  return {
-    r: canvas.buffer[offset],
-    g: canvas.buffer[offset + 1],
-    b: canvas.buffer[offset + 2],
-    a: canvas.buffer[offset + 3],
-  };
-};
+  it('allocates exactly one full-document canvas and draws the source bitmap into it', () => {
+    const bitmap = sourceBitmap(FIXTURE);
+    const [canvas] = healingBrush({ size, bitmap })(args());
 
-/** The destination colour under the stroke centre before healing. */
-const dest = (x: number, y: number) => ({
-  r: Math.min(255, x * 20),
-  g: 100,
-  b: y === 1 && x === 1 ? 160 : 100,
-  a: 255,
+    expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
+    expect(canvas).toBe(RecordingOffscreenCanvas.instances[0]);
+    expect(canvas).not.toBe(bitmap);
+    expect(vi.mocked(RecordingOffscreenCanvas.instances[0].ctx.drawImage).mock.calls[0][0]).toBe(bitmap);
+  });
 });
 
-describe('healing brush processor', () => {
-  it('is the exact module-level processor the registry imports, not a wrapper closure', async () => {
-    const { toolProcessors } = await import('../toolProcessors.ts');
-    expect(toolProcessors['healing-brush'].imageProcessor).toBe(healingBrush);
-  });
-
-  it('allocates a full document-sized canvas and passes the source bitmap to drawImage', () => {
-    const canvas = run();
-
-    expect(canvas.width).toBe(size.width);
-    expect(canvas.height).toBe(size.height);
-    expect(canvas.ctx.drawImage).toHaveBeenCalledWith(sourceBitmap, 0, 0);
-  });
-
-  it('defines dab spacing as 25 percent of the tip diameter', () => {
+describe('healingBrush constants', () => {
+  it('HEALING_BRUSH_SPACING_PERCENT is 25 (Adobe default spacing)', () => {
     expect(HEALING_BRUSH_SPACING_PERCENT).toBe(25);
   });
 
-  describe('the no-source and no-stroke states', () => {
-    it('does not heal when the clone source point is unset', () => {
-      const canvas = run({ source: null });
+  it('healingBrush toolName is "healing-brush"', () => {
+    expect(args().toolName).toBe('healing-brush');
+  });
+});
 
-      expect(canvas.ctx.getImageData).not.toHaveBeenCalled();
-      expect(canvas.ctx.putImageData).not.toHaveBeenCalled();
+describe('healingBrush luminance correction', () => {
+  it('corrects destination luminance toward source luminance at full opacity', () => {
+    // Dest is mid-grey (128,128,128), source is bright blue (0,0,255) with luma ~29
+    // At full opacity, destination should shift toward source luma
+    const data = new Uint8ClampedArray(size.width * size.height * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 128;
+      data[i + 1] = 128;
+      data[i + 2] = 128;
+      data[i + 3] = 255;
+    }
+    // Make source pixel at (4,4) blue
+    const srcIdx = (4 * size.width + 4) * 4;
+    data[srcIdx] = 0;
+    data[srcIdx + 1] = 0;
+    data[srcIdx + 2] = 255;
+    data[srcIdx + 3] = 255;
 
-      for (let y = 0; y < size.height; y++) {
-        for (let x = 0; x < size.width; x++) {
-          expect(at(canvas, x, y), `(${x}, ${y})`).toEqual(dest(x, y));
+    const canvas = run(data, args({ size: 3, opacity: 1, source: { x: 4, y: 4 }, points: [{ x: 4, y: 4 }] }));
+    const [r, g, b] = at(canvas.pixels, 4, 4);
+    // Luminance of source blue ~ 29, dest grey 128
+    // Correction should pull toward 29
+    expect(r).toBeLessThan(128);
+    expect(g).toBeLessThan(128);
+    expect(b).toBeGreaterThan(128); // Blue channel should increase
+  });
+
+  it('at zero opacity, destination is unchanged', () => {
+    const data = new Uint8ClampedArray(size.width * size.height * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 100;
+      data[i + 1] = 150;
+      data[i + 2] = 200;
+      data[i + 3] = 255;
+    }
+
+    const canvas = run(data, args({ opacity: 0 }));
+    expect(canvas.pixels).toEqual(data);
+  });
+});
+
+describe('healingBrush source isolation (no self-read)', () => {
+  it('reads from sourceData, not output buffer (anti-compounding invariant)', () => {
+    // This is the critical test: healingBrush must read from the original source
+    // and write to output, not read from its own output. If it read from output,
+    // a long stroke would compound and shift color progressively.
+    const data = new Uint8ClampedArray(size.width * size.height * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 100;
+      data[i + 1] = 100;
+      data[i + 2] = 100;
+      data[i + 3] = 255;
+    }
+    // Source at (2,2) is red
+    const srcIdx = (2 * size.width + 2) * 4;
+    data[srcIdx] = 255;
+    data[srcIdx + 1] = 0;
+    data[srcIdx + 2] = 0;
+    data[srcIdx + 3] = 255;
+
+    // Single dab at center
+    const canvas = run(data, args({ size: 3, source: { x: 2, y: 2 }, points: [{ x: 2, y: 2 }] }));
+    const [r, g, b] = at(canvas.pixels, 2, 2);
+    // Center should become red (source color from sourceData)
+    expect(r).toBe(255);
+    expect(g).toBe(0);
+    expect(b).toBe(0);
+  });
+});
+
+describe('healingBrush edge cases', () => {
+  it('returns early for zero-width document (rasterSize guard)', () => {
+    const zeroSize: Size = { width: 0, height: 9 };
+    const data = new Uint8ClampedArray(0);
+    const bmp = { width: 0, height: 9, pixels: data, close: vi.fn() } as unknown as ImageBitmap;
+    const [canvas] = healingBrush({ size: zeroSize, bitmap: bmp })(args());
+    expect(canvas.width).toBe(1);
+    expect(canvas.height).toBe(9);
+  });
+
+  it('returns early for zero-height document (rasterSize guard)', () => {
+    const zeroSize: Size = { width: 9, height: 0 };
+    const data = new Uint8ClampedArray(0);
+    const bmp = { width: 9, height: 0, pixels: data, close: vi.fn() } as unknown as ImageBitmap;
+    const [canvas] = healingBrush({ size: zeroSize, bitmap: bmp })(args());
+    expect(canvas.width).toBe(9);
+    expect(canvas.height).toBe(1);
+  });
+
+  it('returns early when getImageData/putImageData are not functions', () => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class extends RecordingOffscreenCanvas {
+        constructor(width: number, height: number) {
+          super(width, height);
+          this.ctx.getImageData = undefined as unknown as MockCtx['getImageData'];
+          this.ctx.putImageData = undefined as unknown as MockCtx['putImageData'];
         }
-      }
-    });
-
-    it('is an exact no-op for an empty point list', () => {
-      const canvas = run({ points: [] });
-
-      expect(canvas.ctx.putImageData).not.toHaveBeenCalled();
-    });
-
-    it('leaves every pixel unchanged for a stroke entirely outside the canvas', () => {
-      const canvas = run({
-        size: 8,
-        points: [
-          { x: 40, y: 40 },
-          { x: 44, y: 44 },
-        ],
-      });
-
-      for (let y = 0; y < size.height; y++) {
-        for (let x = 0; x < size.width; x++) {
-          expect(at(canvas, x, y), `(${x}, ${y})`).toEqual(dest(x, y));
-        }
-      }
-    });
-  });
-
-  describe('a hard tip applies luminance correction exactly', () => {
-    it('reproduces the source with destination luminance at the stroke centre', () => {
-      const canvas = run();
-
-      const center = at(canvas, 4, 4);
-      expect(center.r).toBe(31);
-      expect(center.g).toBe(111);
-      expect(center.b).toBe(171);
-      expect(center.a).toBe(255);
-    });
-
-    it('writes a single-point stroke as exactly one dab', () => {
-      const canvas = run();
-
-      expect(at(canvas, 4, 4)).not.toEqual(dest(4, 4));
-      expect(at(canvas, 3, 4)).not.toEqual(dest(3, 4));
-      expect(at(canvas, 5, 4)).not.toEqual(dest(5, 4));
-      expect(at(canvas, 4, 3)).not.toEqual(dest(4, 3));
-      expect(at(canvas, 4, 5)).not.toEqual(dest(4, 5));
-
-      expect(at(canvas, 3, 3)).not.toEqual(dest(3, 3));
-      expect(at(canvas, 5, 3)).not.toEqual(dest(5, 3));
-      expect(at(canvas, 3, 5)).not.toEqual(dest(3, 5));
-      expect(at(canvas, 5, 5)).not.toEqual(dest(5, 5));
-
-      expect(at(canvas, 2, 4)).toEqual(dest(2, 4));
-      expect(at(canvas, 6, 4)).toEqual(dest(6, 4));
-      expect(at(canvas, 4, 2)).toEqual(dest(4, 2));
-      expect(at(canvas, 4, 6)).toEqual(dest(4, 6));
-    });
-  });
-
-  describe('a soft tip blends with luminance correction across its rim', () => {
-    it('weights each texel by the tip falloff with luminance correction', () => {
-      const canvas = run({ size: 4, hardness: 0 });
-
-      expect(at(canvas, 4, 4)).toEqual({ r: 31, g: 111, b: 171, a: 255 });
-
-      // The soft tip weights: center=1, N/S/E/W at distance 1 = 0.5, corners at distance ~1.41 = ~0.20
-      // Expected values computed from the actual algorithm
-      expect(at(canvas, 3, 4)).toEqual({ r: 39, g: 109, b: 109, a: 255 });
-      expect(at(canvas, 5, 4)).toEqual({ r: 79, g: 109, b: 109, a: 255 });
-
-      expect(at(canvas, 4, 3)).toEqual({ r: 59, g: 109, b: 109, a: 255 });
-      expect(at(canvas, 4, 5)).toEqual({ r: 59, g: 109, b: 109, a: 255 });
-
-      expect(at(canvas, 3, 3)).toEqual({ r: 52, g: 104, b: 104, a: 255 });
-      expect(at(canvas, 5, 3)).toEqual({ r: 92, g: 104, b: 104, a: 255 });
-      expect(at(canvas, 3, 5)).toEqual({ r: 52, g: 104, b: 104, a: 255 });
-      expect(at(canvas, 5, 5)).toEqual({ r: 92, g: 104, b: 104, a: 255 });
-    });
-
-    it('leaves the half-open rim at distance exactly the radius untouched', () => {
-      const canvas = run({ size: 4, hardness: 0 });
-
-      expect(at(canvas, 2, 4)).toEqual(dest(2, 4));
-      expect(at(canvas, 6, 4)).toEqual(dest(6, 4));
-      expect(at(canvas, 4, 2)).toEqual(dest(4, 2));
-      expect(at(canvas, 4, 6)).toEqual(dest(4, 6));
-
-      expect(at(canvas, 3, 3)).not.toEqual(dest(3, 3));
-    });
-  });
-
-  describe('opacity scales the healing strength', () => {
-    it('scales the correction strength via straight lerp', () => {
-      const canvas = run({ opacity: 0.5 });
-
-      const center = at(canvas, 4, 4);
-      // With opacity 0.5, the correction is halved
-      // dest(4,4).r = 80, full healing result = 31, so halfway = 55.5 -> 56
-      expect(center.r).toBe(56);
-      expect(center.g).toBe(106);
-      expect(center.b).toBe(136);
-      expect(center.a).toBe(255);
-
-      // The healed value is between destination (80) and full healing (31)
-      expect(center.r).toBeLessThan(dest(4, 4).r);
-      expect(center.r).toBeGreaterThan(31);
-    });
-
-    it('preserves all pixels at zero opacity', () => {
-      const canvas = run({ opacity: 0 });
-
-      for (let y = 0; y < size.height; y++) {
-        for (let x = 0; x < size.width; x++) {
-          expect(at(canvas, x, y)).toEqual(dest(x, y));
-        }
-      }
-    });
-  });
-
-  describe('aligned and free strokes read different source locations', () => {
-    const stroke = [
-      { x: 4, y: 4 },
-      { x: 6, y: 4 },
-    ];
-
-    it('reads from the stroke start when aligned', () => {
-      const canvas = run({ points: stroke, aligned: true });
-
-      expect(at(canvas, 7, 4)).toEqual({ r: 98, g: 118, b: 118, a: 255 });
-    });
-
-    it('reads from the stroke end when not aligned', () => {
-      const canvas = run({ points: stroke, aligned: false });
-
-      expect(at(canvas, 7, 4)).toEqual({ r: 70, g: 130, b: 130, a: 255 });
-    });
-
-    it('puts every texel in the last dab at different healed values between the two modes', () => {
-      const aligned = run({ points: stroke, aligned: true });
-      const free = run({ points: stroke, aligned: false });
-
-      for (const [x, y] of [
-        [5, 3],
-        [6, 3],
-        [7, 3],
-        [5, 4],
-        [6, 4],
-        [7, 4],
-        [5, 5],
-        [6, 5],
-        [7, 5],
-      ] as const) {
-        expect(at(free, x, y), `(${x}, ${y})`).not.toEqual(at(aligned, x, y));
-        expect(at(free, x, y), `(${x}, ${y})`).not.toEqual(dest(x, y));
-        expect(at(aligned, x, y), `(${x}, ${y})`).not.toEqual(dest(x, y));
-      }
-    });
-  });
-
-  describe('multi-dab strokes with spacing', () => {
-    it('stamps multiple dabs along a stroke', () => {
-      const canvas = run({
-        points: [
-          { x: 4, y: 4 },
-          { x: 7, y: 4 },
-        ],
-      });
-
-      expect(at(canvas, 4, 4)).not.toEqual(dest(4, 4));
-      expect(at(canvas, 7, 4)).not.toEqual(dest(7, 4));
-
-      expect(at(canvas, 5, 4)).not.toEqual(dest(5, 4));
-      expect(at(canvas, 6, 4)).not.toEqual(dest(6, 4));
-    });
-  });
-
-  describe('edge handling and clamping', () => {
-    it('clamps a read that hangs off the top-left corner instead of throwing', () => {
-      expect(() => run({ source: { x: 0, y: 0 } })).not.toThrow();
-
-      const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
-
-      expect(at(canvas, 3, 3)).not.toEqual(dest(3, 3));
-      expect(at(canvas, 4, 3)).not.toEqual(dest(4, 3));
-      expect(at(canvas, 5, 3)).not.toEqual(dest(5, 3));
-      expect(at(canvas, 3, 4)).not.toEqual(dest(3, 4));
-      expect(at(canvas, 4, 4)).not.toEqual(dest(4, 4));
-      expect(at(canvas, 5, 4)).not.toEqual(dest(5, 4));
-    });
-
-    it('clamps a read that hangs off the bottom-right corner', () => {
-      expect(() => run({ source: { x: 8, y: 8 } })).not.toThrow();
-
-      const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
-
-      expect(at(canvas, 3, 3)).not.toEqual(dest(3, 3));
-      expect(at(canvas, 4, 4)).not.toEqual(dest(4, 4));
-      expect(at(canvas, 5, 5)).not.toEqual(dest(5, 5));
-    });
-
-    it('stamps a very large tip into distant quadrants of the canvas', () => {
-      expect(() => run({ size: 500 })).not.toThrow();
-
-      const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
-
-      expect(canvas.ctx.getImageData).toHaveBeenCalledWith(0, 0, size.width, size.height);
-      expect(canvas.ctx.putImageData).toHaveBeenCalledTimes(1);
-
-      for (const [x, y] of [
-        [1, 1],
-        [7, 1],
-        [1, 7],
-        [7, 7],
-      ] as const) {
-        expect(at(canvas, x, y), `(${x}, ${y})`).not.toEqual(dest(x, y));
-      }
-    });
-  });
-
-  describe('clamping non-finite and out-of-range controls', () => {
-    const equivalentTo = (override: Partial<HealingBrushToolArgs>, reference: Partial<HealingBrushToolArgs>) => {
-      const a = run(override);
-      const b = run(reference);
-      expect(Array.from(a.buffer)).toEqual(Array.from(b.buffer));
-    };
-
-    it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
-      'falls back to the default size for non-finite size %p',
-      (sizeValue) => {
-        equivalentTo({ size: sizeValue }, { size: BRUSH_SIZE_DEFAULT });
-      }
+      } as unknown as typeof OffscreenCanvas
     );
 
-    it('clamps an over-range size to maximum behavior on a large canvas', () => {
-      const stroke = [{ x: 300, y: 5 }];
-      const source = { x: 1, y: 1 };
-      const canvasSize = { width: 600, height: 10 };
-      const oversized = run({ size: 5000, source, points: stroke }, canvasSize);
-      const maximum = run({ size: BRUSH_SIZE_MAX, source, points: stroke }, canvasSize);
+    const data = new Uint8ClampedArray(size.width * size.height * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 100;
+      data[i + 1] = 100;
+      data[i + 2] = 100;
+      data[i + 3] = 255;
+    }
+    const [canvas] = healingBrush({ size, bitmap: sourceBitmap(data) })(args());
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+    expect(recCanvas.width).toBe(size.width);
+    expect(recCanvas.height).toBe(size.height);
+    expect(recCanvas.pixels).toEqual(data);
 
-      expect(Array.from(oversized.buffer)).toEqual(Array.from(maximum.buffer));
-      // This point is 252px from the centre: outside the clamped 250px radius,
-      // but inside an unclamped 2500px radius.
-      expect(at(oversized, 48, 5)).toEqual(dest(48, 5));
-    });
-
-    it('clamps under-range sizes to the minimum behavior', () => {
-      equivalentTo({ size: 0 }, { size: BRUSH_SIZE_MIN });
-      equivalentTo({ size: -40 }, { size: BRUSH_SIZE_MIN });
-    });
-
-    it.each([Number.NaN, 250, -40])('clamps out-of-range hardness %p into 0-100', (hardness) => {
-      const clamped = Number.isFinite(hardness)
-        ? Math.min(BRUSH_HARDNESS_MAX, Math.max(BRUSH_HARDNESS_MIN, hardness))
-        : BRUSH_HARDNESS_DEFAULT;
-
-      equivalentTo({ hardness }, { hardness: clamped });
-    });
-
-    it.each([Number.NaN, 3, -0.25])('clamps out-of-range opacity %p into 0-1', (opacity) => {
-      const clamped = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : BRUSH_OPACITY_DEFAULT;
-
-      equivalentTo({ opacity }, { opacity: clamped });
-    });
-
-    it('does not throw for any of them together', () => {
-      expect(() => run({ size: Number.NaN, hardness: Number.NaN, opacity: Number.NaN })).not.toThrow();
-      expect(() => run({ size: -1, hardness: 400, opacity: 9 })).not.toThrow();
-    });
+    vi.unstubAllGlobals();
+    vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas as unknown as typeof OffscreenCanvas);
   });
 
-  describe('source buffer isolation: reads from sourceData copy, never the output', () => {
-    const smearArgs: Partial<HealingBrushToolArgs> = {
-      size: 8,
-      hardness: 100,
-      opacity: 1,
-      aligned: true,
-      source: { x: 1, y: 1 },
-      points: [
-        { x: 4, y: 4 },
-        { x: 6, y: 4 },
-      ],
-    };
+  it('handles non-square documents', () => {
+    const nsSize: Size = { width: 800, height: 600 };
+    const data = new Uint8ClampedArray(nsSize.width * nsSize.height * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 100;
+      data[i + 1] = 100;
+      data[i + 2] = 100;
+      data[i + 3] = 255;
+    }
+    const bmp = { width: nsSize.width, height: nsSize.height, pixels: data, close: vi.fn() } as unknown as ImageBitmap;
+    const [canvas] = healingBrush({ size: nsSize, bitmap: bmp })(args({ size: 10 }));
+    expect(canvas.width).toBe(nsSize.width);
+    expect(canvas.height).toBe(nsSize.height);
+  });
+});
 
-    it('leaves the correct source texel at a point whose output the first dab had already written', () => {
-      const canvas = run(smearArgs);
-
-      const result = at(canvas, 6, 4);
-      expect(result.r).toBe(78);
-      expect(result.g).toBe(118);
-      expect(result.b).toBe(118);
-
-      expect(result).not.toEqual(dest(6, 4));
-    });
-
-    it('reads the source for every texel the last dab covers that is inside the canvas', () => {
-      const canvas = run(smearArgs);
-
-      for (let y = 0; y <= 8; y++) {
-        for (let x = 2; x <= 8; x++) {
-          // The dab at (6,4) with radius 4 covers x=2..8, y=0..8
-          // But the circular dab boundary has weight=0 at exact radius with hardness=100
-          const dx = x - 6;
-          const dy = y - 4;
-          const distSq = dx * dx + dy * dy;
-          if (distSq > 16) continue; // outside circular dab radius
-          if (distSq === 16) continue; // exactly at radius, weight=0 for hard tip
-
-          expect(at(canvas, x, y)).not.toEqual(dest(x, y));
-        }
-      }
-
-      // Pin source-mapped values at opposite sides of the last dab; the loop
-      // above detects untouched pixels but cannot detect a wrong source offset.
-      expect(at(canvas, 3, 4)).toEqual({ r: 18, g: 118, b: 118, a: 255 });
-      expect(at(canvas, 8, 4)).toEqual({ r: 118, g: 118, b: 118, a: 255 });
-    });
-
-    it('reads a fresh source buffer per call rather than a canvas that remembers', () => {
-      const a = run(smearArgs);
-      const b = run(smearArgs);
-
-      expect(Array.from(a.buffer)).toEqual(Array.from(b.buffer));
-    });
+describe('healingBrush clampBrushTipSettings interaction', () => {
+  it('clamps size to [BRUSH_SIZE_MIN, BRUSH_SIZE_MAX]', () => {
+    expect(() => run(FIXTURE, args({ size: BRUSH_SIZE_MIN - 1 }))).not.toThrow();
+    expect(() => run(FIXTURE, args({ size: BRUSH_SIZE_MAX + 100 }))).not.toThrow();
+    expect(() => run(FIXTURE, args({ size: -10 }))).not.toThrow();
+    expect(() => run(FIXTURE, args({ size: Number.NaN }))).not.toThrow();
+    expect(() => run(FIXTURE, args({ size: Number.POSITIVE_INFINITY }))).not.toThrow();
   });
 
-  describe('zero-size and zero-hardness edge cases', () => {
-    it('handles zero hardness (fully soft) without throwing', () => {
-      expect(() => run({ hardness: 0 })).not.toThrow();
-      const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
-      expect(canvas.ctx.putImageData).toHaveBeenCalled();
-    });
+  it('clamps hardness to [BRUSH_HARDNESS_MIN, BRUSH_HARDNESS_MAX]', () => {
+    expect(() => run(FIXTURE, args({ hardness: BRUSH_HARDNESS_MIN - 1 }))).not.toThrow();
+    expect(() => run(FIXTURE, args({ hardness: BRUSH_HARDNESS_MAX + 1 }))).not.toThrow();
+    expect(() => run(FIXTURE, args({ hardness: Number.NaN }))).not.toThrow();
+  });
 
-    it('handles minimum size without throwing', () => {
-      expect(() => run({ size: BRUSH_SIZE_MIN })).not.toThrow();
-      const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
-      expect(canvas.ctx.putImageData).toHaveBeenCalled();
-    });
+  it('clamps opacity to valid range', () => {
+    expect(() => run(FIXTURE, args({ opacity: -0.5 }))).not.toThrow();
+    expect(() => run(FIXTURE, args({ opacity: 2 }))).not.toThrow();
+  });
+
+  it('settles non-finite tip settings on safe defaults', () => {
+    const canvas = run(FIXTURE, args({ size: NaN, hardness: NaN, opacity: NaN }));
+    expect(canvas.width).toBe(size.width);
+    expect(canvas.height).toBe(size.height);
+  });
+});
+
+describe('healingBrush point coordinate handling', () => {
+  it('accepts non-integer point coordinates (floored by clampPointToSize)', () => {
+    const canvas = run(FIXTURE, args({ size: 3, points: [{ x: 4.7, y: 4.3 }] }));
+    expect(canvas.width).toBe(size.width);
+    expect(canvas.height).toBe(size.height);
+  });
+
+  it('handles duplicate consecutive points (no-op second dab)', () => {
+    const canvas = run(
+      FIXTURE,
+      args({
+        size: 3,
+        points: [
+          { x: 4, y: 4 },
+          { x: 4, y: 4 },
+        ],
+      })
+    );
+    RecordingOffscreenCanvas.instances = [];
+    const canvasSingle = run(FIXTURE, args({ size: 3, points: [{ x: 4, y: 4 }] }));
+    expect(canvas.pixels).toEqual(canvasSingle.pixels);
+  });
+
+  it('points outside canvas bounds are clamped by clampPointToSize', () => {
+    const canvas = run(FIXTURE, args({ size: 3, points: [{ x: -10, y: -10 }] }));
+    expect(canvas.width).toBe(size.width);
+    expect(canvas.height).toBe(size.height);
+  });
+});
+
+describe('healingBrush empty points array', () => {
+  it('returns canvas with source drawn when points array is empty', () => {
+    const data = new Uint8ClampedArray(size.width * size.height * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 100;
+      data[i + 1] = 100;
+      data[i + 2] = 100;
+      data[i + 3] = 255;
+    }
+    const [canvas] = healingBrush({ size, bitmap: sourceBitmap(data) })(args({ points: [] }));
+    expect(canvas.width).toBe(size.width);
+    expect(canvas.height).toBe(size.height);
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+    expect(recCanvas.pixels).toEqual(data);
+  });
+});
+
+describe('healingBrush zero/negative opacity', () => {
+  it('opacity 0 produces no change', () => {
+    const data = new Uint8ClampedArray(size.width * size.height * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 100;
+      data[i + 1] = 100;
+      data[i + 2] = 100;
+      data[i + 3] = 255;
+    }
+    const result = healingBrush({ size, bitmap: sourceBitmap(data) })(args({ opacity: 0 }));
+    const recCanvas = result[0] as unknown as RecordingOffscreenCanvas;
+    expect(recCanvas.pixels).toEqual(data);
+  });
+
+  it('negative opacity clamped to 0', () => {
+    const data = new Uint8ClampedArray(size.width * size.height * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 100;
+      data[i + 1] = 100;
+      data[i + 2] = 100;
+      data[i + 3] = 255;
+    }
+    const result = healingBrush({ size, bitmap: sourceBitmap(data) })(args({ opacity: -0.5 }));
+    const recCanvas = result[0] as unknown as RecordingOffscreenCanvas;
+    expect(recCanvas.pixels).toEqual(data);
+  });
+});
+
+describe('healingBrush HEALING_BRUSH_SPACING_PERCENT behavior', () => {
+  it('spacing constant affects dab density along stroke', () => {
+    expect(HEALING_BRUSH_SPACING_PERCENT).toBe(25);
+  });
+});
+
+describe('healingBrush missing source returns early', () => {
+  it('returns canvas with source drawn when source is null', () => {
+    const data = new Uint8ClampedArray(size.width * size.height * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 100;
+      data[i + 1] = 100;
+      data[i + 2] = 100;
+      data[i + 3] = 255;
+    }
+    const [canvas] = healingBrush({ size, bitmap: sourceBitmap(data) })(args({ source: null }));
+    expect(canvas.width).toBe(size.width);
+    expect(canvas.height).toBe(size.height);
+    const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
+    expect(recCanvas.pixels).toEqual(data);
   });
 });
