@@ -26,6 +26,9 @@ import { getAssetRegistry } from './asset-registry.ts';
 import { durableExportRecords } from './export-canvas.ts';
 import { documentFrameEquals } from './document-frame.ts';
 
+// Pre-warm AVIF encoder WASM on provider mount to eliminate first-encode fetch latency
+import { init as initAvifEncoder } from '@jsquash/avif/encode';
+
 export type ImageUploadResponse =
   | { fileName: string; document: PsdDocument }
   | {
@@ -84,6 +87,11 @@ export const FileProvider = ({ children }: FileProviderProps) => {
     };
     input?.addEventListener('cancel', cancel);
     return () => input?.removeEventListener('cancel', cancel);
+  }, []);
+
+  // Pre-warm AVIF encoder WASM to eliminate first-encode fetch latency (~3.5MB)
+  useEffect(() => {
+    initAvifEncoder().catch((err: unknown) => console.warn('AVIF encoder pre-warm failed:', err));
   }, []);
 
   const handleFileInputChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
