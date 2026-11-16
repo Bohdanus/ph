@@ -126,8 +126,9 @@ const REVIEWED = {
     patterns: `subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=7 filesystem-write:mkdirSync=4 filesystem-write:rmSync=11`,
   },
   'orphan-branches.test.mjs': {
-    scope: 'Git fixtures use a unique temporary repository.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=11 filesystem-write:writeFileSync=3 filesystem-write:rmSync=5`,
+    scope:
+      'Git fixtures use a unique temporary repository; the Windows direct-entrypoint check reports from that fixture.',
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=12 filesystem-write:writeFileSync=3 filesystem-write:rmSync=6`,
   },
   'path-identity.test.mjs': {
     scope:

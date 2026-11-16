@@ -70,6 +70,11 @@ const ALLOWED_UNLISTED = new Map([
       'task-specific records, so this audit does not need a permanent index row.',
   ],
   [
+    'docs/handoffs/overnight-salvage-20261115.md',
+    'one-off evidence for this overnight salvage and landing; the docs/handoffs/ directory row ' +
+      'covers task-specific records, so this audit does not need a permanent index row.',
+  ],
+  [
     'docs/handoffs/linux-snapshot-ci-20261024-salvage-review.md',
     'one-off evidence for this historical branch review; the docs/handoffs/ directory row ' +
       'covers task-specific records, so this review does not need a permanent index row.',
