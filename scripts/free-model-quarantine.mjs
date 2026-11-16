@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { pathToFileURL } from 'node:url';
 import {
   DEFAULT_QUARANTINE_FILE,
   AUTOMATIC_QUARANTINE_REASONS,
@@ -153,7 +154,7 @@ export async function main(args = process.argv.slice(2), io = process, deps = {}
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().then((code) => {
     process.exitCode = code;
   });
