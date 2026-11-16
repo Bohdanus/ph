@@ -101,10 +101,15 @@ function readMainWorktreeIdentity(gitDir) {
  * that Git creates with a recycled path-derived admin directory.
  *
  * @param {string} cwd
- * @param {{ required?: boolean }} options When true, persistence failures are surfaced to hook installation.
+ * @param {{ required?: boolean, expectedCommonDir?: string }} options
+ * `expectedCommonDir` rejects a path replaced between selection and registration;
+ * `required` surfaces persistence failures to hook installation.
  * @returns {boolean}
  */
-export function registerMainWorktree(cwd = process.cwd(), { required = false, allowDetached = false } = {}) {
+export function registerMainWorktree(
+  cwd = process.cwd(),
+  { required = false, allowDetached = false, expectedCommonDir = null } = {}
+) {
   const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   try {
     let branchRef = null;
@@ -115,6 +120,15 @@ export function registerMainWorktree(cwd = process.cwd(), { required = false, al
     }
     const gitDir = gitConfigPath(realpathSync(resolve(cwd, git(['rev-parse', '--absolute-git-dir']))));
     const worktreePath = gitConfigPath(realpathSync(cwd));
+    if (
+      expectedCommonDir &&
+      !samePath(
+        gitConfigPath(realpathSync(resolve(cwd, git(['rev-parse', '--path-format=absolute', '--git-common-dir'])))),
+        gitConfigPath(realpathSync(expectedCommonDir))
+      )
+    ) {
+      return false;
+    }
     let registeredGitDir = null;
     let registeredPath = null;
     let registeredGitDirRaw = null;

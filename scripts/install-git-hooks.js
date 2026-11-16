@@ -221,11 +221,24 @@ function hasLinkedWorktree(records, commonDir) {
 }
 
 function isMainRecord(record) {
-  return /(?:^|\n)branch refs\/heads\/main(?:\n|$)/.test(record);
+  return /(?:^|\n)branch refs\/heads\/main(?:\n|$)/.test(record) && !/(?:^|\n)prunable(?:\s|$)/.test(record);
 }
 
 function worktreePath(record) {
   return record.match(/^worktree (.+)$/m)?.[1] ?? null;
+}
+
+function isCurrentMainCheckout(recordPath, commonDir) {
+  try {
+    const actualPath = realpathSync(recordPath);
+    const actualCommonDir = realpathSync(
+      git(['-C', actualPath, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+    );
+    const actualBranch = git(['-C', actualPath, 'symbolic-ref', '--quiet', '--short', 'HEAD']);
+    return actualBranch === 'main' && samePath(actualCommonDir, realpathSync(commonDir));
+  } catch {
+    return false;
+  }
 }
 
 function registeredMainWorktree(records, commonDir) {
@@ -278,7 +291,10 @@ function chooseMainWorktree(records, commonDir) {
     return currentPath;
   }
 
-  if (mainRecords.length === 1) return worktreePath(mainRecords[0]);
+  if (mainRecords.length === 1) {
+    const recordPath = worktreePath(mainRecords[0]);
+    return recordPath && isCurrentMainCheckout(recordPath, commonDir) ? realpathSync(recordPath) : null;
+  }
   if (mainRecords.length > 1) {
     // A forced duplicate branch is ambiguous; preserve the saved identity unless recovery explicitly selects its checkout.
     const registeredPath = registeredMainWorktree(records, commonDir);
@@ -300,7 +316,7 @@ function main() {
   const records = git(['worktree', 'list', '--porcelain']).split('\n\n');
   const mainPath = chooseMainWorktree(records, commonDir);
   const hasLinkedCheckout = !mainPath && hasLinkedWorktree(records, commonDir);
-  if (mainPath && !registerMainWorktree(mainPath, { required: true })) {
+  if (mainPath && !registerMainWorktree(mainPath, { required: true, expectedCommonDir: commonDir })) {
     throw new Error(`could not persist the designated main worktree identity for ${mainPath}`);
   }
   if (!mainPath && process.env.CI === 'true' && !hasLinkedCheckout) {
@@ -403,7 +419,13 @@ function main() {
         'cannot identify the designated main worktree: keep refs/heads/main checked out during the first hook install, or restore its saved identity'
       );
     }
-    if (!registerMainWorktree(validatedDetachedMainPath, { required: true, allowDetached: true })) {
+    if (
+      !registerMainWorktree(validatedDetachedMainPath, {
+        required: true,
+        allowDetached: true,
+        expectedCommonDir: commonDir,
+      })
+    ) {
       throw new Error(`could not migrate the detached main worktree identity for ${validatedDetachedMainPath}`);
     }
   }

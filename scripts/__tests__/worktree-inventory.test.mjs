@@ -1188,7 +1188,9 @@ describe('the inventory output target', () => {
       stdout:
         args[0] === 'worktree'
           ? `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`
-          : `${join(repo, '.git')}\n`,
+          : args[0] === 'symbolic-ref'
+            ? 'main\n'
+            : `${join(repo, '.git')}\n`,
     });
     expect(inventoryTarget(repo, undefined, { run, realpath: (p) => p })).toBe(join(linkedMain, 'WORKTREES.json'));
   });
@@ -4525,14 +4527,60 @@ describe('shared inventory-path resolver', () => {
     expect(records).toEqual([{ path: '/repo', branch: '(unknown)', bare: true }]);
   });
 
+  it('parseWorktreeListing: retains a prunable worktree reason', () => {
+    const records = parseWorktreeListing(
+      'worktree /repo/reused-main\nbranch refs/heads/main\nprunable gitdir file points to a different worktree\n'
+    );
+    expect(records).toEqual([
+      {
+        path: '/repo/reused-main',
+        branch: 'main',
+        bare: false,
+        prunableReason: 'gitdir file points to a different worktree',
+      },
+    ]);
+  });
+
   it('resolveMainWorktreeRoot: returns the main checkout path', () => {
     const run = (cwd, args) => {
       if (args[0] === 'worktree') {
         return { stdout: 'worktree /repo\nbranch refs/heads/main\n' };
       }
+      if (args[0] === 'rev-parse') return { stdout: '/repo/.git' };
+      if (args[0] === 'symbolic-ref') return { stdout: 'main' };
       return { stdout: '' };
     };
     expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe('/repo');
+  });
+
+  it('resolveMainWorktreeRoot: rejects a prunable main even when its path resolves', () => {
+    const run = (_cwd, args) => ({
+      stdout:
+        args[0] === 'worktree'
+          ? 'worktree /repo/reused-main\nbranch refs/heads/main\nprunable gitdir file points to a different worktree\n'
+          : '',
+    });
+    expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBeNull();
+  });
+
+  it('resolveMainWorktreeRoot: rejects an unmarked main path reused by another repository', () => {
+    const reusedMain = '/repo/reused-main';
+    const run = (cwd, args) => {
+      if (args[0] === 'worktree') {
+        return {
+          stdout: `worktree /repo\nbranch refs/heads/feature\n\nworktree ${reusedMain}\nbranch refs/heads/main\n`,
+        };
+      }
+      if (args[0] === 'rev-parse') {
+        return { stdout: cwd === reusedMain ? '/foreign/.git' : '/repo/.git' };
+      }
+      if (args[0] === 'symbolic-ref') return { stdout: 'main' };
+      return { stdout: '' };
+    };
+    const options = { run, realpath: identityRealpath };
+
+    expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', options)).toBeNull();
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', options)).toBeNull();
   });
 
   it('resolveMainWorktreeRoot: returns null when no main worktree exists', () => {
@@ -4543,11 +4591,18 @@ describe('shared inventory-path resolver', () => {
   it.each([
     ['missing', 'worktree /missing/main\nbranch refs/heads/main\n'],
     ['ambiguous', 'worktree /repo/main-a\nbranch refs/heads/main\n\nworktree /repo/main-b\nbranch refs/heads/main\n'],
+    [
+      'prunable',
+      'worktree /repo/reused-main\nbranch refs/heads/main\nprunable gitdir file points to a different worktree\n',
+    ],
   ])('resolveInventoryPath: refuses a %s registered main rather than falling back', (label, worktreeListing) => {
     const asked = [];
     const run = (_cwd, args) => {
       asked.push(args);
-      return { stdout: args[0] === 'worktree' ? worktreeListing : '/repo/.git\n' };
+      if (args[0] === 'worktree') return { stdout: worktreeListing };
+      if (args[0] === 'rev-parse') return { stdout: '/repo/.git\n' };
+      if (args[0] === 'symbolic-ref') return { stdout: 'main\n' };
+      return { stdout: '' };
     };
     const realpath = (p) => {
       if (p === '/repo/.git') return p;
@@ -4560,33 +4615,50 @@ describe('shared inventory-path resolver', () => {
   });
 
   it('resolveInventoryPath: returns the main checkout path', () => {
-    const run = (cwd, args) => ({ stdout: `worktree ${repo}\nbranch refs/heads/main\n` });
+    const run = (_cwd, args) => {
+      if (args[0] === 'worktree') return { stdout: `worktree ${repo}\nbranch refs/heads/main\n` };
+      if (args[0] === 'rev-parse') return { stdout: join(repo, '.git') };
+      if (args[0] === 'symbolic-ref') return { stdout: 'main' };
+      return { stdout: '' };
+    };
     expect(resolveInventoryPath(taskWorktree, { run, realpath: identityRealpath })).toBe(join(repo, 'WORKTREES.json'));
   });
 
   it('resolveInventoryPath: returns the linked main worktree when main is not the primary', () => {
-    const run = (cwd, args) => ({
-      stdout: `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`,
-    });
+    const run = (_cwd, args) => {
+      if (args[0] === 'worktree') {
+        return {
+          stdout: `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`,
+        };
+      }
+      if (args[0] === 'rev-parse') return { stdout: join(repo, '.git') };
+      if (args[0] === 'symbolic-ref') return { stdout: 'main' };
+      return { stdout: '' };
+    };
     expect(resolveInventoryPath(taskWorktree, { run, realpath: identityRealpath })).toBe(
       join(linkedMain, 'WORKTREES.json')
     );
   });
 
   it('resolveInventoryPath: bases fallback and main lookup on one roster snapshot', () => {
-    let calls = 0;
-    const run = () => {
-      calls += 1;
-      return {
-        stdout:
-          calls === 1
-            ? `worktree ${repo}\nbranch refs/heads/feature\n`
-            : `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`,
-      };
+    let rosterCalls = 0;
+    const run = (_cwd, args) => {
+      if (args[0] === 'worktree') {
+        rosterCalls += 1;
+        return {
+          stdout:
+            rosterCalls === 1
+              ? `worktree ${repo}\nbranch refs/heads/feature\n`
+              : `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`,
+        };
+      }
+      if (args[0] === 'rev-parse') return { stdout: join(repo, '.git') };
+      if (args[0] === 'symbolic-ref') return { stdout: 'main' };
+      return { stdout: '' };
     };
 
     expect(resolveInventoryPath(taskWorktree, { run, realpath: identityRealpath })).toBe(join(repo, 'WORKTREES.json'));
-    expect(calls).toBe(1);
+    expect(rosterCalls).toBe(1);
   });
 
   it('resolveRepositoryRoot: keeps storage rooted at the primary checkout with linked main', () => {
