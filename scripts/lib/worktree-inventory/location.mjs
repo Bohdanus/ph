@@ -36,6 +36,7 @@
 import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { samePath } from '../path-identity.mjs';
 
 /** Default git runner: `execFileSync('git', args, { cwd })` returning `{ stdout }`. */
 export function defaultRun(cwd, args) {
@@ -77,6 +78,8 @@ export function parseWorktreeListing(porcelain) {
         record.branch = '(detached)';
       } else if (line.startsWith('bare') && record.path) {
         record.bare = true;
+      } else if (line.startsWith('prunable') && record.path) {
+        record.prunableReason = line.slice('prunable'.length).trim() || true;
       }
     }
     if (record.path) records.push(record);
@@ -92,7 +95,8 @@ export function parseWorktreeListing(porcelain) {
  * - there is no `main` worktree,
  * - there is more than one `main` worktree (ambiguous),
  * - the main worktree is bare,
- * - its path does not exist on disk.
+ * - its entry is prunable, its path does not exist, or the path now belongs to a
+ *   different repository or branch.
  *
  * `null` is a fail-closed refusal, not a guess: a caller that cannot name the
  * main checkout must not pick an arbitrary worktree and pretend it is canonical.
@@ -107,13 +111,27 @@ function readWorktreeRoster(cwd, { run = defaultRun, parse = parseWorktreeListin
   return { listingAvailable: true, worktrees: parse(porcelain) };
 }
 
-function resolveMainFromWorktrees(worktrees, realpath = realpathSync) {
-  const mains = worktrees.filter((w) => !w.bare && w.branch === 'main');
+function resolveMainFromWorktrees(cwd, worktrees, { run = defaultRun, realpath = realpathSync } = {}) {
+  const registeredMains = worktrees.filter((w) => !w.bare && w.branch === 'main');
+  const mains = registeredMains.filter((w) => !w.prunableReason);
 
-  if (mains.length !== 1) return { registered: mains.length > 0, root: null };
+  if (registeredMains.length === 0 || mains.length !== 1) {
+    return { registered: registeredMains.length > 0, root: null };
+  }
 
   try {
-    return { registered: true, root: realpath(mains[0].path) };
+    const root = realpath(mains[0].path);
+    const repositoryCommonDir = realpath(
+      run(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim()
+    );
+    const mainCommonDir = realpath(
+      run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim()
+    );
+    const mainBranch = run(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
+    if (mainBranch !== 'main' || !samePath(mainCommonDir, repositoryCommonDir)) {
+      return { registered: true, root: null };
+    }
+    return { registered: true, root };
   } catch {
     return { registered: true, root: null };
   }
@@ -132,7 +150,7 @@ function resolvePrimaryFromWorktrees(worktrees, realpath = realpathSync) {
 function inspectMainWorktree(cwd, options = {}) {
   const roster = readWorktreeRoster(cwd, options);
   if (!roster.listingAvailable) return { ...roster, registered: false, root: null };
-  return { ...roster, ...resolveMainFromWorktrees(roster.worktrees, options.realpath ?? realpathSync) };
+  return { ...roster, ...resolveMainFromWorktrees(cwd, roster.worktrees, options) };
 }
 
 export function resolveMainWorktreeRoot(cwd, options = {}) {
@@ -175,8 +193,9 @@ export function resolveRepositoryRoot(cwd, options = {}) {
  * main worktree's checkout. The repository root is used only when the worktree
  * roster was read successfully and confirms there is no registered `main`
  * worktree (for example, a bare repository). If the roster is unreadable, or a
- * registered main checkout is missing or ambiguous, resolution fails closed;
- * it must not fall back to a possibly stale copy in another checkout.
+ * registered main checkout is missing, ambiguous, or no longer belongs to this
+ * repository, resolution fails closed; it must not fall back to a possibly stale
+ * copy in another checkout.
  *
  * Returns `null` only when no repository can be identified at all (the caller is
  * outside any git repository). Even when the file does not yet exist at the
@@ -187,7 +206,7 @@ export function resolveInventoryPath(cwd, options = {}) {
   const roster = readWorktreeRoster(cwd, options);
   if (!roster.listingAvailable) return null;
 
-  const main = resolveMainFromWorktrees(roster.worktrees, options.realpath ?? realpathSync);
+  const main = resolveMainFromWorktrees(cwd, roster.worktrees, options);
   if (main.root) return join(main.root, 'WORKTREES.json');
   if (main.registered) return null;
 
