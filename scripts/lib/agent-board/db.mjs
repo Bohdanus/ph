@@ -2772,8 +2772,9 @@ export class Board {
    * worktree still exists. This is not proof that a session ended: a long task
    * that outlives its lease can lose the claim to a peer's next board command.
    */
-  autoSweep({ at = this.now(), dryRun = false } = {}) {
-    if (dryRun) return { renewed: [], renewedFiles: [], released: this.doctor({ at, dryRun, record: false }) };
+  autoSweep({ at, dryRun = false } = {}) {
+    let sweepAt = at === undefined ? this.now() : at;
+    if (dryRun) return { renewed: [], renewedFiles: [], released: this.doctor({ at: sweepAt, dryRun, record: false }) };
     const agentId = this.identity?.agentId;
     const worktree = this.identity?.worktree;
     const canRenew = Boolean(agentId && worktree && existsDir(worktree));
@@ -2784,25 +2785,33 @@ export class Board {
           'SELECT lease_until FROM claims WHERE released_at IS NULL AND agent_id = ? AND (worktree IS NULL OR worktree = ?)'
         )
         .all(agentId, worktree)
-        .some((claim) => needsLeaseRenewal(claim.lease_until, at, DEFAULT_LEASE_MS));
+        .some((claim) => needsLeaseRenewal(claim.lease_until, sweepAt, DEFAULT_LEASE_MS));
     const locksNeedRenewal =
       canRenew &&
       this.db
         .prepare('SELECT expires_at FROM file_locks WHERE released_at IS NULL AND agent_id = ? AND worktree = ?')
         .all(agentId, worktree)
-        .some((lock) => needsLeaseRenewal(lock.expires_at, at, DEFAULT_LEASE_MS));
+        .some((lock) => needsLeaseRenewal(lock.expires_at, sweepAt, DEFAULT_LEASE_MS));
 
     let renewed = [];
     let renewedFiles = [];
     if (claimsNeedRenewal || locksNeedRenewal) {
       // A sweep between these two renewals could reclaim the still-expired lock
       // after seeing its claim renewed. Keep both lease sets under one writer lock.
-      ({ renewed, renewedFiles } = this.transaction(() => ({
-        renewed: this.renewOwnClaims({ at }),
-        renewedFiles: this.renewOwnLocks({ at }),
-      })));
+      // Sample the clock after acquiring it so the lock wait does not shorten the new lease.
+      const result = this.transaction(() => {
+        const renewalAt = at === undefined ? this.now() : at;
+        return {
+          renewed: this.renewOwnClaims({ at: renewalAt }),
+          renewedFiles: this.renewOwnLocks({ at: renewalAt }),
+          at: renewalAt,
+        };
+      });
+      renewed = result.renewed;
+      renewedFiles = result.renewedFiles;
+      sweepAt = result.at;
     }
-    const released = this.doctor({ at, dryRun, record: true });
+    const released = this.doctor({ at: sweepAt, dryRun, record: true });
     return { renewed, renewedFiles, released };
   }
 

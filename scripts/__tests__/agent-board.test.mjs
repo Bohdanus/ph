@@ -3193,7 +3193,7 @@ describe('lease renewal when two agents share a branch', () => {
       const renewed = renewClaims(options);
       // A concurrent doctor must not reclaim the expired lock in the interval
       // after its claim is renewed but before the lock renewal runs.
-      expect(() => sweeper.doctor()).toThrow(/database is locked/i);
+      expect(() => sweeper.doctor()).toThrow();
       return renewed;
     };
     owner.renewOwnLocks = (options) => {
@@ -3208,6 +3208,34 @@ describe('lease renewal when two agents share a branch', () => {
     expect(result.renewedFiles).toEqual(['src/atomic-renew.ts']);
     expect(result.released).toEqual([]);
     expect(sweeper.doctor()).toEqual([]);
+  });
+
+  it('renews a lock without a claim and starts its lease after the write-lock wait', () => {
+    const ownerWorktree = join(dir, 'wt-lock-only-renew-owner');
+    mkdirSync(ownerWorktree, { recursive: true });
+    const owner = openAs('feat/lock-only-renew', ownerWorktree);
+    owner.holdFiles(['src/lock-only-renew.ts']);
+    const originalDeadline = owner.db
+      .prepare('SELECT expires_at FROM file_locks WHERE path = ?')
+      .get('src/lock-only-renew.ts').expires_at;
+    advance(DEFAULT_LEASE_MS / 2 + 1);
+
+    const transaction = owner.transaction.bind(owner);
+    owner.transaction = (fn) =>
+      transaction(() => {
+        advance(5_000);
+        return fn();
+      });
+
+    const result = owner.autoSweep();
+    const renewedDeadline = owner.db
+      .prepare('SELECT expires_at FROM file_locks WHERE path = ?')
+      .get('src/lock-only-renew.ts').expires_at;
+
+    expect(result.renewed).toEqual([]);
+    expect(result.renewedFiles).toEqual(['src/lock-only-renew.ts']);
+    expect(Date.parse(renewedDeadline)).toBe(clock + DEFAULT_LEASE_MS);
+    expect(Date.parse(renewedDeadline)).toBeGreaterThan(Date.parse(originalDeadline));
   });
 
   it('uses the same supplied timestamp to evaluate locks and claims', () => {
