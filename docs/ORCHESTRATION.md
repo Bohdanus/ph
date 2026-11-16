@@ -1484,6 +1484,8 @@ the dry run does not release anything. A command from the matching branch and
 worktree can renew a worktree-scoped malformed lease, replacing its unreadable
 deadline with a valid one. Legacy claims with no recorded worktree retain their
 existing renewal rule; locks without a worktree cannot be renewed this way.
+The dry run lists point-in-time candidates; a later sweep rechecks the lease
+generation, so a candidate renewed in between is kept.
 
 A **claim** renews itself while its worktree exists, and `autoSweep` renews
 before it sweeps. The limit of that ordering: `doctor` also reclaims on **expiry**,
@@ -1519,11 +1521,18 @@ is a way to hold a lock and lose it:
   half-lease threshold. That threshold is what makes it safe to reason about: a lock is never
   extended before it is half gone, so a stale row cannot be kept alive by a command that has
   nothing to do with the file.
-- **The sweep is no longer the hazard it was.** `doctor` releases each expired row through
-  `releaseFiles([finding.path], { agent: finding.agent, reason: 'swept' })` — with **no
-  `force`** — so the `agent_id !== who` guard still applies and a live holder on the same path
-  is not swept out from under itself. The key is `(path, agent_id)`, so two live rows on one
-  path are schema-legal, and `doctor` iterates every live row rather than the first.
+- **The sweep releases the generation it inspected.** Claims and locks are rechecked inside
+  their write transaction, and the update matches the inspected owner, worktree, and lease
+  timestamps. If another command renewed or replaced a row after the scan, the sweep leaves it
+  alone and does not report a release. A stale claim cascade releases only paired locks that are
+  independently stale; a live file lock survives even when the claim lease has expired. Each
+  standalone lock remains an independent candidate even when its agent also has a stale claim.
+  `releaseFiles` still runs without `force`, and the `(path, agent_id)` key allows two rows for one
+  path; `doctor` iterates every inspected row rather than the first.
+
+This closes the scan-then-release race between separate board processes. It does not extend the
+lease of an agent that stops running `swarm` for half a lease; the owner still needs an activity
+signal for work that can run longer than the renewal window.
 
 What is left is the same limit a claim has: an agent that stops running `swarm` for a
 half-lease loses its locks, and the fix is an activity signal rather than a longer TTL.

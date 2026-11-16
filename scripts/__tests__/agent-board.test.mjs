@@ -109,6 +109,8 @@ const boardFor = (agentId) => {
   return board;
 };
 
+const ensureAgentWorktree = (agentId) => mkdirSync(identityFor(agentId).worktree, { recursive: true });
+
 /**
  * A board on the real clock, for the tests that are about two processes seeing
  * one database rather than about lease arithmetic. A lease written by one board
@@ -1113,6 +1115,163 @@ describe('deferrals decide what is ready', () => {
 });
 
 describe('doctor reclaims what dead agents left', () => {
+  it('uses one supplied timestamp to evaluate claims and locks', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'claim and lock expire together' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/same-scan-deadline.ts'], { issueId: id, leaseMs: 60_000 });
+    a.close();
+
+    const b = boardFor('b');
+    const candidates = b.doctor({ at: clock + 60_001, dryRun: true });
+
+    expect(candidates.map(({ kind }) => kind)).toEqual(['expired-lease', 'expired-lock']);
+    expect(b.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(id).released_at).toBeNull();
+    expect(
+      b.db
+        .prepare('SELECT released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+        .get('src/same-scan-deadline.ts', 'a').released_at
+    ).toBeNull();
+  });
+
+  it('does not release a claim or paired lock renewed after the scan', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'active again during sweep' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/renewed-during-sweep.ts'], { issueId: id, leaseMs: 60_000 });
+    advance(60_001);
+
+    const b = boardFor('b');
+    const releaseClaim = b.releaseClaim.bind(b);
+    const releaseFiles = b.releaseFiles.bind(b);
+    vi.spyOn(b, 'releaseClaim').mockImplementation((issue, options) => {
+      a.autoSweep();
+      return releaseClaim(issue, options);
+    });
+    vi.spyOn(b, 'releaseFiles').mockImplementation((paths, options) => {
+      a.autoSweep();
+      return releaseFiles(paths, options);
+    });
+
+    expect(b.doctor()).toEqual([]);
+    const claim = b.db.prepare('SELECT lease_until, released_at FROM claims WHERE issue_id = ?').get(id);
+    const lock = b.db
+      .prepare('SELECT expires_at, released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/renewed-during-sweep.ts', 'a');
+    expect(claim.released_at).toBeNull();
+    expect(Date.parse(claim.lease_until)).toBeGreaterThan(clock);
+    expect(lock.released_at).toBeNull();
+    expect(Date.parse(lock.expires_at)).toBeGreaterThan(clock);
+    expect(b.events({ kind: 'doctor.run' })).toHaveLength(0);
+  });
+
+  it('does not cascade an expired claim into an independently live file lock', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'claim and file lock have separate leases' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/longer-file-lease.ts'], { issueId: id, leaseMs: 120_000 });
+    advance(60_001);
+
+    const b = boardFor('b');
+    expect(b.doctor().map((finding) => finding.issue)).toEqual([id]);
+    expect(b.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(id).released_at).not.toBeNull();
+    const lock = b.db
+      .prepare('SELECT expires_at, released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/longer-file-lease.ts', 'a');
+    expect(lock.released_at).toBeNull();
+    expect(Date.parse(lock.expires_at)).toBeGreaterThan(clock);
+    expect(b.liveLocks().map((entry) => entry.path)).toContain('src/longer-file-lease.ts');
+    expect(b.db.prepare('SELECT issue_id FROM issue_locks WHERE path = ?').get('src/longer-file-lease.ts')).toEqual({
+      issue_id: id,
+    });
+  });
+
+  it('does not release a standalone lock renewed after the scan', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    a.holdFiles(['src/standalone-renewed-during-sweep.ts'], { leaseMs: 60_000 });
+    advance(60_001);
+
+    const b = boardFor('b');
+    const releaseFiles = b.releaseFiles.bind(b);
+    vi.spyOn(b, 'releaseFiles').mockImplementation((paths, options) => {
+      expect(a.renewOwnLocks()).toEqual(['src/standalone-renewed-during-sweep.ts']);
+      return releaseFiles(paths, options);
+    });
+
+    expect(b.doctor()).toEqual([]);
+    const lock = b.db
+      .prepare('SELECT expires_at, released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/standalone-renewed-during-sweep.ts', 'a');
+    expect(lock.released_at).toBeNull();
+    expect(Date.parse(lock.expires_at)).toBeGreaterThan(clock);
+    expect(b.events({ kind: 'doctor.run' })).toHaveLength(0);
+  });
+
+  it('preserves a renewed file lock when its expired claim is swept', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'claim expired while file use continued' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/lock-renewed-after-claim-scan.ts'], { issueId: id, leaseMs: 60_000 });
+    advance(60_001);
+
+    const b = boardFor('b');
+    const releaseClaim = b.releaseClaim.bind(b);
+    vi.spyOn(b, 'releaseClaim').mockImplementation((issue, options) => {
+      expect(a.renewOwnLocks()).toEqual(['src/lock-renewed-after-claim-scan.ts']);
+      return releaseClaim(issue, options);
+    });
+
+    expect(b.doctor().map((finding) => finding.issue)).toEqual([id]);
+    expect(b.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(id).released_at).not.toBeNull();
+    const lock = b.db
+      .prepare('SELECT expires_at, released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/lock-renewed-after-claim-scan.ts', 'a');
+    expect(lock.released_at).toBeNull();
+    expect(Date.parse(lock.expires_at)).toBeGreaterThan(clock);
+    expect(
+      b.db.prepare('SELECT issue_id FROM issue_locks WHERE path = ?').get('src/lock-renewed-after-claim-scan.ts')
+    ).toEqual({ issue_id: id });
+    expect(b.events({ kind: 'doctor.run' })).toHaveLength(1);
+  });
+
+  it('keeps a new claim pairing created after the sweep snapshot', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'lock paired during sweep' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    advance(60_001);
+
+    const b = boardFor('b');
+    const releaseClaim = b.releaseClaim.bind(b);
+    vi.spyOn(b, 'releaseClaim').mockImplementation((issue, options) => {
+      a.holdFiles(['src/new-pairing-during-sweep.ts'], { issueId: id, leaseMs: 120_000 });
+      return releaseClaim(issue, options);
+    });
+
+    expect(b.doctor().map((finding) => finding.issue)).toEqual([id]);
+    expect(b.liveLocks().map((lock) => lock.path)).toContain('src/new-pairing-during-sweep.ts');
+    expect(
+      b.db.prepare('SELECT issue_id FROM issue_locks WHERE path = ?').get('src/new-pairing-during-sweep.ts')
+    ).toEqual({ issue_id: id });
+  });
+
+  it('reclaims a dead worktree standalone lock even when that agent has a dead claim', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'claim and unrelated standalone hold' });
+    a.claimIssue(id, { leaseMs: 86_400_000 });
+    a.holdFiles(['src/standalone-next-to-dead-claim.ts'], { leaseMs: 86_400_000 });
+    a.close();
+
+    const b = boardFor('b');
+    expect(b.doctor().map((finding) => finding.kind)).toEqual(['dead-worktree', 'dead-worktree-lock']);
+    expect(b.locksHeldBy('a')).toHaveLength(0);
+  });
+
   it('releases a claim held from a worktree that no longer exists', () => {
     const a = boardFor('a');
     const { id } = a.createIssue({ title: 'worktree deleted mid-task' });
@@ -1163,7 +1322,7 @@ describe('doctor reclaims what dead agents left', () => {
 
   it('leaves a live claim from a live worktree alone', () => {
     const a = boardFor('a');
-    mkdirSync(join(dir, 'wt-a'), { recursive: true });
+    ensureAgentWorktree('a');
     const { id } = a.createIssue({ title: 'in progress' });
     a.claimIssue(id, { leaseMs: 60_000 });
     a.close();
@@ -2618,7 +2777,8 @@ describe('the command line', () => {
     expect(a.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(deadId).released_at).toBeNull();
 
     const human = await cli(['doctor', '--dry-run']);
-    expect(human.out).toContain('would release');
+    expect(human.out).toContain('stale release candidate(s)');
+    expect(human.out).toContain('rechecked before release');
     expect(human.out).toContain('deadline alone is treated as live');
     expect(human.out).toContain('invalid-deadline');
   });
