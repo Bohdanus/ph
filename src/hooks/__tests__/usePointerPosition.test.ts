@@ -285,6 +285,29 @@ describe('usePointerPosition', () => {
       expect(result.current.getLocalCoords(event)).toEqual({ x: 10, y: 20 });
     });
 
+    it('maps pointer coordinates from the bordered client viewport after a scrollbar shrinks it', () => {
+      const { el } = createContainer({ left: 50, top: 25, width: 415, height: 220 });
+      // Match the classic 15px scrollbar fixture below: the border box stays 415px wide
+      // while the client viewport shrinks from 400px to 385px.
+      setClientViewport(el, { left: 2, top: 3, width: 385, height: 200, offsetWidth: 415, offsetHeight: 220 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+      const dimensions = result.current.dimensionsRef.current;
+
+      expect(dimensions).toMatchObject({
+        outerWidth: 385,
+        outerHeight: 200,
+        scale: 2,
+        offsetX: 92.5,
+        offsetY: 0,
+      });
+
+      const event = pointerEvent(el, {
+        clientX: 50 + 2 + dimensions.offsetX + dimensions.scale * 10,
+        clientY: 25 + 3 + dimensions.offsetY + dimensions.scale * 20,
+      });
+      expect(result.current.getLocalCoords(event)).toEqual({ x: 10, y: 20 });
+    });
+
     it('accounts for the container scroll offset without adding window scroll twice', () => {
       const { el } = createContainer({ left: 50, top: 25, width: 200, height: 200 });
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));

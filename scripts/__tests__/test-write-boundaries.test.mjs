@@ -65,7 +65,7 @@ const REVIEWED = {
   },
   'free-model-pool-external.test.mjs': {
     scope:
-      'External-provider, typed transient 5xx, Kilo cost-stop and source-cooldown, OpenRouter quota metadata and UTC-midnight rollover, and keyless catalog fixtures use unique OS temporary directories with finally cleanup.',
+      'External-provider, typed transient 5xx, Kilo cost-stop and source-cooldown, OpenRouter quota metadata and UTC-midnight rollover, and keyless catalog fixtures use unique OS temporary directories with finally cleanup; keyless catalog fixture files are removed with their temporary directory.',
     patterns: `filesystem-write:mkdtemp=12 filesystem-write:rm=12 filesystem-write:writeFile=1`,
   },
   'free-model-pool.test.mjs': {
@@ -145,7 +145,8 @@ const REVIEWED = {
     patterns: `subprocess:execFileSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=40 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=4 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=2`,
   },
   'repo-state-gate.test.mjs': {
-    scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',
+    scope:
+      'Git and filesystem fixtures use temporary repositories; child cwd and environment are reviewed, and fixture repo/worktree paths are removed only within scratch roots cleaned by afterEach.',
     patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=20 filesystem-write:rmSync=9 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
   },
   'session-db-snapshot.test.mjs': {
