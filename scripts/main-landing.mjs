@@ -34,6 +34,8 @@ const OWNER_FILE = 'owner.json';
 const LOCK_DIR = 'main-landing-occupancy';
 const HEARTBEAT_MS = 30_000;
 const WATCH_POLL_MS = 30_000;
+const WATCHER_READ_RETRY_MAX = 3;
+const WATCHER_READ_RETRY_BASE_MS = 500;
 const WATCHER_READY_TIMEOUT_MS = 10_000;
 const AUTO_MERGE_RECOVERY_MS = 30 * 60_000;
 const AUTO_MERGE_OBSERVATION_GAP_MS = WATCH_POLL_MS * 3;
@@ -141,6 +143,40 @@ function readOwner(paths) {
   } catch (error) {
     throw new Error('the main landing owner record is unreadable: ' + (error?.message ?? String(error)));
   }
+}
+
+const sleepFor = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+
+async function readOwnerForWatcher(paths, { sleep = sleepFor, readOwnerImpl = readOwner } = {}) {
+  for (let attempt = 1; attempt <= WATCHER_READ_RETRY_MAX; attempt += 1) {
+    try {
+      return { ok: true, owner: readOwnerImpl(paths) };
+    } catch (error) {
+      appendFileSync(
+        join(paths.lockDir, 'alert-failures.log'),
+        new Date().toISOString() +
+          ' watcher readOwner failed (attempt ' +
+          attempt +
+          '/' +
+          WATCHER_READ_RETRY_MAX +
+          '): ' +
+          (error?.message ?? String(error)) +
+          '\n'
+      );
+      if (attempt === WATCHER_READ_RETRY_MAX) {
+        appendFileSync(
+          join(paths.lockDir, 'alert-failures.log'),
+          new Date().toISOString() +
+            ' watcher: readOwner failed ' +
+            WATCHER_READ_RETRY_MAX +
+            ' consecutive times; exiting\n'
+        );
+        return { ok: false, error };
+      }
+      await sleep(WATCHER_READ_RETRY_BASE_MS * attempt);
+    }
+  }
+  return { ok: false, error: new Error('watcher readOwner retry loop exited unexpectedly') };
 }
 
 function readControlLock(paths) {
@@ -1637,24 +1673,13 @@ async function recoverPersistentOrphanAutoMerge(
 export async function watch(
   paths,
   leaseId,
-  {
-    sleep = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
-    now = Date.now,
-    recoveryOptions = {},
-  } = {}
+  { sleep = sleepFor, now = Date.now, recoveryOptions = {}, readOwnerImpl = readOwner } = {}
 ) {
   for (;;) {
     await sleep(WATCH_POLL_MS);
-    let owner;
-    try {
-      owner = readOwner(paths);
-    } catch (error) {
-      appendFileSync(
-        join(paths.lockDir, 'alert-failures.log'),
-        new Date().toISOString() + ' watcher: ' + error.message + '\n'
-      );
-      return 1;
-    }
+    const ownerResult = await readOwnerForWatcher(paths, { sleep, readOwnerImpl });
+    if (!ownerResult.ok) return 1;
+    let owner = ownerResult.owner;
     if (!owner || owner.leaseId !== leaseId) return 0;
     try {
       if (owner.mode === 'landing') {
@@ -1712,7 +1737,10 @@ export async function watch(
   }
 }
 
-export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), watcherStarter = startWatcher } = {}) {
+export async function main(
+  argv = process.argv.slice(2),
+  { cwd = process.cwd(), watcherStarter = startWatcher, sleep = sleepFor, readOwnerImpl = readOwner } = {}
+) {
   const [action, ...rest] = argv;
   if (!action || action === '--help' || action === '-h') {
     process.stdout.write(USAGE + '\n');
@@ -1722,10 +1750,12 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
     const paths = resolvePaths(cwd);
     const leaseId = rest[0];
     if (!leaseId || rest.length !== 1) throw new Error('watch requires one lease ID');
-    const owner = readOwner(paths);
+    const ownerResult = await readOwnerForWatcher(paths, { sleep, readOwnerImpl });
+    if (!ownerResult.ok) return 1;
+    const owner = ownerResult.owner;
     if (!owner || owner.leaseId !== leaseId || owner.mode !== 'landing') return 0;
     process.stdout.write('KILO_MAIN_LANDING_WATCHER_READY:' + leaseId + '\n');
-    return watch(paths, leaseId);
+    return watch(paths, leaseId, { sleep, readOwnerImpl });
   }
   const options = parseOptions(rest);
   const paths = resolvePaths(cwd);

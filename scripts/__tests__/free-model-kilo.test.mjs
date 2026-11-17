@@ -145,6 +145,187 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     }
   });
 
+  it.each([
+    [
+      'the observed unwrapped response',
+      `<function=kilo_memory_recall>
+<parameter=mode>
+search
+</parameter>
+<parameter=query>
+watcher owner read
+</parameter>
+</function>
+</tool_call>`,
+    ],
+    [
+      'the unwrapped response after reasoning text',
+      `I need to search before answering.
+<function=kilo_memory_recall>
+<parameter=mode>
+search
+</parameter>
+<parameter=query>
+watcher owner read
+</parameter>
+</function>
+</tool_call>`,
+    ],
+    [
+      'the wrapped form after reasoning text',
+      `The request calls for a lookup.
+<tool_call>
+<function=kilo_memory_recall>
+<parameter=mode>
+search
+</parameter>
+<parameter=query>
+watcher owner read
+</parameter>
+</function>
+</tool_call>`,
+    ],
+  ])('rejects %s when returned as text instead of an answer', async (_label, content) => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const output = [
+      JSON.stringify({ type: 'text', part: { text: content } }),
+      JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0 } }),
+    ].join('\n');
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `process.stdout.write(${JSON.stringify(output + '\n')});`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+        error: 'Kilo attempted a tool call; the completion was rejected',
+        exhaustSource: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      'a triple-backtick fence',
+      `Use this XML only as a documentation example:
+\`\`\`xml
+<tool_call>
+<function=kilo_memory_recall>
+<parameter=mode>
+search
+</parameter>
+</function>
+</tool_call>
+\`\`\``,
+    ],
+    [
+      'a four-backtick CRLF fence with a longer closer',
+      [
+        'Use this XML only as a documentation example:',
+        '````xml',
+        '<tool_call>',
+        '<function=kilo_memory_recall>',
+        '<parameter=mode>',
+        'search',
+        '</parameter>',
+        '</function>',
+        '</tool_call>',
+        '`````',
+      ].join('\r\n'),
+    ],
+    [
+      'a tilde fence with mismatched and shorter closers',
+      [
+        '~~~~xml',
+        '~~~',
+        '<tool_call>',
+        '<function=kilo_memory_recall>',
+        '</function>',
+        '</tool_call>',
+        '````',
+        '<tool_call>',
+        '<function=kilo_memory_recall>',
+        '</function>',
+        '</tool_call>',
+        '~~~~',
+      ].join('\n'),
+    ],
+    [
+      'tool-call fragments separated by a fenced example',
+      [
+        '<tool_call><function=kilo_memory_recall>',
+        '~~~~xml',
+        'Example markup is shown for documentation only.',
+        '~~~~',
+        '</function></tool_call>',
+      ].join('\n'),
+    ],
+    [
+      'an unclosed tilde fence',
+      `~~~xml
+<tool_call>
+<function=kilo_memory_recall>
+</function>
+</tool_call>`,
+    ],
+  ])('accepts tool-call markup inside %s as ordinary answer text', async (_label, content) => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const output = [
+      JSON.stringify({ type: 'text', part: { text: content } }),
+      JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0 } }),
+    ].join('\n');
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `process.stdout.write(${JSON.stringify(output + '\n')});`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toMatchObject({
+        content,
+        finishReason: 'stop',
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('resumes rejecting serialized tool calls after a closed code fence', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const content = `Documentation example:
+~~~xml
+<tool_call>
+<function=kilo_memory_recall>
+</function>
+</tool_call>
+~~~
+<tool_call>
+<function=kilo_memory_recall>
+<parameter=mode>
+search
+</parameter>
+</function>
+</tool_call>`;
+    const output = [
+      JSON.stringify({ type: 'text', part: { text: content } }),
+      JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0 } }),
+    ].join('\n');
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `process.stdout.write(${JSON.stringify(output + '\n')});`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+        error: 'Kilo attempted a tool call; the completion was rejected',
+        exhaustSource: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('does not accept an earlier stopped step when the last step was truncated', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
     const command = await writeExecutable(

@@ -129,6 +129,13 @@ configuration, not proof that credentials are absent. Do not inspect credential 
 database or auth file. See the [OpenCode CLI auth guide](https://opencode.ai/docs/cli/) and
 [storage guide](https://opencode.ai/docs/troubleshooting/).
 
+The completion child receives runtime path variables, but uses a per-request temporary `HOME` and
+XDG directories instead of the operator's OpenCode credentials and config. It does not inherit
+arbitrary provider API-key variables or `OPENCODE_CONFIG_DIR`. `OPENCODE_PURE` and
+`OPENCODE_DISABLE_PROJECT_CONFIG` keep external plugins and project instructions out of the child;
+the hard-deny tool policy remains active. OpenCode's provider-owned free models do not require an API
+key; `opencode auth login` is not needed for this route.
+
 The runner accepts provider-owned model IDs ending in `-free`, plus the exact Nemotron `:free` ID
 only when the catalog marks it `owned_by: opencode`. It denies tool use and requires a clean CLI exit
 with non-empty text. The current OpenCode catalog inspection on 2026-11-12 did not list the exact

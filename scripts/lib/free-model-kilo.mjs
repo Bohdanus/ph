@@ -144,6 +144,36 @@ function hasToolActivity(events) {
   );
 }
 
+function isSerializedToolCallText(content) {
+  const outsideFencedSegments = [];
+  let currentSegment = [];
+  const lines = content.split(/\r?\n/);
+  let fence = null;
+  for (const line of lines) {
+    if (fence) {
+      const closing = /^ {0,3}(`+|~+)[ \t]*$/.exec(line);
+      if (closing && closing[1][0] === fence.character && closing[1].length >= fence.length) {
+        outsideFencedSegments.push(currentSegment.join('\n'));
+        currentSegment = [];
+        fence = null;
+      }
+      continue;
+    }
+    const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (opening && !(opening[1][0] === '`' && opening[2].includes('`'))) {
+      outsideFencedSegments.push(currentSegment.join('\n'));
+      currentSegment = [];
+      fence = { character: opening[1][0], length: opening[1].length };
+      continue;
+    }
+    currentSegment.push(line);
+  }
+  outsideFencedSegments.push(currentSegment.join('\n'));
+  return outsideFencedSegments.some((outsideFencedText) =>
+    /(?:<tool_call>\s*)?<function=[A-Za-z0-9_.:-]+>[\s\S]*?<\/function>\s*<\/tool_call>/i.test(outsideFencedText)
+  );
+}
+
 function isExactZeroCost(cost) {
   if (typeof cost === 'number') return Number.isFinite(cost) && cost === 0;
   return typeof cost === 'string' && /^0+(?:\.0+)?$/.test(cost.trim());
@@ -527,6 +557,9 @@ export async function runKiloCompletion({
       .filter((event) => event?.type === 'text')
       .map((event) => (typeof event?.part?.text === 'string' ? event.part.text : (event.text ?? '')))
       .join('');
+    if (isSerializedToolCallText(content)) {
+      return { error: 'Kilo attempted a tool call; the completion was rejected', exhaustSource: true };
+    }
     if (terminal?.part?.reason !== 'stop' || !content.trim()) {
       return {
         error: 'Kilo did not return a complete non-empty response',

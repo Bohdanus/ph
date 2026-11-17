@@ -98,6 +98,44 @@ export const MAX_GROQ_KEYS = 8;
 const GROQ_KEY_PROBE_CACHE = join(homedir(), '.cache', 'ph', 'groq-key-probe.json');
 const GROQ_KEY_PROBE_TTL_MS = 60 * 60 * 1000;
 
+const OPENCODE_RUNTIME_ENV_KEYS = [
+  'PATH',
+  'USER',
+  'LOGNAME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'NO_COLOR',
+  'PROGRAMDATA',
+  'SYSTEMROOT',
+  'WINDIR',
+  'COMSPEC',
+];
+
+function opencodeRuntimeEnvironment(environment, isolatedHome, platform) {
+  const runtime = Object.fromEntries(
+    OPENCODE_RUNTIME_ENV_KEYS.flatMap((key) => (typeof environment[key] === 'string' ? [[key, environment[key]]] : []))
+  );
+  return {
+    ...runtime,
+    HOME: isolatedHome,
+    XDG_CONFIG_HOME: join(isolatedHome, 'xdg-config'),
+    XDG_DATA_HOME: join(isolatedHome, 'xdg-data'),
+    XDG_CACHE_HOME: join(isolatedHome, 'xdg-cache'),
+    ...(platform === 'win32'
+      ? {
+          USERPROFILE: isolatedHome,
+          APPDATA: join(isolatedHome, 'AppData', 'Roaming'),
+          LOCALAPPDATA: join(isolatedHome, 'AppData', 'Local'),
+        }
+      : {}),
+  };
+}
+
 async function loadGroqKeyProbeCache() {
   const { readFile } = await import('node:fs/promises');
   try {
@@ -1010,6 +1048,7 @@ export async function runOpenCodeCompletion({
   maxTokens,
   timeoutMs,
   providerOwned = false,
+  environment = process.env,
   spawnImpl = spawn,
   platform = process.platform,
   terminateWindowsProcessTreeImpl = terminateWindowsProcessTree,
@@ -1053,8 +1092,10 @@ export async function runOpenCodeCompletion({
   try {
     await writeFile(promptPath, prompt, { encoding: 'utf8', mode: 0o600 });
     const env = {
-      ...process.env,
+      ...opencodeRuntimeEnvironment(environment, directory, platform),
       OPENCODE_CONFIG_CONTENT: OPENCODE_TOOL_DENY_CONFIG,
+      OPENCODE_PURE: '1',
+      OPENCODE_DISABLE_PROJECT_CONFIG: '1',
       OPENCODE_DISABLE_AUTOUPDATE: '1',
       OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
       OPENCODE_DISABLE_PRUNE: '1',

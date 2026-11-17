@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { samePath } from '../lib/path-identity.mjs';
 
-import { createReplacementMainWorktree, land, watch } from '../main-landing.mjs';
+import { createReplacementMainWorktree, land, main as mainLanding, watch } from '../main-landing.mjs';
 import { decide, registerMainWorktree, resolveWorktree, run, OVERRIDE_VAR } from '../main-worktree-guard.mjs';
 
 /**
@@ -508,6 +508,69 @@ describe('the guard tells a main worktree from a linked one on a real repository
       rmSync(fixture, { recursive: true, force: true });
     }
   }, 240_000);
+
+  it('retries transient watcher owner reads at startup and exits after the bounded retry limit', async () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-landing-owner-read-retry-')));
+    const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      writeFileSync(join(fixture, 'base.txt'), 'base\n');
+      expect(git(fixture, ['init', '-q', '-b', 'main'])).not.toBeNull();
+      expect(git(fixture, ['config', 'user.name', 'Git Guard Test'])).not.toBeNull();
+      expect(git(fixture, ['config', 'user.email', 'git-guard@example.invalid'])).not.toBeNull();
+      expect(git(fixture, ['add', '-A'])).not.toBeNull();
+      expect(git(fixture, ['commit', '-qm', 'base'])).not.toBeNull();
+      expect(registerMainWorktree(fixture, { required: true })).toBe(true);
+      const commonDir = resolve(fixture, git(fixture, ['rev-parse', '--git-common-dir']));
+      const lockDir = join(commonDir, 'main-landing-occupancy');
+      mkdirSync(lockDir, { recursive: true });
+
+      const retryDelays = [];
+      const recoveringReader = vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error('temporary owner read error');
+        })
+        .mockImplementationOnce(() => ({ leaseId: 'lease-read-retry', mode: 'landing' }))
+        .mockImplementationOnce(() => {
+          throw new Error('temporary polling owner read error');
+        })
+        .mockImplementationOnce(() => ({ leaseId: 'replaced-lease', mode: 'landing' }));
+      const recovered = await mainLanding(['watch', 'lease-read-retry'], {
+        cwd: fixture,
+        sleep: async (milliseconds) => retryDelays.push(milliseconds),
+        readOwnerImpl: recoveringReader,
+      });
+
+      expect(recovered).toBe(0);
+      expect(recoveringReader).toHaveBeenCalledTimes(4);
+      expect(retryDelays).toEqual([500, 30_000, 500]);
+      expect(stdoutWrite).toHaveBeenCalledWith('KILO_MAIN_LANDING_WATCHER_READY:lease-read-retry\n');
+      expect(readFileSync(join(lockDir, 'alert-failures.log'), 'utf8')).toContain(
+        'watcher readOwner failed (attempt 1/3): temporary polling owner read error'
+      );
+
+      const failureDelays = [];
+      const failingReader = vi.fn(() => {
+        throw new Error('owner remains unreadable');
+      });
+      const failed = await mainLanding(['watch', 'lease-read-retry'], {
+        cwd: fixture,
+        sleep: async (milliseconds) => failureDelays.push(milliseconds),
+        readOwnerImpl: failingReader,
+      });
+
+      expect(failed).toBe(1);
+      expect(failingReader).toHaveBeenCalledTimes(3);
+      expect(failureDelays).toEqual([500, 1000]);
+      expect(stdoutWrite).toHaveBeenCalledTimes(1);
+      expect(readFileSync(join(lockDir, 'alert-failures.log'), 'utf8')).toContain(
+        'readOwner failed 3 consecutive times; exiting'
+      );
+    } finally {
+      stdoutWrite.mockRestore();
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
 
   it('keeps the designated checkout protected if its branch changes from main', () => {
     const original = resolveWorktree(mainLinked);

@@ -867,17 +867,54 @@ describe('free model rotation', () => {
     const command = await writeFakeOpenCode(
       directory,
       `const fs = require('node:fs');
+const path = require('node:path');
 const args = process.argv.slice(2);
 const model = args[args.indexOf('--model') + 1];
 if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(9);
+if (process.env.OPENCODE_PURE !== '1' || process.env.OPENCODE_DISABLE_PROJECT_CONFIG !== '1') process.exit(10);
 if (!fs.readFileSync(args[args.indexOf('--file') + 1], 'utf8').includes('private prompt')) process.exit(8);
+const isolatedHome = fs.realpathSync(process.env.HOME);
+if (isolatedHome !== fs.realpathSync(process.cwd())) process.exit(7);
+for (const [key, suffix] of [['XDG_CONFIG_HOME', 'xdg-config'], ['XDG_DATA_HOME', 'xdg-data'], ['XDG_CACHE_HOME', 'xdg-cache']]) {
+  if (path.basename(process.env[key]) !== suffix || fs.realpathSync(path.dirname(process.env[key])) !== isolatedHome) process.exit(11);
+}
+if (process.env.USERPROFILE && fs.realpathSync(process.env.USERPROFILE) !== isolatedHome) process.exit(5);
+if (process.env.APPDATA && process.env.APPDATA !== path.join(process.env.HOME, 'AppData', 'Roaming')) process.exit(4);
+if (process.env.LOCALAPPDATA && process.env.LOCALAPPDATA !== path.join(process.env.HOME, 'AppData', 'Local')) process.exit(3);
+if (
+  process.env.OPENROUTER_API_KEY ||
+  process.env.ANTHROPIC_API_KEY ||
+  process.env.OPENCODE_API_KEY ||
+  process.env.OPENCODE_CONFIG_DIR ||
+  process.env.UNRELATED_SECRET
+) process.exit(6);
 console.log(JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }));
 console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }));`
     );
 
     try {
       await expect(
-        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'private prompt', maxTokens: 64 })
+        runOpenCodeCompletion({
+          command,
+          model: 'beam-free',
+          prompt: 'private prompt',
+          maxTokens: 64,
+          environment: {
+            PATH: process.env.PATH,
+            HOME: '/fixture/home',
+            USERPROFILE: '/fixture/profile',
+            XDG_CONFIG_HOME: '/fixture/opencode-config',
+            XDG_DATA_HOME: '/fixture/opencode-data',
+            XDG_CACHE_HOME: '/fixture/opencode-cache',
+            APPDATA: '/fixture/roaming',
+            LOCALAPPDATA: '/fixture/local-app-data',
+            OPENROUTER_API_KEY: 'do-not-forward-openrouter',
+            ANTHROPIC_API_KEY: 'do-not-forward-anthropic',
+            OPENCODE_API_KEY: 'do-not-forward-opencode',
+            OPENCODE_CONFIG_DIR: '/fixture/custom-config',
+            UNRELATED_SECRET: 'do-not-forward',
+          },
+        })
       ).resolves.toMatchObject({ content: 'complete answer', finishReason: 'stop', model: 'beam-free', usage: null });
     } finally {
       await rm(directory, { recursive: true, force: true });
