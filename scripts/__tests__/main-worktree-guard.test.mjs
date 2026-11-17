@@ -919,9 +919,15 @@ describe('the guard is actually installed', () => {
       git(reusedMainPath, ['commit', '--quiet', '--allow-empty', '-m', 'foreign']);
 
       const roster = git(fixture, ['worktree', 'list', '--porcelain']);
-      expect(roster).toContain(`worktree ${reusedMainPath.replace(/\\/g, '/')}`);
-      expect(roster).toContain('branch refs/heads/main');
-      expect(roster).not.toMatch(/\nprunable(?:\s|$)/);
+      const reusedMainEntry = roster.split(/\r?\n\s*\r?\n/).find((entry) => {
+        const worktreeLine = entry.split(/\r?\n/, 1)[0];
+        return (
+          worktreeLine?.startsWith('worktree ') && samePath(worktreeLine.slice('worktree '.length), reusedMainPath)
+        );
+      });
+      expect(reusedMainEntry).toBeDefined();
+      expect(reusedMainEntry).toContain('branch refs/heads/main');
+      expect(reusedMainEntry).not.toMatch(/\nprunable(?:\s|$)/);
 
       const install = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
         cwd: fixture,
