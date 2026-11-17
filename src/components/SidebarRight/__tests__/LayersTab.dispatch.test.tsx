@@ -4,6 +4,7 @@ import LayersTab from '../LayersTab.tsx';
 import {
   HIDE_LAYER_ACTION,
   LOCK_LAYER_ACTION,
+  NEW_LAYER_ACTION,
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   SET_LAYER_BLEND_MODE_ACTION,
@@ -346,7 +347,7 @@ describe('LayersTab actions reaching the store', () => {
     expect(dispatched()).toEqual([]);
   });
 
-  it('dispatches REMOVE_ACTION when the trash control is activated', () => {
+  it('dispatches REMOVE_ACTION when the action bar trash control is activated', () => {
     seedStore({
       layers: {
         'layer-1': createMockLayer({ id: 'layer-1', name: 'Background', order: 0, isBedrock: true }),
@@ -357,7 +358,7 @@ describe('LayersTab actions reaching the store', () => {
     render(<LayersTab />);
 
     act(() => {
-      fireEvent.click(getRow('Layer 2').querySelector('button[aria-label="Remove layer"]')!);
+      fireEvent.click(screen.getByTestId('layers-delete-active-button'));
     });
 
     const action = onlyDispatched();
@@ -377,6 +378,55 @@ describe('LayersTab actions reaching the store', () => {
     expect(updates.deletedLayers['layer-2']).toEqual(expect.objectContaining({ bitmap: null, tmpCanvas: null }));
     // removing the active layer falls back to the new topmost layer
     expect(updates.activeLayerId).toBe('layer-1');
+  });
+
+  it('disables New Layer when there is no document frame to cover', () => {
+    render(<LayersTab />);
+
+    expect(screen.getByRole('button', { name: 'New Layer' })).toBeDisabled();
+  });
+
+  it('creates a new layer above the selected layer from the action bar', () => {
+    seedStore({
+      hasImage: true,
+      documentFrame: { x: 10, y: 12, width: 40.5, height: 30.25 },
+      totalSize: { width: 41, height: 31 },
+    });
+    render(<LayersTab />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'New Layer' }));
+
+    const action = onlyDispatched();
+    expect(action.type).toBe('COMMIT_DOCUMENT_EDIT');
+    expect(action.payload.historyItem).toMatchObject({
+      actionName: NEW_LAYER_ACTION,
+      insertAfterLayerId: 'layer-2',
+    });
+    const updates = action.payload.updates as {
+      layers: Record<string, { order: number; pos: { x: number; y: number; width: number; height: number } }>;
+      activeLayerId: string;
+    };
+    expect(updates.layers['history-id']?.order).toBeGreaterThan(1);
+    expect(updates.layers['history-id']?.order).toBeLessThan(2);
+    expect(updates.layers['history-id']?.pos).toEqual({ x: 10, y: 12, width: 41, height: 31 });
+    expect(updates.activeLayerId).toBe('history-id');
+  });
+
+  it('deletes a dragged layer when dropped on the action bar trash control', () => {
+    render(<LayersTab />);
+    const dataTransfer = createDataTransfer();
+
+    fireEvent.dragStart(getRow('Top Layer'), { dataTransfer });
+    fireEvent.drop(screen.getByTestId('layers-delete-active-button'), { dataTransfer });
+
+    const action = onlyDispatched();
+    expect(action.type).toBe('COMMIT_DOCUMENT_EDIT');
+    expect(action.payload.historyItem).toEqual({
+      id: 'history-id',
+      layerId: 'layer-3',
+      actionName: REMOVE_ACTION,
+      args: {},
+    });
   });
 
   it('keeps the active layer selected when a different layer is removed', () => {
