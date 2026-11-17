@@ -1,0 +1,823 @@
+---
+name: broad-test-improvement
+description: Improve unit tests in the `ph` photo editor - fix broken tests, raise coverage, and strengthen assertions without touching source. E2E specs and helper unit tests are included only when requested and need their own runners/baselines. Use when asked to improve, harden or extend the test suite or fix flaky tests. The tracked procedure is `.skills/broad-test-improvement.md`.
+---
+
+# Broad Test Improvement Skill
+
+This skill performs comprehensive test suite improvements: fixing broken tests, shallow review for common defects, and increasing coverage where needed. **Only modifies test files** — never touches source code. Follow `MODELS.md` before selecting agents. All agent tasks are read-only: they return findings and proposed patches; the coordinator applies accepted edits and runs verification.
+
+## ⛔ DO NOT TOUCH (Protected Files)
+
+**Protection rule (PRIMARY)**: If a test file has >3 tests, uses `it.each` parameterization, or asserts on pixel data / canvas calls — it is likely a good test. Do not touch it. This rule supersedes the static list below.
+
+**Static protected files (historical exceptions — re-derive via GTD each run)**:
+
+- `psd-utils.test.ts` — gold-standard format-utils test; real `ag-psd` round-trips with pixel assertions
+- `useAnts.test.tsx` — verified accurate per `useAnts.ts`; the `[0, 6, -1, 5]` offset and `clearRect(9,19,32,32)` assertions are correct
+- `rect.test.ts` — the "fully outside" assertion matches `trimRect` exactly; it's a regression test for current behavior
+- `draw.test.ts` — exact `bezierCurveTo`/`quadraticCurveTo` arg assertions are correct; for these thin canvas wrappers the canvas-call sequence IS the observable behavior
+- `useHistory.test.ts`, `useApp.psd.test.ts`, `functions.test.ts` — prior session determined concerns were overblown; re-verify via GTD before relying on this
+
+**If a subagent identifies an issue in a protected file, it must:**
+
+1. Record it in the "Remaining (Manual Review)" section
+2. NOT modify the file
+3. Return `{file, action: "skipped", reason: "protected"}`
+
+---
+
+## Safety & Autonomy Principles
+
+- **Dry-run first**: Every phase starts with a read-only scan; no writes until verification passes
+- **Atomic fixes**: One file per subagent, verified independently before batch commit
+- **Escape hatches**: Stop on any regression (lint/typecheck/test failure on previously passing code) — **after you have established it is not a wrong expectation.** Follow `MODELS.md` for finite budgets and quota-aware routing; use a verified free route when eligible, and never silently fall back to paid inference. Do not weaken a valid assertion because a selector or setup is difficult. Before handing off an unresolved question, read the source under test, check `e2e/OPEN_PROBLEMS.md`, recover the intended contract from relevant chat history and handoffs, and rerun the failing assertion with the actual value printed. If evidence or available capacity is still insufficient, write an evidence-based handoff that names the remaining check or decision.
+- **No source changes**: Report any necessary accessibility hook as a separate proposal for coordinator review
+- **Deterministic verification**: Run affected file's tests + full suite after each batch
+- **Preserve good tests**: Never rewrite or "simplify" tests that already work and are well-structured
+
+---
+
+## When to Use
+
+- After major refactors or dependency upgrades
+- When test failures or warnings appear in CI
+- Periodic test hygiene maintenance
+- Before releases to ensure test reliability
+
+---
+
+## Scope
+
+The default scope is unit tests in `src`: `src/**/*.test.{ts,tsx}`, including `src/App.test.tsx`,
+which sits in neither an `__tests__` directory nor a family folder. E2E specs and E2E-helper unit
+tests are in scope only when the request names them; they use different runners and must be
+baselined separately (`npm run test:e2e` and `npm run test:e2e:unit`). Do not treat their absence
+from the default Vitest report as a passing result. **Counts are re-derived, never trusted** — an
+earlier revision said "currently 55 files, ~400 tests" against a tree that held 259 test files:
+
+```bash
+rg --files src -g '*.test.ts' -g '*.test.tsx' | wc -l
+```
+
+---
+
+## Before Phase 1: create the worktree
+
+**Every subagent below inherits this session's working directory.** Follow `AGENTS.md`: before any
+other Git command, list worktrees, select the stanza whose branch is `refs/heads/main`, and create
+the task worktree under `.kilo/worktrees`. Verify the new checkout before dispatching. A fan-out
+launched from main would share files with other sessions, and `task` does not create a worktree.
+
+```bash
+git worktree list --porcelain
+# Set this to the absolute path from the stanza with: branch refs/heads/main
+MAIN_WORKTREE="<absolute-main-worktree-path>"
+TASK_NAME="test-improve-<slug>"
+TASK_WORKTREE="$MAIN_WORKTREE/.kilo/worktrees/$TASK_NAME"
+git -C "$MAIN_WORKTREE" worktree add -b "task/$TASK_NAME" "$TASK_WORKTREE" main
+cd "$TASK_WORKTREE"
+git rev-parse --show-toplevel
+git -C "$TASK_WORKTREE" rev-parse --git-dir --git-common-dir
+```
+
+**Free-model validation (mandatory before dispatching subagents):**
+
+```bash
+node scripts/free-model-pool.mjs --list
+node scripts/free-model-pool.mjs --openrouter-quota
+# Launch subagents via scripts/free-subagent-launcher.mjs with read-only-research profile
+```
+
+Create it, **then** dispatch, then put the **absolute** worktree path in every brief — a subagent's
+cwd only affects relative `bash`, while its `edit` and `write` calls take absolute paths, so the
+brief is the thing that moves the work. Never two subagents on one file; split by concern, and
+serialize anything Phase 2's triage assigns to more than one finding in the same file. Pass `model`
+**and** `provider` together — a free session that names a paid model without a provider gets it
+resolved onto the gateway and dies at zero tokens. **Preferred free route: Nemotron 3 Ultra (free) via Kilo provider, variant `high` (MODELS.md).**
+
+**The main worktree is for reading and pinned landings only.** Never make ordinary or hotfix
+commits there; make the change on a task branch and land it through the reviewed procedure. Never `git stash`, and never
+`git add -A` in a worktree whose root checkout is dirty: the root is a different checkout at a
+different `HEAD`, so `-A` commits a silent reverting of whatever main has since done, with no
+conflict marker, and this repository has shipped 17 of those. Stage explicit paths, and run the
+`scripts/merge-takeover-guard.mjs` before integrating — it refuses the merge and is wired
+into `pre-commit` and `pre-merge-commit`; `docs/ORCHESTRATION.md` is its one home.
+
+---
+
+## Phase 0: Baseline Capture (Mandatory First Step)
+
+```bash
+# Capture baseline for regression detection (`npm test` already supplies --run)
+npm test -- --reporter=json > /tmp/test-baseline.json 2>&1
+npm run lint:check > /tmp/lint-baseline.txt 2>&1
+npm run tsc > /tmp/tsc-baseline.txt 2>&1
+# If E2E suites are in scope, capture their baselines separately.
+# npm run test:e2e:unit
+# npm run test:e2e
+git status --porcelain > /tmp/git-baseline.txt
+```
+
+**Store baseline**. Any phase that causes regression vs baseline → immediate stop, report diff.
+
+---
+
+## Good Test Detection (GTD) — Mandatory Pre-Flight
+
+**Before ANY subagent proposes a change to a test file, it must classify the file using this rubric.**
+
+### GTD Scorecard
+
+For each candidate file, score these criteria (1 point each):
+
+| Criterion               | What to look for                                                                   | Score |
+| ----------------------- | ---------------------------------------------------------------------------------- | ----- |
+| Test count > 3          | File has more than 3 `it()` blocks                                                 | +1    |
+| Parameterized tests     | Uses `it.each([...])` with multiple cases                                          | +1    |
+| Pixel/canvas assertions | Asserts on `getImageData()`, `drawImage` args, `putImageData`, canvas pixel arrays | +1    |
+| Error path coverage     | Has `rejects.toThrow()` or `expect(...).rejects` tests                             | +1    |
+| Negative path coverage  | Tests `!hasImage`, `!toolName`, disabled states, empty inputs                      | +1    |
+| Warning assertions      | Asserts on `warnings.join(' ')` or `warnings` array                                | +1    |
+| Mock verification       | Uses `toHaveBeenCalledTimes`, `toHaveBeenNthCalledWith`, `toHaveBeenCalledWith`    | +1    |
+| Real codec usage        | Imports real encoder/decoder (e.g., `ag-psd`, `gifenc`) instead of mocking it      | +1    |
+
+### GTD Classification
+
+These four classifications are the complete rubric. Do not invent extra tiers such as "hardened";
+if a scanner reports a raw score, retain the score and derive the classification from this table.
+
+| Score   | Classification   | Action                                                                                                 |
+| ------- | ---------------- | ------------------------------------------------------------------------------------------------------ |
+| **5+**  | **Gold**         | **DO NOT TOUCH** — record in "Remaining (Manual Review)"                                               |
+| **3-4** | **Solid**        | Only fix **Critical** defects (real errors, flaky tests). No assertion changes, no coverage additions. |
+| **1-2** | **Shallow**      | Safe to improve — add coverage, strengthen assertions                                                  |
+| **0**   | **Broken/Empty** | Safe to rewrite or expand                                                                              |
+
+### GTD Examples from This Repo
+
+| File                     | Score | Classification | Why                                                                                                     |
+| ------------------------ | ----- | -------------- | ------------------------------------------------------------------------------------------------------- |
+| `psd-utils.test.ts`      | 8     | Gold           | 34 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
+| `useAnts.test.tsx`       | 5     | Gold           | 5+ tests, canvas call assertions, verified accurate per source                                          |
+| `rect.test.ts`           | 5     | Gold           | 5+ tests, exact assertion matches `trimRect`                                                            |
+| `draw.test.ts`           | 5     | Gold           | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions                                           |
+| `DesktopHeader.test.tsx` | 6     | Gold           | 67 tests, menu toggles, confirm dialogs, error paths                                                    |
+| `Draw.test.tsx`          | 5     | Gold           | 38 tests, controls and interaction paths                                                                |
+| `Transform.test.tsx`     | 5     | Gold           | 38 cases, 36 passing and 2 expected fail, controls and interaction paths                                |
+| `Levels.test.tsx`        | 5     | Gold           | 26 tests, controls and interaction paths                                                                |
+| `MagicWand.test.tsx`     | 5     | Gold           | 28 tests, controls and interaction paths                                                                |
+
+**Scores and counts in this table and in **Gold-Standard Files** are historical examples, not a
+current triage.**
+Re-derive with the rubric above — it is the only thing that classifies a file. `Draw`,
+`Transform`, `Levels` and `MagicWand` were reclassified from `Shallow` to `Gold` because the
+rubric scores them at the 5+ threshold, not because their coverage was judged better.
+
+### GTD Enforcement
+
+**Subagent contract**: Before proposing a change for any file, the subagent must:
+
+1. Read the file
+2. Score it using the GTD rubric
+3. If Gold (5+) → return `{file, action: "skipped", reason: "gold_standard", score: N}`
+4. If Solid (3-4) → only propose Critical defects, return `{file, action: "critical_only", proposals: [...]}`
+5. If Shallow (0-2) → propose a focused improvement, return `{file, action: "proposed", changes: [...]}`
+6. If the file is in the **DO NOT TOUCH** list → return `{file, action: "skipped", reason: "protected"}`
+
+**If a subagent fails to classify or misclassifies, the skill aborts and reports the error.**
+
+---
+
+## Phase 1: Discovery & Triage (Parallel Subagents)
+
+Launch 3 subagents **simultaneously**. Each returns structured JSON.
+
+**Scanner results are leads, not defects.** Regexes can match valid patterns (for example, a
+`useStore` mock returning `[state, dispatch]` is a valid tuple, and a one-element tuple is only a
+problem if the exercised code reads the missing element). Cleanup can also be provided by shared
+test configuration or harnesses. Before assigning severity or editing, inspect the complete match,
+the test's setup/teardown, the relevant config, and the real source contract. Record confirmed
+findings separately from false positives. Never bulk-fix from match counts alone.
+
+Discovery output must use one shared schema and rubric across all partitions. In the merged
+`triage.json`, include each scanned file's runner/baseline status as `passed`, `failed`, or
+`not-in-baseline`; derive this from runner output, not from the pattern scanner. Missing from a
+report is not equivalent to passing. Keep the protected-file set and severity definitions
+identical across agents. If parallel reports disagree materially, reconcile the scripts and
+definitions before prioritizing fixes.
+
+### 1A. Test Runner Subagent
+
+```
+Run: npm test -- --reporter=json
+Return JSON with:
+{
+  "totalTests": number,
+  "passed": number,
+  "failed": number,
+  "testFiles": [{"file": "path", "status": "passed|failed", "passes": number, "failures": number}],
+  "errors": [{"file": "path", "test": "name", "error": "message", "line": number}],
+  "unhandledErrors": [{"file": "path", "message": "string"}],
+  "durationMs": number
+}
+```
+
+### 1B. Lint Check Subagent
+
+```
+Run: npm run lint:check
+Return JSON with:
+{
+  "errors": [{"file": "path", "line": number, "rule": "string", "message": "string"}],
+  "warnings": [{"file": "path", "line": number, "rule": "string", "message": "string"}]
+}
+```
+
+### 1C. Pattern Scanner Subagent
+
+```
+Search ALL in-scope src test files (`src/**/*.test.{ts,tsx}`, including `src/App.test.tsx`) for these patterns.
+Return JSON array of findings: [{"file": "path", "line": number, "pattern": "id", "match": "exact matched text", "severity": "critical|high|medium|low"}]
+
+Patterns to scan (use ripgrep with -n --json):
+
+CRITICAL — mock shape mismatches:
+1. "useTheme\\s*:\\s*\\(\\s*\\)\\s*=>\\s*\\["  (array mock for object return — useTheme returns {theme, toggleTheme})
+2. "vi\\.mock\\([^)]+\\)" inside describe/it block (Vitest 5 hoisting violation)
+3. "beforeEach.*requestAnimationFrame|beforeEach.*cancelAnimationFrame|beforeEach.*Path2D" (global override without fake timers)
+4. "vi\\.stubGlobal\\([^)]+\\)" without corresponding "vi\\.unstubAllGlobals\\(\\)" in afterEach
+5. "useStore\\s*:\\s*\\(\\s*\\)\\s*=>\\s*\\["  (candidate tuple-shape match — inspect whether the exercised code reads a missing element)
+
+CRITICAL — global cleanup hygiene:
+6. "vi\\.restoreAllMocks\\(\\)" in a file that also uses fake timers without a verified timer reset in cleanup (candidate only)
+7. "vi\\.useFakeTimers\\(\\)" without "vi\\.useRealTimers\\(\\)" in afterEach
+8. "vi\\.stubGlobal\\(" without a verified corresponding global restore (candidate only; mock clearing is unrelated)
+
+HIGH — brittle assertions:
+9. "getAllByRole\\([^)]+\\)\\[\\d+\\]" (indexing into role queries)
+10. "expect\\([^)]+\\.toHaveClass\\([^)]*(bg-|grid-|w-|h-|flex|hidden|block|border-|rounded-|shadow-)[^)]*\\)" (Tailwind class assertions)
+11. "expect\\(container\\).toBeTruthy\\(\\)" (weak assertion)
+12. "expect\\([^)]+\\)\\.toBeTruthy\\(\\)" (truthy assertion on DOM node)
+13. "getByTitle\\([^)]+\\)" (title attribute — not accessible, prefer getByRole with aria-label)
+14. "getByText\\([^)]+\\)\\.toBeTruthy\\(\\)" (truthy assertion instead of toBeInTheDocument)
+
+MEDIUM — coverage gaps:
+15. "mockResolvedValue\\([^)]+\\)" without nearby error-path test (check 20 lines after)
+16. "vi\\.mock\\([^)]+useApp|useFile|useHistory|useLayer|useCurrentTool|StoreContext|ThemeContext" (context mock — verify shape)
+17. "vi\\.mock\\([^)]+usePointerPosition|useResizeObserver|useAnts|useDoubleClick|useKeyboardEvents" (hook mock — verify shape)
+18. "mockReturnValue\\(\\{[^}]*\\}\\)" (partial mock return — may hide undefined fields)
+
+LOW — style/hygiene:
+19. "describe\\([^)]*\\).*describe" (nested describes — may indicate over-testing)
+20. "it\\([^)]*\\).*it\\([^)]*same|duplicate" (potential duplicate test names)
+21. "expect\\([^)]+\\)\\.not\\.toBeTruthy\\(\\)" (negated truthy — prefer toBeFalsy)
+22. "vi\\.fn\\(\\)" without "mockReturnValue" or "mockImplementation" (untyped mock)
+23. "screen\\.queryBy[^)]*\\.toBeTruthy\\(\\)" (truthy on queryBy — prefer toBeNull)
+24. "screen\\.queryBy[^)]*\\.toBeFalsy\\(\\)" (falsy on queryBy — prefer toBeNull)
+```
+
+---
+
+## Phase 2: Categorize & Prioritize
+
+Aggregate findings from all 3 subagents. Group by file and severity.
+
+**Priority Matrix**:
+
+| Severity | Category                                | Action                    |
+| -------- | --------------------------------------- | ------------------------- |
+| Critical | Unhandled error / flaky / mock mismatch | Fix immediately (Phase 3) |
+| Critical | Vitest 5 hoisting violation             | Fix immediately (Phase 3) |
+| Critical | Fake-timer/global-stub hygiene          | Fix immediately (Phase 3) |
+| High     | Brittle selector / Tailwind assertion   | Fix in Phase 4            |
+| High     | Weak assertion (container.toBeTruthy)   | Fix in Phase 4            |
+| Medium   | Missing negative/error path             | Add coverage in Phase 5   |
+| Medium   | Missing keyboard nav                    | Add coverage in Phase 5   |
+| Low      | Style/hygiene/nesting                   | Optional, batch at end    |
+
+**Output**: `triage.json` with `{critical: [], high: [], medium: [], low: [], files: []}`. Findings contain `{file, line, pattern, description, fixStrategy}`; `files` contains one entry per scanned test file with `{file, runner, baselineStatus, gtdScore, classification}`. `baselineStatus` is `passed`, `failed`, or `not-in-baseline`; never infer `passed` from absence in runner output.
+
+---
+
+## Phase 3: Fix Critical Defects (Parallel Read-Only Reviews, One File Each)
+
+**Launch one read-only subagent per critical finding**. Each subagent:
+
+1. Reads the test file
+2. Proposes the specific fix as a unified diff or exact edit instructions
+3. Returns `{file, fixed: false, proposedChanges: "diff or edit instructions", verification: "not-run"}`
+
+The coordinator applies accepted proposals and runs the file test and lint checks.
+
+### Fix Strategies by Pattern
+
+#### 3.1 useTheme Array Mock → Object
+
+```typescript
+// BAD
+vi.mock('../../../contexts/ThemeContext.tsx', () => ({
+  useTheme: () => [{ theme: 'light', toggleTheme: vi.fn() }],
+}));
+
+// GOOD
+const themeState = { theme: 'light', toggleTheme: vi.fn() };
+vi.mock('../../../contexts/ThemeContext.tsx', () => ({
+  useTheme: () => themeState,
+}));
+```
+
+**Also applies to**: `useStore`, `useApp`, `useFile`, `useHistory`, `useLayers`, `useCurrentTool` — verify each returns correct type.
+
+#### 3.2 Vitest 5 Hoisting: Move vi.mock to Top Level
+
+```typescript
+// BAD (inside describe)
+describe('Component', () => {
+  vi.mock('../context.tsx', () => ({ useCtx: () => mock }));
+});
+
+// GOOD (top level, before any describe)
+vi.mock('../context.tsx', () => ({ useCtx: () => mock }));
+describe('Component', () => { ... });
+```
+
+Use `vi.hoisted` for factories needing runtime values.
+
+#### 3.3 Fake Timer / Global Stub Hygiene
+
+```typescript
+// BAD
+beforeEach(() => {
+  global.requestAnimationFrame = (cb) => setTimeout(cb, 16);
+  global.cancelAnimationFrame = (id) => clearTimeout(id);
+});
+afterEach(() => {
+  vi.restoreAllMocks(); // Doesn't clear pending setTimeout!
+});
+
+// GOOD
+beforeEach(() => {
+  vi.useFakeTimers();
+  // If needed: vi.stubGlobal('requestAnimationFrame', cb => setTimeout(cb, 16));
+});
+afterEach(() => {
+  vi.useRealTimers(); // Drains pending timers
+  vi.unstubAllGlobals(); // Unconditional
+});
+```
+
+In tests: use `vi.advanceTimersByTime(16)` to drain rAF callbacks.
+
+#### 3.4 vi.stubGlobal Without Unstub
+
+Add `afterEach(() => { vi.unstubAllGlobals(); })` unconditionally.
+
+#### 3.5 useStore Array Mock → Tuple
+
+```typescript
+// BAD
+vi.mock('../../../contexts/StoreContext.tsx', () => ({
+  useStore: () => [{ hasImage: true }],
+}));
+
+// GOOD
+const storeState = { hasImage: true, dispatch: vi.fn() };
+vi.mock('../../../contexts/StoreContext.tsx', () => ({
+  useStore: () => [storeState, storeState.dispatch],
+}));
+```
+
+Verify: `useStore()` returns `[state, dispatch]` — both must be present.
+
+#### 3.6 vi.restoreAllMocks Without vi.useRealTimers
+
+```typescript
+// BAD
+afterEach(() => {
+  vi.restoreAllMocks(); // Doesn't clear pending setTimeout!
+});
+
+// GOOD
+afterEach(() => {
+  vi.useRealTimers(); // Drains pending timers first
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+```
+
+---
+
+## Phase 4: Strengthen Assertions (Parallel Read-Only Reviews, One File Each)
+
+**Launch one read-only subagent per high-severity finding**. Each returns a focused patch proposal; the coordinator applies accepted proposals and verifies them.
+
+### Fix Strategies
+
+#### 4.1 Replace Indexed getAllByRole
+
+```typescript
+// BAD
+const buttons = screen.getAllByRole('button');
+expect(buttons[0]).toHaveTextContent('Save');
+expect(buttons[1]).toHaveTextContent('Cancel');
+
+// GOOD
+expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+// OR if names are dynamic:
+expect(screen.getByTestId('save-dialog-save-button')).toBeInTheDocument();
+```
+
+**If no stable accessible name exists**: Propose a minimal semantic accessibility hook to the coordinator; source edits remain out of scope for this skill.
+
+#### 4.2 Replace Tailwind Class Assertions
+
+```typescript
+// BAD
+expect(toolbar).toHaveClass('w-[6.5rem]');
+expect(firstSection).toHaveClass('grid-cols-2');
+
+// GOOD
+expect(toolbar).toHaveStyle({ width: '104px' }); // or computed style
+expect(firstSection).toHaveStyle({ gridTemplateColumns: 'repeat(1, minmax(0, 1fr))' });
+// OR test behavior:
+expect(screen.getByTestId('left-toolbar-tools')).toHaveAttribute('data-layout', 'two-column');
+```
+
+#### 4.3 Replace Weak Assertions
+
+```typescript
+// BAD
+expect(container).toBeTruthy();
+
+// GOOD
+expect(screen.getByRole('region', { name: 'Sidebar' })).toBeInTheDocument();
+expect(screen.getByTestId('specific-element')).toBeInTheDocument();
+```
+
+#### 4.4 Replace getByTitle with Accessible Query
+
+```typescript
+// BAD
+expect(screen.getByTitle('Rotate 90° Left')).toBeTruthy();
+
+// GOOD
+expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocument();
+// If title is the only accessible name, propose an aria-label source change separately:
+// <button aria-label="Rotate 90° Left" title="Rotate 90° Left">...</button>
+```
+
+#### 4.5 Replace Truthy/Falsy on queryBy with toBeNull
+
+```typescript
+// BAD
+expect(screen.queryByText('Not found')).toBeTruthy();
+expect(screen.queryByText('Not found')).toBeFalsy();
+
+// GOOD
+expect(screen.queryByText('Not found')).toBeNull();
+expect(screen.queryByText('Found')).not.toBeNull();
+```
+
+#### 4.6 Replace Negated Truthy
+
+```typescript
+// BAD
+expect(screen.queryByText('X')).not.toBeTruthy();
+
+// GOOD
+expect(screen.queryByText('X')).toBeNull();
+```
+
+#### 4.7 Replace getByLabelText/getByText/getByTitle with toBeInTheDocument
+
+```typescript
+// BAD — truthy assertion on DOM node (fragile)
+expect(screen.getByLabelText('Pen Type')).toBeTruthy();
+expect(screen.getByLabelText(/Size/)).toBeTruthy();
+expect(screen.getByText('Reset All')).toBeTruthy();
+
+// GOOD — toBeInTheDocument is explicit and fails correctly
+expect(screen.getByLabelText('Pen Type')).toBeInTheDocument();
+expect(screen.getByLabelText(/Size/)).toBeInTheDocument();
+expect(screen.getByText('Reset All')).toBeInTheDocument();
+```
+
+**Why**: `toBeTruthy()` on a DOM node passes even if the element doesn't exist (returns `null` which is falsy, but `getByLabelText` throws if not found — so truthy is redundant). Use `toBeInTheDocument()` for explicit assertions.
+
+#### 4.8 Replace getByTitle with getByRole + aria-label
+
+```typescript
+// BAD — title attribute is not accessible
+expect(screen.getByTitle('Rotate 90° Left')).toBeTruthy();
+
+// GOOD — accessible query
+expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocument();
+// If source doesn't have aria-label, propose that source change separately:
+// <button aria-label="Rotate 90° Left" title="Rotate 90° Left">...</button>
+```
+
+**Evidence**: `Transform.test.tsx` uses `getByTitle` for rotate buttons — `screen.getByTitle('Rotate 90° Left')`. The source likely renders `<button title="Rotate 90° Left">` without `aria-label`. Propose the minimal source accessibility change separately and keep source out of scope for this skill.
+
+---
+
+## Phase 5: Add Coverage (Parallel Read-Only Reviews, One Component Each)
+
+**Target components with gaps** (from the Phase 2 triage — an earlier revision of this line named
+`TEST_REVIEW_HANDOFF.md`, which **does not exist** anywhere in this repository, so it sent the reader
+to a file that returns nothing and reads exactly like "no gaps are known"; **this reference is removed**):
+
+| Component                                                                            | Missing Coverage                                                        |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Draw, Transform, Levels, Text, MagicWand, RectangularSelection, FeatherMagneticLasso | Disabled controls, empty inputs, `!hasImage`, `!toolName` early returns |
+| SaveDialog, NewImageDialog                                                           | Error paths, cancel flows                                               |
+| Format utils (bmp, tiff, ico, gif, svg, avif)                                        | Real round-trip encoding/decoding with pixel assertions                 |
+| SidebarLeft, SidebarRight, ToolbarHorizontal, BottomToolbar, Footer                  | Keyboard nav (ArrowUp/Down, Enter, Space, Escape), focus management     |
+
+### Read-Only Subagent Template for Coverage
+
+```
+Propose tests for: <test-file-path>
+Target: <specific gap from triage>
+Constraints:
+- Only propose test-file changes; do not edit files or run commands
+- Follow existing test patterns in the file
+- Use vi.useFakeTimers() for async
+- Use getByRole/getByLabelText/getByText first
+- If no accessible query works, report the smallest needed source change separately; source remains out of scope
+- Test both success and failure paths
+- Return a focused unified diff or exact proposed test cases; do not edit files or run commands. The coordinator applies and verifies accepted changes.
+```
+
+### Coverage Patterns from Gold-Standard Tests
+
+**psd-utils.test.ts** (the repo's gold standard for format-utils tests):
+
+- Real `ag-psd` encoding/decoding (not mocked codec)
+- Pixel-level assertions (`Array.from(layer.getContext('2d')!.getImageData(0,0,w,h).data)`)
+- Metadata assertions (name, order, opacity, blendMode, visibility, locked)
+- Warning assertions (`imported.warnings.join(' ')`)
+- Edge cases: fractional geometry, negative offsets, empty layers, smart objects
+- Error paths: invalid dimensions, unsupported blend modes, invalid headers
+- Parameterized tests (`it.each`) for blend modes and dimension validation
+
+**Apply this pattern to**: bmp-utils, tiff-utils, ico-utils, gif-utils, svg-utils, avif-utils
+
+### Concrete Gaps from Repo Scan
+
+| File                          | Current Tests                       | Missing Coverage                                                                           | Priority |
+| ----------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------ | -------- |
+| Draw.test.tsx                 | 38 tests                            | 38 tests against 38, `it.each` absent — strength is in the count alone; re-derive the gaps | Medium   |
+| Transform.test.tsx            | 38 cases (36 pass, 2 expected fail) | 2 `expected fail` cases — resolve or re-pin them before any change                         | Medium   |
+| Levels.test.tsx               | 26 tests                            | 26 tests against 38 before — confirm the drop is intentional                               | Medium   |
+| MagicWand.test.tsx            | 28 tests                            | Tolerance and smoothing bounds, dispatch on change, disabled state                         | Medium   |
+| RectangularSelection.test.tsx | Happy path only                     | Empty inputs, disabled controls, `!hasImage` early return                                  | Medium   |
+| FeatherMagneticLasso.test.tsx | Happy path only                     | Empty inputs, disabled controls, `!hasImage` early return                                  | Medium   |
+| Text.test.tsx                 | Happy path only                     | Font size change, text input, disabled state, `!hasImage` early return                     | Medium   |
+| SaveDialog.test.tsx           | Happy path + cancel                 | Error paths, file name validation, empty name                                              | Medium   |
+| NewImageDialog.test.tsx       | Happy path only                     | Invalid dimensions, cancel flow, error paths                                               | Medium   |
+| bmp-utils.test.tsx            | 1 test (round-trip)                 | Invalid header, invalid dimensions, error paths                                            | Medium   |
+| tiff-utils.test.tsx           | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| ico-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| gif-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| svg-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| avif-utils.test.tsx           | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| SidebarRight.test.tsx         | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
+| ToolbarHorizontal.test.tsx    | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
+| BottomToolbar.test.tsx        | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
+| Footer.test.tsx               | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
+
+---
+
+## Phase 6: Verification & Report
+
+### 6.1 Automated Verification
+
+```bash
+# After ALL fixes applied
+npm test -- --reporter=json > /tmp/test-final.json
+npm run lint:check > /tmp/lint-final.txt
+npm run tsc > /tmp/tsc-final.txt
+npm run repo:state
+
+# Compare vs baseline
+# - Test count must be >= baseline
+# - Zero new failures
+# - Zero new lint errors
+# - Zero type errors
+```
+
+### 6.2 Regression Check
+
+If ANY regression detected:
+
+- Stop immediately
+- Output diff vs baseline
+- List files modified in this session
+- Do not proceed
+
+### 6.3 Final Report Format
+
+```
+## Broad Test Improvement Summary
+
+### Baseline
+- Tests: X passed, Y failed, Z errors
+- Lint: A errors, B warnings
+- Typecheck: pass/fail
+
+### Critical Fixed (N)
+- file.test.tsx:line - [pattern] - description of fix
+
+### High Fixed (N)
+- file.test.tsx:line - [pattern] - description of fix
+
+### Coverage Added (N tests across M files)
+- file.test.tsx: +N tests for [specific scenario]
+
+### Verification
+- Tests: X passed (Δ+Y), 0 failed, 0 errors
+- Lint: 0 errors, B warnings
+- Typecheck: pass
+
+### Remaining (Manual Review)
+- file.test.tsx:line - [pattern] - reason not auto-fixed
+```
+
+---
+
+## Subagent Execution Rules
+
+1. **Max parallelism**: 5 subagents at once (avoid resource exhaustion)
+2. **Timeout**: 120s per subagent
+3. **Retry**: Once on transient failure (timeout, flaky test)
+4. **Failure handling**: If subagent fails → mark file as "needs manual review", continue others
+5. **Batch commit**: Only after ALL subagents in a phase report success
+
+---
+
+## Subagent Contract (Every Subagent Must Follow This)
+
+### ⛔ Forbidden Actions
+
+**NEVER do these, even if you think they're improvements:**
+
+1. **NEVER rewrite or "simplify" a passing test** — If a test passes and is well-structured, leave it alone
+2. **NEVER change assertion style on a Gold-classified file** — e.g., don't replace `expect(canvas.getContext('2d')!.getImageData(...))` with `expect(container).toBeTruthy()`
+3. **NEVER remove a test that passes** — Even if it seems redundant, it may be a regression guard
+4. **NEVER change mock return shapes on Solid-classified files** — If the mock works, don't "fix" it
+5. **NEVER replace exact assertions with loose ones** — `expect(x).toBe(42)` is better than `expect(x).toBeTruthy()` if the value is deterministic
+6. **NEVER delete `it.each` parameterized tests** — These are high-value coverage
+7. If an accessible query cannot work, report the smallest needed source change separately; do not edit source
+8. **NEVER modify source files** — Components, hooks, contexts, utils, styles are off-limits
+9. **NEVER update snapshots** — Without explicit approval
+10. **NEVER remove `vi.mock` calls** — Even if they seem unused; they may be needed for module isolation
+
+### ✅ Required Actions
+
+**Before proposing a change for ANY file:**
+
+1. **Read the file** — Don't assume what's there
+2. **Ask the coordinator to run the existing tests** — `npm test -- <file>` to confirm they pass
+3. **Classify with GTD** — Score using the rubric above
+4. **Check the DO NOT TOUCH list** — If matched, skip
+
+**After the coordinator applies an accepted proposal:**
+
+5. **Coordinator verification** — The coordinator runs the file's tests, lint, and relevant full suite after applying an accepted proposal
+6. **Return structured result** — `{file, action, proposedChanges, verification: "not-run", gtdScore}`
+
+### 🚨 Red Flags — If You See These, STOP and Report
+
+| Red Flag                                                        | Why                                                          |
+| --------------------------------------------------------------- | ------------------------------------------------------------ |
+| Test asserts on exact pixel values (`[12, 24, 36, 255]`)        | Likely a regression guard — don't touch                      |
+| Test uses `it.each` with 5+ cases                               | High-value parameterized coverage — don't touch              |
+| Test mocks a real codec (e.g., `ag-psd`) but the source uses it | The mock may be testing integration — verify before changing |
+| Test has `expect(...).rejects.toThrow('specific message')`      | Error path coverage — don't remove                           |
+| Test has `vi.spyOn` on canvas methods                           | Likely testing drawing behavior — don't simplify             |
+| Test file has 8+ tests                                          | Likely well-structured — classify with GTD before touching   |
+| Test file was modified in a prior session (check git log)       | May be a known-good fix — don't revert                       |
+
+### 🧪 Verification Protocol
+
+**For each file modified, run in order:**
+
+```bash
+# 1. Confirm existing tests pass (before changes)
+npm test -- <file>
+
+# 2. Apply changes
+
+# 3. Confirm modified tests pass
+npm test -- <file>
+
+# 4. Confirm no lint regressions
+npm run lint:check
+
+# 5. Confirm no full-suite regressions
+npm test
+```
+
+**If step 1 fails** → the file already has failing tests. Report as "pre-existing failure" and skip.
+**If step 3 fails** → your changes broke something. Revert and report.
+**If step 5 fails** → your changes caused a regression elsewhere. Revert and report.
+
+---
+
+## Findings Are Run-Specific
+
+Do not keep a pre-loaded inventory of presumed defects or coverage gaps here. Such lists become
+stale and can turn historical observations into unsafe instructions. Record findings in the
+current run's triage artifact only after re-deriving the file state, GTD score, source contract, and
+runner status. The protected files below remain explicit exceptions regardless of score.
+
+Keep current findings only in the run-specific triage artifact; do not treat historical examples
+below as live defects or targets.
+
+## Historical Evidence (Not a Live Triage — ARCHIVAL ONLY)
+
+The following table is a historical snapshot, not a current issue list. **Do not use for triage** — re-check every entry before
+using it; pattern matches and old GTD scores do not establish a defect or justify an edit.
+This table is retained for reference only; the GTD rubric is the sole classifier for live runs.
+
+| Pattern                                                           | Where                                                                                                                    | GTD           | Severity | Evidence                                                |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------- | -------- | ------------------------------------------------------- |
+| `getByTitle` used instead of accessible query                     | `Transform.test.tsx` — its `screen.getByTitle('Rotate 90° Left')` assertions                                             | Shallow (1)   | High     | `screen.getByTitle('Rotate 90° Left')` — not accessible |
+| `getByText(...).toBeTruthy()` instead of `toBeInTheDocument`      | `Transform.test.tsx`, `Levels.test.tsx`                                                                                  | Shallow (1)   | High     | Truthy assertion on DOM node                            |
+| `getByLabelText(...).toBeTruthy()` instead of `toBeInTheDocument` | `Draw.test.tsx`, `Levels.test.tsx`                                                                                       | Shallow (1)   | High     | Truthy assertion on DOM node                            |
+| `vi.mock` inside describe block                                   | the `SidebarLeft` suites under `src/components/SidebarLeft/__tests__/`                                                   | Gold (7)      | Critical | Vitest 5 hoisting violation                             |
+| `useTheme` array mock (object return)                             | `DesktopHeader.test.tsx` — its `useTheme` mock (was fixed)                                                               | Solid (6)     | Critical | Already addressed in prior session                      |
+| `mockResolvedValue` without error path                            | `DesktopHeader.test.tsx` — its `openNewImageDialog` mock                                                                 | Solid (6)     | Medium   | Only success path tested                                |
+| Format-utils shallow (mocked codec)                               | bmp-utils.test.tsx, tiff-utils.test.tsx, ico-utils.test.tsx, gif-utils.test.tsx, svg-utils.test.tsx, avif-utils.test.tsx | Shallow (0-1) | Medium   | Real round-trip only in psd-utils.test.ts               |
+| `vi.hoisted` used correctly                                       | `MagicWand.test.tsx` — its `dispatchMock` hoisted declaration                                                            | Shallow (1)   | Good     | Pattern to replicate                                    |
+| `vi.stubGlobal` + `vi.unstubAllGlobals`                           | `DesktopHeader.test.tsx`                                                                                                 | Solid (6)     | Good     | Pattern to replicate                                    |
+
+**Note**: Classifications above may conflict with current GTD rubric scores. Always re-derive via GTD rubric for live runs.
+
+---
+
+## Commands Reference
+
+```bash
+# Full src/unit test run (`npm test` already supplies `--run`)
+npm test
+
+# Single file test
+npm test -- src/path/to/file.test.tsx
+
+# Lint the whole tracked tree (`lint:check` takes no paths)
+npm run lint:check
+
+# Typecheck
+npm run tsc
+
+# Pattern search (ripgrep; includes src/App.test.tsx)
+rg -n --glob '*.test.ts' --glob '*.test.tsx' "pattern" src
+
+# Baseline capture
+npm test -- --reporter=json > /tmp/test-baseline.json
+# Run separately when these suites are in scope; they are not in the default Vitest baseline.
+npm run test:e2e:unit
+npm run test:e2e
+npm run lint:check > /tmp/lint-baseline.txt 2>&1
+npm run tsc > /tmp/tsc-baseline.txt 2>&1
+```
+
+---
+
+## Constraints (Enforced)
+
+- **NEVER modify source files** (components, hooks, contexts, utils, styles)
+- **Keep source files out of scope**; report any necessary source change for separate coordinator handling
+- **Prefer read-only subagents** for parallel review and patch proposals; the coordinator applies changes and runs verification
+- **Run verification** after each batch of fixes
+- **Stop immediately** if lint/typecheck/tests fail on previously passing code
+- **No new test files** unless covering entirely untested source module
+- **No snapshot updates** without explicit approval
+- **Free subagents must use `read-only-research` profile** (`.kilo/agent/read-only-research.md`) with Nemotron 3 Ultra via Kilo provider
+- **Run `node scripts/free-model-pool.mjs --list` and `--openrouter-quota`** before launching free subagents
+- **Launch free subagents via `scripts/free-subagent-launcher.mjs`** for catalog validation
+
+---
+
+## Skill Invocation
+
+To run this skill autonomously:
+
+```
+Execute the broad-test-improvement skill:
+1. Run Phase 0 (baseline capture)
+2. Launch Phase 1 subagents in parallel with one shared prompt, schema, rubric, and protected-file set
+3. Reconcile disagreements and verify each candidate against source/config before triage
+4. Aggregate confirmed findings; preserve false positives and `not-in-baseline` status
+5. Launch Phase 3 subagents for confirmed critical findings (max 5 parallel)
+6. Verify Phase 3 results and run the relevant full suite
+7. Launch Phase 4 subagents for confirmed high findings (max 5 parallel)
+8. Verify Phase 4 results and run the relevant full suite
+9. Launch Phase 5 subagents for verified coverage gaps (max 5 parallel)
+10. Verify all in-scope runners + lint + typecheck, then generate the final report
+```
+
+Each phase gates on the previous phase's verification passing.
