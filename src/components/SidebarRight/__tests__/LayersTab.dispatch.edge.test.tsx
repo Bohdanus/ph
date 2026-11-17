@@ -151,6 +151,7 @@ describe('LayersTab dispatch edge cases', () => {
     act(() => {
       fireEvent.click(getRow('Top Layer').querySelector('button[aria-label="Remove layer"]')!);
     });
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
 
     const action = dispatched()[0];
     expect(action.type).toBe('COMMIT_DOCUMENT_EDIT');

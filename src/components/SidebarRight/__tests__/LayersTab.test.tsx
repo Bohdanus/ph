@@ -709,19 +709,70 @@ describe('LayersTab', () => {
     expect(currentToolState.toolArgs).toMatchObject({ editingLayerId: 'current', text: 'current draft' });
   });
 
-  it('removes layer on trash click', () => {
+  it('confirms before removing a layer from its row', async () => {
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
-    const trashButton = layerDivs[0].querySelector('button[aria-label="Remove layer"]');
+    const trashButton = layerDivs[0].querySelector<HTMLButtonElement>('button[aria-label="Remove layer"]');
+    if (!trashButton) throw new Error('no remove button for Top Layer');
+    trashButton.focus();
     act(() => {
       fireEvent.click(trashButton!);
     });
+
+    expect(screen.getByTestId('confirm-dialog')).toBeInTheDocument();
+    expect(layerMocks.removeLayer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
+    await Promise.resolve();
+    expect(document.activeElement).toBe(screen.getByRole('group', { name: 'Layers panel' }));
+
     expect(layerMocks.removeLayer).toHaveBeenCalledTimes(1);
     expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
 
     expect(screen.queryByText('Top Layer')).toBeNull();
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
     expect('layer-3' in liveStore.snapshot.layers).toBe(false);
+  });
+
+  it('closes deletion confirmation if the layer disappears externally', async () => {
+    render(<LayersTab />);
+    const trashButton = getLayerDivs()[0].querySelector<HTMLButtonElement>('button[aria-label="Remove layer"]');
+    if (!trashButton) throw new Error('no remove button for Top Layer');
+    fireEvent.click(trashButton);
+    expect(screen.getByTestId('confirm-dialog')).toBeInTheDocument();
+
+    act(() => {
+      updateStore((snapshot) => {
+        const layers = { ...snapshot.layers };
+        delete layers['layer-3'];
+        return { ...snapshot, layers };
+      });
+    });
+
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+  });
+
+  it('leaves a layer unchanged when deletion is cancelled', () => {
+    render(<LayersTab />);
+    const trashButton = getLayerDivs()[0].querySelector<HTMLButtonElement>('button[aria-label="Remove layer"]');
+    if (!trashButton) throw new Error('no remove button for Top Layer');
+    trashButton.focus();
+    fireEvent.click(trashButton);
+
+    fireEvent.click(screen.getByTestId('confirm-dialog-cancel-button'));
+
+    expect(layerMocks.removeLayer).not.toHaveBeenCalled();
+    expect(screen.getByText('Top Layer')).toBeInTheDocument();
+    expect(document.activeElement).toBe(trashButton);
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+  });
+
+  it('deletes immediately on Alt/Option-click', () => {
+    render(<LayersTab />);
+
+    fireEvent.click(screen.getByTestId('layers-delete-active-button'), { altKey: true });
+
+    expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-2');
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
   });
 
   it('stops propagation on trash click', () => {
@@ -731,6 +782,9 @@ describe('LayersTab', () => {
     act(() => {
       fireEvent.click(trashButton!);
     });
+    expect(screen.getByTestId('confirm-dialog')).toBeInTheDocument();
+    expect(layerMocks.removeLayer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
     expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
     expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
 

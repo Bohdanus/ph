@@ -175,6 +175,7 @@ describe('LayersTab against a live layer store', () => {
       act(() => {
         fireEvent.click(row.querySelector('button[aria-label="Remove layer"]')!);
       });
+      fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
       expect(screen.queryByText(name)).toBeNull();
     }
 
