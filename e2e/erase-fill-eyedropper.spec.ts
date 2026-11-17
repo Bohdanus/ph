@@ -194,8 +194,7 @@ async function canvasBox(page: Page): Promise<BoundingBox> {
  * Computes a clip around the document-space slab from the canvas's current box.
  * It includes the stroke's full document-space width and 20 CSS pixels of padding.
  */
-async function slabClip(page: Page): Promise<ViewportClip> {
-  const box = await canvasBox(page);
+function slabClipForBox(box: BoundingBox): ViewportClip {
   const start = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y);
   const end = documentToCanvasOffset(box, DOC_ERASE_LINE_END_X, DOC_LINE_Y);
   const slabTop = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y - SLAB / 2);
@@ -206,6 +205,10 @@ async function slabClip(page: Page): Promise<ViewportClip> {
     width: Math.abs(end.x - start.x) + 40,
     height: slabBottom.y - slabTop.y + 40,
   });
+}
+
+async function slabClip(page: Page): Promise<ViewportClip> {
+  return slabClipForBox(await canvasBox(page));
 }
 
 /** The name the seeded base layer carries in the Layers panel: `layer-utils.ts:160,181`. */
@@ -901,7 +904,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await expect(sampleSize).toHaveValue('1');
 
     // Find the slab's top edge from the capture itself rather than assuming where the line
-    // landed, so the click sits ON the colour boundary and the 3x3 window straddles it.
+    // landed; the half-logical-pixel nudge below then places the click just inside that edge.
     const clip = await slabClip(page);
     const image = await loadImageData(await page.screenshot({ clip }));
     if (image.width <= 0 || image.height <= 0) throw new Error('empty capture while locating the slab edge');
@@ -1082,13 +1085,13 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     // Wait for the composited result: Multiply of blue (0,0,204) over red (204,0,0) = black (0,0,0).
     // Address the overlap by its document-space center so changing the capture padding cannot
     // move the assertion onto a pixel outside the two slabs.
-    const clip = await slabClip(page);
+    const currentBox = await canvasBox(page);
+    const clip = slabClipForBox(currentBox);
     await waitForCanvasPixels(
       page,
       clip,
       async (screenshot) => {
         const image = await loadImageData(screenshot);
-        const currentBox = await canvasBox(page);
         const overlap = documentToCanvasOffset(currentBox, DOC_LINE_CENTRE_X, DOC_LINE_Y_BLUE - 20);
         const pixel = cssPointToImage(image, clip, {
           x: currentBox.x + overlap.x,
