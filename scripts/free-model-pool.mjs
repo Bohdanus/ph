@@ -1351,6 +1351,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
     initializeLegacyQuarantine = true,
     onCatalogError = () => {},
     onOpenRouterQuota = () => {},
+    onAllFreeExhausted = () => {},
     stderr = { write: () => {} },
   } = options;
   if (typeof prompt !== 'string' || prompt.length === 0 || prompt.length > MAX_PROMPT_CHARS) {
@@ -1386,17 +1387,6 @@ export async function completeWithFreeModel(prompt, options = {}) {
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
-  if (available.some((entry) => entry.source === 'kilo') && !effectiveKiloCommand) {
-    exhausted.add('kilo');
-    errors.push('kilo: Kilo CLI not found; install the Kilo Code extension or set KILO_CLI');
-  }
-  const kiloCooldownUntil = await getKiloCooldownUntil({ stateFile: poolStateFile });
-  if (kiloCooldownUntil !== null && available.some((entry) => entry.source === 'kilo')) {
-    exhausted.add('kilo');
-    stderr.write(
-      `Kilo is cooling down after HTTP 429 until ${new Date(kiloCooldownUntil).toISOString()}; skipping this run.\n`
-    );
-  }
   const requestCounts = () => {
     const counts = {
       kilo: attempts.get('kilo') ?? 0,
@@ -1407,84 +1397,129 @@ export async function completeWithFreeModel(prompt, options = {}) {
     }
     return counts;
   };
-  const stopForReportedCost = async (candidate, detail = 'provider reported non-zero or invalid completion cost') => {
-    const quarantineNote = isOperatorOnlyQuarantine(candidate.source, candidate.model)
-      ? '; quarantine is operator-managed'
-      : '';
-    const message = `${candidate.source}/${candidate.model}: ${detail}${quarantineNote}; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
-    try {
-      await quarantineReportedCost(candidate.source, candidate.model, quarantineFile);
-    } catch (error) {
-      const failure = new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
-      failure.safetyStop = true;
-      failure.costSafetyStopHandled = true;
-      throw failure;
+  let allFreeExhausted = false;
+  try {
+    if (available.some((entry) => entry.source === 'kilo') && !effectiveKiloCommand) {
+      exhausted.add('kilo');
+      errors.push('kilo: Kilo CLI not found; install the Kilo Code extension or set KILO_CLI');
     }
-    const error = new Error(message);
-    error.safetyStop = true;
-    error.costSafetyStopHandled = true;
-    throw error;
-  };
-  const stopForContentPolicy = (candidate) => {
-    const error = new Error(
-      `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request. Requests attempted: ${JSON.stringify(requestCounts())}`
-    );
-    error.contentPolicyRejected = true;
-    throw error;
-  };
-  const recordModelFailureSafely = async (options) => {
-    try {
-      return await recordModelFailure({ ...options, stateFile: poolStateFile, quarantineFile });
-    } catch (error) {
-      const failure = new Error(`Could not persist ${options.source} model failure state: ${error.message}`, {
-        cause: error,
-      });
-      failure.safetyStop = true;
-      throw failure;
-    }
-  };
-  const recordAttributableFailure = async (candidate, failure, { include429 = false } = {}) => {
-    if (
-      failure?.modelAttributable !== true ||
-      !Number.isInteger(failure.status) ||
-      failure.status === 401 ||
-      failure.status === 402 ||
-      (failure.status === 429 && !include429) ||
-      failure.accountQuota === true
-    ) {
-      return null;
-    }
-    const recorded = await recordModelFailureSafely({ source: candidate.source, model: candidate.model });
-    if (recorded.quarantineHours !== null) {
+    const kiloCooldownUntil = await getKiloCooldownUntil({ stateFile: poolStateFile });
+    if (kiloCooldownUntil !== null && available.some((entry) => entry.source === 'kilo')) {
+      exhausted.add('kilo');
       stderr.write(
-        `${candidate.source} model ${candidate.model} was quarantined for ${recorded.quarantineHours} hours after attributable failures.\n`
+        `Kilo is cooling down after HTTP 429 until ${new Date(kiloCooldownUntil).toISOString()}; skipping this run.\n`
       );
     }
-    return recorded;
-  };
-  const persistKiloRateLimit = async () => {
-    try {
-      await markKiloRateLimited({ stateFile: poolStateFile, quarantineFile });
-      exhausted.add('kilo');
-    } catch (error) {
-      const failure = new Error(`Could not persist Kilo HTTP 429 cooldown: ${error.message}`, { cause: error });
-      failure.safetyStop = true;
-      throw failure;
-    }
-  };
-  let openRouterQuotaChecked = false;
-  let openRouterQuotaKnownPositive = false;
-  let openRouterQuotaInitiallyUnknown = false;
-  let openRouterRetryUsed = false;
-  const ensureOpenRouterAvailable = async () => {
-    if (exhausted.has('openrouter')) return false;
-    if (!openRouterQuotaChecked) {
-      openRouterQuotaChecked = true;
-      if (await isOpenRouterQuotaExhaustedToday({ stateFile: poolStateFile })) {
-        exhausted.add('openrouter');
-        stderr.write('OpenRouter daily free-model quota was exhausted earlier today; skipping this run.\n');
-        return false;
+    const stopForReportedCost = async (candidate, detail = 'provider reported non-zero or invalid completion cost') => {
+      const quarantineNote = isOperatorOnlyQuarantine(candidate.source, candidate.model)
+        ? '; quarantine is operator-managed'
+        : '';
+      const message = `${candidate.source}/${candidate.model}: ${detail}${quarantineNote}; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
+      try {
+        await quarantineReportedCost(candidate.source, candidate.model, quarantineFile);
+      } catch (error) {
+        const failure = new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
+        failure.safetyStop = true;
+        failure.costSafetyStopHandled = true;
+        throw failure;
       }
+      const error = new Error(message);
+      error.safetyStop = true;
+      error.costSafetyStopHandled = true;
+      throw error;
+    };
+    const stopForContentPolicy = (candidate) => {
+      const error = new Error(
+        `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request. Requests attempted: ${JSON.stringify(requestCounts())}`
+      );
+      error.contentPolicyRejected = true;
+      throw error;
+    };
+    const recordModelFailureSafely = async (options) => {
+      try {
+        return await recordModelFailure({ ...options, stateFile: poolStateFile, quarantineFile });
+      } catch (error) {
+        const failure = new Error(`Could not persist ${options.source} model failure state: ${error.message}`, {
+          cause: error,
+        });
+        failure.safetyStop = true;
+        throw failure;
+      }
+    };
+    const recordAttributableFailure = async (candidate, failure, { include429 = false } = {}) => {
+      if (
+        failure?.modelAttributable !== true ||
+        !Number.isInteger(failure.status) ||
+        failure.status === 401 ||
+        failure.status === 402 ||
+        (failure.status === 429 && !include429) ||
+        failure.accountQuota === true
+      ) {
+        return null;
+      }
+      const recorded = await recordModelFailureSafely({ source: candidate.source, model: candidate.model });
+      if (recorded.quarantineHours !== null) {
+        stderr.write(
+          `${candidate.source} model ${candidate.model} was quarantined for ${recorded.quarantineHours} hours after attributable failures.\n`
+        );
+      }
+      return recorded;
+    };
+    const persistKiloRateLimit = async () => {
+      try {
+        await markKiloRateLimited({ stateFile: poolStateFile, quarantineFile });
+        exhausted.add('kilo');
+      } catch (error) {
+        const failure = new Error(`Could not persist Kilo HTTP 429 cooldown: ${error.message}`, { cause: error });
+        failure.safetyStop = true;
+        throw failure;
+      }
+    };
+    let openRouterQuotaChecked = false;
+    let openRouterQuotaKnownPositive = false;
+    let openRouterQuotaInitiallyUnknown = false;
+    let openRouterRetryUsed = false;
+    const ensureOpenRouterAvailable = async () => {
+      if (exhausted.has('openrouter')) return false;
+      if (!openRouterQuotaChecked) {
+        openRouterQuotaChecked = true;
+        if (await isOpenRouterQuotaExhaustedToday({ stateFile: poolStateFile })) {
+          exhausted.add('openrouter');
+          stderr.write('OpenRouter daily free-model quota was exhausted earlier today; skipping this run.\n');
+          return false;
+        }
+        const quotaProbeStartedAt = Date.now();
+        const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+        if (quota.reason === 'ok') {
+          onOpenRouterQuota(quota);
+          if (quota.remaining <= 0 || quota.used >= quota.limit) {
+            await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: quotaProbeStartedAt });
+            exhausted.add('openrouter');
+            stderr.write('OpenRouter daily free-model quota is exhausted; skipping this run.\n');
+            return false;
+          }
+          openRouterQuotaKnownPositive = true;
+        } else if (quota.reason === 'http_401' || quota.reason === 'http_402') {
+          exhausted.add('openrouter');
+          stderr.write(`OpenRouter quota endpoint returned ${quota.reason}; skipping OpenRouter for this run.\n`);
+          return false;
+        } else {
+          openRouterQuotaInitiallyUnknown = true;
+          stderr.write(
+            `OpenRouter quota unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}); allowing at most one inference attempt.\n`
+          );
+        }
+      }
+      return !exhausted.has('openrouter');
+    };
+    let openRouterQuotaCheckedAfterAttempt = 0;
+    const refreshOpenRouterQuotaAfterAttempt = async () => {
+      const openRouterAttempts = attempts.get('openrouter') ?? 0;
+      if (openRouterAttempts <= openRouterQuotaCheckedAfterAttempt) {
+        return openRouterQuotaKnownPositive && !exhausted.has('openrouter');
+      }
+      openRouterQuotaCheckedAfterAttempt = openRouterAttempts;
+      openRouterQuotaKnownPositive = false;
       const quotaProbeStartedAt = Date.now();
       const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
       if (quota.reason === 'ok') {
@@ -1492,525 +1527,553 @@ export async function completeWithFreeModel(prompt, options = {}) {
         if (quota.remaining <= 0 || quota.used >= quota.limit) {
           await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: quotaProbeStartedAt });
           exhausted.add('openrouter');
-          stderr.write('OpenRouter daily free-model quota is exhausted; skipping this run.\n');
-          return false;
+          stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter routes.\n');
+        } else {
+          openRouterQuotaKnownPositive = true;
         }
-        openRouterQuotaKnownPositive = true;
       } else if (quota.reason === 'http_401' || quota.reason === 'http_402') {
         exhausted.add('openrouter');
-        stderr.write(`OpenRouter quota endpoint returned ${quota.reason}; skipping OpenRouter for this run.\n`);
-        return false;
-      } else {
-        openRouterQuotaInitiallyUnknown = true;
         stderr.write(
-          `OpenRouter quota unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}); allowing at most one inference attempt.\n`
+          `OpenRouter quota endpoint returned ${quota.reason} after an attempt; skipping remaining routes.\n`
         );
+      } else {
+        const detail = quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : '';
+        stderr.write(`OpenRouter quota refresh unknown (${quota.reason}${detail}); skipping remaining routes.\n`);
       }
-    }
-    return !exhausted.has('openrouter');
-  };
-  let openRouterQuotaCheckedAfterAttempt = 0;
-  const refreshOpenRouterQuotaAfterAttempt = async () => {
-    const openRouterAttempts = attempts.get('openrouter') ?? 0;
-    if (openRouterAttempts <= openRouterQuotaCheckedAfterAttempt) {
+      if (openRouterQuotaInitiallyUnknown || !openRouterQuotaKnownPositive) exhausted.add('openrouter');
       return openRouterQuotaKnownPositive && !exhausted.has('openrouter');
-    }
-    openRouterQuotaCheckedAfterAttempt = openRouterAttempts;
-    openRouterQuotaKnownPositive = false;
-    const quotaProbeStartedAt = Date.now();
-    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
-    if (quota.reason === 'ok') {
-      onOpenRouterQuota(quota);
-      if (quota.remaining <= 0 || quota.used >= quota.limit) {
-        await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: quotaProbeStartedAt });
+    };
+    const handleOpenRouterFailure = async ({
+      candidate,
+      response,
+      payload,
+      quotaWasPositive,
+      retryAttempt,
+      requestStartedAt,
+    }) => {
+      const status = response?.status;
+      const transientServerFailure = Number.isInteger(status) && status >= 500 && status <= 599;
+      const transientTypedFailure = status === 200 && hasTransientOpenRouterProviderError(payload);
+      const dailyQuotaFailure = isOpenRouterDailyQuotaError(payload);
+      const limitSources = openRouterLimitSources(payload);
+      if (limitSources.includes('openrouter_free_tier_daily')) {
+        await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: requestStartedAt });
+      }
+      if (status === 401 || status === 402) {
         exhausted.add('openrouter');
-        stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter routes.\n');
-      } else {
-        openRouterQuotaKnownPositive = true;
-      }
-    } else if (quota.reason === 'http_401' || quota.reason === 'http_402') {
-      exhausted.add('openrouter');
-      stderr.write(`OpenRouter quota endpoint returned ${quota.reason} after an attempt; skipping remaining routes.\n`);
-    } else {
-      const detail = quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : '';
-      stderr.write(`OpenRouter quota refresh unknown (${quota.reason}${detail}); skipping remaining routes.\n`);
-    }
-    if (openRouterQuotaInitiallyUnknown || !openRouterQuotaKnownPositive) exhausted.add('openrouter');
-    return openRouterQuotaKnownPositive && !exhausted.has('openrouter');
-  };
-  const handleOpenRouterFailure = async ({
-    candidate,
-    response,
-    payload,
-    quotaWasPositive,
-    retryAttempt,
-    requestStartedAt,
-  }) => {
-    const status = response?.status;
-    const transientServerFailure = Number.isInteger(status) && status >= 500 && status <= 599;
-    const transientTypedFailure = status === 200 && hasTransientOpenRouterProviderError(payload);
-    const dailyQuotaFailure = isOpenRouterDailyQuotaError(payload);
-    const limitSources = openRouterLimitSources(payload);
-    if (limitSources.includes('openrouter_free_tier_daily')) {
-      await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: requestStartedAt });
-    }
-    if (status === 401 || status === 402) {
-      exhausted.add('openrouter');
-      return { retry: false };
-    }
-    const isPlatformLimit =
-      limitSources.some((source) => source.startsWith('openrouter_')) || openRouterPlatformRemaining(response) === 0;
-    const rateLimitFailure =
-      status === 429 || hasOpenRouterRateLimitError(payload) || dailyQuotaFailure || isPlatformLimit;
-    let quotaRefreshed = false;
-    let refreshedQuotaRemains = openRouterQuotaKnownPositive;
-    if (rateLimitFailure) {
-      refreshedQuotaRemains = await refreshOpenRouterQuotaAfterAttempt();
-      quotaRefreshed = true;
-      if (!refreshedQuotaRemains) return { retry: false };
-    }
-    if (isPlatformLimit || dailyQuotaFailure) {
-      exhausted.add('openrouter');
-      stderr.write(
-        'OpenRouter platform rate limit or daily quota applies to this run; skipping its remaining routes.\n'
-      );
-      return { retry: false };
-    }
-    const attributed = isModelAttributableOpenRouterFailure(response, payload);
-    let failureResult = null;
-    if (attributed) {
-      try {
-        failureResult = await recordModelFailureSafely({
-          source: 'openrouter',
-          model: candidate.model,
-          rateLimit: status === 429 || hasOpenRouterRateLimitError(payload),
-        });
-      } catch (error) {
-        throw error;
-      }
-      if (failureResult.quarantineHours !== null) {
-        stderr.write(
-          `OpenRouter model ${candidate.model} was quarantined for ${failureResult.quarantineHours} hours after attributable failures.\n`
-        );
-      }
-    }
-    const retryAfterMs = retryAfterDelayMs(response);
-    if (retryAfterMs !== null && retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
-      if (status === 429 && attributed) {
-        if (refreshedQuotaRemains) {
-          stderr.write(
-            `OpenRouter model ${candidate.model} Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this model and checking the next route.\n`
-          );
-        }
-        // A zero or unknown refresh already marks OpenRouter exhausted, so the loop cannot rotate.
         return { retry: false };
       }
-      exhausted.add('openrouter');
-      stderr.write(
-        `OpenRouter Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping its remaining routes for this run.\n`
-      );
-      return { retry: false };
-    }
-    const clientError = Number.isInteger(status) && status >= 300 && status < 500;
-    if (
-      !quotaRefreshed &&
-      (status === 429 || transientTypedFailure || transientServerFailure || response?.ok === true || clientError)
-    ) {
-      await refreshOpenRouterQuotaAfterAttempt();
-    }
-    if (openRouterQuotaInitiallyUnknown) exhausted.add('openrouter');
-    if (!openRouterQuotaKnownPositive) exhausted.add('openrouter');
-    if (retryAttempt) {
-      // This route's retry is spent; only a fresh positive quota permits the next model below.
-      return { retry: false };
-    }
-    if (
-      !quotaWasPositive ||
-      !openRouterQuotaKnownPositive ||
-      openRouterRetryUsed ||
-      (!attributed && !transientServerFailure && !transientTypedFailure)
-    ) {
-      return { retry: false };
-    }
-    if (failureResult?.quarantineHours !== null && failureResult?.quarantineHours !== undefined) {
-      return { retry: false };
-    }
-    return {
-      retry: true,
-      delayMs: retryAfterMs ?? (status === 429 || hasOpenRouterRateLimitError(payload) ? 1000 : 0),
-    };
-  };
-  for (let candidateIndex = 0; candidateIndex < available.length; candidateIndex += 1) {
-    const candidate = available[candidateIndex];
-    if (exhausted.has(candidate.source)) continue;
-    if (candidate.source === 'openrouter' && !(await ensureOpenRouterAvailable())) continue;
-    const sourceAttempts = attempts.get(candidate.source) ?? 0;
-    if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
-    if (candidate.source === 'openrouter' && !openRouterKey) continue;
-    if (candidate.source === 'groq' && (!groqKeys.length || !groqFreePlan)) continue;
-    if (candidate.source === 'opencode' && !opencodeCommand) continue;
-    attempts.set(candidate.source, sourceAttempts + 1);
-    const routeProfile = freeModelProfile(candidate.model, maxTokens);
-    const routeMaxTokens = routeProfile.maxTokens;
-    const routeTimeoutMs = routeProfile.timeoutMs;
-    if (candidate.source === 'kilo') {
-      try {
-        const result = await runKilo({
-          command: effectiveKiloCommand,
-          source: 'kilo',
-          model: candidate.model,
-          prompt,
-          maxTokens: routeMaxTokens,
-          timeoutMs: routeTimeoutMs,
-        });
-        if (result?.reportedCost === true || hasReportedNonZeroCost(result?.usage)) {
-          await stopForReportedCost(candidate);
-        }
-        if (result?.safetyStop) {
-          const error = new Error(result.error ?? 'Kilo completion safety stop');
-          error.safetyStop = true;
-          throw error;
-        }
-        if (isContentPolicyError(result)) stopForContentPolicy(candidate);
-        if (result?.status === 401 || result?.status === 402) {
-          exhausted.add(candidate.source);
-          errors.push(`kilo/${candidate.model}: ${result.error ?? `HTTP ${result.status}`}`);
-          continue;
-        }
-        if (result?.status === 429) {
-          await persistKiloRateLimit();
-          errors.push(`kilo/${candidate.model}: ${result.error ?? 'HTTP 429'}`);
-          continue;
-        }
-        if (result?.finishReason === 'length') {
-          errors.push(`kilo/${candidate.model}: incomplete completion (finish_reason=length)`);
-          continue;
-        }
-        if (result?.content && result.finishReason === 'stop') {
-          const resolvedModel = result.model ?? candidate.model;
-          if (!available.some((entry) => entry.source === 'kilo' && entry.model === resolvedModel)) {
-            errors.push(`kilo/${candidate.model}: response resolved to missing or unverified model ${resolvedModel}`);
-            continue;
-          }
-          return {
-            source: candidate.source,
-            model: resolvedModel,
-            content: result.content,
-            finishReason: result.finishReason,
-            usage: result.usage ?? null,
-            requestCounts: requestCounts(),
-          };
-        }
-        await recordAttributableFailure(candidate, result);
-        errors.push(`kilo/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
-        if (result?.exhaustSource) exhausted.add(candidate.source);
-      } catch (error) {
-        if (error.costSafetyStopHandled) throw error;
-        if (error.reportedCost === true || hasReportedNonZeroCost(error.usage)) {
-          await stopForReportedCost(candidate);
-        }
-        if (error.safetyStop) throw error;
-        if (isContentPolicyError(error)) stopForContentPolicy(candidate);
-        if (error.status === 401 || error.status === 402) {
-          exhausted.add(candidate.source);
-          errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
-          continue;
-        }
-        if (error.status === 429) {
-          await persistKiloRateLimit();
-          errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
-          continue;
-        }
-        await recordAttributableFailure(candidate, error);
-        errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
-        if (error.exhaustSource || error.code === 'ENOENT' || error.code === 'KILO_SPAWN') {
-          exhausted.add(candidate.source);
-        }
+      const isPlatformLimit =
+        limitSources.some((source) => source.startsWith('openrouter_')) || openRouterPlatformRemaining(response) === 0;
+      const rateLimitFailure =
+        status === 429 || hasOpenRouterRateLimitError(payload) || dailyQuotaFailure || isPlatformLimit;
+      let quotaRefreshed = false;
+      let refreshedQuotaRemains = openRouterQuotaKnownPositive;
+      if (rateLimitFailure) {
+        refreshedQuotaRemains = await refreshOpenRouterQuotaAfterAttempt();
+        quotaRefreshed = true;
+        if (!refreshedQuotaRemains) return { retry: false };
       }
-      if (exhausted.has(candidate.source)) continue;
-      const attemptNumber = attempts.get(candidate.source) ?? 0;
-      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      await waitForKiloBackoff(backoffMs);
-      continue;
-    }
-    if (candidate.source === 'groq') {
-      const effectiveMaxTokens = Math.max(routeMaxTokens, 1024);
-      for (const key of groqKeys) {
-        if (exhaustedGroqKeys.has(key)) continue;
-        let response;
+      if (isPlatformLimit || dailyQuotaFailure) {
+        exhausted.add('openrouter');
+        stderr.write(
+          'OpenRouter platform rate limit or daily quota applies to this run; skipping its remaining routes.\n'
+        );
+        return { retry: false };
+      }
+      const attributed = isModelAttributableOpenRouterFailure(response, payload);
+      let failureResult = null;
+      if (attributed) {
         try {
-          response = await fetchImpl(GROQ_CHAT, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${key}`,
-            },
-            signal: AbortSignal.timeout(routeTimeoutMs),
-            body: JSON.stringify({
-              model: candidate.model,
-              messages: [{ role: 'user', content: prompt }],
-              max_tokens: effectiveMaxTokens,
-              reasoning_effort: 'low',
-            }),
+          failureResult = await recordModelFailureSafely({
+            source: 'openrouter',
+            model: candidate.model,
+            rateLimit: status === 429 || hasOpenRouterRateLimitError(payload),
           });
         } catch (error) {
-          const retryAfter = retryAfterHint(response);
-          errors.push(
-            `groq/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
-          );
-          const attemptNumber = attempts.get(candidate.source) ?? 0;
-          const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-          await delay(backoffMs);
-          continue;
+          throw error;
         }
-        let payload;
-        try {
-          payload = await readBoundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'Model response');
-        } catch (error) {
-          const retryAfter = retryAfterHint(response);
-          errors.push(
-            `groq/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+        if (failureResult.quarantineHours !== null) {
+          stderr.write(
+            `OpenRouter model ${candidate.model} was quarantined for ${failureResult.quarantineHours} hours after attributable failures.\n`
           );
-          if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
-          const attemptNumber = attempts.get(candidate.source) ?? 0;
-          const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-          await delay(backoffMs);
-          continue;
         }
-        if (hasReportedNonZeroCost(payload?.usage)) {
-          const message = `groq/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
-          try {
-            await quarantineReportedCost('groq', candidate.model, quarantineFile);
-          } catch (error) {
-            throw new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
+      }
+      const retryAfterMs = retryAfterDelayMs(response);
+      if (retryAfterMs !== null && retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
+        if (status === 429 && attributed) {
+          if (refreshedQuotaRemains) {
+            stderr.write(
+              `OpenRouter model ${candidate.model} Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this model and checking the next route.\n`
+            );
           }
-          throw new Error(message);
+          // A zero or unknown refresh already marks OpenRouter exhausted, so the loop cannot rotate.
+          return { retry: false };
         }
-        if (isContentPolicyError(payload)) stopForContentPolicy(candidate);
-        const choice = payload?.choices?.[0];
-        const content = choice?.message?.content;
-        const finishReason = choice?.finish_reason;
-        if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
-          const resolvedModel = payload.model;
-          const stillFree = available.some(
-            (entry) => entry.source === candidate.source && entry.model === resolvedModel
-          );
-          if (!stillFree) {
+        exhausted.add('openrouter');
+        stderr.write(
+          `OpenRouter Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping its remaining routes for this run.\n`
+        );
+        return { retry: false };
+      }
+      const clientError = Number.isInteger(status) && status >= 300 && status < 500;
+      if (
+        !quotaRefreshed &&
+        (status === 429 || transientTypedFailure || transientServerFailure || response?.ok === true || clientError)
+      ) {
+        await refreshOpenRouterQuotaAfterAttempt();
+      }
+      if (openRouterQuotaInitiallyUnknown) exhausted.add('openrouter');
+      if (!openRouterQuotaKnownPositive) exhausted.add('openrouter');
+      if (retryAttempt) {
+        // This route's retry is spent; only a fresh positive quota permits the next model below.
+        return { retry: false };
+      }
+      if (
+        !quotaWasPositive ||
+        !openRouterQuotaKnownPositive ||
+        openRouterRetryUsed ||
+        (!attributed && !transientServerFailure && !transientTypedFailure)
+      ) {
+        return { retry: false };
+      }
+      if (failureResult?.quarantineHours !== null && failureResult?.quarantineHours !== undefined) {
+        return { retry: false };
+      }
+      return {
+        retry: true,
+        delayMs: retryAfterMs ?? (status === 429 || hasOpenRouterRateLimitError(payload) ? 1000 : 0),
+      };
+    };
+    for (let candidateIndex = 0; candidateIndex < available.length; candidateIndex += 1) {
+      const candidate = available[candidateIndex];
+      if (exhausted.has(candidate.source)) continue;
+      if (candidate.source === 'openrouter' && !(await ensureOpenRouterAvailable())) continue;
+      const sourceAttempts = attempts.get(candidate.source) ?? 0;
+      if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
+      if (candidate.source === 'openrouter' && !openRouterKey) continue;
+      if (candidate.source === 'groq' && (!groqKeys.length || !groqFreePlan)) continue;
+      if (candidate.source === 'opencode' && !opencodeCommand) continue;
+      attempts.set(candidate.source, sourceAttempts + 1);
+      const routeProfile = freeModelProfile(candidate.model, maxTokens);
+      const routeMaxTokens = routeProfile.maxTokens;
+      const routeTimeoutMs = routeProfile.timeoutMs;
+      if (candidate.source === 'kilo') {
+        try {
+          const result = await runKilo({
+            command: effectiveKiloCommand,
+            source: 'kilo',
+            model: candidate.model,
+            prompt,
+            maxTokens: routeMaxTokens,
+            timeoutMs: routeTimeoutMs,
+          });
+          if (result?.reportedCost === true || hasReportedNonZeroCost(result?.usage)) {
+            await stopForReportedCost(candidate);
+          }
+          if (result?.safetyStop) {
+            const error = new Error(result.error ?? 'Kilo completion safety stop');
+            error.safetyStop = true;
+            throw error;
+          }
+          if (isContentPolicyError(result)) stopForContentPolicy(candidate);
+          if (result?.status === 401 || result?.status === 402) {
+            exhausted.add(candidate.source);
+            errors.push(`kilo/${candidate.model}: ${result.error ?? `HTTP ${result.status}`}`);
+            continue;
+          }
+          if (result?.status === 429) {
+            await persistKiloRateLimit();
+            errors.push(`kilo/${candidate.model}: ${result.error ?? 'HTTP 429'}`);
+            continue;
+          }
+          if (result?.finishReason === 'length') {
+            errors.push(`kilo/${candidate.model}: incomplete completion (finish_reason=length)`);
+            continue;
+          }
+          if (result?.content && result.finishReason === 'stop') {
+            const resolvedModel = result.model ?? candidate.model;
+            if (!available.some((entry) => entry.source === 'kilo' && entry.model === resolvedModel)) {
+              errors.push(`kilo/${candidate.model}: response resolved to missing or unverified model ${resolvedModel}`);
+              continue;
+            }
+            return {
+              source: candidate.source,
+              model: resolvedModel,
+              content: result.content,
+              finishReason: result.finishReason,
+              usage: result.usage ?? null,
+              requestCounts: requestCounts(),
+            };
+          }
+          await recordAttributableFailure(candidate, result);
+          errors.push(`kilo/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
+          if (result?.exhaustSource) exhausted.add(candidate.source);
+        } catch (error) {
+          if (error.costSafetyStopHandled) throw error;
+          if (error.reportedCost === true || hasReportedNonZeroCost(error.usage)) {
+            await stopForReportedCost(candidate);
+          }
+          if (error.safetyStop) throw error;
+          if (isContentPolicyError(error)) stopForContentPolicy(candidate);
+          if (error.status === 401 || error.status === 402) {
+            exhausted.add(candidate.source);
+            errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+            continue;
+          }
+          if (error.status === 429) {
+            await persistKiloRateLimit();
+            errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+            continue;
+          }
+          await recordAttributableFailure(candidate, error);
+          errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+          if (error.exhaustSource || error.code === 'ENOENT' || error.code === 'KILO_SPAWN') {
+            exhausted.add(candidate.source);
+          }
+        }
+        if (exhausted.has(candidate.source)) continue;
+        const attemptNumber = attempts.get(candidate.source) ?? 0;
+        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+        await waitForKiloBackoff(backoffMs);
+        continue;
+      }
+      if (candidate.source === 'groq') {
+        const effectiveMaxTokens = Math.max(routeMaxTokens, 1024);
+        for (const key of groqKeys) {
+          if (exhaustedGroqKeys.has(key)) continue;
+          let response;
+          try {
+            response = await fetchImpl(GROQ_CHAT, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${key}`,
+              },
+              signal: AbortSignal.timeout(routeTimeoutMs),
+              body: JSON.stringify({
+                model: candidate.model,
+                messages: [{ role: 'user', content: prompt }],
+                max_tokens: effectiveMaxTokens,
+                reasoning_effort: 'low',
+              }),
+            });
+          } catch (error) {
+            const retryAfter = retryAfterHint(response);
             errors.push(
-              `groq/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
+              `groq/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
             );
             const attemptNumber = attempts.get(candidate.source) ?? 0;
             const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
             await delay(backoffMs);
             continue;
           }
-          return {
-            source: candidate.source,
-            model: resolvedModel,
-            content,
-            finishReason,
-            usage: payload.usage ?? null,
-            requestCounts: requestCounts(),
-            groqKeysAvailable: groqKeys.length - exhaustedGroqKeys.size,
-          };
+          let payload;
+          try {
+            payload = await readBoundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'Model response');
+          } catch (error) {
+            const retryAfter = retryAfterHint(response);
+            errors.push(
+              `groq/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+            );
+            if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
+            const attemptNumber = attempts.get(candidate.source) ?? 0;
+            const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+            await delay(backoffMs);
+            continue;
+          }
+          if (hasReportedNonZeroCost(payload?.usage)) {
+            const message = `groq/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
+            try {
+              await quarantineReportedCost('groq', candidate.model, quarantineFile);
+            } catch (error) {
+              throw new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
+            }
+            throw new Error(message);
+          }
+          if (isContentPolicyError(payload)) stopForContentPolicy(candidate);
+          const choice = payload?.choices?.[0];
+          const content = choice?.message?.content;
+          const finishReason = choice?.finish_reason;
+          if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
+            const resolvedModel = payload.model;
+            const stillFree = available.some(
+              (entry) => entry.source === candidate.source && entry.model === resolvedModel
+            );
+            if (!stillFree) {
+              errors.push(
+                `groq/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
+              );
+              const attemptNumber = attempts.get(candidate.source) ?? 0;
+              const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+              await delay(backoffMs);
+              continue;
+            }
+            return {
+              source: candidate.source,
+              model: resolvedModel,
+              content,
+              finishReason,
+              usage: payload.usage ?? null,
+              requestCounts: requestCounts(),
+              groqKeysAvailable: groqKeys.length - exhaustedGroqKeys.size,
+            };
+          }
+          if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
+            errors.push(`groq/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`);
+            const attemptNumber = attempts.get(candidate.source) ?? 0;
+            const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+            await delay(backoffMs);
+            continue;
+          }
+          const reason = response.ok
+            ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
+            : failureReason(response, payload);
+          errors.push(`groq/${candidate.model}: ${reason}`);
+          if (response.status >= 500 && hasUpstreamProviderMetadata(payload)) {
+            const failure = await recordAttributableFailure(candidate, {
+              status: response.status,
+              modelAttributable: true,
+            });
+            if (failure && failure.quarantineHours !== null) {
+              exhausted.add('groq');
+              break;
+            }
+          }
+          if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
+          const attemptNumber = attempts.get(candidate.source) ?? 0;
+          const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+          await delay(backoffMs);
         }
-        if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
-          errors.push(`groq/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`);
+        if (groqKeys.every((key) => exhaustedGroqKeys.has(key))) exhausted.add('groq');
+        continue;
+      }
+      if (candidate.source === 'opencode') {
+        try {
+          const result = await runOpenCode({
+            command: opencodeCommand,
+            model: candidate.model,
+            prompt,
+            maxTokens: routeMaxTokens,
+            timeoutMs: routeTimeoutMs,
+            ...(candidate.providerOwned === true ? { providerOwned: true } : {}),
+          });
+          if (result?.safetyStop || hasReportedNonZeroCost(result?.usage)) {
+            await stopForReportedCost(candidate);
+          }
+          if (isContentPolicyError(result)) stopForContentPolicy(candidate);
+          if (result?.content && result.finishReason === 'stop') {
+            const resolvedModel = result.model ?? candidate.model;
+            if (!available.some((entry) => entry.source === 'opencode' && entry.model === resolvedModel)) {
+              errors.push(
+                `opencode/${candidate.model}: response resolved to missing or unverified model ${resolvedModel}`
+              );
+              continue;
+            }
+            return {
+              source: candidate.source,
+              model: resolvedModel,
+              content: result.content,
+              finishReason: result.finishReason,
+              usage: result.usage ?? null,
+              requestCounts: requestCounts(),
+            };
+          }
+          errors.push(`opencode/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
+          const metadata = openCodeErrorMetadata(result);
+          if (metadata.accountQuota) {
+            exhausted.add('opencode');
+            stderr.write(
+              'OpenCode reported provider.free-limit; skipping OpenCode for this run without a persistent cooldown.\n'
+            );
+          } else if (metadata.modelAttributable && metadata.status !== null) {
+            const failure = await recordAttributableFailure(candidate, metadata, { include429: true });
+            if (failure && failure.quarantineHours !== null) continue;
+          }
+          if (
+            metadata.status === 429 &&
+            metadata.modelAttributable &&
+            !metadata.accountQuota &&
+            !candidate.retryAttempt
+          ) {
+            const retryAfterMs = openCodeRetryDelayMs(metadata);
+            if (retryAfterMs === null || retryAfterMs <= MAX_OPENCODE_RETRY_AFTER_MS) {
+              await waitForRetryAfter(retryAfterMs ?? 1000);
+              available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+            }
+          }
+        } catch (error) {
+          if (error.costSafetyStopHandled) throw error;
+          if (error.reportedCost === true || hasReportedNonZeroCost(error.usage)) {
+            await stopForReportedCost(candidate);
+          }
+          if (error.safetyStop) throw error;
+          if (isContentPolicyError(error)) stopForContentPolicy(candidate);
+          errors.push(`opencode/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+          const metadata = openCodeErrorMetadata(error);
+          if (error.code === 'ENOENT') exhausted.add(candidate.source);
+          if (metadata.accountQuota) exhausted.add('opencode');
+          if (metadata.modelAttributable && metadata.status !== null && !metadata.accountQuota) {
+            const failure = await recordAttributableFailure(candidate, metadata, { include429: true });
+            if (failure && failure.quarantineHours !== null) continue;
+          }
+          if (
+            metadata.status === 429 &&
+            metadata.modelAttributable &&
+            !metadata.accountQuota &&
+            !candidate.retryAttempt
+          ) {
+            const retryAfterMs = openCodeRetryDelayMs(metadata);
+            if (retryAfterMs === null || retryAfterMs <= MAX_OPENCODE_RETRY_AFTER_MS) {
+              await waitForRetryAfter(retryAfterMs ?? 1000);
+              available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+            }
+          }
+        }
+        const attemptNumber = attempts.get(candidate.source) ?? 0;
+        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+        await delay(backoffMs);
+        continue;
+      }
+      const url = OPENROUTER_CHAT;
+      const headers = { 'Content-Type': 'application/json' };
+      if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
+      const quotaWasPositive = candidate.source === 'openrouter' && openRouterQuotaKnownPositive;
+      const effectiveMaxTokens = routeMaxTokens;
+      let response;
+      const requestStartedAt = Date.now();
+      try {
+        response = await fetchImpl(url, {
+          method: 'POST',
+          headers,
+          signal: AbortSignal.timeout(routeTimeoutMs),
+          body: JSON.stringify({
+            model: candidate.model,
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: effectiveMaxTokens,
+            ...(routeProfile.reasoningEffort ? { reasoning: { effort: routeProfile.reasoningEffort } } : {}),
+          }),
+        });
+      } catch (error) {
+        const retryAfter = retryAfterHint(response);
+        errors.push(
+          `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+        );
+        if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
+        if (exhausted.has(candidate.source)) continue;
+        const attemptNumber = attempts.get(candidate.source) ?? 0;
+        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+        await delay(backoffMs);
+        continue;
+      }
+      let payload;
+      try {
+        payload = await readBoundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'Model response');
+      } catch (error) {
+        const retryAfter = retryAfterHint(response);
+        errors.push(
+          `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+        );
+        const retryDecision = await handleOpenRouterFailure({
+          candidate,
+          response,
+          payload: null,
+          quotaWasPositive,
+          retryAttempt: candidate.retryAttempt === true,
+          requestStartedAt,
+        });
+        if (retryDecision.retry) {
+          openRouterRetryUsed = true;
+          if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
+          available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+          continue;
+        }
+        const attemptNumber = attempts.get(candidate.source) ?? 0;
+        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+        await delay(backoffMs);
+        continue;
+      }
+      if (hasReportedNonZeroCost(payload?.usage)) {
+        const message = `${candidate.source}/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
+        try {
+          await quarantineReportedCost(candidate.source, candidate.model, quarantineFile);
+        } catch (error) {
+          throw new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
+        }
+        throw new Error(message);
+      }
+      if (isContentPolicyError(payload)) {
+        throw new Error(
+          `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
+        );
+      }
+      const choice = payload?.choices?.[0];
+      const content = choice?.message?.content;
+      const finishReason = choice?.finish_reason;
+      if (
+        candidate.source === 'openrouter' &&
+        response.ok &&
+        (hasTransientOpenRouterProviderError(payload) || hasOpenRouterQuotaFailure(response, payload, finishReason))
+      ) {
+        errors.push(`${candidate.source}/${candidate.model}: ${failureReason(response, payload)}`);
+        const retryDecision = await handleOpenRouterFailure({
+          candidate,
+          response,
+          payload,
+          quotaWasPositive,
+          retryAttempt: candidate.retryAttempt === true,
+          requestStartedAt,
+        });
+        if (retryDecision.retry) {
+          openRouterRetryUsed = true;
+          if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
+          available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+        }
+        continue;
+      }
+      if (response.ok && finishReason === 'length' && candidate.source === 'openrouter') {
+        await refreshOpenRouterQuotaAfterAttempt();
+      }
+      if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
+        const resolvedModel = payload.model;
+        const stillFree = available.some((entry) => entry.source === candidate.source && entry.model === resolvedModel);
+        if (!stillFree) {
+          errors.push(
+            `${candidate.source}/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
+          );
+          if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
+          if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+          if (exhausted.has(candidate.source)) continue;
           const attemptNumber = attempts.get(candidate.source) ?? 0;
           const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
           await delay(backoffMs);
           continue;
         }
-        const reason = response.ok
-          ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
-          : failureReason(response, payload);
-        errors.push(`groq/${candidate.model}: ${reason}`);
-        if (response.status >= 500 && hasUpstreamProviderMetadata(payload)) {
-          const failure = await recordAttributableFailure(candidate, {
-            status: response.status,
-            modelAttributable: true,
-          });
-          if (failure && failure.quarantineHours !== null) {
-            exhausted.add('groq');
-            break;
-          }
-        }
-        if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
+        return {
+          source: candidate.source,
+          model: resolvedModel,
+          content,
+          finishReason,
+          usage: payload.usage ?? null,
+          requestCounts: requestCounts(),
+        };
+      }
+      if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
+        if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
+        errors.push(
+          `${candidate.source}/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`
+        );
+        if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+        if (exhausted.has(candidate.source)) continue;
         const attemptNumber = attempts.get(candidate.source) ?? 0;
         const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
         await delay(backoffMs);
-      }
-      if (groqKeys.every((key) => exhaustedGroqKeys.has(key))) exhausted.add('groq');
-      continue;
-    }
-    if (candidate.source === 'opencode') {
-      try {
-        const result = await runOpenCode({
-          command: opencodeCommand,
-          model: candidate.model,
-          prompt,
-          maxTokens: routeMaxTokens,
-          timeoutMs: routeTimeoutMs,
-          ...(candidate.providerOwned === true ? { providerOwned: true } : {}),
-        });
-        if (result?.safetyStop || hasReportedNonZeroCost(result?.usage)) {
-          await stopForReportedCost(candidate);
-        }
-        if (isContentPolicyError(result)) stopForContentPolicy(candidate);
-        if (result?.content && result.finishReason === 'stop') {
-          const resolvedModel = result.model ?? candidate.model;
-          if (!available.some((entry) => entry.source === 'opencode' && entry.model === resolvedModel)) {
-            errors.push(
-              `opencode/${candidate.model}: response resolved to missing or unverified model ${resolvedModel}`
-            );
-            continue;
-          }
-          return {
-            source: candidate.source,
-            model: resolvedModel,
-            content: result.content,
-            finishReason: result.finishReason,
-            usage: result.usage ?? null,
-            requestCounts: requestCounts(),
-          };
-        }
-        errors.push(`opencode/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
-        const metadata = openCodeErrorMetadata(result);
-        if (metadata.accountQuota) {
-          exhausted.add('opencode');
-          stderr.write(
-            'OpenCode reported provider.free-limit; skipping OpenCode for this run without a persistent cooldown.\n'
-          );
-        } else if (metadata.modelAttributable && metadata.status !== null) {
-          const failure = await recordAttributableFailure(candidate, metadata, { include429: true });
-          if (failure && failure.quarantineHours !== null) continue;
-        }
-        if (
-          metadata.status === 429 &&
-          metadata.modelAttributable &&
-          !metadata.accountQuota &&
-          !candidate.retryAttempt
-        ) {
-          const retryAfterMs = openCodeRetryDelayMs(metadata);
-          if (retryAfterMs === null || retryAfterMs <= MAX_OPENCODE_RETRY_AFTER_MS) {
-            await waitForRetryAfter(retryAfterMs ?? 1000);
-            available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
-          }
-        }
-      } catch (error) {
-        if (error.costSafetyStopHandled) throw error;
-        if (error.reportedCost === true || hasReportedNonZeroCost(error.usage)) {
-          await stopForReportedCost(candidate);
-        }
-        if (error.safetyStop) throw error;
-        if (isContentPolicyError(error)) stopForContentPolicy(candidate);
-        errors.push(`opencode/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
-        const metadata = openCodeErrorMetadata(error);
-        if (error.code === 'ENOENT') exhausted.add(candidate.source);
-        if (metadata.accountQuota) exhausted.add('opencode');
-        if (metadata.modelAttributable && metadata.status !== null && !metadata.accountQuota) {
-          const failure = await recordAttributableFailure(candidate, metadata, { include429: true });
-          if (failure && failure.quarantineHours !== null) continue;
-        }
-        if (
-          metadata.status === 429 &&
-          metadata.modelAttributable &&
-          !metadata.accountQuota &&
-          !candidate.retryAttempt
-        ) {
-          const retryAfterMs = openCodeRetryDelayMs(metadata);
-          if (retryAfterMs === null || retryAfterMs <= MAX_OPENCODE_RETRY_AFTER_MS) {
-            await waitForRetryAfter(retryAfterMs ?? 1000);
-            available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
-          }
-        }
-      }
-      const attemptNumber = attempts.get(candidate.source) ?? 0;
-      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      await delay(backoffMs);
-      continue;
-    }
-    const url = OPENROUTER_CHAT;
-    const headers = { 'Content-Type': 'application/json' };
-    if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
-    const quotaWasPositive = candidate.source === 'openrouter' && openRouterQuotaKnownPositive;
-    const effectiveMaxTokens = routeMaxTokens;
-    let response;
-    const requestStartedAt = Date.now();
-    try {
-      response = await fetchImpl(url, {
-        method: 'POST',
-        headers,
-        signal: AbortSignal.timeout(routeTimeoutMs),
-        body: JSON.stringify({
-          model: candidate.model,
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: effectiveMaxTokens,
-          ...(routeProfile.reasoningEffort ? { reasoning: { effort: routeProfile.reasoningEffort } } : {}),
-        }),
-      });
-    } catch (error) {
-      const retryAfter = retryAfterHint(response);
-      errors.push(
-        `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
-      );
-      if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
-      if (exhausted.has(candidate.source)) continue;
-      const attemptNumber = attempts.get(candidate.source) ?? 0;
-      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      await delay(backoffMs);
-      continue;
-    }
-    let payload;
-    try {
-      payload = await readBoundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'Model response');
-    } catch (error) {
-      const retryAfter = retryAfterHint(response);
-      errors.push(
-        `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
-      );
-      const retryDecision = await handleOpenRouterFailure({
-        candidate,
-        response,
-        payload: null,
-        quotaWasPositive,
-        retryAttempt: candidate.retryAttempt === true,
-        requestStartedAt,
-      });
-      if (retryDecision.retry) {
-        openRouterRetryUsed = true;
-        if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
-        available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
         continue;
       }
-      const attemptNumber = attempts.get(candidate.source) ?? 0;
-      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      await delay(backoffMs);
-      continue;
-    }
-    if (hasReportedNonZeroCost(payload?.usage)) {
-      const message = `${candidate.source}/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
-      try {
-        await quarantineReportedCost(candidate.source, candidate.model, quarantineFile);
-      } catch (error) {
-        throw new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
-      }
-      throw new Error(message);
-    }
-    if (isContentPolicyError(payload)) {
-      throw new Error(
-        `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
-      );
-    }
-    const choice = payload?.choices?.[0];
-    const content = choice?.message?.content;
-    const finishReason = choice?.finish_reason;
-    if (
-      candidate.source === 'openrouter' &&
-      response.ok &&
-      (hasTransientOpenRouterProviderError(payload) || hasOpenRouterQuotaFailure(response, payload, finishReason))
-    ) {
-      errors.push(`${candidate.source}/${candidate.model}: ${failureReason(response, payload)}`);
+      const reason = response.ok
+        ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
+        : failureReason(response, payload);
+      errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
       const retryDecision = await handleOpenRouterFailure({
         candidate,
         response,
@@ -2019,82 +2082,30 @@ export async function completeWithFreeModel(prompt, options = {}) {
         retryAttempt: candidate.retryAttempt === true,
         requestStartedAt,
       });
+      if (
+        response.status === 401 ||
+        (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
+      )
+        exhausted.add(candidate.source);
       if (retryDecision.retry) {
         openRouterRetryUsed = true;
         if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
         available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
-      }
-      continue;
-    }
-    if (response.ok && finishReason === 'length' && candidate.source === 'openrouter') {
-      await refreshOpenRouterQuotaAfterAttempt();
-    }
-    if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
-      const resolvedModel = payload.model;
-      const stillFree = available.some((entry) => entry.source === candidate.source && entry.model === resolvedModel);
-      if (!stillFree) {
-        errors.push(
-          `${candidate.source}/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
-        );
-        if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
-        if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
-        if (exhausted.has(candidate.source)) continue;
-        const attemptNumber = attempts.get(candidate.source) ?? 0;
-        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-        await delay(backoffMs);
         continue;
       }
-      return {
-        source: candidate.source,
-        model: resolvedModel,
-        content,
-        finishReason,
-        usage: payload.usage ?? null,
-        requestCounts: requestCounts(),
-      };
-    }
-    if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
-      if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
-      errors.push(
-        `${candidate.source}/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`
-      );
-      if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
-      if (exhausted.has(candidate.source)) continue;
       const attemptNumber = attempts.get(candidate.source) ?? 0;
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
       await delay(backoffMs);
-      continue;
     }
-    const reason = response.ok
-      ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
-      : failureReason(response, payload);
-    errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
-    const retryDecision = await handleOpenRouterFailure({
-      candidate,
-      response,
-      payload,
-      quotaWasPositive,
-      retryAttempt: candidate.retryAttempt === true,
-      requestStartedAt,
-    });
-    if (
-      response.status === 401 ||
-      (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
-    )
-      exhausted.add(candidate.source);
-    if (retryDecision.retry) {
-      openRouterRetryUsed = true;
-      if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
-      available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
-      continue;
+    allFreeExhausted = true;
+    throw new Error(
+      `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.map((e) => sanitizeErrorMessage(e)).join(' | ') || 'No eligible free models were available.'}`
+    );
+  } finally {
+    if (allFreeExhausted) {
+      await onAllFreeExhausted({ requestCounts: requestCounts(), errors: errors.map((e) => sanitizeErrorMessage(e)) });
     }
-    const attemptNumber = attempts.get(candidate.source) ?? 0;
-    const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-    await delay(backoffMs);
   }
-  throw new Error(
-    `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.map((e) => sanitizeErrorMessage(e)).join(' | ') || 'No eligible free models were available.'}`
-  );
 }
 
 function usage() {

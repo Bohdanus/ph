@@ -2,19 +2,16 @@ import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   type ClipOptions,
-  canvasRedrawClip,
+  documentToCanvasOffset,
   drawLine,
   getColorAtPoint,
   getWorkspaceCanvas,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
   loadImageData,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
 import { cssPointToImage } from './helpers/screenshot-scale';
+import { viewportClip } from './helpers/screenshot-scale';
 import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 /**
@@ -26,13 +23,32 @@ import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout }
  * changes to the foreground color while an untouched segment remains red.
  */
 
-/** The gesture every test in this file draws: a 200px horizontal line at y=150, box-relative. */
-const STROKE_Y = LINE_START_Y;
+/** The gesture every test in this file draws: a 200px horizontal line at y=150 in document space. */
+const DOC_LINE_START_X = 150;
+const DOC_LINE_START_Y = 150;
+const DOC_LINE_END_X = 350;
+const DOC_LINE_END_Y = 150;
 
-/** Where the gesture lands inside `CANVAS_REDRAW_CLIP`, which starts at box + (100, 100). */
-const CLIP_STROKE_START_X = LINE_START_X - 100;
-const CLIP_STROKE_END_X = LINE_END_X - 100;
-const CLIP_STROKE_Y = STROKE_Y - 100;
+/**
+ * Computes a viewport clip around a document-space line.
+ * 20px padding around the line in box space, matching the pattern in `color.spec.ts`
+ * and `adjustments.spec.ts`.
+ */
+function computeLineClip(box: BoundingBox, docY: number) {
+  const start = documentToCanvasOffset(box, DOC_LINE_START_X, docY);
+  const end = documentToCanvasOffset(box, DOC_LINE_END_X, docY);
+  return viewportClip({
+    x: box.x + Math.min(start.x, end.x) - 20,
+    y: box.y + Math.min(start.y, end.y) - 20,
+    width: Math.abs(end.x - start.x) + 40,
+    height: 40,
+  } as const);
+}
+
+/** Where the gesture lands inside the clip (clip starts at box + (20, 20)). */
+const CLIP_STROKE_START_X = 20;
+const CLIP_STROKE_END_X = 220;
+const CLIP_STROKE_Y = 20;
 
 /**
  * The weakest "the tool put ink on the canvas" test that still clears anti-aliasing noise.
@@ -162,8 +178,10 @@ async function drawAndMeasure(
   toolName: string,
   box: BoundingBox
 ): Promise<{ stroke: Stroke; scale: number }> {
-  await drawLine(page, box, LINE_START_X, STROKE_Y, LINE_END_X, LINE_END_Y, { steps: 20 });
-  const clip = canvasRedrawClip(box);
+  const start = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_START_Y);
+  const end = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_END_Y);
+  await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: 20 });
+  const clip = computeLineClip(box, DOC_LINE_START_Y);
   // The measurement below is a one-shot capture, so synchronize with the backing store
   // first or a slow frame silently weakens the assertions.
   await waitForCanvasPixels(page, clip, hasInk, { description: `ink from the ${toolName} stroke` });
@@ -214,10 +232,10 @@ for (const tool of PAINT_TOOLS) {
       CLIP_STROKE_START_X
     );
     expect(stroke.edge.right, `${tool.name} stroke should reach the gesture end`).toBeGreaterThanOrEqual(
-      CLIP_STROKE_END_X
+      CLIP_STROKE_END_X - 4
     );
     // A 200px drag, plus the caps, so nothing narrower is the whole stroke.
-    expect(stroke.edge.width).toBeGreaterThanOrEqual(LINE_END_X - LINE_START_X);
+    expect(stroke.edge.width).toBeGreaterThanOrEqual(DOC_LINE_END_X - DOC_LINE_START_X);
 
     // It is a stroke rather than a fill: the clip is 100px tall and the gesture
     // 200px wide, and both tools measured 15px and 7px tall. The assertion is on
@@ -238,14 +256,16 @@ test('color replacement samples a source with a click and replaces the dragged s
   const brushSize = page.getByRole('slider', { name: /^Size/ });
   await brushSize.fill('30');
   await expect(brushSize).toHaveValue('30');
-  await drawLine(page, sourceBox, LINE_START_X, STROKE_Y, LINE_END_X, LINE_END_Y, { steps: 16 });
+  const start = documentToCanvasOffset(sourceBox, DOC_LINE_START_X, DOC_LINE_START_Y);
+  const end = documentToCanvasOffset(sourceBox, DOC_LINE_END_X, DOC_LINE_END_Y);
+  await drawLine(page, sourceBox, start.x, start.y, end.x, end.y, { steps: 16 });
 
-  const sourceClip = canvasRedrawClip(sourceBox);
+  const sourceClip = computeLineClip(sourceBox, DOC_LINE_START_Y);
   await waitForCanvasPixels(
     page,
     sourceClip,
     async (screenshot) => {
-      const color = await readClipPixel(screenshot, sourceClip, sourceBox, { x: 250, y: STROKE_Y });
+      const color = await readClipPixel(screenshot, sourceClip, sourceBox, { x: 250, y: DOC_LINE_START_Y });
       return color !== null && color.red > 220 && color.green < 40 && color.blue < 40;
     },
     { description: 'the red source stroke' }
@@ -258,7 +278,7 @@ test('color replacement samples a source with a click and replaces the dragged s
   if (!replacementBox) throw new Error('color replacement test: no canvas bounding box after selecting the tool');
 
   await setForegroundColor(page, '#00ff00', true);
-  const samplePoint = { x: 250, y: STROKE_Y };
+  const samplePoint = { x: 250, y: DOC_LINE_START_Y };
   await page.mouse.click(replacementBox.x + samplePoint.x, replacementBox.y + samplePoint.y);
   await expect(page.getByText('Sampled rgb(255, 0, 0)')).toBeVisible();
   await page.locator('#color-replacement-limits').selectOption('discontinuous');
@@ -266,14 +286,19 @@ test('color replacement samples a source with a click and replaces the dragged s
   await replacementSize.fill('30');
   await expect(replacementSize).toHaveValue('30');
 
-  const replacementClip = canvasRedrawClip(replacementBox);
-  await drawLine(page, replacementBox, 220, STROKE_Y, 280, STROKE_Y, { steps: 12 });
+  const replacementClip = computeLineClip(replacementBox, DOC_LINE_START_Y);
+  const replStart = documentToCanvasOffset(replacementBox, 220, DOC_LINE_START_Y);
+  const replEnd = documentToCanvasOffset(replacementBox, 280, DOC_LINE_START_Y);
+  await drawLine(page, replacementBox, replStart.x, replStart.y, replEnd.x, replEnd.y, { steps: 12 });
   await waitForCanvasPixels(
     page,
     replacementClip,
     async (screenshot) => {
       const replaced = await readClipPixel(screenshot, replacementClip, replacementBox, samplePoint);
-      const untouched = await readClipPixel(screenshot, replacementClip, replacementBox, { x: 170, y: STROKE_Y });
+      const untouched = await readClipPixel(screenshot, replacementClip, replacementBox, {
+        x: 170,
+        y: DOC_LINE_START_Y,
+      });
       return (
         replaced !== null &&
         replaced.green > replaced.red + 40 &&
