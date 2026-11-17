@@ -98,6 +98,64 @@ const ALLOWED_UNLISTED = new Map([
       'orchestrator context. MODELS.md is the canonical daily policy; this file is a lookup ' +
       'reference for provider terms, quotas, and failure observations.',
   ],
+  [
+    '.kilo/skills/broad-test-improvement/SKILL.md',
+    'skill loader for .skills/broad-test-improvement.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/chat-history-query/SKILL.md',
+    'skill loader for .skills/chat-history-query.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/chat-loose-end-scan/SKILL.md',
+    'skill loader for .skills/chat-loose-end-scan.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/ci-failure-mitigation/SKILL.md',
+    'skill loader for .skills/ci-failure-mitigation.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/copilot-chat-history/SKILL.md',
+    'skill loader for .skills/copilot-chat-history.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/copilot-subagent-launch/SKILL.md',
+    'skill loader for .skills/copilot-subagent-launch.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/e2e-hardening-cron/SKILL.md',
+    'skill loader for .skills/e2e-hardening-cron.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/e2e-hardening-overnight/SKILL.md',
+    'skill loader for .skills/e2e-hardening-overnight.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/free-model-agent-rotation/SKILL.md',
+    'skill loader for .skills/free-model-agent-rotation.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/free-model-chat-sweep/SKILL.md',
+    'skill loader for .skills/free-model-chat-sweep.md; not a standalone document',
+  ],
+  ['.kilo/skills/hard-merge/SKILL.md', 'skill loader for .skills/hard-merge.md; not a standalone document'],
+  [
+    '.kilo/skills/merge-preparation-research/SKILL.md',
+    'skill loader for .skills/merge-preparation-research.md; not a standalone document',
+  ],
+  ['.kilo/skills/overnight-sweep/SKILL.md', 'skill loader for .skills/overnight-sweep.md; not a standalone document'],
+  [
+    '.kilo/skills/photoshop-tool-creation/SKILL.md',
+    'skill loader for .skills/photoshop-tool-creation.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/stale-worktree-reclaim/SKILL.md',
+    'skill loader for .skills/stale-worktree-reclaim.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/worktree-merge-harvest/SKILL.md',
+    'skill loader for .skills/worktree-merge-harvest.md; not a standalone document',
+  ],
 ]);
 
 const trackedMarkdown = () =>
