@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 const BASELINE_VERSION = 1;
 const TEST_OUTCOMES = new Set(['expected', 'unexpected', 'flaky', 'skipped']);
+const EXPECTED_STATUSES = new Set(['passed', 'failed', 'timedOut', 'skipped', 'interrupted']);
 // Keep these in sync with the e2e job's 3-platform by 2-shard matrix. The
 // aggregator fails closed if a platform or shard disappears from that matrix.
 const E2E_PLATFORMS = ['linux', 'windows', 'macos'];
@@ -135,6 +136,11 @@ export function collectSkippedTests(report) {
         if (!TEST_OUTCOMES.has(test.status)) {
           throw new Error(`Playwright JSON report test in ${file} has unknown status ${JSON.stringify(test.status)}`);
         }
+        if (!EXPECTED_STATUSES.has(test.expectedStatus)) {
+          throw new Error(
+            `Playwright JSON report test in ${file} has unknown expectedStatus ${JSON.stringify(test.expectedStatus)}`
+          );
+        }
         if (typeof test.projectName !== 'string') {
           throw new Error(`Playwright JSON report test in ${file} has no string projectName`);
         }
@@ -142,8 +148,6 @@ export function collectSkippedTests(report) {
           throw new Error(`Playwright JSON report test in ${file} has no string projectId`);
         }
         const projectId = test.projectId;
-        if (test.status !== 'skipped') continue;
-
         const identity = {
           specId,
           projectId,
@@ -151,6 +155,16 @@ export function collectSkippedTests(report) {
           titlePath: [...titlePath, spec.title],
           projectName: test.projectName,
         };
+
+        // Playwright treats a failed assertion as successful when its outcome is
+        // `expected`; `test.fail()` sets expectedStatus to `failed`. The skip
+        // baseline is the only cross-platform report gate, so reject that exact
+        // green outcome rather than letting a broken E2E test pass.
+        if (test.status === 'expected' && test.expectedStatus === 'failed') {
+          throw new Error(`Playwright JSON report declares a test expected to fail: ${formatIdentity(identity)}`);
+        }
+        if (test.status !== 'skipped') continue;
+
         const key = identityKey(identity);
         if (seen.has(key)) {
           throw new Error(`Playwright JSON report contains duplicate skipped identity: ${formatIdentity(identity)}`);

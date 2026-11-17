@@ -45,9 +45,7 @@ function computeLineClip(box: BoundingBox, docY: number) {
   } as const);
 }
 
-/** Where the gesture lands inside the clip (clip starts at box + (20, 20)). */
-const CLIP_STROKE_START_X = 20;
-const CLIP_STROKE_END_X = 220;
+/** The requested stroke row is 20 CSS pixels below the padded clip's top edge. */
 const CLIP_STROKE_Y = 20;
 
 /**
@@ -177,7 +175,7 @@ async function drawAndMeasure(
   page: Page,
   toolName: string,
   box: BoundingBox
-): Promise<{ stroke: Stroke; scale: number }> {
+): Promise<{ stroke: Stroke; scale: number; gestureStartPixel: number; gestureEndPixel: number }> {
   const start = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_START_Y);
   const end = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_END_Y);
   await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: 20 });
@@ -188,18 +186,27 @@ async function drawAndMeasure(
   const screenshot = await page.screenshot({ clip });
   const measured = await measureStroke(screenshot);
   if (!measured) throw new Error(`drawAndMeasure: the clip is empty after ${toolName} ink was observed`);
+  const image = await loadImageData(screenshot);
+  const gestureStart = cssPointToImage(image, clip, { x: box.x + start.x, y: box.y + start.y });
+  const gestureEnd = cssPointToImage(image, clip, { x: box.x + end.x, y: box.y + end.y });
   const scale = await imageScale(screenshot, clip);
-  return { stroke: measured, scale };
+  return {
+    stroke: measured,
+    scale,
+    gestureStartPixel: Math.round(gestureStart.x),
+    gestureEndPixel: Math.round(gestureEnd.x),
+  };
 }
 
-async function readClipPixel(
+async function readDocumentPixelInClip(
   screenshot: Buffer,
   clip: Required<ClipOptions>,
   box: BoundingBox,
-  point: { x: number; y: number }
+  documentPoint: { x: number; y: number }
 ) {
   const image = await loadImageData(screenshot);
-  const imagePoint = cssPointToImage(image, clip, { x: box.x + point.x, y: box.y + point.y });
+  const canvasPoint = documentToCanvasOffset(box, documentPoint.x, documentPoint.y);
+  const imagePoint = cssPointToImage(image, clip, { x: box.x + canvasPoint.x, y: box.y + canvasPoint.y });
   return getColorAtPoint(image, Math.round(imagePoint.x), Math.round(imagePoint.y), 0);
 }
 
@@ -222,24 +229,24 @@ for (const tool of PAINT_TOOLS) {
     // the defect rather than the behaviour.
     await setForegroundColor(page, '#ff0000', true);
 
-    const { stroke, scale } = await drawAndMeasure(page, tool.name, box);
+    const { stroke, scale, gestureStartPixel, gestureEndPixel } = await drawAndMeasure(page, tool.name, box);
 
-    // The stroke starts at or before the gesture's start and ends at or after its end, so
-    // the tool tracked the whole drag instead of dropping a single mark. Brush measured
-    // 43..256 and Pencil 47..253 against a 50..250 gesture, the overshoot being the round
-    // line cap plus the anti-aliased rim.
-    expect(stroke.edge.left, `${tool.name} stroke should start at the gesture start`).toBeLessThanOrEqual(
-      CLIP_STROKE_START_X
+    // The captured stroke must cover both mapped gesture endpoints; round caps may extend past them.
+    expect(stroke.edge.left, `${tool.name} stroke should cover the gesture's first captured pixel`).toBeLessThanOrEqual(
+      gestureStartPixel
     );
-    expect(stroke.edge.right, `${tool.name} stroke should reach the gesture end`).toBeGreaterThanOrEqual(
-      CLIP_STROKE_END_X - 4
-    );
-    // A 200px drag, plus the caps, so nothing narrower is the whole stroke.
-    expect(stroke.edge.width).toBeGreaterThanOrEqual(DOC_LINE_END_X - DOC_LINE_START_X);
+    expect(
+      stroke.edge.right,
+      `${tool.name} stroke should cover the gesture's last captured pixel`
+    ).toBeGreaterThanOrEqual(gestureEndPixel);
+    // Include every captured pixel from the first mapped endpoint through the last.
+    expect(
+      stroke.edge.width,
+      `${tool.name} stroke bounds should span the complete mapped gesture`
+    ).toBeGreaterThanOrEqual(gestureEndPixel - gestureStartPixel + 1);
 
-    // It is a stroke rather than a fill: the clip is 100px tall and the gesture
-    // 200px wide, and both tools measured 15px and 7px tall. The assertion is on
-    // CSS pixels, so divide the image-space height by the capture scale.
+    // The clip is 40 CSS pixels tall. Normalize the raster height to CSS pixels so its bounds
+    // stay meaningful when screenshot DPR changes.
     expect(stroke.edge.height / scale).toBeGreaterThanOrEqual(3);
     expect(stroke.edge.height / scale, `${tool.name} should stroke a line, not flood the clip`).toBeLessThan(30);
 
@@ -265,7 +272,10 @@ test('color replacement samples a source with a click and replaces the dragged s
     page,
     sourceClip,
     async (screenshot) => {
-      const color = await readClipPixel(screenshot, sourceClip, sourceBox, { x: 250, y: DOC_LINE_START_Y });
+      const color = await readDocumentPixelInClip(screenshot, sourceClip, sourceBox, {
+        x: 250,
+        y: DOC_LINE_START_Y,
+      });
       return color !== null && color.red > 220 && color.green < 40 && color.blue < 40;
     },
     { description: 'the red source stroke' }
@@ -279,7 +289,8 @@ test('color replacement samples a source with a click and replaces the dragged s
 
   await setForegroundColor(page, '#00ff00', true);
   const samplePoint = { x: 250, y: DOC_LINE_START_Y };
-  await page.mouse.click(replacementBox.x + samplePoint.x, replacementBox.y + samplePoint.y);
+  const sampleCanvasPoint = documentToCanvasOffset(replacementBox, samplePoint.x, samplePoint.y);
+  await page.mouse.click(replacementBox.x + sampleCanvasPoint.x, replacementBox.y + sampleCanvasPoint.y);
   await expect(page.getByText('Sampled rgb(255, 0, 0)')).toBeVisible();
   await page.locator('#color-replacement-limits').selectOption('discontinuous');
   const replacementSize = page.getByRole('slider', { name: /^Size/ });
@@ -294,8 +305,8 @@ test('color replacement samples a source with a click and replaces the dragged s
     page,
     replacementClip,
     async (screenshot) => {
-      const replaced = await readClipPixel(screenshot, replacementClip, replacementBox, samplePoint);
-      const untouched = await readClipPixel(screenshot, replacementClip, replacementBox, {
+      const replaced = await readDocumentPixelInClip(screenshot, replacementClip, replacementBox, samplePoint);
+      const untouched = await readDocumentPixelInClip(screenshot, replacementClip, replacementBox, {
         x: 170,
         y: DOC_LINE_START_Y,
       });

@@ -70,8 +70,8 @@ const REVIEWED = {
   },
   'free-model-pool.test.mjs': {
     scope:
-      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
-    patterns: `filesystem-write:mkdtemp=31 filesystem-write:rm=31 filesystem-write:writeFile=15 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
+    patterns: `filesystem-write:mkdtemp=32 filesystem-write:rm=32 filesystem-write:writeFile=15 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -100,8 +100,8 @@ const REVIEWED = {
   },
   'main-worktree-guard.test.mjs': {
     scope:
-      'Git and hook fixtures use temporary repositories, including foreign reuse of a stale main path, forced duplicate-main recovery, and watcher retries across startup and polling reads; the retry cases cover changed leases and persistent failures, and fixture files stay inside the temporary repository. Review child cwd and any environment passed to subprocesses.',
-    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=49 filesystem-write:mkdtempSync=13 filesystem-write:writeFileSync=36 filesystem-write:rmSync=17 filesystem-write:mkdirSync=6`,
+      'Git and hook fixtures use temporary repositories, including malformed owner-file retries and changed-lease rechecks, injected transient read failures at startup and polling, bounded exits after persistent read failures, forced duplicate-main recovery, and foreign reuse of a stale main path. Review child cwd and environment; fixture files stay inside temporary repositories.',
+    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=49 filesystem-write:mkdtempSync=15 filesystem-write:writeFileSync=39 filesystem-write:rmSync=19 filesystem-write:mkdirSync=6`,
   },
   'main-landing-alert.test.mjs': {
     scope:

@@ -12,9 +12,10 @@ unranked models share the final tier and are interleaved by provider. A quaranti
 only its provider/model pair. Never bypass pricing, authentication, quota, quarantine, or safety
 controls.
 
-As of 2026-11-12, the exact OpenRouter pair is under a 168-hour `poor_performance` quarantine
-through `2026-11-19T02:03:21.539Z`; that does not quarantine the model on other providers. The exact
-Kilo route remains approved. Active quarantines are removed before route ordering. Check
+On 2026-11-17, the exact OpenRouter Nemotron 3 Ultra `:free` pair was released from its
+operator-managed `poor_performance` quarantine at operator direction. This changes no other
+provider/model pair. The route still requires exact-zero live pricing, authentication, and available
+quota; the exact Kilo route remains approved. Active quarantines are removed before route ordering. Check
 `npm run free:quarantine -- list` for current expiry and refresh catalogs with
 `npm run free:models -- --list` before a run.
 
