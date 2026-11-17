@@ -213,6 +213,14 @@ function withNoExpectedLanding(run) {
 function commitReviewedLanding(message) {
   return execFileSync(process.execPath, [LANDING_COMMIT_PATH, '-m', message], {
     cwd: dir,
+    env: {
+      ...process.env,
+      KILO_EXPECTED_MIRROR_RUN_ID: '123456789',
+      KILO_EXPECTED_MIRROR_SOURCE_SHA: process.env.KILO_EXPECTED_INCOMING_SHA ?? '',
+      KILO_EXPECTED_MIRROR_REQUEST_ID: 'c'.repeat(32),
+      KILO_EXPECTED_MIRROR_WORKFLOW_SHA: 'b'.repeat(40),
+      KILO_EXPECTED_MIRROR_VERIFIED_AT: new Date().toISOString(),
+    },
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -236,7 +244,11 @@ function commitThroughMainLanding() {
   ];
   const runner = [
     `import { main } from ${JSON.stringify(pathToFileURL(LANDING_WRAPPER_PATH).href)};`,
-    `process.exitCode = await main(${JSON.stringify(args)}, { cwd: process.cwd(), watcherStarter: async () => {} });`,
+    'const mirrorProofVerifier = async (_paths, pins) => {',
+    '  const timestamp = new Date().toISOString();',
+    '  return { version: 1, mode: "full", branch: pins.branch, sourceSha: pins.incomingSha, workflowSha: "b".repeat(40), requestId: "c".repeat(32), runId: "123456789", attempt: 1, conclusion: "success", runUrl: "https://github.com/Bohdanus/ph/actions/runs/123456789", completedAt: timestamp, verifiedAt: timestamp };',
+    '};',
+    `process.exitCode = await main(${JSON.stringify(args)}, { cwd: process.cwd(), watcherStarter: async () => {}, mirrorProofVerifier });`,
   ].join('\n');
   execFileSync(process.execPath, ['--input-type=module', '--eval', runner], {
     cwd: dir,

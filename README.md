@@ -95,7 +95,6 @@ e2e/              # Playwright specs + helper unit tests
 | `test`                      | Unit tests                                       |
 | `test:integration`          | Integration tests                                |
 | `test:e2e`                  | Playwright specs (wrapper starts own dev server) |
-| `test:e2e:raw`              | Bare `playwright test`                           |
 | `test:e2e:unit`             | e2e helper unit tests                            |
 | `test:e2e:unit:coverage`    | e2e helpers + coverage                           |
 | `test:e2e:ui`               | Playwright UI (opens window)                     |

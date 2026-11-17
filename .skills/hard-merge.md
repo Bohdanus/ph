@@ -177,8 +177,8 @@ another session's half-written change rather than a broken `main`; check the _co
 throwaway worktree before you touch a path you have not touched.
 `docs/ORCHESTRATION.md` — §Landing — is the one home for the mechanism and for its three limits.
 
-**The gates and the board.** `npm run test:e2e` starts its own server on a port it picks, and
-`npm run test:e2e:raw` from a worktree attaches to whatever holds port 5173. The cross-session channel
+**The gates and the board.** `npm run test:e2e` starts its own server on a port it picks and takes
+the single-suite lock; direct local `playwright test` invocations are refused. The cross-session channel
 is `npm run swarm`, **not** Kilo's `board_read`/`board_post`: `board_read` reports `messages: []`
 outside a fan-out on purpose, `board_post` about a worktree usually returns `total: 0, active: 0`
 because it only reaches the sessions a fan-out spawned, and **a `board_read` that returns nothing
@@ -1337,19 +1337,14 @@ npm run build          # not redundant with tsc: it catches Sass, wasm, PostCSS,
 npm run lint:check     # ESLint + Prettier over `git ls-files`
 npm run test           # the app suite
 npm run test:e2e:unit  # the e2e helper suite — run this whenever you touched e2e/
-npm run test:e2e       # the locked wrapper. NEVER `npm run test:e2e:raw` from a worktree.
+npm run test:e2e       # the hard-serialized wrapper; never invoke Playwright directly locally.
 ```
 
-**`npm run test:e2e` is a queue, not a gate.** It takes a swarm lock, allocates a free port per run
-and writes to its own output directory. **Nothing about the lock can fail a run**: queue full,
-board unreachable, malformed lease, wait expired — each logs and the suite proceeds, because a lost
-queue costs a concurrent run rather than correctness and both runs have their own ports. An earlier
-version exited 4 when it could not have the lock, which turned an unenforceable mechanism into a
-hard block on a merge gate; do not reintroduce one. `npm run swarm -- check <paths>` exits **1** for a busy path, and
-that is a different question from the one the queue answers, so do not read one as the other. A
-bare `npx playwright test` from a worktree is the shape that reported seven product mutations green
-against another checkout's code; it is `npm run test:e2e:raw` and it belongs to CI, where one job
-owns one checkout.
+**`npm run test:e2e` holds a hard local single-suite lock.** It waits up to the configured timeout,
+then fails without starting if the queue is busy or unavailable. Renewal loss terminates the suite.
+This is separate from `npm run swarm -- check <paths>`, which arbitrates file claims. A bare local
+`npx playwright test` is refused; GitHub-hosted CI uses isolated machines and keeps its direct
+workflow command. Full browser validation before landing uses `npm run test:e2e:mirror -- --full`.
 
 **Gate output is part of the merge record.** Every failure gets a file, a count and a mechanism,
 including the ones that are not yours. A pre-existing red test in a shared file is **reported, not
@@ -1810,8 +1805,8 @@ where the check was not actually run** — the same honesty convention the tool-
     is actually in the served module before believing a green mutation result.**
 
 11. **An e2e run attached to the wrong checkout reports everything green.** Symptom: a mutation
-    campaign that "passes" and measured nothing. Defence: `npm run test:e2e`, the locked wrapper,
-    never `npm run test:e2e:raw` from a worktree.
+    campaign that "passes" and measured nothing. Defence: `npm run test:e2e`, the serialized wrapper;
+    never invoke Playwright directly from a local worktree.
 
 12. **A generated file in conflict is regenerated, never resolved.** Symptom: a 7,000-line
     hand-merge that no generator would produce and `--check` immediately rejects. Defence:

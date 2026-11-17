@@ -15,8 +15,10 @@ import {
   run as runUnderTest,
   runOutputPaths,
   runPlaywright,
+  parseDurationMs,
 } from '../e2e-run.mjs';
 import { signalProcessTree } from '../e2e-run/process-tree.mjs';
+import { assertSerializedRunOwner } from '../e2e-run/run-owner.mjs';
 
 /**
  * This file's budget, and the reason it is not Vitest's default 5s.
@@ -96,16 +98,18 @@ const REPO_ROOT = join(import.meta.dirname, '..', '..');
  * in the common git dir. The repository itself is NOT faked: path normalization is
  * lexical but the git home and worktree list are real.
  *
- * `CI` and the wrapper controls are cleared rather than inherited. GitHub Actions sets
- * `CI` for every step, while port, remote-target, queue, and output flags change which
- * branch `run()` takes. Tests supply those values explicitly, so host settings cannot
- * silently change the behavior under test.
+ * CI, hosted-runner markers, and wrapper controls are cleared rather than inherited.
+ * Port, remote-target, queue, and output flags change which branch `run()` takes, so
+ * tests supply those values explicitly rather than inherit host settings.
  */
 function tempBoard() {
   const dir = mkdtempSync(join(tmpdir(), 'e2e-run-test-'));
   const env = { ...process.env, AGENT_BOARD_DIR: dir };
   delete env.CI;
   for (const name of [
+    'GITHUB_ACTIONS',
+    'RUNNER_ENVIRONMENT',
+    'E2E_RUN_LOCK_OWNER',
     'PLAYWRIGHT_PORT',
     'PLAYWRIGHT_BASE_URL',
     'PLAYWRIGHT_REUSE_EXISTING_SERVER',
@@ -227,8 +231,8 @@ function run(argv, options = {}) {
 function fakeSuite(onRun) {
   const calls = [];
   const fn = async (args, options) => {
-    calls.push({ args, env: options?.env, quiet: options?.quiet });
-    if (onRun) await onRun({ args, env: options?.env });
+    calls.push({ args, env: options?.env, quiet: options?.quiet, signal: options?.signal });
+    if (onRun) await onRun({ args, env: options?.env, signal: options?.signal });
     return 0;
   };
   fn.calls = calls;
@@ -299,8 +303,7 @@ async function claimAPort(heldPort = null) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* The guarantee: this run's own server. Nothing below here may depend on the   */
-/* swarm board, because the board is only a queue.                              */
+/* The guarantee: one local suite at a time, on this run's own server.         */
 /* -------------------------------------------------------------------------- */
 
 describe('e2e-run: the own-server guarantee', () => {
@@ -332,11 +335,7 @@ describe('e2e-run: the own-server guarantee', () => {
     expect(log.text(), 'the retry count is not off by one').not.toContain('2 times');
   });
 
-  it('runs with a port even when the board is completely unavailable', async () => {
-    // The load-bearing test of the whole design. If the guarantee needed the board,
-    // this is where it would show: no board, no port, and a run against whatever
-    // happens to be listening. Instead the run allocates exactly as it does with a
-    // board, because the board was never load-bearing.
+  it('refuses to run when the shared board is unavailable', async () => {
     const suite = fakeSuite();
     const log = recorder();
     const code = await run([], {
@@ -350,10 +349,9 @@ describe('e2e-run: the own-server guarantee', () => {
       runPlaywright: suite,
     });
 
-    expect(code, 'an unreachable board is not a failure').toBe(0);
-    expect(suite.calls, 'the suite still starts').toHaveLength(1);
-    expect(suite.calls[0].env.PLAYWRIGHT_PORT, 'on a port of its own').toBe(String(UNIT_TEST_PORT));
-    expect(log.text(), 'and the loss of scheduling is stated').toMatch(/board is unavailable/);
+    expect(code, 'an unreachable board fails closed').toBe(1);
+    expect(suite.calls, 'the suite never starts without a lock').toHaveLength(0);
+    expect(log.text()).toMatch(/board is unavailable/);
   });
 
   it('refuses PLAYWRIGHT_REUSE_EXISTING_SERVER instead of inheriting a dead variable', () => {
@@ -565,7 +563,10 @@ describe('e2e-run: the own-server guarantee', () => {
   });
 
   it('keeps the default port and the default output directory in CI', async () => {
-    const suite = fakeSuite();
+    let duringRun;
+    const suite = fakeSuite(async () => {
+      duringRun = observeHeld(boardDir.env);
+    });
     const code = await run([], { env: { ...boardDir.env, CI: '1' }, log: recorder().log, runPlaywright: suite });
 
     expect(code).toBe(0);
@@ -573,20 +574,28 @@ describe('e2e-run: the own-server guarantee', () => {
     expect(args, 'CI reads test-results/ for its reporter output').not.toContain('--output');
     expect(env.PLAYWRIGHT_PORT, 'and the workflow documents :5173').toBeUndefined();
     expect(env.PLAYWRIGHT_HTML_OUTPUT_DIR).toBeUndefined();
-    // The CI branch of `run()` had NO test at all: `resolvePort` was exercised as a
-    // pure function with `ci=true`, which cannot catch a branch in `run()` that
-    // ignored the flag — and `CI` is set in this repo's own `ci` job.
-    expect(observeHeld(boardDir.env).status, 'CI does not take the e2e queue').toBe(0);
+    expect(duringRun.status, 'CI-style environments on this machine still hold the queue').toBe(1);
+    expect(observeHeld(boardDir.env).status, 'the local CI run gives its queue back').toBe(0);
     expect(args[0], 'and Playwright is still invoked rather than skipped').toBe('test');
   });
 
-  it('refuses a remote base URL here, and global-setup refuses it on the raw path', async () => {
-    // This is the wrapper's half. The load-bearing half is `checkOwnServer` in
-    // `e2e/global-setup.ts`, because `npm run test:e2e:raw` and the CI job's bare
-    // `npx playwright test` never load this file, and `playwright.config.ts`
-    // resolves `use.baseURL` from the variable itself — so a refusal that lived only
-    // here was one command away from being false. The global-setup half is covered
-    // in `e2e/__tests__/global-setup.unit.test.ts`.
+  it('does not take a local lock on an isolated GitHub-hosted runner', async () => {
+    const suite = fakeSuite();
+    const code = await run([], {
+      env: { ...boardDir.env, CI: '1', GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted' },
+      log: recorder().log,
+      runPlaywright: suite,
+    });
+
+    expect(code).toBe(0);
+    expect(suite.calls).toHaveLength(1);
+    expect(suite.calls[0].env.E2E_RUN_LOCK_OWNER).toBeUndefined();
+    expect(observeHeld(boardDir.env).status).toBe(0);
+  });
+
+  it('refuses a remote base URL before starting the suite', async () => {
+    // The wrapper refuses remote targets before acquiring the local run lock; the
+    // config's global setup independently validates the same target for raw paths.
     const suite = fakeSuite();
     await expect(
       run([], {
@@ -600,10 +609,10 @@ describe('e2e-run: the own-server guarantee', () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* The queue: advisory only. None of this may fail a run.                       */
+/* The queue: fail-closed, exactly one local suite.                              */
 /* -------------------------------------------------------------------------- */
 
-describe('e2e-run: the queue is a queue, not a gate', () => {
+describe('e2e-run: the local single-suite lock', () => {
   let boardDir;
 
   beforeEach(() => {
@@ -616,17 +625,19 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
 
   it('takes the sentinel for the run and gives it back after', async () => {
     let duringRun = null;
+    const suite = fakeSuite(async () => {
+      duringRun = observeHeld(boardDir.env);
+    });
     const code = await run([], {
       env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' },
       log: recorder().log,
-      runPlaywright: fakeSuite(async () => {
-        duringRun = observeHeld(boardDir.env);
-      }),
+      runPlaywright: suite,
     });
 
     expect(code).toBe(0);
     expect(duringRun.status, 'another agent can see the sentinel held while the suite runs').toBe(1);
     expect(duringRun.holders).toHaveLength(1);
+    expect(suite.calls[0].env.E2E_RUN_LOCK_OWNER).toBe(duringRun.holders[0]);
 
     const after = observeHeld(boardDir.env);
     expect(after.status, 'and free once the run returns').toBe(0);
@@ -666,43 +677,41 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
     expect(suite.calls, 'exactly one run, after the queue was free').toHaveLength(1);
   });
 
-  it('STARTS ANYWAY when another run holds the sentinel for too long', async () => {
-    // This is the difference between a queue and a gate. The old version exited 4 and
-    // ran nothing, which made an unenforceable mechanism into a hard block on a merge
-    // gate: it looked like a guarantee and was not one. Two concurrent runs are
-    // survivable, so the run goes.
+  it('refuses to run when another suite holds the sentinel past the wait timeout', async () => {
     expect(board(['hold', SENTINEL, '--lease', '30m', '--agent', 'somebody-else'], boardDir.env).status).toBe(0);
 
     const suite = fakeSuite();
+    const reservePort = vi.fn();
     const log = recorder();
     const code = await run(['e2e/undo-redo.spec.ts'], {
       env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' },
       log: log.log,
       runPlaywright: suite,
+      reservePort,
     });
 
-    expect(code, 'not 4: a queue that blocks a merge gate is a gate').toBe(0);
-    expect(suite.calls, 'the suite starts anyway').toHaveLength(1);
-    expect(suite.calls[0].args[0]).toBe('test');
-    expect(log.text()).toMatch(/going ahead anyway/);
-    expect(observeHeld(boardDir.env).holders, 'and the other run keeps its queue slot: this run never took it').toEqual(
-      ['somebody-else']
-    );
+    expect(code).toBe(1);
+    expect(suite.calls, 'the second suite never starts concurrently').toHaveLength(0);
+    expect(reservePort, 'the wrapper waits for its lock before reserving a port').not.toHaveBeenCalled();
+    expect(log.text()).toMatch(/refusing to start a concurrent E2E suite/);
+    expect(observeHeld(boardDir.env).holders, 'the current suite keeps its queue slot').toEqual(['somebody-else']);
   });
 
-  it('runs unlocked on E2E_SKIP_LOCK=1 too, not only on the --no-lock flag', async () => {
+  it.each([
+    ['E2E_SKIP_LOCK=1', [], { E2E_SKIP_LOCK: '1' }],
+    ['--no-lock', ['--no-lock'], {}],
+  ])('rejects the %s safety-lock bypass', async (_name, args, extraEnv) => {
     const suite = fakeSuite();
     const log = recorder();
-    await run(['e2e/levels.spec.ts'], {
-      env: { ...boardDir.env, E2E_SKIP_LOCK: '1' },
+    const code = await run(args, {
+      env: { ...boardDir.env, ...extraEnv },
       log: log.log,
       runPlaywright: suite,
     });
 
-    expect(suite.calls).toHaveLength(1);
-    expect(suite.calls[0].args, 'and --no-lock is not forwarded to Playwright').not.toContain('--no-lock');
-    expect(log.text()).toMatch(/not queueing/);
-    expect(observeHeld(boardDir.env).status, 'taking no queue is not the same as taking a bad one').toBe(0);
+    expect(code).toBe(2);
+    expect(suite.calls).toHaveLength(0);
+    expect(log.text()).toMatch(/cannot bypass the local E2E safety lock/);
   });
 
   it('does not add a CLI global timeout that overrides the Playwright config', async () => {
@@ -718,19 +727,7 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
     expect(suite.calls.map(({ args }) => args)).toEqual([['test'], ['test', '--workers=1']]);
   });
 
-  it('renews the lease while the suite runs, and says so if a renewal fails', async () => {
-    // The board renews this run's own lock too (`renewOwnLocks`, while the
-    // worktree is on disk), so this timer is belt and braces rather than the only
-    // thing standing between a live run and the sweep. An earlier version defined
-    // the renewal and never started it: the timer existed, was documented, and no
-    // code path reached it. It survived a real full-suite run purely because the
-    // 30-minute lease outlasted it, which is exactly the kind of pass that is not
-    // evidence — and the reason it still has to start is the same.
-    //
-    // A failed renewal is now a MESSAGE, not a kill. The old version stopped the
-    // suite, which was correct when the lock was the guarantee and is wrong now that
-    // the port is: the run is safe, and stopping it would hand a merge gate to a
-    // scheduling detail.
+  it('renews the lease while the suite runs, and aborts if renewal is lost', async () => {
     let holdCalls = 0;
     const exec = (command) => {
       if (command.slice(2)[0] === 'hold') {
@@ -744,10 +741,18 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
     const lock = new SwarmLock({ env: boardDir.env, log: recorder().log, exec, renewEveryMs: 5 });
 
     const log = recorder();
-    let suiteFinished = false;
-    const suite = fakeSuite(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 60));
-      suiteFinished = true;
+    let aborted = false;
+    const suite = fakeSuite(async ({ signal }) => {
+      await new Promise((resolve) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            aborted = true;
+            resolve();
+          },
+          { once: true }
+        );
+      });
     });
 
     const code = await run([], {
@@ -759,12 +764,8 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
 
     expect(holdCalls, 'the acquisition plus at least one renewal').toBeGreaterThan(1);
     expect(log.text()).toMatch(/could not be renewed/);
-    // The suite runs to completion even though the queue was lost mid-run. Under the
-    // old design, where the lock WAS the guarantee, killing it was right; now the
-    // port is the guarantee and this run is safe, so stopping it would hand a merge
-    // gate to a scheduling detail.
-    expect(suiteFinished, 'a lost queue does not stop a run that already has its own server').toBe(true);
-    expect(code, 'and the run still reports the suite exit code').toBe(0);
+    expect(aborted, 'the browser suite is signalled as soon as the lock is lost').toBe(true);
+    expect(code, 'a run that lost its exclusion guarantee fails').toBe(1);
   });
 
   it('reclaims the queue from a holder whose process is gone', async () => {
@@ -847,18 +848,76 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
   });
 });
 
+describe('e2e-run: Playwright must prove it inherited the local lock', () => {
+  const owner = `e2e-run/feature/nested/${12345}/${'a'.repeat(32)}`;
+
+  it('accepts only the active lock held by its wrapper parent', () => {
+    const probe = vi.fn(() => ({
+      status: 1,
+      stdout: JSON.stringify({
+        report: [{ path: SENTINEL, holders: [{ agent_id: owner }] }],
+      }),
+    }));
+
+    expect(assertSerializedRunOwner({ env: { E2E_RUN_LOCK_OWNER: owner }, parentPid: 12345, probe })).toBeUndefined();
+    expect(probe).toHaveBeenCalledOnce();
+  });
+
+  it('verifies the owner against the shared board instead of trusting the environment marker', async () => {
+    const boardDir = tempBoard();
+    const currentOwner = `e2e-run/feature/test/${process.ppid}/${'f'.repeat(32)}`;
+    const lock = new SwarmLock({ env: boardDir.env, identity: currentOwner, log: () => {} });
+    expect((await lock.acquire()).acquired).toBe(true);
+    try {
+      expect(() =>
+        assertSerializedRunOwner({
+          env: { ...boardDir.env, E2E_RUN_LOCK_OWNER: currentOwner },
+          parentPid: process.ppid,
+        })
+      ).not.toThrow();
+    } finally {
+      lock.release();
+      boardDir.cleanup();
+    }
+  });
+
+  it('rejects a raw invocation, a different parent, and a missing board holder', () => {
+    const probe = vi.fn(() => ({
+      status: 1,
+      stdout: JSON.stringify({ report: [{ path: SENTINEL, holders: [] }] }),
+    }));
+
+    expect(() => assertSerializedRunOwner({ env: {}, parentPid: 12345, probe })).toThrow(/npm run test:e2e/);
+    expect(() => assertSerializedRunOwner({ env: { E2E_RUN_LOCK_OWNER: owner }, parentPid: 8, probe })).toThrow(
+      /npm run test:e2e/
+    );
+    expect(() => assertSerializedRunOwner({ env: { E2E_RUN_LOCK_OWNER: owner }, parentPid: 12345, probe })).toThrow(
+      /no longer owns the shared E2E lock/
+    );
+    expect(probe).toHaveBeenCalledOnce();
+  });
+
+  it('allows raw Playwright only on a GitHub-hosted runner', () => {
+    const probe = vi.fn();
+    expect(
+      assertSerializedRunOwner({
+        env: { GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted' },
+        parentPid: 12345,
+        probe,
+      })
+    ).toBeUndefined();
+    expect(probe).not.toHaveBeenCalled();
+  });
+});
+
 /* -------------------------------------------------------------------------- */
 /* The identity it holds the queue as                                           */
 /* -------------------------------------------------------------------------- */
 
 describe('e2e-run: the queue holder is a run, not a branch', () => {
   it('is per run, so two runs on one branch are two holders', async () => {
-    // Board identity is the branch by default and the conflict test is
-    // `lock.agent_id !== who`, so a branch never conflicts with itself: two runs on
-    // one branch both "acquire", and the second one's `unlock` releases the row the
-    // first still holds. Since the queue is only scheduling, the cost of that is a
-    // noisy log rather than a false green — but it is still wrong, and it is still
-    // fixed here.
+    // Independent lock instances in one checkout must not become reentrant just
+    // because they share the same branch and process.
     const boardDir = tempBoard();
     try {
       const env = { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' };
@@ -879,10 +938,12 @@ describe('e2e-run: the queue holder is a run, not a branch', () => {
     }
   });
 
-  it('names the branch and the pid, so `swarm status` says which checkout is running', () => {
-    const identity = new SwarmLock({ env: {} }).identity;
-    expect(identity).toMatch(/^e2e-run\/.+\/\d+$/);
-    expect(identity, 'the pid is what makes it per run').toContain(String(process.pid));
+  it('names each wrapper instance uniquely, even when it shares a process and branch', () => {
+    const first = new SwarmLock({ env: {} }).identity;
+    const second = new SwarmLock({ env: {} }).identity;
+    expect(first).toMatch(/^e2e-run\/.+\/\d+\/[a-f\d]{32}$/i);
+    expect(first, 'the process id remains available for dead-owner reclamation').toContain(String(process.pid));
+    expect(second).not.toBe(first);
   });
 });
 
@@ -892,66 +953,39 @@ describe('e2e-run: the queue holder is a run, not a branch', () => {
 
 describe('e2e-run: the lease', () => {
   // A malformed lease used to be FATAL, and three documents said it was not. The
-  // constructor threw from `assertLease`, and `run()` built the lock before it had
-  // decided whether the run wanted a queue at all — so `CI=1 E2E_LOCK_LEASE=30min`
-  // died with no suite, which is exactly the "a scheduling knob blocks a merge gate"
-  // failure the advisory-queue design exists to prevent. It now logs and falls back.
+  // Invalid or too-short settings must fall back to a lease long enough to survive
+  // the renewal timer; this prevents a configuration typo from silently unlocking a
+  // still-running suite.
   //
   // These are the values the board's own `parseDuration` refuses, checked against its
   // CLI rather than picked by eye: `30 m` and `0.5h` are ACCEPTED (its regex allows a
   // space and a decimal), and a first draft of this list called them invalid — which
   // would have had the wrapper rejecting configurations that work.
-  const bad = ['30min', 'soon', '-5m', '1 hour', '', '0m'];
+  const bad = ['30min', 'soon', '-5m', '1 hour', '', '0m', '4m', '500ms'];
 
   it.each(bad)('reports %j and uses the default rather than killing the run', (lease) => {
     const log = recorder();
     const lock = new SwarmLock({ lease, identity: 'test', env: {}, log: log.log });
-    expect(lock.leaseMs, 'the default lease, not zero').toBe(30 * 60_000);
+    expect(lock.leaseMs, 'the safe default lease').toBe(10 * 60_000);
     expect(log.text(), 'and the operator is told what was ignored').toMatch(/E2E_LOCK_LEASE/);
   });
 
-  it('does not kill a run that has already said it will not queue', async () => {
-    // The regression itself, not the policy: a bad lease under CI and under
-    // --no-lock must still reach the suite, because neither of those paths wants a
-    // lock at all. Before the fix the SwarmLock was constructed first, so both died
-    // in the constructor with exit 1 and no Playwright.
-    const boardDir = tempBoard();
-    try {
-      for (const env of [{ CI: '1' }, { E2E_SKIP_LOCK: '1' }]) {
-        const suite = fakeSuite();
-        const code = await run([], {
-          env: { ...boardDir.env, ...env, E2E_LOCK_LEASE: '30min' },
-          log: recorder().log,
-          runPlaywright: suite,
-        });
-        expect(code, `a run with ${JSON.stringify(env)} still runs`).toBe(0);
-        expect(suite.calls).toHaveLength(1);
-      }
-    } finally {
-      boardDir.cleanup();
+  it('accepts the board grammar but applies the minimum lease safety bound', () => {
+    for (const lease of ['5m', '30m', '30 m', '90s', '2h', '45', '0.5h', '1.5h']) {
+      const parsed = parseDurationMs(lease);
+      expect(parsed, `lease ${lease} parses`).not.toBeNull();
+      expect(new SwarmLock({ lease, identity: 'test' }).leaseMs, `lease ${lease}`).toBeGreaterThanOrEqual(5 * 60_000);
     }
   });
 
-  it("accepts the board's own grammar, including a bare minute count and a decimal", () => {
-    for (const lease of ['30m', '30 m', '90s', '2h', '500ms', '45', '0.5h', '1.5h']) {
-      expect(new SwarmLock({ lease, identity: 'test' }).leaseMs, `lease ${lease}`).toBeGreaterThan(0);
-    }
-  });
-
-  it('renews inside the lease, and never faster than a spawn can bear', () => {
-    // A 4-minute lease with a 5-minute interval expires the lock before the first
-    // renewal, `doctor` reclaims it on the next board command from anybody, and the
-    // run quietly stops being serialized at all.
-    const lock = new SwarmLock({ lease: '4m', identity: 'test' });
+  it('renews inside the lease and bounds board spawns', () => {
+    const lock = new SwarmLock({ lease: '10m', identity: 'test' });
     expect(lock.renewEveryMs).toBeLessThan(lock.leaseMs / 2);
-    expect(new SwarmLock({ lease: '30m', identity: 'test' }).renewEveryMs).toBe(5 * 60_000);
+    expect(new SwarmLock({ lease: '30m', identity: 'test' }).renewEveryMs).toBe(3 * 60_000);
 
-    // The other end: the renewal body is a synchronous `spawnSync` of the board CLI,
-    // so a lease short enough to derive a sub-minute interval would spawn a node
-    // process many times a second and block the stdout it exists to keep streaming.
-    // `500ms` is a duration the board accepts.
-    expect(new SwarmLock({ lease: '500ms', identity: 'test' }).renewEveryMs).toBe(30_000);
-    expect(new SwarmLock({ lease: '1s', identity: 'test' }).renewEveryMs).toBe(30_000);
+    const minimumLease = new SwarmLock({ lease: '5m', identity: 'test' });
+    expect(minimumLease.leaseMs).toBe(5 * 60_000);
+    expect(minimumLease.renewEveryMs).toBe(100_000);
   });
 });
 
@@ -1143,17 +1177,15 @@ describe('e2e-run: quiet mode (--quiet / E2E_QUIET=1)', () => {
     expect(suite.calls[0].quiet, 'post-separator tokens do not alter wrapper quiet mode').toBe(false);
   });
 
-  it('combines --quiet with --no-lock', async () => {
+  it('does not let --quiet change the no-lock refusal', async () => {
     const suite = fakeSuite();
-    await run(['--quiet', '--no-lock', 'e2e/foo.spec.ts'], {
+    const code = await run(['--quiet', '--no-lock', 'e2e/foo.spec.ts'], {
       env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' },
       log: recorder().log,
       runPlaywright: suite,
     });
-    expect(suite.calls[0].quiet).toBe(true);
-    expect(suite.calls[0].args).not.toContain('--quiet');
-    expect(suite.calls[0].args).not.toContain('--no-lock');
-    expect(suite.calls[0].args).toContain('e2e/foo.spec.ts');
+    expect(code).toBe(2);
+    expect(suite.calls).toHaveLength(0);
   });
 
   it('logs that quiet mode is active', async () => {
@@ -1259,6 +1291,23 @@ describe('e2e-run: runPlaywright quiet capture', () => {
       expect(stderrWrites.join(''), 'captured diagnostics are replayed on signal exit').toContain('SIGNALED OUTPUT');
     } finally {
       stderrSpy.mockRestore();
+      script.cleanup();
+    }
+  });
+
+  it('terminates the whole Playwright process tree when the queue lease is lost', async () => {
+    const script = makeScript('setInterval(() => {}, 1000);');
+    const controller = new AbortController();
+    try {
+      const running = runPlaywright([], {
+        cli: script.file,
+        env: { ...process.env },
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(), 100);
+      const code = await running;
+      expect(code, 'a lost exclusion lock cannot leave a passing suite').not.toBe(0);
+    } finally {
       script.cleanup();
     }
   });

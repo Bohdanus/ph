@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
@@ -7,11 +8,13 @@ const BOARD_CLI = path.join(import.meta.dirname, '..', 'agent-board.mjs');
 /** The queue's repo-relative key. */
 export const E2E_SENTINEL = 'e2e/.swarm-e2e-runner';
 
-const DEFAULT_LOCK_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_LOCK_TIMEOUT_MS = 60 * 60_000;
 const DEFAULT_LOCK_POLL_MS = 3_000;
-const DEFAULT_LOCK_LEASE = '30m';
+const DEFAULT_LOCK_LEASE = '10m';
+const MIN_LOCK_LEASE_MS = 5 * 60_000;
+const BOARD_COMMAND_TIMEOUT_MS = 15_000;
 
-const MAX_RENEW_EVERY_MS = 5 * 60_000;
+const MAX_RENEW_EVERY_MS = 3 * 60_000;
 const MIN_RENEW_EVERY_MS = 30_000;
 
 const DURATION = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?$/i;
@@ -27,11 +30,10 @@ const PREFIX = '[e2e-run]';
 
 export function resolveLease(lease, log) {
   const ms = parseDurationMs(lease);
-  if (ms !== null && ms > 0) return ms;
+  if (ms !== null && ms >= MIN_LOCK_LEASE_MS) return ms;
   log(
-    `${PREFIX} E2E_LOCK_LEASE=${JSON.stringify(lease)} is not a duration the board accepts, so this run is using ` +
-      `the default of ${DEFAULT_LOCK_LEASE}. Use 45m, 90s, 2h, or a bare number of minutes. This is a queue, ` +
-      'so nothing about the run itself depends on it.'
+    `${PREFIX} E2E_LOCK_LEASE=${JSON.stringify(lease)} is invalid or below the 5m safety minimum, so this run is ` +
+      `using the default of ${DEFAULT_LOCK_LEASE}. A short lease can expire before renewal and permit overlapping suites.`
   );
   return parseDurationMs(DEFAULT_LOCK_LEASE);
 }
@@ -41,7 +43,7 @@ export function defaultIdentity() {
   const name = String(branch.stdout ?? '')
     .trim()
     .replace(/[^A-Za-z0-9._/@+-]/g, '-');
-  return `e2e-run/${name || 'detached'}/${process.pid}`;
+  return `e2e-run/${name || 'detached'}/${process.pid}/${randomUUID().replaceAll('-', '')}`;
 }
 
 const RUN_IDENTITY_PREFIX = 'e2e-run/';
@@ -49,7 +51,9 @@ const RUN_IDENTITY_PREFIX = 'e2e-run/';
 export function isHolderAlive(identity) {
   const name = String(identity);
   if (!name.startsWith(RUN_IDENTITY_PREFIX)) return true;
-  const segment = name.slice(name.lastIndexOf('/') + 1);
+  const segments = name.split('/');
+  const last = segments.at(-1);
+  const segment = /^[a-f\d]{32}$/i.test(last) ? segments.at(-2) : last;
   if (!/^\d+$/.test(segment)) return true;
   const pid = Number(segment);
   if (!Number.isInteger(pid) || pid <= 0) return true;
@@ -63,7 +67,11 @@ export function isHolderAlive(identity) {
 
 function defaultExec(command, options) {
   const result = spawnSync(command[0], command.slice(1), { ...options, encoding: 'utf8' });
-  return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr || result.error?.message || '',
+  };
 }
 
 function readNumber(value, fallback) {
@@ -99,7 +107,11 @@ export class SwarmLock {
   }
 
   #board(args, identity = this.identity) {
-    return this.exec([process.execPath, BOARD_CLI, ...args, '--agent', identity], { cwd: REPO_ROOT, env: this.env });
+    return this.exec([process.execPath, BOARD_CLI, ...args, '--agent', identity], {
+      cwd: REPO_ROOT,
+      env: this.env,
+      timeout: BOARD_COMMAND_TIMEOUT_MS,
+    });
   }
 
   async acquire() {
@@ -133,7 +145,10 @@ export class SwarmLock {
           for (const identity of holders) {
             const freed = this.#board(['unlock', E2E_SENTINEL], identity);
             if (freed.status !== 0) {
-              this.log(`${PREFIX} could not release ${identity} (exit ${freed.status}); carrying on regardless`);
+              this.log(
+                `${PREFIX} could not release ${identity} (exit ${freed.status}); this suite will not start until ` +
+                  'the shared queue is acquired'
+              );
             }
           }
           await this.sleep(0);
@@ -149,8 +164,7 @@ export class SwarmLock {
         if (this.now() >= deadline) {
           this.log(
             `${PREFIX} waited ${this.timeoutMs}ms for ${E2E_SENTINEL}` +
-              `${holder ? `, still held by ${holder}` : ''} and is going ahead anyway. That costs a concurrent run, ` +
-              'not correctness: this run still starts its own server on its own port.'
+              `${holder ? `, still held by ${holder}` : ''}; refusing to start a concurrent E2E suite.`
           );
           return { acquired: false, reason: 'contended', holder };
         }
@@ -160,8 +174,8 @@ export class SwarmLock {
 
       this.log(
         `${PREFIX} the swarm board is unavailable (exit ${attempt.status}: ` +
-          `${firstLine(attempt.stderr || attempt.stdout)}). Running without the queue, which costs scheduling and ` +
-          'nothing else — this run still starts its own server on its own port.'
+          `${firstLine(attempt.stderr || attempt.stdout)}). Refusing to run because single-suite serialization ` +
+          'cannot be guaranteed.'
       );
       return { acquired: false, reason: 'unavailable', holder: null };
     }
@@ -172,8 +186,8 @@ export class SwarmLock {
     if (probe.status !== 1) {
       warn(
         `could not read the queue's holders (check exited ${probe.status}: ` +
-          `${firstLine(probe.stderr || probe.stdout)}), so a dead holder cannot be reclaimed and this run may ` +
-          'wait its full timeout. Only scheduling is at stake.'
+          `${firstLine(probe.stderr || probe.stdout)}), so a dead holder cannot be safely reclaimed and this run ` +
+          'will not start unless acquisition succeeds.'
       );
       return [];
     }
@@ -184,7 +198,7 @@ export class SwarmLock {
     } catch (error) {
       warn(
         `could not parse the queue's holders (${error instanceof Error ? error.message : String(error)}), so a ` +
-          'dead holder cannot be reclaimed and this run may wait its full timeout. Only scheduling is at stake.'
+          'dead holder cannot be safely reclaimed and this run will not start unless acquisition succeeds.'
       );
       return [];
     }
@@ -198,8 +212,8 @@ export class SwarmLock {
       this.held = false;
       this.stopRenewal();
       onLost(
-        `the ${E2E_SENTINEL} queue could not be renewed (exit ${renew.status}), so another run may start alongside ` +
-          'this one. The suite keeps going: both runs have their own ports.'
+        `the ${E2E_SENTINEL} queue could not be renewed (exit ${renew.status}); the active Playwright process ` +
+          'must be stopped because another run may acquire the queue.'
       );
     }, this.renewEveryMs);
     this.renewal.unref?.();

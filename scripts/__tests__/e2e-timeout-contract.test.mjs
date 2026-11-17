@@ -15,6 +15,9 @@ const platformBaselineCaptureWorkflow = readFileSync(
   'utf8'
 );
 const playwrightConfig = readFileSync(join(testDirectory, '../../playwright.config.ts'), 'utf8');
+const globalSetup = readFileSync(join(testDirectory, '../../e2e/global-setup.ts'), 'utf8');
+const runOwner = readFileSync(join(testDirectory, '../e2e-run/run-owner.mjs'), 'utf8');
+const kiloConfig = readFileSync(join(testDirectory, '../../kilo.jsonc'), 'utf8');
 const packageManifest = JSON.parse(readFileSync(join(testDirectory, '../../package.json'), 'utf8'));
 const packageLock = JSON.parse(readFileSync(join(testDirectory, '../../package-lock.json'), 'utf8'));
 const e2eVitestConfig = readFileSync(join(testDirectory, '../../vitest.e2e.config.ts'), 'utf8');
@@ -141,6 +144,17 @@ function readConditionalTestSkipCounts(testRoots, pattern, testFilePattern = /\.
 }
 
 describe('E2E timeout contract', () => {
+  it('keeps all local Playwright invocations behind the shared run lock', () => {
+    expect(packageManifest.scripts['test:e2e']).toBe('node scripts/e2e-run.mjs');
+    expect(packageManifest.scripts['test:e2e:raw']).toBeUndefined();
+    expect(playwrightConfig).toContain('assertSerializedRunOwner');
+    expect(globalSetup).toContain('if (config.configFile) assertSerializedRunOwner()');
+    expect(runOwner).toContain("env.RUNNER_ENVIRONMENT === 'github-hosted'");
+    expect(kiloConfig).toContain('"*playwright*test*": "deny"');
+    expect(kiloConfig).toContain('"*E2E_SKIP_LOCK*": "deny"');
+    expect(kiloConfig).toContain('"*--no-lock*": "deny"');
+  });
+
   it('recognizes Windows-only conditional suite skips and aliases', () => {
     const condition = ['process.platform', '!==', "'win32'"].join(' ');
     const suiteSkips = ['describe', 'suite'].map(

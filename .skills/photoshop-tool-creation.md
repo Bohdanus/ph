@@ -212,16 +212,17 @@ webServer: {
 than ignoring it, so setting it is an error, not a no-op. `PLAYWRIGHT_BASE_URL` is refused too
 unless the run says `E2E_ALLOW_REMOTE=1`, which it logs. The wrapper picks a free port, checks it
 is still bindable, exports it as `PLAYWRIGHT_PORT`, and records it to `.kilo/e2e-last-run.json`, so
-the port that served a run can be named after the fact. Local runs are also sequential —
-`workers: 1` outside CI (`playwright.config.ts` — `workers`) — so two runs in one process cannot fight over
-one app instance.
+the port that served a run can be named after the fact. Local runs also hold the shared E2E lock:
+only one full suite may run on this machine at a time, across all worktrees. A busy or unavailable
+lock fails closed; do not bypass it or start a second suite.
 
 ```bash
 cd /Users/bkalynovskyi/ph/.kilo/worktrees/<name>
-PLAYWRIGHT_PORT=5199 npm run test:e2e
+npm run test:e2e
 ```
 
-Pick a port nobody has claimed.
+The wrapper chooses a free port. Do not set a manual port to run suites in parallel; the local
+capacity has not been benchmarked and concurrent suites have caused CPU-contention timeouts.
 
 ### 0.6 Main is not stable while you work
 
@@ -3108,10 +3109,9 @@ files; do not touch any other file. Do not commit.
 
 - **NEVER open a browser window** — no `--headed`, `--ui`, `--debug`, `show-report`, `show-trace`,
   `codegen`, or the headed opt-in variable. `npm run test:e2e` only, which is headless.
-- You do NOT need to pick a port to avoid a collision: `npm run test:e2e` finds a free one per run
-  and it is impossible to attach to another checkout's server. Pin one only to run two suites on
-  this machine at once — `PLAYWRIGHT_PORT=<PORT> npx playwright test e2e/<file>.spec.ts` — and run
-  it from the worktree root.
+- You do NOT need to pick a port: `npm run test:e2e` finds and validates a free one. Run only one
+  full suite on this machine at a time; the shared lock serializes worktrees. Never use
+  `PLAYWRIGHT_PORT` plus raw Playwright to run parallel suites.
 - Do NOT weaken a gate: no `test.skip`, no raised thresholds, no `expect.soft` in place of a hard
   assert, no deleting an assertion to make something pass. If a test genuinely cannot pass, report
   that back instead of skipping it.
@@ -3178,7 +3178,7 @@ that would drift; assert against the options the select actually exposes.">
 
 ## VERIFY BEFORE REPORTING
 
-From the worktree root: `PLAYWRIGHT_PORT=<PORT> npx playwright test e2e/<file>.spec.ts`,
+From the worktree root: `npm run test:e2e -- e2e/<file>.spec.ts`,
 `npm run tsc`, `npx eslint e2e/<file>.spec.ts`, `npx prettier --check e2e/<file>.spec.ts`. All four
 must be clean; iterate until they are. If a test cannot pass without weakening it, LEAVE IT FAILING
 and report exactly which assertion fails and what you observed.
@@ -3348,8 +3348,8 @@ failure is a new defect, never a known one. Characterised, not listed:
    What replaced "prove which checkout answered" is that there is nothing left to prove: every run
    starts its own server on a port it picks. The original note is on the unmerged
    `ps-integration:e2e/OPEN_PROBLEMS.md` §"P1 — a run could test a
-   different checkout's application", a **not-yet-merged reference**. **Set `PLAYWRIGHT_PORT` in
-   every worktree**, and put it in the brief so a subagent cannot forget.
+   different checkout's application", a **not-yet-merged reference**. Use the wrapper's port
+   allocation; do not run suites concurrently or prescribe a manual port to a subagent.
 
 One more latent entry: a nearly transparent pixel counts at full weight in `dominantRed`
 (`canvas-helpers.ts` — `dominantRed()`) and `getColorAtPoint` (`canvas-helpers.ts` — `getColorAtPoint()`), so a light or translucent stroke makes a
@@ -3740,8 +3740,10 @@ npm run lint:check                             # formatting + lint, whole tree
 npm run test                                   # jsdom: 0 failed AND no lost test files
 npm run test:e2e:unit                         # node-env helper tests
 npm run build                                 # bundler-only failures (sass, wasm, PostCSS)
-PLAYWRIGHT_PORT=5199 npm run test:e2e          # headless, last: slowest, most environmental
 ```
+
+After committing the candidate, run the required full browser suite on the mirror:
+`npm run test:e2e:mirror -- --full`. Do not run a local full suite.
 
 - **The `Test Files` count DECREASED** versus the branch point. A decreased count with 0 failures
   means files were deleted or renamed out of the glob: "a merge that silently drops test files is
@@ -4028,7 +4030,7 @@ cd /Users/bkalynovskyi/ph/.kilo/worktrees/<integration-line>
 git merge --no-ff <leaf-branch>
 npm run tsc && npm run lint:check && npm run test && npm run test:e2e:unit
 npm run build
-PLAYWRIGHT_PORT=5199 npm run test:e2e
+npm run test:e2e:mirror -- --full
 ```
 
 Batching merges and then debugging four sets of failures at once is what `08-merge-plan.md` §"5. Cross-cutting state at merge time" — the "Rebase onto current main BEFORE merging, one worktree at a time" bullet explicitly warns against; the full gate after each merge is what makes "which merge broke it" answerable. The model is `f534335`, "merge: 15 review branches from the untouched-code campaign": 15 `rev2/*` leaves into `rev2/integration`, then that line into `main` with a body listing the highlights, the gates run, and the pin delta. The handoff doc ships inside the merge.
@@ -4074,7 +4076,7 @@ Do not use the worktree count as a test. `git worktree list` disagrees with `.gi
 - [ ] `npm run tsc` clean. `npm run lint:check` clean, including the files you wrote.
 - [ ] `npm run test`: 0 failed **and** the `Test Files` count has not decreased.
 - [ ] `npm run test:e2e:unit` clean. `npm run build` clean.
-- [ ] `PLAYWRIGHT_PORT=<free port> npm run test:e2e` clean; any failure located in `e2e/OPEN_PROBLEMS.md` or declared a new defect.
+- [ ] `npm run test:e2e:mirror -- --full` passed on the exact committed candidate SHA; any failure located in `e2e/OPEN_PROBLEMS.md` or declared a new defect.
 - [ ] Every new test fails without its fix, with the failure count recorded.
 - [ ] Handoff entry in the same commit as the finding; fixed entries deleted, not reworded.
 - [ ] `package.json` and `package-lock.json` unchanged; no new runtime dependency.
@@ -4358,9 +4360,9 @@ merge --ff-only main`.
    Defence: `npm run test:e2e`, which allocates a port, verifies it and records it; and behind it
    `reuseExistingServer` is a literal `false` with nothing that can turn it on, plus `--strictPort`
    so a clash is a hard failure rather than a silent hop to 5174 (`playwright.config.ts` — `reuseExistingServer: false`).
-   Both refusals are enforced in `e2e/global-setup.ts` as well as the wrapper, so a raw
-   `npx playwright test` cannot bypass them either. A swarm lock is also taken so two agents rarely
-   run at once, but it is **advisory only** and can never block a run — see `docs/ORCHESTRATION.md`.
+   The local run owner is verified in `e2e/global-setup.ts`, so raw local Playwright invocations
+   cannot bypass the single-suite lock. The wrapper fails closed if the lock is busy, unavailable,
+   or lost during a run; GitHub-hosted jobs use isolated runners.
 5. **The `agent_manager` tool in this build needs every optional key sent explicitly**
    **[unverified by me]** — arrays reportedly get mangled into `{ item: [...] }`. And
    `agent_manager` reportedly accepted 19 session requests and created none, which is why `task`

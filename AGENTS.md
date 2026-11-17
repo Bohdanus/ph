@@ -38,7 +38,7 @@ Keep pixel-substitution tools such as Color Replacement on their own args, proce
 
 ## Browser And Validation
 
-- Never open a browser. Use `npm run test:e2e` for headless E2E and `npm run probe:console` for one page load. Broad E2E runs use the `mirror` workflow; see [`docs/E2E-MIRROR.md`](docs/E2E-MIRROR.md). Do not add browser MCPs or weaken console/theme gates.
+- Never open a browser. Use `npm run test:e2e` for headless local E2E and `npm run probe:console` for one page load. The local wrapper serializes full Playwright suites across worktrees; never run them concurrently, use raw local Playwright, `--no-lock`, or `E2E_SKIP_LOCK`. Full E2E validation before landing uses `npm run test:e2e:mirror -- --full`, not a local full suite; see [`docs/E2E-MIRROR.md`](docs/E2E-MIRROR.md). Do not add browser MCPs or weaken console/theme gates.
 - Run npm commands only in a worktree. Use `npm run tsc` for typechecking and `npm run build` for production builds; do not use `npx tsc --noEmit` as project validation.
 - E2E specs use `./fixtures/extended-test`, not `@playwright/test`. Do not spread `useRect` return groups onto DOM elements.
 

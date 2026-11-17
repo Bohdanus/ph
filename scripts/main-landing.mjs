@@ -27,6 +27,12 @@ import { fileURLToPath } from 'node:url';
 
 import { readMergeHeadRefs, resolveWorktree } from './main-worktree-guard.mjs';
 import { readOperations } from './lib/git-operation-state.mjs';
+import {
+  MIRROR_E2E_PROOF_MAX_AGE_MS,
+  MIRROR_REPOSITORY,
+  readMirrorE2EProof,
+  validateMirrorE2EProof,
+} from './lib/mirror-e2e-proof.mjs';
 import { samePath } from './lib/path-identity.mjs';
 import { isProjectMainWorktree } from './merge-takeover-guard.mjs';
 
@@ -37,6 +43,8 @@ const WATCH_POLL_MS = 30_000;
 const WATCHER_READY_TIMEOUT_MS = 10_000;
 const AUTO_MERGE_RECOVERY_MS = 30 * 60_000;
 const AUTO_MERGE_OBSERVATION_GAP_MS = WATCH_POLL_MS * 3;
+const PROCESS_START_TOKEN_CACHE_MS = 10_000;
+const PROCESS_START_TOKEN_CACHE_LIMIT = 512;
 const PENDING_RECOVERY_EXIT = 75;
 const ALERTS = [
   { minutes: 15, label: '15 minutes' },
@@ -44,6 +52,7 @@ const ALERTS = [
 ];
 const HEX_OBJECT_ID = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/i;
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const processStartTokenCache = new Map();
 
 const USAGE = [
   'Usage:',
@@ -55,6 +64,7 @@ const USAGE = [
   '  node scripts/main-landing.mjs clear-control-lock --confirm-control-process-stopped --confirm-no-other-recovery',
   '  node scripts/main-landing.mjs heartbeat --token ID --step TEXT',
   '  node scripts/main-landing.mjs release --token ID',
+  'A land requires a fresh successful full mirror E2E run for the exact incoming SHA.',
   'A persistent orphan AUTO_MERGE is retried from a replacement main worktree after 30 minutes.',
   'Exit 75 means the pinned landing is pending that failover, not that it has landed.',
   'Other landing leases are never taken over based on age alone.',
@@ -205,11 +215,54 @@ function pidExists(pid) {
   }
 }
 
+function processStartToken(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  const now = Date.now();
+  const cached = processStartTokenCache.get(pid);
+  if (cached && now - cached.checkedAt < PROCESS_START_TOKEN_CACHE_MS) return cached.token;
+  const result =
+    process.platform === 'win32'
+      ? spawnSync(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `try { (Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o') } catch { exit 1 }`,
+          ],
+          { encoding: 'utf8', timeout: 5_000, windowsHide: true }
+        )
+      : spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+          encoding: 'utf8',
+          timeout: 5_000,
+          windowsHide: true,
+        });
+  const token = result.status === 0 ? result.stdout?.trim() || null : null;
+  processStartTokenCache.set(pid, { checkedAt: now, token });
+  if (processStartTokenCache.size > PROCESS_START_TOKEN_CACHE_LIMIT) {
+    const oldestPid = processStartTokenCache.keys().next().value;
+    if (oldestPid !== undefined) processStartTokenCache.delete(oldestPid);
+  }
+  return token;
+}
+
+export function recordedProcessIsAlive(
+  pid,
+  recordedStartToken,
+  { exists = pidExists, startToken = processStartToken } = {}
+) {
+  const alive = exists(pid);
+  if (alive !== true || !recordedStartToken) return alive;
+  const currentStartToken = startToken(pid);
+  if (!currentStartToken) return true;
+  return currentStartToken === recordedStartToken;
+}
+
 function recordedPidStates(owner) {
   if (!sameRuntime(owner)) return { owner: null, child: null };
   return {
-    owner: Number.isInteger(owner?.pid) && owner.pid > 0 ? pidExists(owner.pid) : null,
-    child: Number.isInteger(owner?.childPid) && owner.childPid > 0 ? pidExists(owner.childPid) : null,
+    owner: recordedProcessIsAlive(owner?.pid, owner?.pidStartToken),
+    child: recordedProcessIsAlive(owner?.childPid, owner?.childStartToken),
   };
 }
 
@@ -288,7 +341,7 @@ export function observeOrphanAutoMerge(owner, state, signature, now = Date.now()
 export function resetOrphanAutoMergeFailover(owner, state, signature, now = Date.now()) {
   const next = {
     ...owner,
-    owner: { ...(owner.previousOwner ?? owner.owner), childPid: null },
+    owner: { ...(owner.previousOwner ?? owner.owner), childPid: null, childStartToken: null },
     autoMergeFailoverAttempted: false,
     step: 'replacement creation failed before a new worktree existed; restarting the 30-minute AUTO_MERGE observation',
     heartbeatAt: new Date(now).toISOString(),
@@ -774,6 +827,115 @@ function assertReviewedPins(paths, pins) {
   if (computedTree !== pins.treeSha) throw new Error('reviewed merge tree does not match the candidate record');
 }
 
+export function candidateWorktreePath(paths, branch) {
+  const output = gitText(['worktree', 'list', '--porcelain'], paths.mainPath);
+  const matches = output
+    .split(/\r?\n\r?\n/)
+    .map((block) => {
+      const worktree = block.match(/^worktree (.+)$/m)?.[1];
+      const branchRef = block.match(/^branch (.+)$/m)?.[1];
+      return branchRef === 'refs/heads/' + branch && worktree ? resolve(worktree) : null;
+    })
+    .filter(Boolean);
+  if (matches.length !== 1) {
+    throw new Error(`expected one registered worktree for candidate branch ${branch}, found ${matches.length}`);
+  }
+  return matches[0];
+}
+
+function ghApiJson(endpoint, cwd = process.cwd(), env = process.env) {
+  const result = spawnSync('gh', ['api', endpoint], {
+    cwd,
+    env,
+    encoding: 'utf8',
+    timeout: 30_000,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(
+      `gh api ${endpoint} failed (${result.status ?? 'spawn error'}): ` +
+        safeText(result.error?.message ?? result.stderr ?? result.stdout ?? 'no response', 240)
+    );
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`gh api ${endpoint} returned invalid JSON: ${safeText(error.message, 180)}`);
+  }
+}
+
+export function verifyMirrorE2EProofForLanding(paths, pins, { ghApi = ghApiJson, now = Date.now } = {}) {
+  const candidatePath = candidateWorktreePath(paths, pins.branch);
+  const candidateRoot = gitText(['rev-parse', '--show-toplevel'], candidatePath);
+  if (!samePath(candidateRoot, candidatePath))
+    throw new Error('candidate worktree mapping changed before mirror proof check');
+  const checkCandidate = () => {
+    if (gitText(['symbolic-ref', '--short', 'HEAD'], candidatePath) !== pins.branch) {
+      throw new Error('candidate worktree no longer has the reviewed branch checked out');
+    }
+    if (gitText(['rev-parse', 'HEAD^{commit}'], candidatePath) !== pins.incomingSha) {
+      throw new Error('candidate worktree HEAD differs from the reviewed incoming SHA');
+    }
+    const candidateStatus = gitResult(['status', '--porcelain=v1', '--untracked-files=all'], candidatePath);
+    if (candidateStatus.status !== 0) throw new Error('could not verify that the candidate worktree is clean');
+    if (candidateStatus.stdout.trim())
+      throw new Error('candidate worktree is dirty; mirror proof cannot authorize landing');
+  };
+  checkCandidate();
+
+  let proof;
+  try {
+    proof = readMirrorE2EProof({ cwd: candidatePath });
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}. Run ` +
+        '`npm run test:e2e:mirror -- --full` from the clean candidate worktree before landing.'
+    );
+  }
+
+  const run = ghApi(`repos/${MIRROR_REPOSITORY}/actions/runs/${proof.runId}`, paths.mainPath);
+  const workflow = ghApi(
+    `repos/${MIRROR_REPOSITORY}/contents/.github/workflows/ci.yml?ref=${proof.workflowSha}`,
+    paths.mainPath
+  );
+  const expectedWorkflowBlobSha = gitText(
+    ['rev-parse', `${pins.incomingSha}:.github/workflows/ci.yml`],
+    paths.mainPath
+  );
+  const validated = validateMirrorE2EProof(proof, {
+    expectedBranch: pins.branch,
+    expectedSourceSha: pins.incomingSha,
+    expectedWorkflowBlobSha,
+    mirrorWorkflowBlobSha: workflow.sha,
+    run,
+    now: now(),
+    maxAgeMs: MIRROR_E2E_PROOF_MAX_AGE_MS,
+  });
+  checkCandidate();
+  return { ...validated, candidatePath };
+}
+
+function assertPinnedMirrorE2E(pins, now = Date.now()) {
+  const proof = pins.mirrorE2E;
+  if (
+    proof?.version !== 1 ||
+    proof.mode !== 'full' ||
+    proof.branch !== pins.branch ||
+    proof.sourceSha !== pins.incomingSha ||
+    proof.conclusion !== 'success' ||
+    !/^\d+$/.test(proof.runId ?? '') ||
+    !/^[a-f\d]{32}$/i.test(proof.requestId ?? '') ||
+    !/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(proof.workflowSha ?? '')
+  ) {
+    throw new Error('a validated full mirror E2E proof for the exact incoming SHA is required before landing');
+  }
+  const verifiedAt = Date.parse(proof.verifiedAt);
+  if (!Number.isFinite(verifiedAt) || verifiedAt > now + 2 * 60_000 || now - verifiedAt > MIRROR_E2E_PROOF_MAX_AGE_MS) {
+    throw new Error('the full mirror E2E proof is stale; rerun `npm run test:e2e:mirror -- --full`');
+  }
+}
+
 function assertCleanPreflight(paths, pins) {
   const state = mainGitState(paths);
   if (state.branch !== 'main') throw new Error('designated main checkout is not on the main branch');
@@ -805,12 +967,15 @@ function newOwner(pins, mode = 'landing', mainPath = null) {
     mainSha: pins.mainSha ?? null,
     incomingSha: pins.incomingSha ?? null,
     treeSha: pins.treeSha ?? null,
+    mirrorE2E: pins.mirrorE2E ?? null,
     originalMainPath: mainPath,
     owner: {
       branch: pins.branch,
       chatId: pins.chatId,
       pid: mode === 'landing' ? process.pid : null,
+      pidStartToken: mode === 'landing' ? processStartToken(process.pid) : null,
       childPid: null,
+      childStartToken: null,
       host: hostname(),
       platform: process.platform,
       script: mode === 'landing' ? 'scripts/main-landing.mjs' : 'Luna recovery agent',
@@ -980,6 +1145,7 @@ function heartbeat(paths, owner, step = owner.step, childPid = owner.owner.child
     owner.heartbeatAt = new Date().toISOString();
     owner.step = step;
     owner.owner.childPid = childPid ?? null;
+    owner.owner.childStartToken = childPid == null ? null : processStartToken(childPid);
     writeOwner(paths, owner);
   } finally {
     rmSync(controlLock, { force: true });
@@ -1052,6 +1218,7 @@ export async function runMergeReleaseAfterLanding(
 }
 
 async function runPinnedLanding(paths, owner, pins, { run = runChild } = {}) {
+  assertPinnedMirrorE2E(pins);
   assertCleanPreflight(paths, pins);
   heartbeat(paths, owner, 'preparing reviewed merge', null);
   const merge = await run('git', ['merge', '--no-commit', '--no-ff', '--no-edit', pins.incomingSha], {
@@ -1099,6 +1266,11 @@ async function runPinnedLanding(paths, owner, pins, { run = runChild } = {}) {
     KILO_EXPECTED_TREE_SHA: pins.treeSha,
     KILO_EXPECTED_BRANCH: pins.branch,
     KILO_EXPECTED_CHAT_ID: pins.chatId,
+    KILO_EXPECTED_MIRROR_RUN_ID: pins.mirrorE2E.runId,
+    KILO_EXPECTED_MIRROR_SOURCE_SHA: pins.mirrorE2E.sourceSha,
+    KILO_EXPECTED_MIRROR_REQUEST_ID: pins.mirrorE2E.requestId,
+    KILO_EXPECTED_MIRROR_WORKFLOW_SHA: pins.mirrorE2E.workflowSha,
+    KILO_EXPECTED_MIRROR_VERIFIED_AT: pins.mirrorE2E.verifiedAt,
     KILO_MAIN_LANDING_LEASE_ID: owner.leaseId,
   };
   const commit = await run(
@@ -1168,7 +1340,12 @@ export async function createReplacementMainWorktree(paths, owner, { run = runChi
   return replacement;
 }
 
-export async function land(paths, options, cwd, { watcherStarter = startWatcher } = {}) {
+export async function land(
+  paths,
+  options,
+  cwd,
+  { watcherStarter = startWatcher, mirrorProofVerifier = verifyMirrorE2EProofForLanding } = {}
+) {
   const pins = validateLandingOptions(options);
   assertMainLandingCheckout(paths, cwd);
   const initialState = mainGitState(paths);
@@ -1176,7 +1353,19 @@ export async function land(paths, options, cwd, { watcherStarter = startWatcher 
   const waitingForAutoMerge = isOrphanAutoMergeState(initialState) && Boolean(initialAutoMergeSignature);
   if (waitingForAutoMerge) assertReviewedPins(paths, pins);
   else assertMainAvailable(paths);
-  let owner = newOwner(pins, 'landing', paths.mainPath);
+  const mirrorE2E = await mirrorProofVerifier(paths, pins);
+  const landingPins = { ...pins, mirrorE2E };
+  if (waitingForAutoMerge) {
+    const currentState = mainGitState(paths);
+    if (orphanAutoMergeSignature(paths, currentState) !== initialAutoMergeSignature) {
+      throw new Error('orphan AUTO_MERGE changed while verifying the mirror E2E proof');
+    }
+    assertReviewedPins(paths, pins);
+  } else {
+    assertCleanPreflight(paths, pins);
+  }
+
+  let owner = newOwner(landingPins, 'landing', paths.mainPath);
   if (waitingForAutoMerge) {
     owner.step = 'waiting for persistent orphan AUTO_MERGE';
     owner.autoMergeRecoveryReady = true;
@@ -1194,7 +1383,7 @@ export async function land(paths, options, cwd, { watcherStarter = startWatcher 
       return PENDING_RECOVERY_EXIT;
     }
 
-    await runPinnedLanding(paths, owner, pins);
+    await runPinnedLanding(paths, owner, landingPins);
     clearInterval(timer);
     releaseLock(paths, owner.leaseId);
     process.stdout.write('main landing committed and owner lease released.\n');
@@ -1212,7 +1401,7 @@ export async function land(paths, options, cwd, { watcherStarter = startWatcher 
           const isAutoMergeFailure = isOrphanAutoMergeState(state) && Boolean(orphanAutoMergeSignature(paths, state));
           owner = updateOwnedRecord(paths, owner.leaseId, (latest) => ({
             ...latest,
-            owner: { ...latest.owner, childPid: null },
+            owner: { ...latest.owner, childPid: null, childStartToken: null },
             step: 'recovery required: ' + safeText(error.message, 240),
             heartbeatAt: new Date().toISOString(),
             ...(isAutoMergeFailure
@@ -1289,7 +1478,9 @@ function takeover(paths, options) {
         branch,
         chatId,
         pid: null,
+        pidStartToken: null,
         childPid: null,
+        childStartToken: null,
         host: hostname(),
         platform: process.platform,
         script: 'Luna recovery agent',
@@ -1481,6 +1672,7 @@ function pinsFromOwner(owner) {
     treeSha: owner.treeSha,
     branch: owner.owner.branch,
     chatId: owner.owner.chatId,
+    mirrorE2E: owner.mirrorE2E,
   };
 }
 
@@ -1517,7 +1709,9 @@ async function recoverPersistentOrphanAutoMerge(
         owner: {
           ...current.owner,
           pid: process.pid,
+          pidStartToken: processStartToken(process.pid),
           childPid: null,
+          childStartToken: null,
           host: hostname(),
           platform: process.platform,
           script: 'automatic stale AUTO_MERGE failover',
@@ -1611,6 +1805,7 @@ async function recoverPersistentOrphanAutoMerge(
       updateOwnedRecord(paths, leaseId, (current) => {
         current.owner = current.previousOwner ?? current.owner;
         current.owner.childPid = null;
+        current.owner.childStartToken = null;
         delete current.previousOwner;
         current.step = 'automatic stale AUTO_MERGE failover failed: ' + message;
         current.heartbeatAt = new Date().toISOString();
@@ -1712,7 +1907,10 @@ export async function watch(
   }
 }
 
-export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), watcherStarter = startWatcher } = {}) {
+export async function main(
+  argv = process.argv.slice(2),
+  { cwd = process.cwd(), watcherStarter = startWatcher, mirrorProofVerifier } = {}
+) {
   const [action, ...rest] = argv;
   if (!action || action === '--help' || action === '-h') {
     process.stdout.write(USAGE + '\n');
@@ -1730,7 +1928,7 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
   const options = parseOptions(rest);
   const paths = resolvePaths(cwd);
   if (action === 'status') return showStatus(paths, options.flags.has('json'));
-  if (action === 'land') return land(paths, options, cwd, { watcherStarter });
+  if (action === 'land') return land(paths, options, cwd, { watcherStarter, mirrorProofVerifier });
   if (action === 'takeover') return takeover(paths, options);
   if (action === 'release-stale') return releaseStale(paths, options);
   if (action === 'release-incomplete') return releaseIncomplete(paths, options);
@@ -1756,6 +1954,23 @@ export function assertLandingLease(cwd, leaseId, expected) {
   ) {
     throw new Error('main landing owner lease does not match the reviewed landing pins');
   }
+  const proof = owner.mirrorE2E;
+  const expectedProof = expected.mirrorE2E;
+  if (
+    !expectedProof ||
+    expectedProof.mode !== 'full' ||
+    expectedProof.sourceSha !== expected.incomingSha ||
+    proof?.version !== 1 ||
+    proof.mode !== 'full' ||
+    proof.sourceSha !== expected.incomingSha ||
+    proof.runId !== expectedProof.runId ||
+    proof.requestId !== expectedProof.requestId ||
+    proof.workflowSha !== expectedProof.workflowSha ||
+    proof.verifiedAt !== expectedProof.verifiedAt
+  ) {
+    throw new Error('main landing owner lease does not contain the verified full mirror E2E proof');
+  }
+  assertPinnedMirrorE2E({ ...expected, mirrorE2E: proof });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(SCRIPT_PATH)) {

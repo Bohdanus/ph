@@ -47,6 +47,7 @@ export function runPlaywright(args, options = {}) {
   const cwd = options.cwd ?? REPO_ROOT;
   const cli = options.cli ?? resolvePlaywrightCli();
   const quiet = options.quiet ?? false;
+  const signal = options.signal;
 
   return new Promise((resolve, reject) => {
     const stdio = quiet ? ['inherit', 'pipe', 'pipe'] : 'inherit';
@@ -59,6 +60,7 @@ export function runPlaywright(args, options = {}) {
     });
 
     let signalled = 0;
+    let abortTimer = null;
     const forward = (signal, name) => () => {
       signalled += 1;
       if (signalled === 1) {
@@ -76,12 +78,28 @@ export function runPlaywright(args, options = {}) {
     };
     const onSigint = forward('SIGINT', 'interrupted');
     const onSigterm = forward('SIGTERM', 'terminated');
+    const onAbort = () => {
+      if (!signalProcessTree(child, 'SIGTERM')) {
+        console.error(`${PREFIX} could not signal the full Playwright process tree after losing the e2e queue.`);
+      }
+      abortTimer = setTimeout(() => {
+        if (child.exitCode != null || child.signalCode != null) return;
+        if (!signalProcessTree(child, 'SIGKILL')) {
+          console.error(`${PREFIX} could not force-stop the Playwright process tree after losing the e2e queue.`);
+        }
+      }, 5_000);
+      abortTimer.unref?.();
+    };
     const cleanup = () => {
+      if (abortTimer) clearTimeout(abortTimer);
       process.off('SIGINT', onSigint);
       process.off('SIGTERM', onSigterm);
+      signal?.removeEventListener('abort', onAbort);
     };
     process.on('SIGINT', onSigint);
     process.on('SIGTERM', onSigterm);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
 
     const captured = quiet ? [] : null;
     if (quiet) {
@@ -119,13 +137,14 @@ export async function run(argv, options = {}) {
   const env = options.env ?? process.env;
   const log = options.log ?? ((line) => console.log(line));
   const ci = Boolean(env.CI);
+  const githubHosted = env.GITHUB_ACTIONS === 'true' && env.RUNNER_ENVIRONMENT === 'github-hosted';
   const spawnSuite = options.runPlaywright ?? runPlaywright;
   const allocateRunPort = options.reservePort ?? reservePort;
   const runRecordPath = options.runRecordPath ?? RUN_RECORD;
 
   const separatorIndex = argv.indexOf('--');
   const wrapperArgs = argv.slice(0, separatorIndex === -1 ? argv.length : separatorIndex);
-  const forwardedArgs = wrapperArgs.filter((arg) => !['--no-lock', '--quiet', '--verbose'].includes(arg));
+  const forwardedArgs = wrapperArgs.filter((arg) => !['--quiet', '--verbose'].includes(arg));
   if (separatorIndex !== -1) forwardedArgs.push(...argv.slice(separatorIndex));
   const quiet = wrapperArgs.includes('--quiet') || (!wrapperArgs.includes('--verbose') && env.E2E_QUIET !== '0');
   const playwrightArgv = ['test', ...forwardedArgs];
@@ -141,75 +160,91 @@ export async function run(argv, options = {}) {
 
   const childEnv = { ...env };
 
-  if (!ci) {
-    const { port, reason } = resolvePort(env, ci);
-    if (port === 'allocate') {
-      const reserved = await allocateRunPort();
-      childEnv.PLAYWRIGHT_PORT = String(reserved.port);
-      const retryCount = reserved.attempt - 1;
-      const retrySummary = retryCount > 0 ? `, ${retryCount} retr${retryCount === 1 ? 'y' : 'ies'}` : '';
-      log(`${PREFIX} port ${reserved.port} (${reason}${retrySummary})`);
-    } else {
-      log(`${PREFIX} port: unchanged, ${reason}`);
-    }
-
-    childEnv.PLAYWRIGHT_LAST_RUN_OUTPUT_FILE = path.join(REPO_ROOT, 'test-results', '.last-run.json');
+  if (env.E2E_SKIP_LOCK === '1' || wrapperArgs.includes('--no-lock')) {
+    const bypass = env.E2E_SKIP_LOCK === '1' ? 'E2E_SKIP_LOCK=1' : '--no-lock';
+    log(`${PREFIX} ${bypass} cannot bypass the local E2E safety lock; refusing to start.`);
+    return 2;
   }
 
-  const skipReason = ci
-    ? 'CI'
-    : env.E2E_SKIP_LOCK === '1'
-      ? 'E2E_SKIP_LOCK=1'
-      : wrapperArgs.includes('--no-lock')
-        ? '--no-lock'
-        : null;
-  const lock = skipReason ? null : (options.lock ?? new SwarmLock({ ...options, env, log }));
+  const lock = githubHosted ? null : (options.lock ?? new SwarmLock({ ...options, env, log }));
   let queued = false;
 
-  if (skipReason === 'CI') {
-    log(`${PREFIX} CI: one checkout, one runner, so the e2e queue is not used.`);
-  } else if (skipReason) {
-    log(`${PREFIX} ${skipReason}: not queueing. Only scheduling is lost; this run still has a port of its own.`);
+  if (githubHosted) {
+    log(`${PREFIX} GitHub-hosted runner: each workflow job has an isolated runner and checkout.`);
   } else {
     const attempt = await lock.acquire();
     queued = attempt.acquired;
-    if (queued) log(`${PREFIX} running with the e2e queue held.`);
+    if (!queued) {
+      log(`${PREFIX} refusing to start without the single-run lock (${attempt.reason}).`);
+      return 1;
+    }
+    childEnv.E2E_RUN_LOCK_OWNER = lock.identity;
+    log(`${PREFIX} running with the single-suite lock held.`);
   }
 
-  const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
-  const paths = runOutputPaths(REPO_ROOT, runId);
   let runRecord = null;
+  try {
+    if (!ci) {
+      const { port, reason } = resolvePort(env, ci);
+      if (port === 'allocate') {
+        const reserved = await allocateRunPort();
+        childEnv.PLAYWRIGHT_PORT = String(reserved.port);
+        const retryCount = reserved.attempt - 1;
+        const retrySummary = retryCount > 0 ? `, ${retryCount} retr${retryCount === 1 ? 'y' : 'ies'}` : '';
+        log(`${PREFIX} port ${reserved.port} (${reason}${retrySummary})`);
+      } else {
+        log(`${PREFIX} port: unchanged, ${reason}`);
+      }
 
-  if (!ci) {
-    if (!hasOutputFlag(playwrightArgv)) {
-      playwrightArgv.push('--output', paths.outputDir);
-      log(`${PREFIX} output: ${path.relative(REPO_ROOT, paths.outputDir)}`);
-    } else {
-      log(`${PREFIX} output: as given on the command line`);
+      childEnv.PLAYWRIGHT_LAST_RUN_OUTPUT_FILE = path.join(REPO_ROOT, 'test-results', '.last-run.json');
     }
 
-    runRecord = {
-      runId,
-      pid: process.pid,
-      port: childEnv.PLAYWRIGHT_PORT ?? null,
-      baseUrl:
-        env.PLAYWRIGHT_BASE_URL ?? (childEnv.PLAYWRIGHT_PORT ? `http://127.0.0.1:${childEnv.PLAYWRIGHT_PORT}` : null),
-      remote: Boolean(remote),
-      outputDir: paths.outputDir,
-      queued,
-      startedAt: new Date().toISOString(),
-    };
-    writeRunRecord(runRecord, runRecordPath);
-    log(
-      `${PREFIX} port recorded in ${
-        runRecordPath === RUN_RECORD ? path.relative(REPO_ROOT, runRecordPath) : runRecordPath
-      }`
-    );
-  }
+    const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
+    const paths = runOutputPaths(REPO_ROOT, runId);
+    if (!ci) {
+      if (!hasOutputFlag(playwrightArgv)) {
+        playwrightArgv.push('--output', paths.outputDir);
+        log(`${PREFIX} output: ${path.relative(REPO_ROOT, paths.outputDir)}`);
+      } else {
+        log(`${PREFIX} output: as given on the command line`);
+      }
 
-  try {
-    if (queued) lock.startRenewal((why) => log(`${PREFIX} ${why}`));
-    const code = await spawnSuite(playwrightArgv, { ...options, env: childEnv, quiet });
+      runRecord = {
+        runId,
+        pid: process.pid,
+        port: childEnv.PLAYWRIGHT_PORT ?? null,
+        baseUrl:
+          env.PLAYWRIGHT_BASE_URL ?? (childEnv.PLAYWRIGHT_PORT ? `http://127.0.0.1:${childEnv.PLAYWRIGHT_PORT}` : null),
+        remote: Boolean(remote),
+        outputDir: paths.outputDir,
+        queued,
+        startedAt: new Date().toISOString(),
+      };
+      writeRunRecord(runRecord, runRecordPath);
+      log(
+        `${PREFIX} port recorded in ${
+          runRecordPath === RUN_RECORD ? path.relative(REPO_ROOT, runRecordPath) : runRecordPath
+        }`
+      );
+    }
+
+    const abortController = new AbortController();
+    let renewalLost = false;
+    const suite = spawnSuite(playwrightArgv, {
+      ...options,
+      env: childEnv,
+      quiet,
+      signal: abortController.signal,
+    });
+    if (queued) {
+      lock.startRenewal((why) => {
+        renewalLost = true;
+        log(`${PREFIX} ${why}`);
+        abortController.abort();
+      });
+    }
+    const suiteCode = await suite;
+    const code = renewalLost ? 1 : suiteCode;
     if (!ci) writeRunRecord({ ...runRecord, exitCode: code, finishedAt: new Date().toISOString() }, runRecordPath);
     return code;
   } finally {
@@ -230,16 +265,16 @@ const HELP = [
   '  --strictPort, so a busy port is a startup failure rather than a silent attach to',
   '  another checkout. PLAYWRIGHT_BASE_URL and PLAYWRIGHT_REUSE_EXISTING_SERVER are refused.',
   '',
-  '  THE QUEUE: the run also takes the swarm lock e2e/.swarm-e2e-runner so two agents',
-  '  rarely run e2e at once. It is advisory - a run never refuses to start because of it,',
-  '  and a board that cannot be reached just means no queue. Two runs at once is fine.',
+  '  THE QUEUE: e2e/.swarm-e2e-runner permits one local full E2E suite at a time. The wrapper waits up to',
+  '  E2E_LOCK_TIMEOUT (default 60m), then fails without starting if the lock is busy or',
+  '  the board is unavailable. A lost lease stops the active Playwright process tree.',
   '',
   '  Quiet output is the default. --verbose (or E2E_QUIET=0) streams suite output;',
   '  --quiet (or E2E_QUIET=1) explicitly captures it, replaying only on failure.',
   '  This keeps a green run from flooding the terminal with minutes of list-reporter',
   '  lines - the same batching strategy the commit and push gates use.',
   '',
-  '  Environment: E2E_LOCK_TIMEOUT, E2E_LOCK_POLL, E2E_LOCK_LEASE, E2E_SKIP_LOCK=1,',
+  '  Environment: E2E_LOCK_TIMEOUT, E2E_LOCK_POLL, E2E_LOCK_LEASE,',
   '  E2E_QUIET=0|1, E2E_ALLOW_REMOTE=1. Implementation modules live under scripts/e2e-run/.',
 ].join('\n');
 

@@ -375,7 +375,7 @@ npm ci                    # only if an asset failed to load
 npm run tsc               # the ONLY trustworthy typecheck
 npm run build
 npm run test              # pool: 'vmThreads', maxWorkers: 4
-npm run test:e2e          # headless; starts its own dev server on its own port
+npm run test:e2e:unit     # browser-free E2E helper tests
 ```
 
 - **`npm run tsc` is not `npx tsc --noEmit`.** `tsc -b` covers
@@ -383,9 +383,11 @@ npm run test:e2e          # headless; starts its own dev server on its own port
   `--noEmit` form resolves the root solution stub and type-checks ZERO files; it does
   not fall back to the app config, and `tsconfig.app.json` has no `exclude`, so it
   pulls `src/**/__tests__` in anyway.
-- **`npm run test:e2e` only where the change is observable in a browser.** A
-  change to a script or a stylesheet does not need a seven-minute suite; a change
-  to a tool, a panel, or anything with pixels does. Say which you ran and why.
+- **Do not run the full browser suite locally.** Full E2E validation is mandatory on
+  the GitHub mirror before landing, for every candidate SHA. After committing the
+  clean candidate, run `npm run test:e2e:mirror -- --full`; the landing gate verifies
+  the exact candidate SHA and successful full workflow run. Focused/browser checks
+  must also use the wrapper, which serializes local suites across worktrees.
 - **Never open a browser window.** Not `--headed`, not `--ui`, not `--debug`, not
   `PLAYWRIGHT_ALLOW_HEADED`, not `show-report`/`show-trace`/`codegen`. A headed run
   fails a _disjoint_ set of tests, so a failure that "goes away headed" is not

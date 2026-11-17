@@ -152,48 +152,40 @@ The outcome is binary: **you get a server this run started, or you get a red run
 third state. Each run also writes its port to `.kilo/e2e-last-run.json` and prints it, so a run
 that fails an hour later is diagnosable from the port that actually served it.
 
-### The queue: advisory, and never a gate
+### The queue: one local suite at a time
 
-The run also takes a swarm lock on `e2e/.swarm-e2e-runner` so two agents rarely run e2e at
-once — less port pressure, less CPU contention, one readable log at a time. **It is only a
-queue:**
+The local wrapper takes a hard lock on `e2e/.swarm-e2e-runner` **before it starts Playwright**.
+The machine has no measured capacity data that justifies concurrent full suites, and CPU
+contention has caused documented timeout failures. Ports and output directories isolate data;
+they do not isolate CPU, memory, or browser load.
 
-- Two runs may proceed at the same time. That is survivable and needs no coordination — each
-  has its own port and its own output directory.
-- If the board cannot be reached, the run says so and starts.
-- If the wait times out, the run says so and starts.
+- A second local run waits for the current suite to finish, then starts.
+- If the wait expires, the board is unavailable, or acquisition cannot be verified, the second
+  run fails without starting. It never proceeds unlocked.
+- If lease renewal fails during a run, the wrapper terminates the Playwright process tree and
+  returns failure; it does not leave a suite running without its exclusion lock.
+- `CI=true` alone does not bypass the lock. GitHub-hosted workflow jobs are separate: they have
+  isolated checkouts and runners, so their direct Playwright command does not contend with local
+  worktrees.
+- `E2E_SKIP_LOCK=1` and `--no-lock` are rejected. Local raw `playwright test` commands are
+  refused by the Playwright setup guard; use `npm run test:e2e` for every local suite.
 
-**No run ever refuses to start because of the lock.** A queue that can block a merge gate is a
-gate, and a gate that is not 100% enforceable is worse than no gate: it looks like a guarantee
-and is not one. An earlier version exited 4 when it could not have the lock, and that is exactly
-the trap this section exists to prevent.
+`npm run swarm status` shows the holder as `e2e-run/<branch>/<pid>/<run-token>`: branch and pid
+identify the checkout and process, while the token makes multiple runs in one process distinct.
+The holder is reclaimed immediately when its process is gone, or after its short lease if the pid
+has been reused.
 
-`npm run swarm status` shows the holder as `e2e-run/<branch>/<pid>` while a suite is in flight:
-the branch says which checkout, the pid says which process. The holder is a **run** rather than a
-branch because board identity is the branch and a branch never conflicts with itself.
+| Variable           | Default   | What it does                                               |
+| ------------------ | --------- | ---------------------------------------------------------- |
+| `E2E_LOCK_TIMEOUT` | `3600000` | Milliseconds to wait before failing without starting.      |
+| `E2E_LOCK_POLL`    | `3000`    | Milliseconds between queue re-checks.                      |
+| `E2E_LOCK_LEASE`   | `10m`     | Lock duration; values below the 5m safety minimum use 10m. |
+| `E2E_ALLOW_REMOTE` | unset     | `1` permits `PLAYWRIGHT_BASE_URL`, and is logged.          |
 
-| Variable           | Default  | What it does                                          |
-| ------------------ | -------- | ----------------------------------------------------- |
-| `E2E_LOCK_TIMEOUT` | `600000` | Milliseconds to queue before going ahead anyway.      |
-| `E2E_LOCK_POLL`    | `3000`   | Milliseconds between queue re-checks.                 |
-| `E2E_LOCK_LEASE`   | `30m`    | A DURATION, not milliseconds. See below.              |
-| `E2E_SKIP_LOCK`    | unset    | `1` skips the queue, loudly. Only scheduling is lost. |
-| `E2E_ALLOW_REMOTE` | unset    | `1` permits `PLAYWRIGHT_BASE_URL`, and is logged.     |
-
-The units are mixed and that is a trap worth naming: **`E2E_LOCK_TIMEOUT` and
-`E2E_LOCK_POLL` are plain millisecond counts** (`E2E_LOCK_TIMEOUT=5000`), while
-**`E2E_LOCK_LEASE` is a duration** (`30m`, `90s`, `2h`, or a bare number of
-minutes). They are not interchangeable, and they fail in opposite ways —
-`E2E_LOCK_TIMEOUT=5m` is `NaN`, so it is silently ignored and you get the
-10-minute default, while a malformed lease is reported and replaced. A typo in
-either costs scheduling and nothing else.
-
-`--no-lock` is the same as `E2E_SKIP_LOCK=1`. The queue is skipped automatically under `CI`,
-where one job owns one checkout outright. The lease is renewed while the suite runs, because the
-board never renews a file lock itself, and a renewal that fails is a message rather than a
-failure: both runs have their own ports. A holder whose process is gone is reclaimed rather than
-waited out, which is why a killed run does not cost the next one its full timeout — the holder
-identity carries the pid, and only identities this wrapper created are probed.
+The units differ: `E2E_LOCK_TIMEOUT` and `E2E_LOCK_POLL` are millisecond counts, while
+`E2E_LOCK_LEASE` is a duration such as `10m`, `90s`, or `2h`. A timeout of `0` means fail
+immediately if another suite holds the lock; it is not a bypass. A malformed lease falls back to
+the safe default, and a lease below five minutes is rejected in favor of that default.
 
 ### Ports and servers
 
@@ -233,10 +225,10 @@ origin it loaded:
 E2E_ALLOW_REMOTE=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e
 ```
 
-Both refusals are enforced twice, in the only two places that can see every
-invocation: `scripts/e2e-run.mjs` (the friendly error, before anything starts)
-and `e2e/global-setup.ts` (the load-bearing one, because `npm run test:e2e:raw`
-and the CI job's bare `npx playwright test` never load the wrapper at all).
+The wrapper reports rejected targets before it starts. `e2e/global-setup.ts` also verifies
+the shared lock owner for every local Playwright invocation, so a direct local CLI command
+cannot bypass serialization. GitHub-hosted jobs are exempt because each job owns an isolated
+checkout and runner.
 
 ### Output
 
@@ -245,12 +237,9 @@ directory before the suite starts. `test-results/` is gitignored wholesale, and
 `npm run test:e2e:clean` clears the generated output under it without taking the
 machine-readable run result with it; exactly which files those are is
 [`../docs/TESTING.md`](../docs/TESTING.md#e2e-failures)'s rule, not this
-section's. A bare `npx playwright test` (or
-`npm run test:e2e:raw`) skips the wrapper and writes to the shared `test-results/`
-— that is the same as CI, where the JSON reporter's output is collected as an
-artifact, and it is why CI calls Playwright directly. A bare run still starts its
-OWN server, on :5173; only the port choice and the output directory come from the
-wrapper.
+section's. Direct local `npx playwright test` is refused. GitHub-hosted CI calls
+Playwright directly so the JSON reporter writes to the shared `test-results/` directory
+collected as an artifact; those jobs do not share a local machine or worktree.
 
 `--last-failed` works across runs: the wrapper pins Playwright's failure list to
 the shared `test-results/.last-run.json`, because that flag silently runs the whole
@@ -361,8 +350,8 @@ React.
 baseline snapshots.
 
 ```bash
-# run them
-npx playwright test e2e/export/visual-regression.spec.ts
+# run them through the serialized local wrapper
+npm run test:e2e -- e2e/export/visual-regression.spec.ts
 
 # update the baselines, then review `git diff` before committing
 npm run test:e2e:update-baselines
@@ -558,7 +547,6 @@ never retried away.
 ```bash
 # e2e specs  (headless by default - see "Run it headless" above)
 npm run test:e2e                     # locked, own port, own output dir; forwards args after `--`
-npm run test:e2e:raw                 # bare `playwright test`, no lock, shared output dir (what CI runs)
 npm run test:e2e:headed              # opt in to a visible window; warns first, do not touch it
 npm run test:e2e:ui                  # Playwright UI mode
 npm run test:e2e:debug               # Playwright inspector
@@ -591,10 +579,11 @@ conditional. It is unconditional, so a stray `test.only` is a hard error on ever
 run rather than a silent scope reduction in exactly the local runs where it is
 least visible.
 
-The one thing `CI` does change in the wrapper is that it skips the swarm lock and
-keeps the default :5173 and the shared `test-results/`, because a CI job owns its
-checkout outright. That is also why the `e2e` job in the workflow calls
-`npx playwright test` directly rather than going through `npm run test:e2e`.
+`CI=true` changes the reporter, retries, worker count, port, and output behavior; it
+does not disable the local lock. Only a GitHub-hosted runner (`GITHUB_ACTIONS=true`
+and `RUNNER_ENVIRONMENT=github-hosted`) bypasses the local lock, because each hosted
+job has an isolated checkout and machine. The workflow's direct `npx playwright test`
+commands run only in that hosted environment. Local raw CLI commands are refused.
 
 **Both local and CI runs are headless.** `playwright.config.ts` resolves
 `headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'`, so the only way to get a

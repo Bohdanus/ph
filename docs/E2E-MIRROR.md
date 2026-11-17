@@ -22,6 +22,18 @@ npm run test:e2e:mirror -- --full
 npm run test:e2e:mirror -- --linux-baselines --chat-id <native-session-id>
 ```
 
+**A successful full mirror run is mandatory before every main landing.** Run
+`npm run test:e2e:mirror -- --full` from the clean, committed candidate worktree after its
+final code-review changes. Do not run the full browser suite locally. The CLI runs the exact
+candidate SHA on the GitHub-hosted mirror runners and records a local ignored proof at
+`.kilo/mirror-e2e-result.json`. Focused-spec and baseline runs do not satisfy the landing gate.
+
+The local proof file is only a pointer, not trusted evidence by itself. The pinned landing gate
+fetches the referenced run from `Bohdanus/ph` and verifies that it is a fresh successful
+`repository_dispatch` of `.github/workflows/ci.yml`, that the run title binds the request ID to
+the exact candidate SHA, and that the mirror workflow file blob matches the candidate's workflow.
+Changing the candidate SHA requires a new full mirror run.
+
 The CLI pushes only the current branch to `mirror`, then runs its exact SHA. It uses
 a normal fast-forward push; if the mirror branch has commits missing from the source
 branch, the CLI refuses and Git also rejects any concurrent non-fast-forward update.

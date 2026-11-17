@@ -231,8 +231,10 @@ Three things stay allowed, each deliberately:
 
 - **A pinned landing.** Use `npm run main:landing -- land ...` with the reviewed parent,
   candidate, tree, source branch, and chat pins. The wrapper prepares the clean merge in `main`,
+  first requires a successful full E2E run on the GitHub mirror for the exact candidate SHA, then
   takes the exclusive owner lease, refreshes shared hook dispatchers, and commits from the reviewed
-  private index snapshot. The hooks still compare `HEAD`, Git's actual `MERGE_HEAD`, the staged
+  private index snapshot. The local ignored proof is re-verified against the GitHub run, workflow
+  file, and freshness before it is pinned in the owner lease. The hooks still compare `HEAD`, Git's actual `MERGE_HEAD`, the staged
   result tree, and the snapshot marker against the reviewed pins. The marker helps detect accidental
   alternate-index use; a same-user caller can deliberately construct it, so it is not an
   authentication boundary. The helper requires matching `Branch:` and `Chat:` trailers and checks
@@ -250,7 +252,9 @@ Three things stay allowed, each deliberately:
 ### Main landing ownership and deadlock recovery
 
 Use `npm run main:landing -- status` before a main landing. The command reports the owner branch,
-chat ID, script, owner/child PIDs, current step, lease, age, and any unowned Git operation. All
+chat ID, script, owner/child PIDs, current step, lease, age, and any unowned Git operation. New
+leases pair each PID with a process-start token, so a recycled PID is not mistaken for the original
+owner; legacy records without a token remain conservative. All
 reviewed main landings go through `npm run main:landing -- land ...`; the exclusive lease lives in
 the common Git directory and remains when a failed wrapper leaves Git state behind. The wrapper
 refreshes shared hook dispatchers before it commits. A pinned landing commit without a current
@@ -334,10 +338,12 @@ processes, not proof that every descendant has exited. If the chat is confirmed 
 landing process tree has stopped, launch the required Luna 6 (`gpt-6-luna`, `xhigh`) recovery subagent. This is
 the user-authorized paid recovery exception; research and routine reviews remain free-first. The
 `takeover` command records a new recovery lease only after the agent supplies both confirmations
-and the old lease token. A live owner or child PID can be overridden only with its separate
-`--confirm-owner-pid-reused` or `--confirm-child-pid-reused` flag after verifying that PID belongs to
-an unrelated process and the full landing process tree is stopped. The model and PID-reuse flags
-are assertions, not host authentication; the agent launcher must actually
+and the old lease token. New leases record each owner's process-start token, so a reused PID can
+be distinguished from the original process and will not block the automatic orphan failover.
+Legacy leases without a start token remain conservative: a live owner or child PID can be
+overridden only with its separate `--confirm-owner-pid-reused` or `--confirm-child-pid-reused`
+flag after verifying that PID belongs to an unrelated process and the full landing process tree
+is stopped. The model and PID-reuse flags are assertions, not host authentication; the agent launcher must actually
 use Luna xhigh. Create and verify a dedicated recovery task worktree before launching Luna, and
 give it the absolute path, old lease token, and a recovery-only write set. Resolve the new chat ID
 with the current host's instructions in `CHAT-ID.md`.
@@ -664,44 +670,30 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
 - **Every worktree's dev server wants :5173, and that used to be the reason e2e lied.** A bare
   `npx playwright test` in a worktree attached to whichever server got to :5173 first — another
   checkout — and passed for the wrong reason; `TEST-FLAKES.md` §10 is a mutation campaign that
-  reported seven mutations green that way. **That is closed structurally now, and not by a lock:**
-  `npm run test:e2e` runs `scripts/e2e-run.mjs`, which starts the run's **own** server on a port
-  it picks, and `playwright.config.ts` sets `reuseExistingServer: false` as a literal with no
-  environment variable and no field that can turn it on. A run either gets a server it started or
-  it is red. `PLAYWRIGHT_REUSE_EXISTING_SERVER` is refused outright; `PLAYWRIGHT_BASE_URL` is
-  refused unless the run says `E2E_ALLOW_REMOTE=1`, which it logs.
-- **The e2e queue is `e2e/.swarm-e2e-runner`, and it is advisory — never a gate.** The run takes it
-  so two agents rarely run e2e at once, and gives it back when it ends, including when the suite
-  fails. It is a **virtual** path: it never exists on disk, so an agent editing `e2e/*.spec.ts`
-  holds those files separately and does not collide with it.
-  - **The holder is a RUN, not a branch.** Board identity is the branch and the conflict test is
-    `lock.agent_id !== who` (in `holdFiles` and `lockFile`, both in `db.mjs`), so a branch never
-    conflicts with itself: with branch
-    identity, two runs in one worktree both "acquire" and the second one's `unlock` releases the
-    row the first still believes it holds. Every board call therefore passes
-    `--agent e2e-run/<branch>/<pid>`, and `swarm status` shows that while a suite runs — the
-    branch says which checkout, the pid says which process.
-  - **The wrapper renews on a timer, and so does the board.** `renewOwnLocks` extends a run's own
-    sentinel for as long as its worktree is on disk, so a live holder keeps its slot without this
-    wrapper asking; the timer here is belt and braces, at a third of the lease and never more than
-    every few minutes, and a renewal that fails is a _message_. Nothing renews a DEAD run's lock,
-    because nothing is running that identity. A lost queue costs a concurrent run, not correctness:
-    both runs have their own ports.
-  - **Nothing here can fail a run.** Queue full, board unreachable, malformed lease: each logs and
-    the run proceeds. Two earlier versions broke that: one exited 4 when it could not have the
-    lock, which made an unenforceable mechanism into a hard block on a merge gate, and one threw
-    from the lock's constructor for a bad lease — before the run had decided it wanted a lock at
-    all, so `CI=true` with a typo in `E2E_LOCK_LEASE` died with no suite. The lock is now built
-    only on the path that uses it, and a bad lease is reported and replaced.
-  - **A holder this wrapper did not create is never reclaimed.** The reclaim unlocks AS the holder
-    it is reclaiming, so a wrong liveness answer releases a real agent's slot. Board identity is
-    the sanitized branch and `sanitize` preserves `/` (it is in `sanitize()`'s allowed-character
-    class, `scripts/lib/agent-board/identity.mjs`),
-    so a holder on `fix/1234` — or anyone who passed `--agent 2026` — has an identity whose last
-    segment parses as a pid. Only `e2e-run/<…>/<digits>` is probed. `E2E_SKIP_LOCK=1` (or `--no-lock`)
-    skips the queue, and `E2E_LOCK_TIMEOUT`, `E2E_LOCK_POLL` and `E2E_LOCK_LEASE` tune the wait.
-    **If a change ever makes an e2e run refuse to start because of this lock, the guarantee has
-    been moved somewhere it cannot be kept.**
+  reported seven mutations green that way. `npm run test:e2e` starts the run's **own** server on a
+  port it picks, and `playwright.config.ts` sets `reuseExistingServer: false` with `--strictPort`.
+  A run either gets a server it started or it is red. `PLAYWRIGHT_REUSE_EXISTING_SERVER` is refused;
+  `PLAYWRIGHT_BASE_URL` is refused unless the run says `E2E_ALLOW_REMOTE=1`, which it logs.
+- **The e2e lock `e2e/.swarm-e2e-runner` is a hard local exclusion, not an advisory queue.** One
+  full local suite may run across the repository's linked worktrees at a time. Ports and per-run
+  output directories isolate data, but not CPU, memory, or browser load; concurrent local suites
+  have caused documented timeout failures and there is no measured capacity supporting more than
+  one.
+  - The wrapper acquires the virtual board path before starting Playwright and releases it on every
+    normal exit. If another suite holds it, the wrapper waits up to `E2E_LOCK_TIMEOUT` (default
+    60 minutes) and then fails without starting. If the board is unavailable or acquisition cannot
+    be verified, it also fails closed. `E2E_LOCK_TIMEOUT=0` is fail-fast, never a bypass.
+  - The identity is per run: `e2e-run/<branch>/<pid>/<run-token>`. The token distinguishes multiple
+    invocations in one process; dead PID reclamation supports the legacy identity format as well.
+  - The default lease is 10 minutes, with a 5-minute minimum, and the wrapper renews it every few
+    minutes. Board subprocesses have a bounded timeout. If renewal is lost, the wrapper terminates
+    the Playwright process tree and returns failure rather than leave a suite running without its
+    exclusion lock.
+  - `E2E_SKIP_LOCK=1` and `--no-lock` are rejected. Raw local Playwright invocations are refused by
+    the setup guard and denied in Kilo permissions. GitHub-hosted CI jobs are exempt because each
+    job has its own checkout and runner; `CI=true` alone does not bypass the local lock.
+  - `npm run swarm status` identifies the current holder. The lock is virtual and never creates a
+    file, so it does not conflict with file claims on `e2e/*.spec.ts`.
   - Each run also writes to `test-results/runs/<run-id>/` — Playwright deletes `outputDir` at the
     start of every run — and records the port it used to `.kilo/e2e-last-run.json`, so a run that
     fails an hour later is diagnosable from the port that served it. The HTML report is

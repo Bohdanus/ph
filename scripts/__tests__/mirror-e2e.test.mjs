@@ -29,6 +29,13 @@ import {
   runCommandWithTimeout,
 } from '../mirror-e2e.mjs';
 import { validateE2ESpec } from '../validate-e2e-spec.mjs';
+import {
+  MIRROR_E2E_PROOF_FILE,
+  MIRROR_E2E_PROOF_MAX_AGE_MS,
+  readMirrorE2EProof,
+  validateMirrorE2EProof,
+  writeMirrorE2EProof,
+} from '../lib/mirror-e2e-proof.mjs';
 
 function normalizeWorkflowText(text) {
   return text.replace(/\r\n?/g, '\n');
@@ -50,6 +57,91 @@ const workflowFiles = [
   ['ci.yml', ciWorkflow],
   ['focused-e2e.yml', focusedWorkflow],
 ];
+
+function mirrorProofFixture(now = Date.now()) {
+  const proof = {
+    version: 1,
+    mode: 'full',
+    branch: 'task/e2e-proof',
+    sourceSha: 'a'.repeat(40),
+    workflowSha: 'b'.repeat(40),
+    requestId: 'c'.repeat(32),
+    runId: '123456789',
+    attempt: 1,
+    conclusion: 'success',
+    runUrl: 'https://github.com/Bohdanus/ph/actions/runs/123456789',
+    completedAt: new Date(now - 1_000).toISOString(),
+  };
+  const run = {
+    id: 123456789,
+    path: '.github/workflows/ci.yml',
+    event: 'repository_dispatch',
+    display_title: `CI ${proof.requestId} @ ${proof.sourceSha}`,
+    head_branch: 'main',
+    head_sha: proof.workflowSha,
+    status: 'completed',
+    conclusion: 'success',
+    run_attempt: 1,
+    updated_at: new Date(now - 1_000).toISOString(),
+    html_url: proof.runUrl,
+  };
+  return { proof, run, now };
+}
+
+describe('full mirror E2E landing proof', () => {
+  it('writes and reads a machine-local proof manifest', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'mirror-e2e-proof-'));
+    const { proof } = mirrorProofFixture();
+    try {
+      const path = writeMirrorE2EProof(proof, { cwd });
+      expect(path).toBe(join(cwd, MIRROR_E2E_PROOF_FILE));
+      expect(readMirrorE2EProof({ cwd })).toEqual(proof);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('binds a fresh successful full workflow run to the exact candidate and workflow', () => {
+    const { proof, run, now } = mirrorProofFixture();
+    const verified = validateMirrorE2EProof(proof, {
+      expectedBranch: proof.branch,
+      expectedSourceSha: proof.sourceSha,
+      expectedWorkflowBlobSha: 'd'.repeat(40),
+      mirrorWorkflowBlobSha: 'd'.repeat(40),
+      run,
+      now,
+    });
+
+    expect(verified.verifiedAt).toBe(new Date(now).toISOString());
+  });
+
+  it('rejects wrong workflows, candidate SHAs, workflow blobs, and stale runs', () => {
+    const { proof, run, now } = mirrorProofFixture();
+    const pins = {
+      expectedBranch: proof.branch,
+      expectedSourceSha: proof.sourceSha,
+      expectedWorkflowBlobSha: 'd'.repeat(40),
+      mirrorWorkflowBlobSha: 'd'.repeat(40),
+      now,
+    };
+
+    expect(() =>
+      validateMirrorE2EProof(proof, { ...pins, run: { ...run, path: '.github/workflows/focused-e2e.yml' } })
+    ).toThrow(/full repository-dispatch workflow/);
+    expect(() => validateMirrorE2EProof(proof, { ...pins, expectedSourceSha: 'e'.repeat(40), run })).toThrow(
+      /incoming candidate SHA/
+    );
+    expect(() => validateMirrorE2EProof(proof, { ...pins, mirrorWorkflowBlobSha: 'f'.repeat(40), run })).toThrow(
+      /workflow file does not match/
+    );
+    expect(() =>
+      validateMirrorE2EProof(proof, {
+        ...pins,
+        run: { ...run, updated_at: new Date(now - MIRROR_E2E_PROOF_MAX_AGE_MS - 1).toISOString() },
+      })
+    ).toThrow(/stale/);
+  });
+});
 
 function runGit(cwd, args, input) {
   const commandArgs = basename(cwd) === 'mirror.git' ? ['-c', 'safe.bareRepository=all', ...args] : args;

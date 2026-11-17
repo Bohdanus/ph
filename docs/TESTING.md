@@ -48,6 +48,7 @@ npm run test            # vitest, jsdom - app unit tests
 npm run test:e2e:unit   # vitest, node - unit tests for the e2e helpers
 npm run test:e2e        # playwright, HEADLESS - starts its OWN server on a port it picks
 npm run test:e2e:verbose # like test:e2e, but streams suite output live
+npm run test:e2e:mirror -- --full # full browser suite on GitHub mirror; required before landing
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
@@ -79,14 +80,15 @@ failure `TEST-FLAKES.md` §10 is a whole mutation campaign about.
 `PLAYWRIGHT_REUSE_EXISTING_SERVER` is refused outright, and `PLAYWRIGHT_BASE_URL`
 is refused unless the run says `E2E_ALLOW_REMOTE=1`, which it logs.
 
-**The optimisation: a queue, which is only a queue.** The run also takes the swarm
-lock `e2e/.swarm-e2e-runner` so two agents rarely run e2e at once. **No run ever
-refuses to start because of it** — a full queue, an unreachable board and a
-malformed lease all produce a message and then a normal run, because the port
-guarantee does not depend on any of it. Two runs at once is survivable: each has
-its own port and its own output directory. Do not "fix" a slow run by making the
-lock load-bearing; that is the change that put an unenforceable mechanism in front
-of a merge gate once already. Board detail: [`ORCHESTRATION.md`](ORCHESTRATION.md).
+**The local lock is a hard single-suite limit.** A second local run waits on
+`e2e/.swarm-e2e-runner`; busy timeout, board failure, or an unverifiable owner fails
+the invocation without starting Playwright. Lease renewal failure terminates the
+active process tree. Port and output isolation do not reduce CPU or browser memory
+contention, and no measured capacity supports concurrent local suites. Direct local
+Playwright commands and the old raw script are not supported; use the wrapper. Only
+GitHub-hosted jobs bypass the local lock because each has an isolated runner and
+checkout. `CI=true` alone does not bypass it. Board details:
+[`ORCHESTRATION.md`](ORCHESTRATION.md).
 
 Each run also writes to its own `test-results/runs/<run-id>/`, because Playwright
 **deletes** `outputDir` at the start of every run, and records its port to
@@ -111,12 +113,13 @@ drop.
 - `npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`:
   it starts its **own** dev server on a port it picks, makes attaching to any other
   server impossible, writes the run's output to its own directory, records its
-  port, and forwards every argument after `--` verbatim. It also takes a swarm lock
-  as an advisory queue — see "The Commands" section above for the guarantee and the
-  queue, and why the second must never be allowed to block a run. Pass
-  `--retries=1` for a trace; `trace: 'on-first-retry'` yields nothing at the local
-  `retries: 0`. **A user-visible change still runs the full suite before it
-  merges.** See `e2e/README.md` and the header of `scripts/e2e-run.mjs`.
+  port, and forwards every argument after `--` verbatim. It also holds the hard
+  single-suite lock; it fails closed on contention or board errors and terminates
+  Playwright if renewal is lost. `--no-lock` and `E2E_SKIP_LOCK=1` are refused.
+  Pass `--retries=1` for a trace; `trace: 'on-first-retry'` yields nothing at the
+  local `retries: 0`. Full browser validation before landing is on the GitHub mirror,
+  not local. See `e2e/README.md`, `E2E-MIRROR.md`, and the header of
+  `scripts/e2e-run.mjs`.
 
 ## Test traps
 

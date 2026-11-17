@@ -98,7 +98,7 @@ export function refuseForeignOrigin(check: OwnServerCheck): void {
       'TEST-FLAKES.md §10 is a mutation campaign that reported every mutation green that way.',
       '',
       'If you mean to test a deployed build, say so explicitly:',
-      `  ${ALLOW_REMOTE_ENV}=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npx playwright test`,
+      `  ${ALLOW_REMOTE_ENV}=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e`,
       '',
       'and the run will log, on every run, which origin the tests were pointed at.',
     ].join('\n')

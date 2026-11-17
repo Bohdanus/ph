@@ -666,13 +666,9 @@ describe('runWarmup', () => {
 });
 
 describe('checkOwnServer', () => {
-  // This is the load-bearing half of the guarantee, and it lives here rather than in
-  // `scripts/e2e-run.mjs` because THIS module runs for every `playwright test`
-  // invocation whatever started it. The wrapper refuses the same thing, but
-  // `npm run test:e2e:raw` and the CI job's bare `npx playwright test` never load it,
-  // and `playwright.config.ts` resolves `use.baseURL` from `PLAYWRIGHT_BASE_URL`
-  // itself — so a refusal that lived only in the wrapper was one command away from
-  // being false, and the guarantee was a convention.
+  // This guard is in globalSetup so every Playwright test invocation checks its
+  // target against the server it owns. The wrapper gives local callers an earlier,
+  // clearer error; GitHub-hosted workflows use the direct CLI on isolated runners.
   it('permits a run whose tests load the dev server it started', () => {
     expect(
       checkOwnServer({

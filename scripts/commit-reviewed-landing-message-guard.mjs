@@ -218,6 +218,14 @@ export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = 
         mainSha: env.KILO_EXPECTED_MAIN_SHA,
         incomingSha: env.KILO_EXPECTED_INCOMING_SHA,
         treeSha: env.KILO_EXPECTED_TREE_SHA,
+        mirrorE2E: {
+          mode: 'full',
+          sourceSha: env.KILO_EXPECTED_MIRROR_SOURCE_SHA,
+          runId: env.KILO_EXPECTED_MIRROR_RUN_ID,
+          requestId: env.KILO_EXPECTED_MIRROR_REQUEST_ID,
+          workflowSha: env.KILO_EXPECTED_MIRROR_WORKFLOW_SHA,
+          verifiedAt: env.KILO_EXPECTED_MIRROR_VERIFIED_AT,
+        },
       });
     }
     if (!reviewedLanding) {

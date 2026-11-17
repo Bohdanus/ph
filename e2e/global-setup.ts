@@ -3,6 +3,7 @@ import type { FullConfig } from '@playwright/test';
 import { refuseVisibleBrowser, ALLOW_ENV } from './global-setup/headed.ts';
 import { checkHtmlOpenEnv, checkHtmlReporterSelection, refuseOpeningHtmlReport } from './global-setup/html-report.ts';
 import { checkOwnServer, refuseForeignOrigin, ALLOW_REMOTE_ENV } from './global-setup/foreign-origin.ts';
+import { assertSerializedRunOwner } from '../scripts/e2e-run/run-owner.mjs';
 import {
   planWarmup,
   runWarmup,
@@ -36,6 +37,7 @@ export {
 };
 
 export default async function globalSetup(config: FullConfig): Promise<void> {
+  if (config.configFile) assertSerializedRunOwner();
   refuseVisibleBrowser(config);
   refuseOpeningHtmlReport(checkHtmlOpenEnv(process.env));
   refuseOpeningHtmlReport(checkHtmlReporterSelection({ argv: config.argv, env: process.env }));

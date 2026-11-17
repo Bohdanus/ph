@@ -131,10 +131,24 @@ export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = 
   const expectedTree = env.KILO_EXPECTED_TREE_SHA;
   const expectedBranch = env.KILO_EXPECTED_BRANCH;
   const expectedChat = env.KILO_EXPECTED_CHAT_ID;
-  if (!expectedMain || !expectedIncoming || !expectedTree || !expectedBranch || !expectedChat) {
-    return fail(
-      'set KILO_EXPECTED_MAIN_SHA, KILO_EXPECTED_INCOMING_SHA, KILO_EXPECTED_TREE_SHA, KILO_EXPECTED_BRANCH, and KILO_EXPECTED_CHAT_ID from the reviewed candidate record'
-    );
+  const expectedMirrorSourceSha = env.KILO_EXPECTED_MIRROR_SOURCE_SHA;
+  const expectedMirrorRunId = env.KILO_EXPECTED_MIRROR_RUN_ID;
+  const expectedMirrorRequestId = env.KILO_EXPECTED_MIRROR_REQUEST_ID;
+  const expectedMirrorWorkflowSha = env.KILO_EXPECTED_MIRROR_WORKFLOW_SHA;
+  const expectedMirrorVerifiedAt = env.KILO_EXPECTED_MIRROR_VERIFIED_AT;
+  if (
+    !expectedMain ||
+    !expectedIncoming ||
+    !expectedTree ||
+    !expectedBranch ||
+    !expectedChat ||
+    !expectedMirrorSourceSha ||
+    !expectedMirrorRunId ||
+    !expectedMirrorRequestId ||
+    !expectedMirrorWorkflowSha ||
+    !expectedMirrorVerifiedAt
+  ) {
+    return fail('set the reviewed landing pins and full mirror E2E proof fields from the main-landing owner record');
   }
   if (!env.KILO_MAIN_LANDING_LEASE_ID) {
     return fail('use `npm run main:landing -- land ...` so the main landing has a recorded owner and recovery lease');
@@ -146,6 +160,14 @@ export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = 
       mainSha: expectedMain,
       incomingSha: expectedIncoming,
       treeSha: expectedTree,
+      mirrorE2E: {
+        mode: 'full',
+        sourceSha: expectedMirrorSourceSha,
+        runId: expectedMirrorRunId,
+        requestId: expectedMirrorRequestId,
+        workflowSha: expectedMirrorWorkflowSha,
+        verifiedAt: expectedMirrorVerifiedAt,
+      },
     });
   } catch (error) {
     return fail(error instanceof Error ? error.message : String(error));

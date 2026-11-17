@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { samePath } from '../lib/path-identity.mjs';
 
-import { createReplacementMainWorktree, land, watch } from '../main-landing.mjs';
+import { createReplacementMainWorktree, land, verifyMirrorE2EProofForLanding, watch } from '../main-landing.mjs';
 import { decide, registerMainWorktree, resolveWorktree, run, OVERRIDE_VAR } from '../main-worktree-guard.mjs';
+import { writeMirrorE2EProof } from '../lib/mirror-e2e-proof.mjs';
 
 /**
  * This file's budget, and the reason it is not Vitest's default 5s.
@@ -56,10 +57,121 @@ function runCommand(command, args, options) {
   return spawnSync(command, args, options);
 }
 
+async function testMirrorProof(_paths, pins) {
+  const timestamp = new Date().toISOString();
+  return {
+    version: 1,
+    mode: 'full',
+    branch: pins.branch,
+    sourceSha: pins.incomingSha,
+    workflowSha: 'b'.repeat(40),
+    requestId: 'c'.repeat(32),
+    runId: '123456789',
+    attempt: 1,
+    conclusion: 'success',
+    runUrl: 'https://github.com/Bohdanus/ph/actions/runs/123456789',
+    completedAt: timestamp,
+    verifiedAt: timestamp,
+  };
+}
+
 function commonDir(cwd) {
   const raw = git(cwd, ['rev-parse', '--git-common-dir']);
   return raw === null ? null : resolve(cwd, raw);
 }
+
+describe('the landing gate binds mirror E2E to the checked-out candidate', () => {
+  it('requires a fresh successful full CI run for the exact candidate SHA and workflow blob', () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-landing-mirror-proof-')));
+    try {
+      mkdirSync(join(fixture, '.kilo', 'worktrees'), { recursive: true });
+      mkdirSync(join(fixture, '.github', 'workflows'), { recursive: true });
+      writeFileSync(join(fixture, '.gitignore'), '.kilo/\n');
+      writeFileSync(join(fixture, 'base.txt'), 'base\n');
+      writeFileSync(join(fixture, '.github', 'workflows', 'ci.yml'), 'name: CI\n');
+      expect(git(fixture, ['init', '-q', '-b', 'main'])).not.toBeNull();
+      expect(git(fixture, ['config', 'user.name', 'Git Guard Test'])).not.toBeNull();
+      expect(git(fixture, ['config', 'user.email', 'git-guard@example.invalid'])).not.toBeNull();
+      expect(git(fixture, ['add', '-A'])).not.toBeNull();
+      expect(git(fixture, ['commit', '-qm', 'base'])).not.toBeNull();
+      const mainSha = git(fixture, ['rev-parse', 'HEAD']);
+
+      expect(git(fixture, ['switch', '-qc', 'feature-lane'])).not.toBeNull();
+      writeFileSync(join(fixture, 'feature.txt'), 'candidate\n');
+      expect(git(fixture, ['add', '-A'])).not.toBeNull();
+      expect(git(fixture, ['commit', '-qm', 'candidate'])).not.toBeNull();
+      const incomingSha = git(fixture, ['rev-parse', 'HEAD']);
+      const workflowBlobSha = git(fixture, ['rev-parse', 'HEAD:.github/workflows/ci.yml']);
+
+      expect(git(fixture, ['switch', '-q', 'main'])).not.toBeNull();
+      expect(git(fixture, ['switch', '-qc', 'task/root'])).not.toBeNull();
+      const mainPath = join(fixture, '.kilo', 'worktrees', 'landing-main');
+      const candidatePath = join(fixture, '.kilo', 'worktrees', 'feature-lane');
+      expect(git(fixture, ['worktree', 'add', mainPath, 'main'])).not.toBeNull();
+      expect(git(fixture, ['worktree', 'add', candidatePath, 'feature-lane'])).not.toBeNull();
+      expect(registerMainWorktree(mainPath, { required: true })).toBe(true);
+
+      const common = commonDir(fixture);
+      const mainGitDir = realpathSync(git(mainPath, ['rev-parse', '--absolute-git-dir']));
+      const paths = {
+        cwd: mainPath,
+        commonDir: common,
+        mainGitDir,
+        mainPath,
+        lockDir: join(common, 'main-landing-occupancy'),
+        archiveDir: join(common, 'main-landing-archive'),
+      };
+      const now = Date.now();
+      const proof = {
+        version: 1,
+        mode: 'full',
+        branch: 'feature-lane',
+        sourceSha: incomingSha,
+        workflowSha: 'b'.repeat(40),
+        requestId: 'c'.repeat(32),
+        runId: '123456789',
+        attempt: 1,
+        conclusion: 'success',
+        runUrl: 'https://github.com/Bohdanus/ph/actions/runs/123456789',
+        completedAt: new Date(now - 1_000).toISOString(),
+      };
+      writeMirrorE2EProof(proof, { cwd: candidatePath });
+      const run = {
+        id: 123456789,
+        path: '.github/workflows/ci.yml',
+        event: 'repository_dispatch',
+        display_title: `CI ${proof.requestId} @ ${incomingSha}`,
+        head_branch: 'main',
+        head_sha: proof.workflowSha,
+        status: 'completed',
+        conclusion: 'success',
+        run_attempt: 1,
+        updated_at: new Date(now - 1_000).toISOString(),
+        html_url: proof.runUrl,
+      };
+      const api = vi.fn((endpoint) => (endpoint.includes('/actions/runs/') ? run : { sha: workflowBlobSha }));
+
+      const verified = verifyMirrorE2EProofForLanding(
+        paths,
+        { branch: 'feature-lane', incomingSha },
+        { ghApi: api, now: () => now }
+      );
+
+      expect(verified).toMatchObject({
+        mode: 'full',
+        branch: 'feature-lane',
+        sourceSha: incomingSha,
+        workflowSha: proof.workflowSha,
+        runId: proof.runId,
+        candidatePath,
+      });
+      expect(verified.verifiedAt).toBe(new Date(now).toISOString());
+      expect(api).toHaveBeenCalledTimes(2);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('the main-worktree guard refuses a commit recorded in the main worktree', () => {
   it('refuses in the designated main worktree', () => {
@@ -306,9 +418,17 @@ describe('the guard tells a main worktree from a linked one on a real repository
         branch: 'feature-lane',
         chat: 'test-chat',
       };
-      expect(await land(paths, landingOptions, originalMainPath, { watcherStarter: async () => {} })).toBe(75);
+      expect(
+        await land(paths, landingOptions, originalMainPath, {
+          watcherStarter: async () => {},
+          mirrorProofVerifier: testMirrorProof,
+        })
+      ).toBe(75);
       const owner = JSON.parse(readFileSync(join(paths.lockDir, 'owner.json'), 'utf8'));
       expect(owner).toMatchObject({ autoMergeRecoveryReady: true, step: 'waiting for persistent orphan AUTO_MERGE' });
+      expect(owner.owner).toHaveProperty('pidStartToken');
+      expect(owner.owner).toHaveProperty('childStartToken', null);
+      expect(owner.mirrorE2E).toMatchObject({ mode: 'full', sourceSha: incomingSha });
       const replacement = await createReplacementMainWorktree(paths, owner, {
         run: async (command, args, options) => {
           if (command !== 'git') {
@@ -406,7 +526,12 @@ describe('the guard tells a main worktree from a linked one on a real repository
         branch: 'feature-lane',
         chat: 'test-chat',
       };
-      expect(await land(paths, landingOptions, originalMainPath, { watcherStarter: async () => {} })).toBe(75);
+      expect(
+        await land(paths, landingOptions, originalMainPath, {
+          watcherStarter: async () => {},
+          mirrorProofVerifier: testMirrorProof,
+        })
+      ).toBe(75);
 
       const ownerPath = join(paths.lockDir, 'owner.json');
       const owner = JSON.parse(readFileSync(ownerPath, 'utf8'));
@@ -480,7 +605,14 @@ describe('the guard tells a main worktree from a linked one on a real repository
       expect(attemptedRecoveryPaths[0]).not.toBe(attemptedRecoveryPaths[1]);
       expect(existsSync(attemptedRecoveryPaths[0])).toBe(false);
       expect(existsSync(attemptedRecoveryPaths[1])).toBe(true);
-      expect(landedPins).toEqual({ mainSha, incomingSha, treeSha, branch: 'feature-lane', chatId: 'test-chat' });
+      expect(landedPins).toMatchObject({
+        mainSha,
+        incomingSha,
+        treeSha,
+        branch: 'feature-lane',
+        chatId: 'test-chat',
+        mirrorE2E: { mode: 'full', sourceSha: incomingSha, branch: 'feature-lane' },
+      });
       expect(git(originalMainPath, ['branch', '--show-current'])).toBe('main');
       expect(git(originalMainPath, ['status', '--porcelain'])).toBe(originalStatus);
       expect(readFileSync(autoMergePath, 'utf8')).toBe(mainTree + '\n');

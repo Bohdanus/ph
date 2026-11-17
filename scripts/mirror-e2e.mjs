@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
+import { MIRROR_REPOSITORY, writeMirrorE2EProof } from './lib/mirror-e2e-proof.mjs';
 import { validateE2ESpec } from './validate-e2e-spec.mjs';
 
-export const MIRROR_REPOSITORY = 'Bohdanus/ph';
+export { MIRROR_REPOSITORY };
 export const LINUX_BASELINE_PATH = 'e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux';
 export const LINUX_BASELINE_FILES = [
   'drawing.avif.png',
@@ -713,6 +714,26 @@ export async function runMirrorE2E(argv = process.argv.slice(2)) {
 
   if (options.mode === 'baselines') fastForwardBaselineCommit({ branch, sourceSha, chatId: options.chatId });
   console.log(`Mirror ${options.mode} run succeeded at ${sourceSha}.`);
+  if (options.mode === 'full') {
+    const proofPath = writeMirrorE2EProof(
+      {
+        version: 1,
+        mode: 'full',
+        branch,
+        sourceSha,
+        workflowSha: expectedWorkflowSha,
+        requestId,
+        runId: String(finished.databaseId),
+        attempt: finished.attempt ?? 1,
+        conclusion: finished.conclusion,
+        runUrl: finished.url,
+        completedAt: new Date().toISOString(),
+      },
+      { cwd: REPO_ROOT }
+    );
+    console.log(`Full mirror E2E proof recorded at ${proofPath}.`);
+  }
+  return finished;
 }
 
 if (process.argv[1] && path.basename(process.argv[1]) === 'mirror-e2e.mjs') {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
-  // Project-scope Kilo config. Everything here serves one goal: keeping an agent
-  // from putting a browser window on the operator's screen.
+  // Project-scope Kilo config. Playwright browser runs must use the local E2E wrapper;
+  // this also prevents agents from bypassing the single-suite queue.
   //
   // The global config sets `permission.bash: "allow"`, so every command - including
   // `playwright test --headed` and `playwright show-report` - runs with no prompt at
@@ -87,6 +87,16 @@
       "*test:e2e:ui*": "deny",
       "*test:e2e:debug*": "ask",
       "*test:e2e:report*": "deny",
+
+      // All local E2E suites must enter through the strict queue wrapper. Direct CLI
+      // forms (including `node .../playwright/cli.js test`) bypass port/output setup
+      // and are rejected by the runner guard as well.
+      "*playwright*test*": "deny",
+      "*test:e2e:raw*": "deny",
+      "*--no-lock*": "deny",
+      "*E2E_SKIP_LOCK*": "deny",
+      "*GITHUB_ACTIONS=true*": "deny",
+      "*RUNNER_ENVIRONMENT=github-hosted*": "deny",
 
       // The guard's own escape hatch. Denying the variable closes the loop: the
       // only remaining way to get a window is a human typing it in their own

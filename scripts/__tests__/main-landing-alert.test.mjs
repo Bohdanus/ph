@@ -9,6 +9,7 @@ import {
   claimAlert,
   isOrphanAutoMergeState,
   observeOrphanAutoMerge,
+  recordedProcessIsAlive,
   resetOrphanAutoMergeFailover,
   runMergeReleaseAfterLanding,
   startWatcher,
@@ -18,6 +19,18 @@ const tempDirectories = [];
 
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+describe('main landing recorded PID identity', () => {
+  it('treats PID reuse as the recorded process being stopped only when start tokens differ', () => {
+    const exists = () => true;
+    expect(recordedProcessIsAlive(123, 'started-at-1', { exists, startToken: () => 'started-at-2' })).toBe(false);
+    expect(recordedProcessIsAlive(123, 'started-at-1', { exists, startToken: () => 'started-at-1' })).toBe(true);
+    expect(recordedProcessIsAlive(123, null, { exists, startToken: () => 'started-at-2' })).toBe(true);
+    expect(recordedProcessIsAlive(123, 'started-at-1', { exists: () => null, startToken: () => 'started-at-2' })).toBe(
+      null
+    );
+  });
 });
 
 describe('main landing alert claims', () => {

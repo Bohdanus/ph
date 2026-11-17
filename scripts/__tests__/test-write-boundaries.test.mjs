@@ -100,8 +100,8 @@ const REVIEWED = {
   },
   'main-worktree-guard.test.mjs': {
     scope:
-      'Git and hook fixtures use temporary repositories, including forced duplicate-main recovery and a watcher retry after one pre-creation failure; review child cwd and any environment passed to subprocesses.',
-    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=45 filesystem-write:mkdtempSync=10 filesystem-write:writeFileSync=35 filesystem-write:rmSync=13 filesystem-write:mkdirSync=5`,
+      'Git and hook fixtures use temporary repositories, including forced duplicate-main recovery, PID-reuse identity, mirror-proof checks, and a watcher retry after one pre-creation failure; review child cwd and any environment passed to subprocesses.',
+    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=45 filesystem-write:mkdtempSync=11 filesystem-write:writeFileSync=39 filesystem-write:rmSync=14 filesystem-write:mkdirSync=7`,
   },
   'main-landing-alert.test.mjs': {
     scope:
@@ -123,8 +123,8 @@ const REVIEWED = {
   },
   'mirror-e2e.test.mjs': {
     scope:
-      'Mirror and git fixtures use temporary repositories; the workflow newline regression uses a temporary CRLF fixture.',
-    patterns: `subprocess:spawnSync=3 filesystem-write:mkdtempSync=3 filesystem-write:writeFileSync=8 filesystem-write:mkdirSync=4 filesystem-write:rmSync=12`,
+      'Mirror proof and git fixtures use temporary repositories; the workflow newline regression uses a temporary CRLF fixture.',
+    patterns: `subprocess:spawnSync=3 filesystem-write:mkdtempSync=4 filesystem-write:writeFileSync=8 filesystem-write:mkdirSync=4 filesystem-write:rmSync=13`,
   },
   'orphan-branches.test.mjs': {
     scope:

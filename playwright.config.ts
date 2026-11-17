@@ -1,6 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
+import { assertSerializedRunOwner } from './scripts/e2e-run/run-owner.mjs';
 import { normalizeOwnServerBaseUrl } from './e2e/global-setup/foreign-origin.ts';
 import { playwrightWorkerCount } from './e2e/global-setup/worker-policy.ts';
+
+// UI mode returns before globalSetup; enforce the local queue before it opens a window.
+if (process.argv.includes('--ui')) assertSerializedRunOwner();
 
 /**
  * See https://playwright.dev/docs/test-configuration.
@@ -113,9 +117,8 @@ export default defineConfig({
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Testing a deployed build needs E2E_ALLOW_REMOTE=1, which
-     * `npm run test:e2e` refuses without and `e2e/global-setup.ts` refuses without
-     * for EVERY invocation, including a bare `npx playwright test`:
-     *   E2E_ALLOW_REMOTE=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npx playwright test
+     * `npm run test:e2e` and `e2e/global-setup.ts` both require:
+     *   E2E_ALLOW_REMOTE=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e
      * The run logs which origin it loaded. See e2e/README.md. */
     baseURL: testBaseUrl,
     // HEADLESS IS THE DEFAULT. Do not flip this to headed-on-local.
