@@ -813,7 +813,9 @@ export function useRect({
     // rotated canvas overlay left by the previous mode.
     if (externalOverlay) {
       if (overlayPaintModeRef.current !== 'external') {
-        if (overlayPaintModeRef.current !== null) clearCanvasBackingStore(ctx);
+        // The canvas is shared across tool mounts, so this instance can start with null mode while
+        // still inheriting pixels painted by the previous tool. Always clear on entry.
+        clearCanvasBackingStore(ctx);
         overlayPaintModeRef.current = 'external';
       }
       lastIncrementalRectRef.current = null;
