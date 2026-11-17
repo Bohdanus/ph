@@ -70,8 +70,8 @@ const REVIEWED = {
   },
   'free-model-pool.test.mjs': {
     scope:
-      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
-    patterns: `filesystem-write:mkdtemp=31 filesystem-write:rm=31 filesystem-write:writeFile=15 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
+    patterns: `filesystem-write:mkdtemp=32 filesystem-write:rm=32 filesystem-write:writeFile=15 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -100,8 +100,8 @@ const REVIEWED = {
   },
   'main-worktree-guard.test.mjs': {
     scope:
-      'Git and hook fixtures use temporary repositories, including foreign reuse of a stale main path, forced duplicate-main recovery, and a watcher retry after one pre-creation failure; review child cwd and any environment passed to subprocesses.',
-    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=49 filesystem-write:mkdtempSync=12 filesystem-write:writeFileSync=35 filesystem-write:rmSync=16 filesystem-write:mkdirSync=5`,
+      'Git and hook fixtures use temporary repositories, including foreign reuse of a stale main path, forced duplicate-main recovery, and watcher retry/recheck after one malformed owner read plus bounded exit after repeated malformed reads; review child cwd and any environment passed to subprocesses.',
+    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=49 filesystem-write:mkdtempSync=14 filesystem-write:writeFileSync=38 filesystem-write:rmSync=18 filesystem-write:mkdirSync=5`,
   },
   'main-landing-alert.test.mjs': {
     scope:

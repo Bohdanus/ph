@@ -191,19 +191,24 @@ async function canvasBox(page: Page): Promise<BoundingBox> {
 }
 
 /**
- * Computes the slab clip from the canvas's current box.
- * The clip follows the document-space line geometry with 20px padding.
+ * Computes a clip around the document-space slab from the canvas's current box.
+ * It includes the stroke's full document-space width and 20 CSS pixels of padding.
  */
-async function slabClip(page: Page): Promise<ViewportClip> {
-  const box = await canvasBox(page);
+function slabClipForBox(box: BoundingBox): ViewportClip {
   const start = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y);
   const end = documentToCanvasOffset(box, DOC_ERASE_LINE_END_X, DOC_LINE_Y);
+  const slabTop = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y - SLAB / 2);
+  const slabBottom = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y + SLAB / 2);
   return viewportClip({
     x: box.x + Math.min(start.x, end.x) - 20,
-    y: box.y + Math.min(start.y, end.y) - 20,
+    y: box.y + slabTop.y - 20,
     width: Math.abs(end.x - start.x) + 40,
-    height: SLAB + 40,
+    height: slabBottom.y - slabTop.y + 40,
   });
+}
+
+async function slabClip(page: Page): Promise<ViewportClip> {
+  return slabClipForBox(await canvasBox(page));
 }
 
 /** The name the seeded base layer carries in the Layers panel: `layer-utils.ts:160,181`. */
@@ -899,7 +904,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await expect(sampleSize).toHaveValue('1');
 
     // Find the slab's top edge from the capture itself rather than assuming where the line
-    // landed, so the click sits ON the colour boundary and the 3x3 window straddles it.
+    // landed; the half-logical-pixel nudge below then places the click just inside that edge.
     const clip = await slabClip(page);
     const image = await loadImageData(await page.screenshot({ clip }));
     if (image.width <= 0 || image.height <= 0) throw new Error('empty capture while locating the slab edge');
@@ -928,7 +933,6 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     const fitScale = Number(await workspace.getAttribute('data-fit-scale'));
     if (!Number.isFinite(fitScale) || fitScale <= 0) throw new Error(`invalid document fit scale: ${fitScale}`);
     target.y += fitScale / 2;
-
     await setForegroundColor(page, '#010101', true);
     await page.mouse.click(target.x, target.y);
     await expect
@@ -944,10 +948,10 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     // Reset the swatch so the poll below cannot be satisfied by the previous sample.
     await setForegroundColor(page, '#010101', true);
 
-    // Move half a logical image pixel into the slab so the click is inside the observed edge pixel
-    // instead of on its outer boundary. The 3x3 sample still reaches across the edge.
-    const HALF_PIXEL = 0.5;
-    await page.mouse.click(target.x, target.y + HALF_PIXEL);
+    // Reuse the same logical pixel center as the Point Sample. The 3x3 block centered on the
+    // first red row includes the white row above it, so only the sample-size change should alter
+    // the swatch.
+    await page.mouse.click(target.x, target.y);
     await expect
       .poll(async () => swatchDelta(page, { red: 204, green: 0, blue: 0 }), {
         message: 'the 3 by 3 Average to differ from the Point Sample',
@@ -1078,17 +1082,22 @@ test.describe('Eraser, fill tools and eyedropper', () => {
       'the blue stroke must commit one history entry before compositing is verified'
     ).toBeEnabled();
 
-    // Wait for the composited result: Multiply of blue (0,0,204) over red (204,0,0) = black (0,0,0)
-    // The overlap region is at the top portion of the clip (around y=10..70 in clip coords).
-    // Check at clip y=40 (middle of overlap) instead of clip center.
+    // Wait for the composited result: Multiply of blue (0,0,204) over red (204,0,0) = black (0,0,0).
+    // Address the overlap by its document-space center so changing the capture padding cannot
+    // move the assertion onto a pixel outside the two slabs.
+    const currentBox = await canvasBox(page);
+    const clip = slabClipForBox(currentBox);
     await waitForCanvasPixels(
       page,
-      await slabClip(page),
+      clip,
       async (screenshot) => {
         const image = await loadImageData(screenshot);
-        const centerX = Math.floor(image.width / 2);
-        const overlapCenterY = Math.floor(image.height * 0.3); // ~40px from top of 140px clip
-        const index = (overlapCenterY * image.width + centerX) * 4;
+        const overlap = documentToCanvasOffset(currentBox, DOC_LINE_CENTRE_X, DOC_LINE_Y_BLUE - 20);
+        const pixel = cssPointToImage(image, clip, {
+          x: currentBox.x + overlap.x,
+          y: currentBox.y + overlap.y,
+        });
+        const index = (Math.floor(pixel.y) * image.width + Math.floor(pixel.x)) * 4;
         return image.data[index] < 50 && image.data[index + 1] < 50 && image.data[index + 2] < 50;
       },
       { description: 'the multiply blend to produce black in the overlap region' }
