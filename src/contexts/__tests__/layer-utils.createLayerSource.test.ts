@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createLayerSource, createAffineLayerOperation, createLayerOperation, maxLayerOrder } from '../layer-utils.ts';
+import {
+  createLayerSource,
+  createAffineLayerOperation,
+  createLayerOperation,
+  getSortedLayersArray,
+  insertLayerRecordAfter,
+  maxLayerOrder,
+} from '../layer-utils.ts';
 import type { Layer, LayerOperation, LayersRecord } from '../layer-types.ts';
 import type { BlankLayerSource, ImageLayerSource, ToolLayerSource } from '../layer-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
@@ -107,25 +114,22 @@ describe('createLayerSource naming and ordering', () => {
     expect(layer.name).toBe('Photo.png 5');
   });
 
-  it('keeps repeated insertions above the selected layer within the available order gap', () => {
-    const layers: Record<string, { order: number; name?: string }> = {
-      selected: { order: 1, name: 'Selected' },
-      top: { order: 2, name: 'Top' },
+  it('keeps inserting above the selected layer after its numeric order gap is exhausted', () => {
+    const base = existingLayers().low!;
+    let layers: LayersRecord = {
+      selected: { ...base, id: 'selected', name: 'Selected', order: 1 },
+      top: { ...base, id: 'top', name: 'Top', order: 2 },
     };
-    let insertAfterLayerId = 'selected';
 
     for (let index = 0; index < 64; index += 1) {
-      const currentOrder = layers[insertAfterLayerId]!.order;
       const layer = createLayerSource({
         layers,
         source: bitmapSource(),
-        insertAfterLayerId,
+        insertAfterLayerId: 'selected',
       });
 
-      expect(layer.order).toBeGreaterThan(currentOrder);
-      expect(layer.order).toBeLessThan(2);
-      layers[layer.id] = { order: layer.order, name: layer.name };
-      insertAfterLayerId = layer.id;
+      layers = insertLayerRecordAfter(layers, layer, 'selected');
+      expect(getSortedLayersArray(layers)[1]!.id).toBe(layer.id);
     }
   });
 

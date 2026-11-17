@@ -169,8 +169,8 @@ const cases: ReadonlyArray<{
     name: 'create directly above the selected layer',
     history: [
       baseline({
-        [layerA]: runtimeLayer(layerA, 0),
-        [layerB]: runtimeLayer(layerB, 1),
+        [layerA]: runtimeLayer(layerA, 1),
+        [layerB]: runtimeLayer(layerB, 1 + Number.EPSILON),
       }),
       {
         id: 'insert-above-selected',

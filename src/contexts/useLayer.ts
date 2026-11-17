@@ -19,6 +19,7 @@ import {
   createLayerSource,
   deriveLayerNameAndOrder,
   getSortedLayersArray,
+  insertLayerRecordAfter,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
@@ -544,7 +545,10 @@ export const useLayers = () => {
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
-        updates: { layers: { ...currentLayers, [layer.id]: layer }, activeLayerId: layer.id },
+        updates: {
+          layers: insertLayerRecordAfter(currentLayers, layer, historyItem.insertAfterLayerId),
+          activeLayerId: layer.id,
+        },
         historyItem: entry,
       },
     });

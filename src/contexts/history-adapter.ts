@@ -35,6 +35,7 @@ import {
   type LayersRecord,
   type ToolLayerSource,
 } from './layer-types.ts';
+import { setLayerMapEntryAfter } from './layer-utils.ts';
 import type { BitmapSource, Size } from './general-types.ts';
 import type { NewBedrockSize, ToolArgs, VectorToolName } from './tool-types.ts';
 import { deriveSelectionBaseline, isValidLegacySelectionSnapshot, selectionSnapshot } from './selection-baseline.ts';
@@ -1312,8 +1313,12 @@ export function legacyHistoryToDurable(
       if ((item.actionName === NEW_LAYER_ACTION || (item.actionName === TOOL_ACTION && source)) && source) {
         const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers, item.insertAfterLayerId);
         const layer = convertLayer(runtimeLayer, assetOwnerId, registry);
-        if (enabled) currentLayers.set(layer.id, layer);
-        operation = Object.freeze({ kind: 'create-layer', layer });
+        if (enabled) setLayerMapEntryAfter(currentLayers, layer.id, layer, item.insertAfterLayerId);
+        operation = Object.freeze({
+          kind: 'create-layer',
+          layer,
+          ...(item.insertAfterLayerId !== undefined ? { insertAfterLayerId: item.insertAfterLayerId } : {}),
+        });
       } else if (isSetLayerPropertiesAction(item.actionName)) {
         const layerPropertiesEntry = deriveSetLayerPropertiesEntry(item);
         if (layerPropertiesEntry) {

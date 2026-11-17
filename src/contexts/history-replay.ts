@@ -7,7 +7,12 @@ import {
   isValidDocumentFrame,
   type DocumentFrame,
 } from './document-frame.ts';
-import { createAffineLayerOperation, createLayerOperation, reorderLayers } from './layer-utils.ts';
+import {
+  createAffineLayerOperation,
+  createLayerOperation,
+  insertLayerRecordAfter,
+  reorderLayers,
+} from './layer-utils.ts';
 import {
   isLayerBlendMode,
   type Layer,
@@ -222,7 +227,7 @@ export function replayHistory(
     if (actionName === NEW_LAYER_ACTION || (actionName === TOOL_ACTION && layerSource?.kind === 'tool')) {
       if (!source) continue;
       const layer = dependencies.createLayer({ layerId, layers, source, insertAfterLayerId: item.insertAfterLayerId });
-      layers = { ...layers, [layer.id]: layer };
+      layers = insertLayerRecordAfter(layers, layer, item.insertAfterLayerId);
       continue;
     }
     if (actionName === SHOW_LAYER_ACTION || actionName === HIDE_LAYER_ACTION) {

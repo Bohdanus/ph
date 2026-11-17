@@ -18,6 +18,35 @@ export function getSortedLayersArray(layersRecord: Record<LayerId, Layer>): Laye
   return Object.values(layersRecord).sort((a, b) => a.order - b.order);
 }
 
+export function insertLayerRecordAfter(layers: LayersRecord, layer: Layer, afterLayerId?: LayerId): LayersRecord {
+  const entries = Object.entries(layers).filter(([id]) => id !== layer.id);
+  if (afterLayerId === undefined) return Object.fromEntries([...entries, [layer.id, layer]]);
+
+  const anchorIndex = entries.findIndex(([id]) => id === afterLayerId);
+  if (anchorIndex < 0) throw new Error(`Cannot insert a layer after missing layer "${afterLayerId}"`);
+  entries.splice(anchorIndex + 1, 0, [layer.id, layer]);
+  return Object.fromEntries(entries);
+}
+
+export function setLayerMapEntryAfter<T>(
+  layers: Map<LayerId, T>,
+  layerId: LayerId,
+  layer: T,
+  afterLayerId?: LayerId
+): void {
+  const entries = [...layers.entries()].filter(([id]) => id !== layerId);
+  if (afterLayerId === undefined) {
+    layers.set(layerId, layer);
+    return;
+  }
+
+  const anchorIndex = entries.findIndex(([id]) => id === afterLayerId);
+  if (anchorIndex < 0) throw new Error(`Cannot insert a layer after missing layer "${afterLayerId}"`);
+  entries.splice(anchorIndex + 1, 0, [layerId, layer]);
+  layers.clear();
+  for (const [id, value] of entries) layers.set(id, value);
+}
+
 /**
  * Converts an array of layers into a Record indexed by layer ID.
  * @param layersArray - Array of Layer objects
@@ -182,46 +211,30 @@ function getNameFromSource(source: LayerSource) {
  * start failing on args no conversion ever needed.
  */
 function orderImmediatelyAfter(layers: LayerOrderRecord, afterLayerId: LayerId): number {
-  const target = layers[afterLayerId];
-  if (!target) throw new Error(`Cannot insert a layer after missing layer "${afterLayerId}"`);
+  const ordered = Object.entries(layers).sort(([, left], [, right]) => left.order - right.order);
+  const targetIndex = ordered.findIndex(([id]) => id === afterLayerId);
+  if (targetIndex < 0) throw new Error(`Cannot insert a layer after missing layer "${afterLayerId}"`);
 
-  const nextOrder = Object.values(layers).reduce(
-    (next, layer) => (layer.order > target.order ? Math.min(next, layer.order) : next),
-    Infinity
-  );
-  const order = Number.isFinite(target.order) ? nextRepresentableOrder(target.order) : NaN;
-  if (!Number.isFinite(order) || order <= target.order || (Number.isFinite(nextOrder) && order >= nextOrder)) {
-    throw new RangeError(`Cannot insert a layer after "${afterLayerId}" because adjacent layer order has no gap`);
-  }
-  return order;
-}
-
-function nextRepresentableOrder(order: number): number {
-  if (order === 0) return Number.MIN_VALUE;
-
-  const view = new DataView(new ArrayBuffer(8));
-  view.setFloat64(0, order, false);
-  let high = view.getUint32(0, false);
-  let low = view.getUint32(4, false);
-
-  // Advance one IEEE-754 value so repeated insertions consume the gap linearly.
-  if (order > 0) {
-    if (low === 0xffffffff) {
-      high += 1;
-      low = 0;
-    } else {
-      low += 1;
-    }
-  } else if (low === 0) {
-    high -= 1;
-    low = 0xffffffff;
-  } else {
-    low -= 1;
+  const target = ordered[targetIndex]![1];
+  if (!Number.isFinite(target.order)) {
+    throw new RangeError(`Cannot insert a layer after "${afterLayerId}" because its order is not finite`);
   }
 
-  view.setUint32(0, high, false);
-  view.setUint32(4, low, false);
-  return view.getFloat64(0, false);
+  const next = ordered[targetIndex + 1]?.[1];
+  if (!next) {
+    const order = target.order + 1;
+    return Number.isFinite(order) && order > target.order ? order : target.order;
+  }
+  if (!Number.isFinite(next.order) || next.order < target.order) {
+    throw new RangeError(`Cannot insert a layer after "${afterLayerId}" because adjacent layer order is invalid`);
+  }
+  if (next.order === target.order) return target.order;
+
+  const midpoint = target.order / 2 + next.order / 2;
+  if (Number.isFinite(midpoint) && midpoint > target.order && midpoint < next.order) return midpoint;
+
+  // Equal orders are ordered by the record/map position, which the insertion helpers preserve.
+  return target.order;
 }
 
 export function deriveLayerNameAndOrder(layers: LayerOrderRecord, source: LayerSource, insertAfterLayerId?: LayerId) {

@@ -77,6 +77,63 @@ describe('history append source-backed create planning', () => {
     }
   });
 
+  it('preserves the insertion anchor when adjacent layer orders have no numeric gap', () => {
+    const registry = new AssetRegistry();
+    try {
+      const source: LayerSource = {
+        kind: 'blank',
+        color: '#ffffff',
+        opacity: 1,
+        isBedrock: false,
+        pos: position,
+      };
+      const base = deriveCreateLayerEntry(createItem('base-layer', source), context(registry));
+      if (!base || base.operation.kind !== 'create-layer') throw new Error('expected a base layer');
+
+      const preLayers = new Map([
+        ['selected', { ...base.operation.layer, id: 'selected', name: 'Selected', order: 1 }],
+        ['top', { ...base.operation.layer, id: 'top', name: 'Top', order: 1 + Number.EPSILON }],
+      ]);
+      const item = { ...createItem('inserted-layer', source), insertAfterLayerId: 'selected' };
+      const planned = deriveCreateLayerEntry(item, context(registry, preLayers));
+
+      expect(planned?.operation).toMatchObject({
+        kind: 'create-layer',
+        insertAfterLayerId: 'selected',
+        layer: { order: 1 },
+      });
+      expect(validatePlannedDurableEntry(item, planned!, null, preLayers, registry, documentId)).toBeNull();
+    } finally {
+      registry.shutdown();
+    }
+  });
+
+  it('rejects a non-string durable insertion anchor', () => {
+    const registry = new AssetRegistry();
+    try {
+      const source: LayerSource = {
+        kind: 'blank',
+        color: '#ffffff',
+        opacity: 1,
+        isBedrock: false,
+        pos: position,
+      };
+      const item = createItem('blank-layer', source);
+      const planned = deriveCreateLayerEntry(item, context(registry));
+      if (!planned || planned.operation.kind !== 'create-layer') throw new Error('expected a blank create plan');
+      const malformed = {
+        ...planned,
+        operation: { ...planned.operation, insertAfterLayerId: 123 },
+      } as unknown as DurableHistoryEntry;
+
+      expect(validatePlannedDurableEntry(item, malformed, null, new Map(), registry, documentId)).toBe(
+        'the durable create-layer operation does not have the canonical shape'
+      );
+    } finally {
+      registry.shutdown();
+    }
+  });
+
   it('creates an image layer with a registered raster asset', () => {
     const registry = new AssetRegistry();
     try {
