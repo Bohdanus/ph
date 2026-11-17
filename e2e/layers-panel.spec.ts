@@ -203,6 +203,31 @@ test.describe('Layers panel', () => {
     await expect(canvas).toBeVisible();
   });
 
+  test('New Layer inserts above the selected row and is one undoable history step', async ({ page }) => {
+    const rows = page.getByTestId(LAYER_ROW);
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    const newLayer = page.getByTestId('layers-new-layer-button');
+
+    await expect(rows).toHaveCount(1);
+    await expect(newLayer).toBeEnabled();
+    await newLayer.click();
+    await expect(rows).toHaveCount(2);
+    await activateRow(layerRow(page, 'Blank 1'), layerRow(page, 'Blank 2'));
+    await newLayer.click();
+
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toContainText('Blank 2');
+    await expect(rows.nth(1)).toContainText('Blank 3');
+    await expect(rows.nth(2)).toContainText('Blank 1');
+    await expect(historyRows).toHaveCount(3);
+
+    await page.getByTestId('undo-button').click();
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toContainText('Blank 2');
+    await expect(rows.nth(1)).toContainText('Blank 1');
+    await expect(historyRows).toHaveCount(3);
+  });
+
   /**
    * Everything the five tests share: a stroke that lands on its own new layer (the Draw
    * tool area calls `createLayerFromTool` per stroke, `DrawToolArea.tsx:87`), and a pixel

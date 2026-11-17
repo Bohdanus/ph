@@ -88,6 +88,34 @@ describe('createLayerSource naming and ordering', () => {
     expect(maxLayerOrder({})).toBe(0);
   });
 
+  it('inserts a layer directly above its anchor and keeps its name unique', () => {
+    const layers = {
+      bottom: { order: 0, name: 'Bottom' },
+      selected: { order: 1, name: 'Selected' },
+      top: { order: 2, name: 'Top' },
+      renamed: { order: 3, name: 'Photo.png 4' },
+    };
+
+    const layer = createLayerSource({
+      layers,
+      source: bitmapSource(),
+      insertAfterLayerId: 'selected',
+    });
+
+    expect(layer.order).toBe(1.5);
+    expect(layer.name).toBe('Photo.png 5');
+  });
+
+  it('rejects insertion after a layer that is not present', () => {
+    expect(() =>
+      createLayerSource({
+        layers: existingLayers(),
+        source: bitmapSource(),
+        insertAfterLayerId: 'missing',
+      })
+    ).toThrow('Cannot insert a layer after missing layer "missing"');
+  });
+
   it('truncates a long image name with an ellipsis', () => {
     const layer = createLayerSource({ layers: {}, source: bitmapSource({ name: 'x'.repeat(40) }) });
 

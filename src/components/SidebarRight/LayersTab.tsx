@@ -243,10 +243,11 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
 }
 
 export default function LayersTab() {
-  const [{ layers, activeLayerId, documentFrame, totalSize, previewLayers }] = useStore();
+  const [{ layers, activeLayerId, documentFrame, totalSize, previewLayers, hasImage }] = useStore();
   const {
     toggleVisibility,
     removeLayer,
+    createBlankLayer,
     moveLayerAfter,
     setActiveLayer,
     updateLayer,
@@ -267,6 +268,7 @@ export default function LayersTab() {
   const [draggedLayerId, setDraggedLayerId] = useState<LayerId | null>(null);
   const [dropTargetId, setDropTargetId] = useState<LayerId | null>(null);
   const [isOverBottom, setIsOverBottom] = useState(false);
+  const [isOverTrash, setIsOverTrash] = useState(false);
 
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
   const canReorderLayer = (layerId: LayerId | null): layerId is LayerId =>
@@ -285,6 +287,7 @@ export default function LayersTab() {
     active: boolean;
     targetId: LayerId | null;
     overBottom: boolean;
+    overTrash: boolean;
   } | null>(null);
   const suppressClickRef = useRef(false);
   const suppressPointerClickRef = useRef(false);
@@ -394,6 +397,7 @@ export default function LayersTab() {
       setDraggedLayerId(null);
       setDropTargetId(null);
       setIsOverBottom(false);
+      setIsOverTrash(false);
     };
     window.addEventListener('blur', cancelPointerDrag);
     document.addEventListener('visibilitychange', cancelPointerDrag);
@@ -406,6 +410,8 @@ export default function LayersTab() {
 
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
   const activeLayer = activeLayerId ? layers[activeLayerId] : null;
+  const layerFrame = documentFrame ?? documentFrameFromSize(totalSize);
+  const canCreateLayer = hasImage && layerFrame.width > 0 && layerFrame.height > 0;
   // The same two conditions `convertBedrockLayer()` refuses on, kept in step so the
   // control is never present for an action that would be a no-op. The second one is
   // the backing layer being the whole stack: a conversion above any other layer
@@ -476,6 +482,7 @@ export default function LayersTab() {
     setDraggedLayerId(null);
     setDropTargetId(null);
     setIsOverBottom(false);
+    setIsOverTrash(false);
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>, layerId: LayerId) {
@@ -503,6 +510,7 @@ export default function LayersTab() {
       active: false,
       targetId: null,
       overBottom: false,
+      overTrash: false,
     };
     pointerDragRef.current = pointerDrag;
     try {
@@ -547,6 +555,10 @@ export default function LayersTab() {
     const pointed = document.elementFromPoint(event.clientX, event.clientY);
     const target = pointed?.closest<HTMLElement>('[data-testid="layer-row"]');
     const overBottom = Boolean(!target && pointed?.closest<HTMLElement>('[data-testid="layers-bottom-drop-target"]'));
+    const overTrash = Boolean(
+      textEditingLayerId !== pointerDrag.layerId &&
+      pointed?.closest<HTMLElement>('[data-testid="layers-delete-active-button"]')
+    );
     const targetId = (target?.dataset.layerId as LayerId | undefined) ?? null;
     const targetIndex = targetId ? sortedLayers.findIndex((layer) => layer.id === targetId) : -1;
     const sourceIsImmediatelyAboveTarget = targetIndex > 0 && sortedLayers[targetIndex - 1]?.id === pointerDrag.layerId;
@@ -555,18 +567,24 @@ export default function LayersTab() {
         ? targetId
         : null;
     pointerDrag.overBottom = overBottom;
+    pointerDrag.overTrash = overTrash;
     setDropTargetId(pointerDrag.targetId);
     setIsOverBottom(overBottom);
+    setIsOverTrash(overTrash);
     event.preventDefault();
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
     const pointerDrag = pointerDragRef.current;
     if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
-    const { active, layerId, targetId, overBottom } = pointerDrag;
+    const { active, layerId, targetId, overBottom, overTrash } = pointerDrag;
     clearPointerDrag(event);
     if (active) suppressPointerClickRef.current = true;
-    if (active && canReorderLayer(layerId) && (targetId || overBottom)) animateMove(layerId, targetId ?? undefined);
+    if (active && canReorderLayer(layerId) && overTrash) {
+      handleConfirmRemove(layerId);
+    } else if (active && canReorderLayer(layerId) && (targetId || overBottom)) {
+      animateMove(layerId, targetId ?? undefined);
+    }
   }
 
   function handleLostPointerCapture(event: React.PointerEvent<HTMLDivElement>) {
@@ -637,6 +655,8 @@ export default function LayersTab() {
                       return;
                     }
 
+                    setIsOverBottom(false);
+                    setIsOverTrash(false);
                     setDraggedLayerId(layer.id);
                     e.dataTransfer.effectAllowed = 'move';
                     e.dataTransfer.setData('application/x-layer-id', layer.id);
@@ -650,6 +670,7 @@ export default function LayersTab() {
                     setDraggedLayerId(null);
                     setDropTargetId(null);
                     setIsOverBottom(false);
+                    setIsOverTrash(false);
                     suppressClickRef.current = false;
                     suppressPointerClickRef.current = false;
                   }}
@@ -659,6 +680,7 @@ export default function LayersTab() {
 
                     setDropTargetId(layer.id);
                     setIsOverBottom(false);
+                    setIsOverTrash(false);
                     if (!draggedLayerId || !isDropTarget) return; // not allowed
 
                     e.preventDefault();
@@ -668,6 +690,7 @@ export default function LayersTab() {
                     setDraggedLayerId(null);
                     setDropTargetId(null);
                     setIsOverBottom(false);
+                    setIsOverTrash(false);
                     suppressClickRef.current = false;
                     suppressPointerClickRef.current = false;
 
@@ -789,8 +812,8 @@ export default function LayersTab() {
                   )}
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
+                    onClick={(event) => {
+                      event.stopPropagation();
                       handleConfirmRemove(layer.id);
                     }}
                     disabled={textEditingLayerId === layer.id}
@@ -835,6 +858,7 @@ export default function LayersTab() {
 
           e.preventDefault();
           setIsOverBottom(true);
+          setIsOverTrash(false);
           setDropTargetId(null);
         }}
         onDrop={(e) => {
@@ -842,6 +866,7 @@ export default function LayersTab() {
           setDraggedLayerId(null);
           setDropTargetId(null);
           setIsOverBottom(false);
+          setIsOverTrash(false);
 
           if (!isMovableLayer(draggedLayerId)) return;
 
@@ -849,6 +874,86 @@ export default function LayersTab() {
           animateMove(draggedLayerId);
         }}
       />
+
+      <div
+        role="toolbar"
+        aria-label="Layer actions"
+        data-testid="layers-action-bar"
+        className="flex shrink-0 items-center justify-center gap-2 border-t border-gray-200 pt-1 dark:border-gray-700"
+      >
+        <button
+          type="button"
+          data-testid="layers-new-layer-button"
+          aria-label="New Layer"
+          title="Create a new layer above the selected layer"
+          disabled={!canCreateLayer}
+          onClick={() =>
+            createBlankLayer(
+              {
+                color: '#ffffff',
+                opacity: 0,
+                pos: { x: layerFrame.x, y: layerFrame.y, ...totalSize },
+              },
+              false,
+              activeLayerId ?? undefined
+            )
+          }
+          className="grid min-h-11 min-w-11 place-items-center rounded text-gray-600 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-300 dark:hover:bg-gray-700"
+        >
+          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+            <path d="M5 3.75h9l5 5v11.5H5zM14 4v5h5" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+            <path d="M12 12v5m-2.5-2.5h5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          data-testid="layers-delete-active-button"
+          aria-label="Delete layer"
+          title={
+            textEditingLayerId === activeLayerId && activeLayerId
+              ? 'Finish text editing before deleting this layer'
+              : activeLayer
+                ? `Delete ${activeLayer.name}`
+                : 'Drag a layer here to delete it'
+          }
+          disabled={
+            Object.keys(layers).length === 0 ||
+            (!activeLayerId && !draggedLayerId) ||
+            (Boolean(activeLayerId) && textEditingLayerId === activeLayerId && !draggedLayerId)
+          }
+          onClick={(event) => {
+            event.stopPropagation();
+            if (activeLayerId) handleConfirmRemove(activeLayerId);
+          }}
+          onDragOver={(event) => {
+            if (!isMovableLayer(draggedLayerId) || textEditingLayerId === draggedLayerId) {
+              setIsOverTrash(false);
+              return;
+            }
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+            setIsOverTrash(true);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const layerId = draggedLayerId;
+            setDraggedLayerId(null);
+            setDropTargetId(null);
+            setIsOverBottom(false);
+            setIsOverTrash(false);
+            if (layerId && canReorderLayer(layerId) && textEditingLayerId !== layerId) {
+              handleConfirmRemove(layerId);
+            }
+          }}
+          className={[
+            'grid min-h-11 min-w-11 place-items-center rounded text-gray-600 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-300 dark:hover:bg-gray-700',
+            isOverTrash ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' : '',
+          ].join(' ')}
+        >
+          <TrashIcon />
+        </button>
+      </div>
 
       {/* Ghost element for custom drag image */}
       <div

@@ -551,7 +551,7 @@ export const useLayers = () => {
     requestPresentation(layer);
   };
 
-  const createBlankLayer = (params: BlankImageParams, replaceDocument = false) => {
+  const createBlankLayer = (params: BlankImageParams, replaceDocument = false, insertAfterLayerId?: LayerId) => {
     if ('size' in params && params.size.width > 0 && params.size.height > 0) {
       assertWithinDocumentPixelBudget(params.size, 'Document');
     }
@@ -559,7 +559,8 @@ export const useLayers = () => {
     if (currentLayers === null) return;
 
     const source: BlankLayerSource = { kind: 'blank', ...params };
-    const newLayer = createLayerSource({ layers: currentLayers, source });
+    const layerInsertionAnchor = replaceDocument ? undefined : insertAfterLayerId;
+    const newLayer = createLayerSource({ layers: currentLayers, source, insertAfterLayerId: layerInsertionAnchor });
 
     _addLayer(
       newLayer,
@@ -567,6 +568,7 @@ export const useLayers = () => {
         layerId: newLayer.id,
         actionName: NEW_LAYER_ACTION,
         layerSource: source,
+        ...(layerInsertionAnchor !== undefined ? { insertAfterLayerId: layerInsertionAnchor } : {}),
       },
       replaceDocument
         ? {

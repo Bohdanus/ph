@@ -1266,6 +1266,50 @@ describe('LayersTab drag and drop guards', () => {
     }
   });
 
+  it('supports dropping a touch drag on the trash action', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const thumbnail = screen.getAllByTestId('layer-thumbnail')[0]!;
+    const target = screen.getByTestId('layers-delete-active-button');
+    mockPointerCapture(source);
+    const elementFromPoint = vi.fn(() => target);
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: elementFromPoint });
+
+    try {
+      act(() => {
+        fireEvent.pointerDown(thumbnail, {
+          pointerId: 21,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 10,
+          clientY: 10,
+        });
+        vi.advanceTimersByTime(LAYER_REORDER_LONG_PRESS_MS);
+        fireEvent.pointerMove(source, {
+          pointerId: 21,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
+        fireEvent.pointerUp(source, {
+          pointerId: 21,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
+      });
+
+      expect(elementFromPoint).toHaveBeenCalledWith(20, 20);
+      expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
+      expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
+    }
+  });
+
   it('cancels the hold timer and releases capture on pointercancel', () => {
     render(<LayersTab />);
     const source = getLayerDivs()[0]!;

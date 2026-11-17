@@ -876,7 +876,12 @@ export type SourceBackedEntryContext = Readonly<{
 function durableLayerForSource(item: HistoryItem, context: SourceBackedEntryContext): DurableLayerSnapshot | null {
   const source = sourceFromEntry(item);
   if (!source) return null;
-  const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, context.liveLayers ?? new Map(context.preLayers));
+  const runtimeLayer = sourceToRuntimeLayer(
+    item.layerId,
+    source,
+    context.liveLayers ?? new Map(context.preLayers),
+    item.insertAfterLayerId
+  );
   const layer = convertLayer(runtimeLayer, context.documentId, context.registry);
   if (layer.source.kind === 'legacy-tool') {
     throw new UnsupportedHistoryFeatureError(
@@ -1911,7 +1916,7 @@ function validatePlannedDurableEntryUnchecked(
     // The adapter's source-to-runtime rule determines the canonical layer metadata.
     let runtime: Layer;
     try {
-      runtime = sourceToRuntimeLayer(entry.layerId, source, liveLayers ?? new Map(preLayers));
+      runtime = sourceToRuntimeLayer(entry.layerId, source, liveLayers ?? new Map(preLayers), entry.insertAfterLayerId);
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }

@@ -166,6 +166,22 @@ const cases: ReadonlyArray<{
     ],
   },
   {
+    name: 'create directly above the selected layer',
+    history: [
+      baseline({
+        [layerA]: runtimeLayer(layerA, 0),
+        [layerB]: runtimeLayer(layerB, 1),
+      }),
+      {
+        id: 'insert-above-selected',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'inserted',
+        layerSource: blankSource({ x: 10, y: 15, width: 40, height: 30 }),
+        insertAfterLayerId: layerA,
+      },
+    ],
+  },
+  {
     name: 'reposition and affine transform',
     history: [
       baseline(),
@@ -323,7 +339,8 @@ const cases: ReadonlyArray<{
  */
 function replayDependencies(): HistoryReplayDependencies {
   return {
-    createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source }),
+    createLayer: ({ layerId, layers, source, insertAfterLayerId }) =>
+      createLayerSource({ layerId, layers, source, insertAfterLayerId }),
     applyRasterTool: (layer) => layer,
   };
 }

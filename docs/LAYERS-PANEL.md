@@ -49,21 +49,21 @@ still retained because Adobe documents resizing panel edges and dividers.
 
 ## 1. Current state
 
-| Area                      | File                                                                               | Notes                                                                                                                                                                               |
-| ------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Panel body                | `src/components/SidebarRight/LayersTab.tsx`                                        | Layer rows plus `LayerThumbnail`, using the existing presentation renderer                                                                                                          |
-| Panel chrome              | `src/components/SidebarRight/SidebarRight.tsx`, `PanelGroup.tsx`                   | Pinned dock, tabs, collapse, width resize, shared vertical split. `PanelId = 'history' \| 'layers'` in `src/contexts/PanelLayout.tsx`                                               |
-| Layer model               | `src/contexts/layer-types.ts` — `Layer`, `LayerSource`, `LayerOperation`           | `Layer` is a flat record; `LayerSource` is a 3-way union; `LayerOperation` a 2-way union                                                                                            |
-| Layer creation / ordering | `src/contexts/layer-utils.ts`                                                      | `getSortedLayersArray()`, `reorderLayers()`                                                                                                                                         |
-| Mutations                 | `src/contexts/useLayer.ts`, `LayersTab.tsx`                                        | `updateLayer()`, `removeLayer()`, `setActiveLayer()`, `toggleVisibility()`, `moveLayerAfter()`, `convertBedrockLayer()`, text re-entry, opacity, blend mode, and full-lock controls |
-| Property application      | `src/contexts/layer-renderer.ts` — `drawLayer()`                                   | `ctx.globalAlpha = layer.opacity`, `ctx.globalCompositeOperation = layer.blendMode`                                                                                                 |
-| Lock enforcement          | `src/contexts/useLayer.ts` — `isLayerLocked()`                                     | Checked by tool edits, temporary edits, `replaceLayerSource()`, and `moveLayerAfter()`; PSD import and the Layers panel can set the full-lock boolean                               |
-| History / undo            | `src/contexts/history-replay.ts` — `replayHistory()`                               | Per-action arms: the layer arms, plus the document-frame and selection arms                                                                                                         |
-| Durable property path     | `src/contexts/history-adapter.ts` — `LayerPropertyKey`                             | Explicit actions derive and validate `visible`, `name`, `opacity`, `blendMode`, and `locked` patches                                                                                |
-| Tablet touch panel        | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | Tablet touch surface: new-layer, delete, rename, move up/down, opacity, blend mode, and full lock; handheld phones are out of scope                                                 |
-| Tests                     | `src/components/SidebarRight/__tests__/LayersTab*.test.tsx`, `e2e/layers*.spec.ts` | What each suite pins is in [§16](#16-test-coverage-that-exists)                                                                                                                     |
+| Area                      | File                                                                               | Notes                                                                                                                                                                                      |
+| ------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Panel body                | `src/components/SidebarRight/LayersTab.tsx`                                        | Layer rows plus `LayerThumbnail` and a bottom New Layer/Delete action bar, using the existing presentation renderer                                                                        |
+| Panel chrome              | `src/components/SidebarRight/SidebarRight.tsx`, `PanelGroup.tsx`                   | Pinned dock, tabs, collapse, width resize, shared vertical split. `PanelId = 'history' \| 'layers'` in `src/contexts/PanelLayout.tsx`                                                      |
+| Layer model               | `src/contexts/layer-types.ts` — `Layer`, `LayerSource`, `LayerOperation`           | `Layer` is a flat record; `LayerSource` is a 3-way union; `LayerOperation` a 2-way union                                                                                                   |
+| Layer creation / ordering | `src/contexts/layer-utils.ts`                                                      | `createLayerSource()` places a new layer above its selected anchor; `getSortedLayersArray()`, `reorderLayers()`                                                                            |
+| Mutations                 | `src/contexts/useLayer.ts`, `LayersTab.tsx`                                        | New Layer and Delete actions, `updateLayer()`, `removeLayer()`, `setActiveLayer()`, `toggleVisibility()`, `moveLayerAfter()`, `convertBedrockLayer()`, text re-entry, opacity, blend, lock |
+| Property application      | `src/contexts/layer-renderer.ts` — `drawLayer()`                                   | `ctx.globalAlpha = layer.opacity`, `ctx.globalCompositeOperation = layer.blendMode`                                                                                                        |
+| Lock enforcement          | `src/contexts/useLayer.ts` — `isLayerLocked()`                                     | Checked by tool edits, temporary edits, `replaceLayerSource()`, and `moveLayerAfter()`; PSD import and the Layers panel can set the full-lock boolean                                      |
+| History / undo            | `src/contexts/history-replay.ts` — `replayHistory()`                               | Layer insertion anchors replay with the creation action; the document-frame and selection arms remain per-action                                                                           |
+| Durable property path     | `src/contexts/history-adapter.ts` — `LayerPropertyKey`                             | Explicit actions derive and validate `visible`, `name`, `opacity`, `blendMode`, and `locked` patches                                                                                       |
+| Tablet touch panel        | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | Tablet touch surface: new-layer-above-selection, delete, rename, move up/down, opacity, blend mode, and full lock; handheld phones are out of scope                                        |
+| Tests                     | `src/components/SidebarRight/__tests__/LayersTab*.test.tsx`, `e2e/layers*.spec.ts` | What each suite pins is in [§16](#16-test-coverage-that-exists)                                                                                                                            |
 
-The panel today is **a list of names with visibility, live thumbnails, opacity, blend mode, full lock, and removal controls**. The remaining requirements below distinguish actual model gaps from missing panel affordances. Two facts drive most of what follows:
+The panel today has **visibility, live thumbnails, opacity, blend mode, full lock, row removal, and a bottom New Layer/Delete action bar**. New layers are inserted directly above the selected layer and that placement is preserved by undo, redo, and durable history. The remaining requirements below distinguish actual model gaps from missing panel affordances. Two facts drive most of what follows:
 
 <!-- `docs/TOOLS.md` is GENERATED by `npm run docs:tools`, and a test fails on drift, so
      its line numbers move on every regeneration. Cite its section headings instead: a
@@ -253,15 +253,12 @@ Note that four visible controls do not imply four model fields: Adobe's UXP `Lay
 Two independent third-party sources enumerate this row and agree on all seven and on the order; Adobe
 names controls 2 and 4 directly.
 
-- `GAP` — **the bar does not exist.** `LayersTab.tsx` — `LayersTab()` — has a bottom _drop zone_
-  (the `isOverBottom` element, used for drag-to-reorder-to-bottom) and an off-screen drag-ghost
-  element (the `dragImageRef` element). Those
-  are the last two children of the component — which is the _only_ thing making this verdict true, so
-  appending a real action bar is a change to this section and not only to the component. The only "new
-  layer" control in the repo is the mobile drawer's `New Layer` button
-  (`MobileLayersDrawer.tsx` — `MobileLayersDrawer()`).
-- **Requirement.** New layers land **directly above** the selected layer, or **inside** the selected
-  group. (Adobe, primary)
+- `PARTIAL` — the desktop bar implements **Create a new layer** and **Delete layer**. The other five
+  icons remain unavailable because their model-backed capabilities do not exist. The existing per-row
+  removal control remains as a convenience; the bottom trash control can also receive a dragged layer.
+- `HAVE` — New layers land **directly above** the selected layer. The selected-layer anchor is recorded
+  in the single creation history entry, so undo, redo, and durable conversion preserve the same order.
+  Creating inside a selected group is unavailable because the layer model has no groups.
 - **Requirement.** `Alt`/`Option`-clicking New Layer or New Group opens the dialog;
   `Ctrl`/`Cmd`-clicking New Layer creates **below** the selected layer; `Shift`-clicking New Group
   groups the current selection. (Adobe, primary) The `Shift`-click is load-bearing, not a shortcut:
@@ -572,15 +569,14 @@ the Delete key**." (Adobe, primary; corroborated by the Elements shortcut page a
 > `Layer > Merge Down` and `Layer > Flatten Image` on the same page. The singular is correct; the
 > plural is a typo in Adobe's text. Do not copy the plural into this app's menu.
 
-- `PARTIAL` — there is a delete control on every row (the `aria-label="Remove layer"` button in
-  `LayersTab.tsx`) and it deletes
-  immediately, with no confirmation path and no modifier. It is also available on a **bedrock**
+- `PARTIAL` — the row control and action-bar trash button delete immediately, with no confirmation
+  path and no modifier. The action-bar trash button also accepts a dragged layer. Removal is available on a **bedrock**
   layer, which the `it('keeps remove control available for a bedrock layer')` case in
   `LayersTab.test.tsx` pins as intended. Honouring the backing layer's movement refusal does not
   remove its delete control; it is not a Photoshop Background layer.
 - `GAP` — confirmation. **The requirement is not "add a confirm dialog"**; it is that the _default_
   path confirms and the _modified_ path does not, so the fast path stays fast.
-- `GAP` — the `Delete` key as a panel-level shortcut, and drag-a-row-onto-the-trash.
+- `GAP` — the `Delete` key as a panel-level shortcut.
 - `GAP` — `Delete ▸ Hidden Layers`.
 - `handleConfirmRemove()` in `LayersTab.tsx` carries
   `// todo: draw a "undo" button that disappears in few seconds`. That is
@@ -825,9 +821,9 @@ including Retina/high-DPI tablets; handheld phone layouts such as iPhone-sized s
 Do not add phone-only layer interactions or phone breakpoints. The tablet surface must obey the same
 document and pinned-panel rules as desktop.
 
-`MobileLayersDrawer.tsx` is a **separate component** from `LayersTab`, not a responsive variant, and it
-is currently **richer** than the desktop panel: it has a `New Layer` button, a delete button, rename,
-and explicit move-up / move-down, all with 44px hit targets.
+`MobileLayersDrawer.tsx` is a **separate component** from `LayersTab`, not a responsive variant. Both
+surfaces offer New Layer and Delete; the tablet drawer additionally has rename and explicit move-up /
+move-down controls, all with 44px hit targets.
 
 - Each mobile layer row has an opacity slider, full-lock toggle, and the active row's blend-mode selector.
   They edit the same fields as desktop; lock and blend changes each create one dedicated durable action.
@@ -866,10 +862,10 @@ Renaming anything in this panel has blast radius beyond the panel. Current contr
 | Suite                                                | What it pins                                                                                                                                                               |
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SidebarRight/__tests__/LayersTab.test.tsx`          | Empty state, top-first order, active highlight, eye states, **one live preview thumbnail per row**, trash, rename (all branches), blank-rename write-back, and drag guards |
-| `SidebarRight/__tests__/LayersTab.dispatch.test.tsx` | Exact dispatched action objects for hide, show, select, rename, remove, blend mode, full lock, and both reorder intents                                                    |
+| `SidebarRight/__tests__/LayersTab.dispatch.test.tsx` | Exact dispatched action objects for New Layer placement, delete, hide, show, select, rename, remove, blend mode, full lock, and reorder intents                            |
 | `SidebarRight/__tests__/LayersTab.store.test.tsx`    | Live-subscription rendering, refused drops, and abandoned drags leave stacking order untouched                                                                             |
 | `SidebarRight/__tests__/SidebarRight.test.tsx`       | Dock gating, collapse, roll-up, pinned-panel behavior, and resize                                                                                                          |
-| `e2e/layers-panel.spec.ts`                           | Hide/show compositing, rename, Merge all, layer-vs-History row identity, row selection, history entries, and empty state                                                   |
+| `e2e/layers-panel.spec.ts`                           | New Layer ordering and undo, hide/show compositing, rename, Merge all, layer-vs-History row identity, row selection, history entries, and empty state                      |
 | `e2e/layers.spec.ts`                                 | Four-layer drag reorder, deletion, and hidden-state preservation                                                                                                           |
 | `Mobile/__tests__/MobileLayersDrawer.test.tsx`       | Move up/down exactness, 44px targets, ARIA structure, opacity gestures, blend mode, full lock, locked-layer behavior, and history groups                                   |
 
@@ -885,19 +881,19 @@ Ordered by what each one unblocks, **not** by Photoshop's own order. Completed r
 so the dependency history is readable; their current status is authoritative. Every row's prerequisite is either earlier in
 this table or explicitly marked as not blocking.
 
-| #   | Requirement                                 | Unblocks                                                                                                                                                                                  |
-| --- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Honor `isBedrock` in the panel** (`HAVE`) | The desktop panel now refuses to drag/reorder the backing layer, matching the canvas. No new model needed ([§12](#12-the-background-layer))                                               |
-| 2   | **Layer kind discriminator**                | Folder, filter, mask, and Smart Object UI; the `T` marker is already inferred for retained Text-tool sources ([§9](#9-the-layer-model-the-panel-requires))                                |
-| 3   | **Layer thumbnail** (`HAVE`)                | Live 48x32 previews are implemented; remaining gaps are thumbnail-size preference and the Smart Object marker ([§3](#3-layer-row-anatomy))                                                |
-| 4   | **Bottom action bar**                       | New layer and delete-as-a-drag-target. **New layer and delete only** — the new-group button needs #8 ([§2.6](#26-the-bottom-action-bar))                                                  |
-| 5   | **Opacity + blend mode** (`PARTIAL`)        | Opacity and 16 supported blend modes are editable on desktop and tablet; Photoshop's exact opacity presets and unsupported blend modes remain absent ([§2.4](#24-blend-mode-and-opacity)) |
-| 6   | **Lock controls** (`PARTIAL`)               | Lock All is replayable; three partial flags and full PSD lock round-trip remain unimplemented ([§2.5](#25-the-lock-row-and-fill))                                                         |
-| 7   | **Selection set**                           | The Move tool's Shift-click row (`docs/TOOLS.md` §Move Tool) and Shift-click-to-extend selection ([§5](#5-selection))                                                                     |
-| 8   | **Group nesting**                           | The new-group button, the folder row, the filter icons, the mask column, and the `Pass Through` default. The largest model change, so it gates rather than follows ([§4](#4-groups))      |
-| 9   | **Panel menu + Panel Options**              | Routes Merge out of two tool bars and into the panel it belongs in ([§2.7](#27-the-panel-menu))                                                                                           |
-| 10  | **Filter row**                              | Needs #2. Useless without it ([§2.2](#22-the-filter-row))                                                                                                                                 |
-| 11  | **The four arrange commands**               | Needs #7 for multi-layer move, and ships in #9's menu ([§6](#6-reorder))                                                                                                                  |
+| #   | Requirement                                 | Unblocks                                                                                                                                                                                       |
+| --- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Honor `isBedrock` in the panel** (`HAVE`) | The desktop panel now refuses to drag/reorder the backing layer, matching the canvas. No new model needed ([§12](#12-the-background-layer))                                                    |
+| 2   | **Layer kind discriminator**                | Folder, filter, mask, and Smart Object UI; the `T` marker is already inferred for retained Text-tool sources ([§9](#9-the-layer-model-the-panel-requires))                                     |
+| 3   | **Layer thumbnail** (`HAVE`)                | Live 48x32 previews are implemented; remaining gaps are thumbnail-size preference and the Smart Object marker ([§3](#3-layer-row-anatomy))                                                     |
+| 4   | **Bottom action bar** (`PARTIAL`)           | New Layer and Delete are implemented, including insertion above the selected layer and drag-to-trash; the remaining five controls need their model support ([§2.6](#26-the-bottom-action-bar)) |
+| 5   | **Opacity + blend mode** (`PARTIAL`)        | Opacity and 16 supported blend modes are editable on desktop and tablet; Photoshop's exact opacity presets and unsupported blend modes remain absent ([§2.4](#24-blend-mode-and-opacity))      |
+| 6   | **Lock controls** (`PARTIAL`)               | Lock All is replayable; three partial flags and full PSD lock round-trip remain unimplemented ([§2.5](#25-the-lock-row-and-fill))                                                              |
+| 7   | **Selection set**                           | The Move tool's Shift-click row (`docs/TOOLS.md` §Move Tool) and Shift-click-to-extend selection ([§5](#5-selection))                                                                          |
+| 8   | **Group nesting**                           | The new-group button, the folder row, the filter icons, the mask column, and the `Pass Through` default. The largest model change, so it gates rather than follows ([§4](#4-groups))           |
+| 9   | **Panel menu + Panel Options**              | Routes Merge out of two tool bars and into the panel it belongs in ([§2.7](#27-the-panel-menu))                                                                                                |
+| 10  | **Filter row**                              | Needs #2. Useless without it ([§2.2](#22-the-filter-row))                                                                                                                                      |
+| 11  | **The four arrange commands**               | Needs #7 for multi-layer move, and ships in #9's menu ([§6](#6-reorder))                                                                                                                       |
 
 **This table is not a definition of done.** Not sequenced here: layer color labels, Fill,
 Background conversion and the `isBackground` concept, the panel-menu commands beyond Merge, layer

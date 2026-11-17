@@ -691,11 +691,15 @@ describe('MobileLayersDrawer', () => {
 
     await user.click(screen.getByRole('button', { name: 'New Layer' }));
 
-    expect(createBlankLayerMock).toHaveBeenCalledWith({
-      color: '#ffffff',
-      opacity: 0,
-      pos: { x: 120, y: 90, width: 800, height: 600 },
-    });
+    expect(createBlankLayerMock).toHaveBeenCalledWith(
+      {
+        color: '#ffffff',
+        opacity: 0,
+        pos: { x: 120, y: 90, width: 800, height: 600 },
+      },
+      false,
+      'upper'
+    );
   });
 
   it('removes the active layer only when there is more than one', async () => {

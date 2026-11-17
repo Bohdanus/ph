@@ -85,7 +85,12 @@ export type HistoryReplayResult = {
 };
 
 export type HistoryReplayDependencies = {
-  createLayer: (input: { layerId: LayerId; layers: LayersRecord; source: LayerSource }) => Layer;
+  createLayer: (input: {
+    layerId: LayerId;
+    layers: LayersRecord;
+    source: LayerSource;
+    insertAfterLayerId?: LayerId;
+  }) => Layer;
   applyRasterTool: (layer: Layer, args: ToolArgs) => Layer;
 };
 
@@ -216,7 +221,7 @@ export function replayHistory(
 
     if (actionName === NEW_LAYER_ACTION || (actionName === TOOL_ACTION && layerSource?.kind === 'tool')) {
       if (!source) continue;
-      const layer = dependencies.createLayer({ layerId, layers, source });
+      const layer = dependencies.createLayer({ layerId, layers, source, insertAfterLayerId: item.insertAfterLayerId });
       layers = { ...layers, [layer.id]: layer };
       continue;
     }

@@ -303,11 +303,15 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
               <button
                 type="button"
                 onClick={() =>
-                  createBlankLayer({
-                    color: '#ffffff',
-                    opacity: 0,
-                    pos: { x: documentFrame.x, y: documentFrame.y, ...totalSize },
-                  })
+                  createBlankLayer(
+                    {
+                      color: '#ffffff',
+                      opacity: 0,
+                      pos: { x: documentFrame.x, y: documentFrame.y, ...totalSize },
+                    },
+                    false,
+                    activeLayerId ?? undefined
+                  )
                 }
                 data-testid="mobile-add-layer-button"
                 className="flex min-h-11 min-w-11 items-center gap-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm"
