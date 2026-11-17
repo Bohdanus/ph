@@ -61,7 +61,7 @@ const REVIEWED = {
   },
   'free-model-kilo.test.mjs': {
     scope: 'Each fake Kilo CLI and configuration fixture uses a unique OS temp directory with finally cleanup.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=20 filesystem-write:rm=20 subprocess:spawnSync=1`,
+    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=23 filesystem-write:rm=23 subprocess:spawnSync=1`,
   },
   'free-model-pool-external.test.mjs': {
     scope:
@@ -100,8 +100,8 @@ const REVIEWED = {
   },
   'main-worktree-guard.test.mjs': {
     scope:
-      'Git and hook fixtures use temporary repositories, including foreign reuse of a stale main path, forced duplicate-main recovery, and a watcher retry after one pre-creation failure; review child cwd and any environment passed to subprocesses.',
-    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=49 filesystem-write:mkdtempSync=12 filesystem-write:writeFileSync=35 filesystem-write:rmSync=16 filesystem-write:mkdirSync=5`,
+      'Git and hook fixtures use temporary repositories, including foreign reuse of a stale main path, forced duplicate-main recovery, and watcher retries across startup and polling reads; the retry cases cover changed leases and persistent failures, and fixture files stay inside the temporary repository. Review child cwd and any environment passed to subprocesses.',
+    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=49 filesystem-write:mkdtempSync=13 filesystem-write:writeFileSync=36 filesystem-write:rmSync=17 filesystem-write:mkdirSync=6`,
   },
   'main-landing-alert.test.mjs': {
     scope:
