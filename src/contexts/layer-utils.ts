@@ -189,11 +189,39 @@ function orderImmediatelyAfter(layers: LayerOrderRecord, afterLayerId: LayerId):
     (next, layer) => (layer.order > target.order ? Math.min(next, layer.order) : next),
     Infinity
   );
-  const order = Number.isFinite(nextOrder) ? target.order + (nextOrder - target.order) / 2 : target.order + 1;
+  const order = Number.isFinite(target.order) ? nextRepresentableOrder(target.order) : NaN;
   if (!Number.isFinite(order) || order <= target.order || (Number.isFinite(nextOrder) && order >= nextOrder)) {
     throw new RangeError(`Cannot insert a layer after "${afterLayerId}" because adjacent layer order has no gap`);
   }
   return order;
+}
+
+function nextRepresentableOrder(order: number): number {
+  if (order === 0) return Number.MIN_VALUE;
+
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, order, false);
+  let high = view.getUint32(0, false);
+  let low = view.getUint32(4, false);
+
+  // Advance one IEEE-754 value so repeated insertions consume the gap linearly.
+  if (order > 0) {
+    if (low === 0xffffffff) {
+      high += 1;
+      low = 0;
+    } else {
+      low += 1;
+    }
+  } else if (low === 0) {
+    high -= 1;
+    low = 0xffffffff;
+  } else {
+    low -= 1;
+  }
+
+  view.setUint32(0, high, false);
+  view.setUint32(4, low, false);
+  return view.getFloat64(0, false);
 }
 
 export function deriveLayerNameAndOrder(layers: LayerOrderRecord, source: LayerSource, insertAfterLayerId?: LayerId) {

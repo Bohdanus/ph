@@ -102,8 +102,31 @@ describe('createLayerSource naming and ordering', () => {
       insertAfterLayerId: 'selected',
     });
 
-    expect(layer.order).toBe(1.5);
+    expect(layer.order).toBeGreaterThan(1);
+    expect(layer.order).toBeLessThan(2);
     expect(layer.name).toBe('Photo.png 5');
+  });
+
+  it('keeps repeated insertions above the selected layer within the available order gap', () => {
+    const layers: Record<string, { order: number; name?: string }> = {
+      selected: { order: 1, name: 'Selected' },
+      top: { order: 2, name: 'Top' },
+    };
+    let insertAfterLayerId = 'selected';
+
+    for (let index = 0; index < 64; index += 1) {
+      const currentOrder = layers[insertAfterLayerId]!.order;
+      const layer = createLayerSource({
+        layers,
+        source: bitmapSource(),
+        insertAfterLayerId,
+      });
+
+      expect(layer.order).toBeGreaterThan(currentOrder);
+      expect(layer.order).toBeLessThan(2);
+      layers[layer.id] = { order: layer.order, name: layer.name };
+      insertAfterLayerId = layer.id;
+    }
   });
 
   it('rejects insertion after a layer that is not present', () => {
