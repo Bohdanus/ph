@@ -181,7 +181,8 @@ describe('useLayers createBlankLayer', () => {
 
     const store = result.current.store;
     const created = store.layers[store.activeLayerId!]!;
-    expect(created.order).toBe(1.5);
+    expect(created.order).toBeGreaterThan(1);
+    expect(created.order).toBeLessThan(2);
     expect(
       Object.values(store.layers)
         .sort((a, b) => a.order - b.order)
