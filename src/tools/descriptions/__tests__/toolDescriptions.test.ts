@@ -248,6 +248,25 @@ describe('toolDescriptions', () => {
     expect(toolDescriptions.blur.purpose).toMatch(/Blur-specific control remains unconfirmed/i);
   });
 
+  it('keeps Color Replacement Tolerance bounds source-qualified', () => {
+    const replacement = toolDescriptions['color-replacement'];
+    const tolerance = replacement.options.find((option) => option.control === 'Tolerance');
+
+    expect(replacement.purpose).toMatch(
+      /Adobe describes Tolerance qualitatively as a percentage.*lower values.*higher values.*does not state numeric bounds/i
+    );
+    expect(replacement.purpose).not.toMatch(/0(?:–|-)?255/i);
+    expect(tolerance?.detail).toMatch(
+      /Adobe's archived 2015 reference does not state numeric bounds.*third-party mirrors says 0–255.*not corroborated by Adobe/i
+    );
+    expect(replacement.appNotes).toMatch(
+      /Adobe does not state numeric bounds.*app uses a 0-100 slider.*exact Photoshop parity is unverified/i
+    );
+    expect(replacement.sources).toContain(
+      'https://helpx.adobe.com/archive/en/photoshop/cc/2015/photoshop_reference.pdf'
+    );
+  });
+
   it('resolves a shape figure to its own description rather than the generic one', () => {
     // The five shape tiles all carry the name `shape` in `toolbarMap`, so a lookup on the
     // name alone would put the generic Shape Tool's summary under the Rectangle Tool.
