@@ -4,7 +4,6 @@ import {
   CANVAS_REDRAW_POLL_INTERVAL_MS,
   CANVAS_REDRAW_TIMEOUT_MS,
   documentToCanvasOffset,
-  DEFAULT_LINE_CLIP,
   type DominantColor,
   drawLine,
   dominantRed,
@@ -35,13 +34,7 @@ const STROKE_COLOR = '#960000';
 const DOC_LINE_START = { x: 150, y: 150 } as const;
 const DOC_LINE_END = { x: 350, y: 150 } as const;
 
-/**
- * The centre of the stroke in the image `takeLineScreenshot` returns, which crops the
- * canvas to `DEFAULT_LINE_CLIP` (120,120,260,80) measured from the canvas box. The
- * standard test line runs (150,150)->(350,150) in box coordinates, so in that image it
- * spans x 30..230 on row 30 and (130,30) is the middle of the line.
- */
-const STROKE_MIDDLE = { x: 130, y: 30 } as const;
+const DOC_LINE_MIDDLE = { x: (DOC_LINE_START.x + DOC_LINE_END.x) / 2, y: DOC_LINE_START.y } as const;
 
 /**
  * Computes the viewport clip around the document-space line.
@@ -60,29 +53,23 @@ function computeLevelsClip(box: BoundingBox): ViewportClipOptions {
 }
 
 /**
- * Samples a point given in CSS pixels within the line capture.
- *
- * `STROKE_MIDDLE` is CSS — it is derived from where `drawLine` puts the stroke and from
- * `DEFAULT_LINE_CLIP`, which is a CSS-pixel rect — while `getColorAtPoint` takes IMAGE
- * pixels. At the suite's 1x the two are the same number and the mismatch cannot be
- * seen. At `deviceScaleFactor: 2`, `page.screenshot` returns a 520x160 image of a
- * 260x80 clip, so image row 30 is CSS row 15: above the stroke, which the measurements
- * put at CSS rows 25..35. Every sampled pixel is white, `ignoreNearWhite` discards
- * them, and the helper returns `null` — a correct suite failing four tests. This is the
- * same class of defect `getStrokeAnalysis` was given a required `region` to fix.
+ * Samples a document-space point from the exact dynamic capture clip at any device scale.
  */
-async function sampleCssPoint(
+async function sampleDocumentPoint(
   screenshot: Buffer | ImageDataResult,
-  cssX: number,
-  cssY: number,
+  box: BoundingBox,
+  clip: ViewportClipOptions,
+  documentX: number,
+  documentY: number,
   radius: number,
   options?: Parameters<typeof getColorAtPoint>[4]
 ) {
   const image = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
+  const boxPoint = documentToCanvasOffset(box, documentX, documentY);
   const point = cssPointToImage(
     { width: image.width, height: image.height },
-    { x: 0, y: 0, width: DEFAULT_LINE_CLIP.width, height: DEFAULT_LINE_CLIP.height },
-    { x: cssX, y: cssY }
+    { x: 0, y: 0, width: clip.width!, height: clip.height! },
+    { x: boxPoint.x - (clip.x! - box.x), y: boxPoint.y - (clip.y! - box.y) }
   );
   // `getColorAtPoint` rejects a non-integer coordinate outright, and `cssPointToImage`
   // returns a float by construction. The point is a location rather than a pixel index,
@@ -429,7 +416,9 @@ test.describe('Levels adjustment', () => {
     // (0,0,0) whatever colour space the filter is evaluated in. What the screenshot
     // sees is the white document composited through the stroke's 0.8 alpha, which is a
     // neutral grey and identical in all three channels.
-    const core = await sampleCssPoint(after, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 0, { ignoreNearWhite: true });
+    const core = await sampleDocumentPoint(after, adjustedBox, adjustedClip, DOC_LINE_MIDDLE.x, DOC_LINE_MIDDLE.y, 0, {
+      ignoreNearWhite: true,
+    });
     expect(core, 'brightness(0%) left no ink at the middle of the stroke').not.toBeNull();
     expect(core, 'brightness(0%) produces the exact neutral composite').toEqual(MEASURED_BRIGHTNESS_MINUS_150_CORE);
   });
@@ -567,9 +556,15 @@ test.describe('Levels adjustment', () => {
             testInfo,
             adjustedClip
           );
-          const sample = await sampleCssPoint(screenshot, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 0, {
-            ignoreNearWhite: false,
-          });
+          const sample = await sampleDocumentPoint(
+            screenshot,
+            adjustedBox,
+            adjustedClip,
+            DOC_LINE_MIDDLE.x,
+            DOC_LINE_MIDDLE.y,
+            0,
+            { ignoreNearWhite: false }
+          );
           return (
             sample !== null &&
             sample.red < original.red &&

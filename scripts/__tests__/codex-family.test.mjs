@@ -344,4 +344,306 @@ describe('codexRolloutState', () => {
       .join('\n');
     expect(codexRolloutState(text).status).toBe('complete');
   });
+
+  it('keeps a terminal chat unproven while an exec process has no completion event', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          output: [
+            {
+              type: 'input_text',
+              text: `Script completed\nWall time 30.0 seconds\nOutput:\n${JSON.stringify({
+                chunk_id: 'chunk-1',
+                wall_time_seconds: 30,
+                session_id: 15435,
+                output: '',
+              })}`,
+            },
+          ],
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(text)).toMatchObject({
+      status: 'unproven',
+      reason: 'Codex command execution completion is unverified for process(es): 15435',
+    });
+  });
+
+  it('tracks every session in a same-line or array-wrapped exec result', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          output: [
+            {
+              type: 'input_text',
+              text: `Script completed\nWall time 30.0 seconds\nOutput: ${JSON.stringify([
+                { chunk_id: 'chunk-1', session_id: 15435, output: '' },
+                { chunk_id: 'chunk-2', session_id: '15436', output: '' },
+              ])}`,
+            },
+          ],
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(text)).toMatchObject({
+      status: 'unproven',
+      reason: 'Codex command execution completion is unverified for process(es): 15435, 15436',
+    });
+  });
+
+  it('parses a pretty-printed exec result instead of treating it as terminal', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          output: [
+            {
+              type: 'input_text',
+              text: 'Script completed\nWall time 30.0 seconds\nOutput:\n{\n  "chunk_id": "chunk-1",\n  "session_id": 15435,\n  "output": ""\n}',
+            },
+          ],
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(text)).toMatchObject({
+      status: 'unproven',
+      reason: 'Codex command execution completion is unverified for process(es): 15435',
+    });
+  });
+
+  it('tracks numeric sessions without chunk IDs and fails closed for invalid session values', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          output: [{ type: 'input_text', text: 'Script completed\nOutput:\n{"session_id":"15435"}' }],
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(text)).toMatchObject({
+      status: 'unproven',
+      reason: 'Codex command execution completion is unverified for process(es): 15435',
+    });
+
+    const invalidSession = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          output: [
+            {
+              type: 'input_text',
+              text: `Script completed\nOutput:\n${JSON.stringify({ chunk_id: 'chunk-1', session_id: { pid: 15435 } })}`,
+            },
+          ],
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(invalidSession)).toMatchObject({
+      status: 'unproven',
+      reason: 'Codex command execution result could not be parsed safely',
+    });
+  });
+
+  it('ignores UUID session metadata but fails closed for ambiguous nested process IDs', () => {
+    const stateAfterToolOutput = (result) => {
+      const text = [
+        { type: 'event_msg', payload: { type: 'task_started' } },
+        {
+          type: 'response_item',
+          payload: {
+            type: 'custom_tool_call_output',
+            output: [{ type: 'input_text', text: `Script completed\nOutput:\n${JSON.stringify(result)}` }],
+          },
+        },
+        { type: 'event_msg', payload: { type: 'task_complete' } },
+      ]
+        .map((event) => JSON.stringify(event))
+        .join('\n');
+      return codexRolloutState(text);
+    };
+
+    expect(stateAfterToolOutput({ session_id: ROOT })).toMatchObject({ status: 'complete', reason: null });
+    expect(stateAfterToolOutput({ wrapper: { session_id: 15435 } })).toMatchObject({
+      status: 'unproven',
+      reason: 'Codex command execution result could not be parsed safely',
+    });
+    expect(stateAfterToolOutput({ chunk_id: 'chunk-1', session_id: ROOT })).toMatchObject({
+      status: 'unproven',
+      reason: 'Codex command execution result could not be parsed safely',
+    });
+  });
+
+  it('accepts a matching late command completion without reopening the terminal chat', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          output: [
+            {
+              type: 'input_text',
+              text: `Script completed\nWall time 30.0 seconds\nOutput:\n${JSON.stringify({
+                chunk_id: 'chunk-1',
+                wall_time_seconds: 30,
+                session_id: 15435,
+                output: '',
+              })}`,
+            },
+          ],
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'item_completed',
+          item: { type: 'CommandExecution', process_id: '15435', status: 'completed', exit_code: 0 },
+        },
+      },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(text)).toMatchObject({ status: 'complete', reason: null });
+  });
+
+  it('keeps completion unproven while any of multiple command processes remains outstanding', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          output: [
+            {
+              type: 'input_text',
+              text: `Output:\n${JSON.stringify([
+                { chunk_id: 'chunk-1', session_id: 15435 },
+                { chunk_id: 'chunk-2', session_id: 15436 },
+              ])}`,
+            },
+          ],
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'item_completed',
+          item: { type: 'CommandExecution', process_id: '15435', status: 'completed' },
+        },
+      },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(text)).toMatchObject({
+      status: 'unproven',
+      reason: 'Codex command execution completion is unverified for process(es): 15436',
+    });
+  });
+
+  it('accepts a completed process event that precedes the terminal task marker', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          output: [
+            {
+              type: 'input_text',
+              text: `Output:\n${JSON.stringify({ chunk_id: 'chunk-1', session_id: 15435 })}`,
+            },
+          ],
+        },
+      },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'item_completed',
+          item: { type: 'CommandExecution', process_id: '15435', status: 'completed' },
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(text)).toMatchObject({ status: 'complete', reason: null });
+  });
+
+  it('fails closed when an exec result ends with truncated session metadata', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          output: [{ type: 'input_text', text: 'Output:\n{"session_id": 15435, "output": "' }],
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(text)).toMatchObject({
+      status: 'unproven',
+      reason: 'Codex command execution result could not be parsed safely',
+    });
+  });
+
+  it('does not treat an unmatched command completion as recognized bookkeeping', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'item_completed',
+          item: { type: 'CommandExecution', process_id: 'untracked-process', status: 'completed' },
+        },
+      },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(text)).toMatchObject({
+      status: 'unproven',
+      reason: 'an unrecognized event followed the last terminal marker',
+    });
+  });
 });

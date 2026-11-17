@@ -769,8 +769,9 @@ Quick Selection tool in the options bar" complete the chain. Photoshop Essential
 is resized with `[` and `]`, "the same way we'd resize a brush". That source is third-party; the
 current Adobe Quick Selection page does not list these keys, the 2019 Adobe PDF lists them for
 Brush/Stamp tools without naming Quick Selection, and Adobe’s current shortcut page directs readers
-to the customizable Keyboard Shortcuts dialog. The structured Quick Selection shortcut rows no
-longer assert them as Photoshop defaults.
+to the customizable Keyboard Shortcuts dialog. The descriptor therefore treats `[` as directly
+demonstrated for Quick Selection in Adobe Learn's Compositing tutorial and `]` as a bounded
+inference from the generic brush-size binding; neither claim says the app implements the keys.
 
 ### The sentence that distinguishes it from the Magic Wand
 
@@ -975,12 +976,17 @@ to decrease/increase brush size and up/down to decrease/increase brush hardness"
 decrease/increase brush hardness"
 (`jkost.com/blog/2017/05/brushes-and-painting-tool-shortcuts-in-photoshop-cc.html`). Plain
 `Alt`-drag is not bound to brush size on either platform, so the row's `keys` is now `Ctrl+Alt` and
-its `action` states the macOS and Windows forms and says the plain-`Alt` gesture is not bound. The
-structured `[`/`]` Quick Selection rows have been removed: their support here came from a
-third-party tutorial, while Adobe’s current Quick Selection page does not name them and its 2019
-shortcut PDF assigns bracket resizing to Brush/Stamp tools without naming Quick Selection. The app
-does not bind bracket resizing; that local implementation gap is independent of the unresolved
-Photoshop default.
+its `action` states the macOS and Windows forms and says the plain-`Alt` gesture is not bound.
+
+**Bracket-size evidence is different for the two keys.** Adobe Learn's Compositing tutorial directly
+demonstrates `[` decreasing the Quick Selection brush size, so the opening-bracket row is a
+tool-specific Photoshop binding. The 2019 Adobe keyboard-shortcut PDF lists `]` as a generic
+brush-size increase for Brush and Stamp tools, but does not name Quick Selection. The closing-bracket
+row is therefore a bounded inference from the generic brush binding, not a Quick Selection-specific
+claim in that PDF; the current desktop Quick Selection page is silent on both keys. The source for
+the `[` row is
+`https://www.adobe.com/learn/photoshop/web/compositing`. The app does not bind either bracket key
+for Quick Selection, independently of what Photoshop's configurable defaults are.
 
 **The bar promised a gesture it did not honour — and the promise is now gone.** This section used
 to be the sharpest finding in the family: the quick-selection bar's `hint` read "Shift and Alt
@@ -1009,6 +1015,7 @@ reader than one that says "this used to lie here".
 - `https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/select-area-intersected-by-other-selections.html` (updated 2026-02-23) — any selection tool; Options-bar Intersect and Alt+Shift/Option+Shift gesture
 - `https://helpx.adobe.com/lt/photoshop/how-to/add-to-subtract-from-selections.html` — names Quick Selection among tools and gives Intersect instructions
 - `https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf?TVGll=wnKKa` (2019) — excludes Quick Selection from the Intersect shortcut; lists brackets for Brush/Stamp tools without naming Quick Selection
+- `https://www.adobe.com/learn/photoshop/web/compositing` — Adobe Learn tutorial directly demonstrates `[` decreasing Quick Selection brush size
 - `https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html` (updated 2026-09-08) — directs users to the customizable Keyboard Shortcuts dialog for current defaults
 - `https://helpx.adobe.com/photoshop/using/tool-techniques/quick-selection-tool.html` (2023-05-24) — `(W)`, edge detection on drag
 - `https://helpx.adobe.com/ph_fil/photoshop/how-to/use-quick-selection-tool.html` (2022-12-28) — the `Auto-Enhance` label, auto-switch to Add, Option/Alt subtract

@@ -254,6 +254,21 @@ describe('the guard tells a main worktree from a linked one on a real repository
     }
   });
 
+  it('does not register a main checkout from a different common Git directory', () => {
+    const foreign = realpathSync(mkdtempSync(join(tmpdir(), 'main-worktree-foreign-common-')));
+    try {
+      expect(git(foreign, ['init', '--quiet', '--initial-branch=main'])).not.toBeNull();
+      const expectedCommonDir = git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+
+      expect(registerMainWorktree(foreign, { expectedCommonDir })).toBe(false);
+      expect(git(foreign, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBeNull();
+      const foreignGitDir = realpathSync(git(foreign, ['rev-parse', '--absolute-git-dir']));
+      expect(existsSync(join(foreignGitDir, 'kilo-main-worktree-identity'))).toBe(false);
+    } finally {
+      rmSync(foreign, { recursive: true, force: true });
+    }
+  });
+
   it('creates a clean replacement landing checkout without changing the damaged checkout', async () => {
     const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-landing-replacement-')));
     try {
@@ -808,6 +823,52 @@ describe('the guard is actually installed', () => {
       const preCommitDispatcher = resolve(fixture, hooksPath, 'pre-commit');
       expect(existsSync(preCommitDispatcher)).toBe(true);
       expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeGitDir'])).toBeNull();
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('does not register a stale main path reused by another repository without a prunable marker', () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-guard-prunable-reuse-')));
+    try {
+      const init = spawnSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: fixture, encoding: 'utf8' });
+      expect(init.status).toBe(0);
+      git(fixture, ['config', 'user.name', 'Hook Fixture']);
+      git(fixture, ['config', 'user.email', 'hook-fixture@example.test']);
+      git(fixture, ['commit', '--quiet', '--allow-empty', '-m', 'fixture']);
+      git(fixture, ['switch', '--quiet', '-c', 'feature']);
+
+      const reusedMainPath = join(fixture, 'reused-main');
+      const mainCheckout = spawnSync('git', ['worktree', 'add', '--quiet', reusedMainPath, 'main'], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(mainCheckout.status, mainCheckout.stderr).toBe(0);
+
+      rmSync(reusedMainPath, { recursive: true, force: true });
+      const replacementInit = spawnSync('git', ['init', '--quiet', '--initial-branch=main', reusedMainPath], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(replacementInit.status, replacementInit.stderr).toBe(0);
+      git(reusedMainPath, ['config', 'user.name', 'Foreign Fixture']);
+      git(reusedMainPath, ['config', 'user.email', 'foreign-fixture@example.test']);
+      git(reusedMainPath, ['commit', '--quiet', '--allow-empty', '-m', 'foreign']);
+
+      const roster = git(fixture, ['worktree', 'list', '--porcelain']);
+      expect(roster).toContain(`worktree ${reusedMainPath.replace(/\\/g, '/')}`);
+      expect(roster).toContain('branch refs/heads/main');
+      expect(roster).not.toMatch(/\nprunable(?:\s|$)/);
+
+      const install = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: fixture,
+        encoding: 'utf8',
+        env: { ...process.env, CI: 'true' },
+      });
+      expect(install.status).not.toBe(0);
+      expect(install.stderr).toContain('cannot identify the designated main worktree');
+      expect(git(fixture, ['config', '--local', '--get', 'core.hooksPath'])).toBeNull();
+      expect(git(reusedMainPath, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBeNull();
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

@@ -360,8 +360,13 @@ describe('dispose preflight', () => {
       ['the target is not a worktree at all', { gitState: { found: false } }, 'unknown-worktree'],
       ['it is the main checkout', { gitState: greenState({ isPrimary: true }) }, 'main-worktree'],
       [
-        'Git cannot identify a registered main worktree for post-removal commands',
+        'Git cannot identify a registered main checkout for post-removal commands',
         { gitState: greenState({ mainWorktreePath: null }) },
+        'main-worktree-path-unavailable',
+      ],
+      [
+        'Git cannot identify the repository common directory for post-removal ref operations',
+        { gitState: greenState({ commonDir: '' }) },
         'main-worktree-path-unavailable',
       ],
       [
@@ -1005,11 +1010,16 @@ describe('dispose execution', () => {
 
   it('deletes the branch with -d, and keeps it when git refuses', () => {
     const ok = harness();
-    const kept = harness({ 'branch -d fix/task': new Error("error: the branch 'fix/task' is not fully merged") });
+    const kept = harness({
+      '--git-dir /repo/.git branch -d fix/task': new Error("error: the branch 'fix/task' is not fully merged"),
+    });
 
-    const deleted = dispose('/repo', greenState(), { run: ok.run, fs: ok.fs });
+    const deleted = dispose('/repo', greenState({ mainWorktreePath: '/foreign/reused-main' }), {
+      run: ok.run,
+      fs: ok.fs,
+    });
     expect(deleted.branchDeleted).toBe(true);
-    expect(ok.calls.some((c) => c.join(' ') === 'branch -d fix/task')).toBe(true);
+    expect(ok.calls.some((c) => c.join(' ') === '--git-dir /repo/.git branch -d fix/task')).toBe(true);
     expect(ok.calls.some((c) => c.includes('-D'))).toBe(false);
 
     const refused = dispose('/repo', greenState(), { run: kept.run, fs: kept.fs });
@@ -1028,7 +1038,7 @@ describe('dispose execution', () => {
       deleteReason: 'patch-absorbed',
     });
     const anchorAt = h.calls.findIndex((c) => c[0] === 'update-ref');
-    const deleteAt = h.calls.findIndex((c) => c.join(' ') === 'branch -D fix/task');
+    const deleteAt = h.calls.findIndex((c) => c.join(' ') === '--git-dir /repo/.git branch -D fix/task');
     expect(anchorAt).toBeGreaterThanOrEqual(0);
     expect(deleteAt).toBeGreaterThan(anchorAt);
     expect(result.branchDeleted).toBe(true);
@@ -1036,7 +1046,9 @@ describe('dispose execution', () => {
   });
 
   it('deletes a net-no-op merge branch with guarded -D after checking main and anchoring it', () => {
-    const h = harness({ 'rev-parse --verify main^{commit}': ['base-sha', 'base-sha', 'base-sha'] });
+    const h = harness({
+      '--git-dir /repo/.git rev-parse --verify main^{commit}': ['base-sha', 'base-sha', 'base-sha'],
+    });
     const result = dispose('/repo', greenState(), {
       run: h.run,
       fs: h.fs,
@@ -1046,17 +1058,19 @@ describe('dispose execution', () => {
     });
     const anchorAt = h.calls.findIndex((c) => c[0] === 'update-ref');
     const removeAt = h.calls.findIndex((c) => c[0] === 'worktree' && c[1] === 'remove');
-    const deleteAt = h.calls.findIndex((c) => c.join(' ') === 'branch -D fix/task');
+    const deleteAt = h.calls.findIndex((c) => c.join(' ') === '--git-dir /repo/.git branch -D fix/task');
     expect(anchorAt).toBeGreaterThanOrEqual(0);
     expect(removeAt).toBeGreaterThan(anchorAt);
     expect(deleteAt).toBeGreaterThan(removeAt);
     expect(result.branchDeleted).toBe(true);
-    expect(h.calls.filter((c) => c.join(' ') === 'rev-parse --verify main^{commit}')).toHaveLength(3);
+    expect(h.calls.filter((c) => c.join(' ') === '--git-dir /repo/.git rev-parse --verify main^{commit}')).toHaveLength(
+      3
+    );
     expect(result.steps.join('\n')).toContain('deleted net-no-op merge branch fix/task');
   });
 
   it('keeps the worktree when main advances before net-no-op disposal', () => {
-    const h = harness({ 'rev-parse --verify main^{commit}': 'new-main-sha' });
+    const h = harness({ '--git-dir /repo/.git rev-parse --verify main^{commit}': 'new-main-sha' });
     const result = dispose('/repo', greenState(), {
       run: h.run,
       fs: h.fs,
@@ -1071,7 +1085,9 @@ describe('dispose execution', () => {
   });
 
   it('keeps the branch anchored if main advances during net-no-op disposal', () => {
-    const h = harness({ 'rev-parse --verify main^{commit}': ['base-sha', 'base-sha', 'new-main-sha'] });
+    const h = harness({
+      '--git-dir /repo/.git rev-parse --verify main^{commit}': ['base-sha', 'base-sha', 'new-main-sha'],
+    });
     const result = dispose('/repo', greenState(), {
       run: h.run,
       fs: h.fs,
@@ -1082,7 +1098,7 @@ describe('dispose execution', () => {
     expect(result.worktreeRemoved).toBe(true);
     expect(result.branchDeleted).toBe(false);
     expect(result.branchKept).toBe(true);
-    expect(h.calls.some((c) => c.join(' ') === 'branch -D fix/task')).toBe(false);
+    expect(h.calls.some((c) => c.join(' ') === '--git-dir /repo/.git branch -D fix/task')).toBe(false);
     expect(result.steps.join('\n')).toContain('main moved or became unreadable after worktree removal');
     expect(result.anchorRef).toContain(KEEP_REF_PREFIX);
   });
@@ -1173,12 +1189,12 @@ describe('dispose execution', () => {
     const message = result.steps.join('\n');
 
     expect(result).toMatchObject({ worktreeRemoved: false, branchDeleted: false, anchorRef: null });
-    expect(message).toContain('Git did not report a registered main worktree');
+    expect(message).toContain('Git did not report a registered main checkout and common directory');
     expect(h.calls.some((args) => args[0] === 'update-ref' || args[0] === 'worktree')).toBe(false);
   });
 
   it('removes the worktree even when the branch deletion is refused, and reports both', () => {
-    const h = harness({ 'branch -d fix/task': new Error('not fully merged') });
+    const h = harness({ '--git-dir /repo/.git branch -d fix/task': new Error('not fully merged') });
     const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs });
     expect(h.calls.some((c) => c.join(' ') === 'worktree remove /repo/.kilo/worktrees/task')).toBe(true);
     expect(result.branchDeleted).toBe(false);
@@ -1195,7 +1211,9 @@ describe('dispose execution', () => {
       fs: h.fs,
     });
     const removeAt = h.calls.findIndex((args) => args[0] === 'worktree' && args[1] === 'remove');
-    const branchDeleteAt = h.calls.findIndex((args) => args[0] === 'branch' && args[1] === '-d');
+    const branchDeleteAt = h.calls.findIndex(
+      (args) => args[0] === '--git-dir' && args[1] === '/repo/.git' && args[2] === 'branch' && args[3] === '-d'
+    );
 
     expect(h.cwdCalls[removeAt]).toBe(target);
     expect(branchDeleteAt).toBeGreaterThan(removeAt);
@@ -1204,7 +1222,7 @@ describe('dispose execution', () => {
   });
 
   it('reports a runner failure without labeling it an unmerged branch', () => {
-    const h = harness({ 'branch -d fix/task': new Error('spawnSync git ENOENT') });
+    const h = harness({ '--git-dir /repo/.git branch -d fix/task': new Error('spawnSync git ENOENT') });
     const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs });
     const message = result.steps.join('\n');
 
@@ -1691,7 +1709,12 @@ describe('a bare name that identifies two worktrees identifies neither', () => {
         { path: mainWorktreePath, branch: 'main' },
         { path: '/repo/.kilo/worktrees/task', branch: 'fix/task' },
       ],
-      run: () => ({ stdout: 'abc1234' }),
+      run: (_cwd, args) => {
+        if (args[0] === 'rev-parse' && args.includes('--git-common-dir')) return { stdout: TMP };
+        if (args[0] === 'rev-parse' && args.includes('--absolute-git-dir')) return { stdout: TMP };
+        if (args[0] === 'symbolic-ref') return { stdout: 'main' };
+        return { stdout: 'abc1234' };
+      },
     });
     expect(state.found).toBe(true);
     expect(state.absolutePath).toBe('/repo/.kilo/worktrees/task');
@@ -1705,6 +1728,41 @@ describe('a bare name that identifies two worktrees identifies neither', () => {
         { path: '/repo/.kilo/worktrees/task', branch: 'fix/task' },
       ],
       run: () => ({ stdout: 'abc1234' }),
+    });
+
+    expect(state.found).toBe(true);
+    expect(state.mainWorktreePath).toBeNull();
+  });
+
+  it('does not use an existing path for a prunable main worktree', () => {
+    const state = readGitState('/repo', 'task', {
+      list: () => [
+        { path: TMP, branch: 'main', prunableReason: 'gitdir file points to a different worktree' },
+        { path: '/repo/.kilo/worktrees/task', branch: 'fix/task' },
+      ],
+      run: () => ({ stdout: 'abc1234' }),
+    });
+
+    expect(state.found).toBe(true);
+    expect(state.mainWorktreePath).toBeNull();
+  });
+
+  it('does not use a main path from another common Git directory', () => {
+    const state = readGitState('/repo/.kilo/worktrees/task', 'task', {
+      list: () => [
+        { path: TMP, branch: 'main' },
+        { path: '/repo/.kilo/worktrees/task', branch: 'fix/task' },
+      ],
+      run: (cwd, args) => {
+        if (args[0] === 'rev-parse' && args.includes('--git-common-dir')) {
+          return { stdout: cwd === TMP ? join(TMP, 'foreign.git') : TMP };
+        }
+        if (args[0] === 'rev-parse' && args.includes('--absolute-git-dir')) return { stdout: TMP };
+        if (args[0] === 'rev-parse' && args[1] === 'HEAD') return { stdout: 'abc1234' };
+        if (args[0] === 'rev-parse' && args[1] === '--verify') return { stdout: 'base-sha' };
+        if (args[0] === 'symbolic-ref') return { stdout: 'main' };
+        return { stdout: '' };
+      },
     });
 
     expect(state.found).toBe(true);
@@ -2157,7 +2215,8 @@ describe('locating the inventory', () => {
   const identityRealpath = (p) => p;
   const mainWorktreeRun = (cwd, args) => {
     if (args[0] === 'worktree') return { stdout: 'worktree /repo\nbranch refs/heads/main\n' };
-    return { stdout: `${cwd}/.git\n` };
+    if (args[0] === 'symbolic-ref') return { stdout: 'main\n' };
+    return { stdout: '/repo/.git\n' };
   };
   const bareRepoRun = (_cwd, args) => {
     if (args[0] === 'worktree') {
@@ -2165,6 +2224,7 @@ describe('locating the inventory', () => {
         stdout: 'worktree /repo\nbare\n\nworktree /repo/.kilo/worktrees/main\nHEAD abc123\nbranch refs/heads/main\n',
       };
     }
+    if (args[0] === 'symbolic-ref') return { stdout: 'main\n' };
     return { stdout: '/repo/.git\n' };
   };
 
@@ -2198,7 +2258,10 @@ describe('locating the inventory', () => {
   it('refuses a stale task-local inventory instead of reading it', () => {
     const repositoryRoot = mkdtempSync(join(tmpdir(), 'dispose-inventory-root-'));
     const cwd = join(repositoryRoot, '.kilo', 'worktrees', 'task');
-    const canonicalPath = join(realpathSync(repositoryRoot), 'WORKTREES.json');
+    // This fixture injects identityRealpath into readInventory, so its canonical
+    // path stays in the same lexical form returned by mkdtempSync. Calling
+    // realpathSync here would compare /private/var with /var on macOS.
+    const canonicalPath = join(repositoryRoot, 'WORKTREES.json');
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(cwd, 'WORKTREES.json'),
@@ -2213,9 +2276,12 @@ describe('locating the inventory', () => {
     try {
       const inventory = readInventory(cwd, greenState(), {
         nowMs: NOW,
-        run: (_cwd, args) => ({
-          stdout: args[0] === 'worktree' ? `worktree ${repositoryRoot}\nbranch refs/heads/main\n` : '',
-        }),
+        realpath: identityRealpath,
+        run: (_cwd, args) => {
+          if (args[0] === 'worktree') return { stdout: `worktree ${repositoryRoot}\nbranch refs/heads/main\n` };
+          if (args[0] === 'symbolic-ref') return { stdout: 'main\n' };
+          return { stdout: `${repositoryRoot}/.git\n` };
+        },
       });
       expect(inventory).toEqual({ ok: false, reason: 'missing', path: canonicalPath });
     } finally {

@@ -1568,6 +1568,44 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     expect(chat).not.toHaveBeenCalled();
   });
 
+  it('calls onAllFreeExhausted once only after every free source fails', async () => {
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')] });
+    const runKilo = vi.fn().mockResolvedValue({ error: 'free tier exhausted', exhaustSource: true });
+    const onAllFreeExhausted = vi.fn();
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        kiloCommand: '/fake-kilo',
+        runKilo,
+        onAllFreeExhausted,
+      })
+    ).rejects.toThrow(/No free model completed/);
+
+    expect(onAllFreeExhausted).toHaveBeenCalledOnce();
+    expect(onAllFreeExhausted).toHaveBeenCalledWith({
+      requestCounts: { kilo: 1, openrouter: 0 },
+      errors: ['kilo/k1: free tier exhausted'],
+    });
+  });
+
+  it('does not call onAllFreeExhausted after a free model succeeds', async () => {
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')] });
+    const runKilo = vi.fn().mockResolvedValue({ model: 'k1', content: 'done', finishReason: 'stop' });
+    const onAllFreeExhausted = vi.fn();
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        kiloCommand: '/fake-kilo',
+        runKilo,
+        onAllFreeExhausted,
+      })
+    ).resolves.toMatchObject({ source: 'kilo', model: 'k1', content: 'done' });
+
+    expect(onAllFreeExhausted).not.toHaveBeenCalled();
+  });
+
   it('exhausts a single-key provider on HTTP 401 to avoid retrying an invalid key', async () => {
     const chat = vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) });
     const fetchImpl = catalogFetch({

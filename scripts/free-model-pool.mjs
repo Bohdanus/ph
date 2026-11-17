@@ -1366,6 +1366,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
     }
     return counts;
   };
+  let allFreeExhausted = false;
   try {
     if (available.some((entry) => entry.source === 'kilo') && !effectiveKiloCommand) {
       exhausted.add('kilo');
@@ -2065,11 +2066,14 @@ export async function completeWithFreeModel(prompt, options = {}) {
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
       await delay(backoffMs);
     }
+    allFreeExhausted = true;
     throw new Error(
       `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.map((e) => sanitizeErrorMessage(e)).join(' | ') || 'No eligible free models were available.'}`
     );
   } finally {
-    await onAllFreeExhausted({ requestCounts: requestCounts(), errors: errors.map((e) => sanitizeErrorMessage(e)) });
+    if (allFreeExhausted) {
+      await onAllFreeExhausted({ requestCounts: requestCounts(), errors: errors.map((e) => sanitizeErrorMessage(e)) });
+    }
   }
 }
 
