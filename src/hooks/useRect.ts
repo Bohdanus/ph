@@ -108,6 +108,8 @@ export type UseRectProps = {
   rotationEnabled?: boolean;
   rotation?: number;
   onRotationChange?: (degrees: number) => void;
+  /** Reset the selection's angle when a press starts a fresh rectangle outside the current one. */
+  resetRotationOnNewRect?: boolean;
   /** Optional composition guide for the crop consumer. Other rectangle tools leave this absent. */
   overlayType?: CropOverlayType;
   overlayOrientation?: CropOverlayOrientation;
@@ -383,6 +385,7 @@ export function useRect({
   rotationEnabled = false,
   rotation = 0,
   onRotationChange,
+  resetRotationOnNewRect = false,
   overlayType,
   overlayOrientation = 'normal',
   overlayVisibility = 'always',
@@ -1243,6 +1246,12 @@ export function useRect({
     if (selectionRect) {
       const edge = getEdgeAtPoint(point, event);
       currentEdgeRef.current = edge;
+
+      if (!edge && resetRotationOnNewRect && rotationRef.current !== 0) {
+        rotationRef.current = 0;
+        startRotationRef.current = 0;
+        onRotationChange?.(0);
+      }
 
       isHandleClicked = !!edge;
 

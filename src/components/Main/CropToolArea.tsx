@@ -619,6 +619,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     hideRotationHandle: angle === 0,
     rotationEnabled: true,
     rotation: angle,
+    resetRotationOnNewRect: true,
     onRotationChange: (nextAngle: number) => setCurrentCropArgs({ ...overlayKeysRef.current.args, angle: nextAngle }),
     overlayType: angle === 0 ? undefined : overlayType,
     overlayColorForRect: angle === 0 ? undefined : sampleCropOverlayColor,
