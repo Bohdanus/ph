@@ -37,6 +37,7 @@ function reportWith({ skipped = [photopea, viewportDrawing], statsSkipped = skip
       {
         projectId: identity.projectId,
         projectName: identity.projectName,
+        expectedStatus: status === 'skipped' ? 'skipped' : 'passed',
         status,
         results:
           status === 'flaky'
@@ -118,8 +119,33 @@ function appendSkippedSpec(report, identity) {
           {
             projectId: identity.projectId,
             projectName: identity.projectName,
+            expectedStatus: 'skipped',
             status: 'skipped',
             results: [],
+          },
+        ],
+      },
+    ],
+    suites: [],
+  });
+}
+
+function appendExpectedFailureSpec(report, identity) {
+  report.suites.push({
+    title: identity.file.split('/').at(-1),
+    file: identity.file,
+    specs: [
+      {
+        title: identity.titlePath.at(-1),
+        file: identity.file,
+        id: identity.specId,
+        tests: [
+          {
+            projectId: identity.projectId,
+            projectName: identity.projectName,
+            expectedStatus: 'failed',
+            status: 'expected',
+            results: [{ retry: 0, status: 'failed' }],
           },
         ],
       },
@@ -142,6 +168,7 @@ describe('E2E skipped-test baseline', () => {
     report.suites[0].specs[0].tests.push({
       projectId: otherProject.projectId,
       projectName: otherProject.projectName,
+      expectedStatus: 'skipped',
       status: 'skipped',
       results: [],
     });
@@ -171,6 +198,7 @@ describe('E2E skipped-test baseline', () => {
             {
               projectId: newSkip.projectId,
               projectName: newSkip.projectName,
+              expectedStatus: 'skipped',
               status: 'skipped',
               results: [],
             },
@@ -247,6 +275,28 @@ describe('E2E skipped-test baseline', () => {
     expect(() => assertE2ESkipBaselineAcrossShards(reports, baseline())).toThrow(
       /Unexpected skip in linux shard 1: sidebar-flyout\.spec\.ts/
     );
+  });
+
+  it('rejects a failing test marked as expected on any platform', () => {
+    const reports = reportsAcrossShards();
+    appendExpectedFailureSpec(reports[0].report, {
+      specId: 'expected-failure-test-id',
+      projectId: 'google-chrome-project-id',
+      file: 'expected-failure.spec.ts',
+      titlePath: ['known failure hidden by test.fail'],
+      projectName: 'Google Chrome',
+    });
+
+    expect(() => assertE2ESkipBaselineAcrossShards(reports, baseline())).toThrow(
+      /test expected to fail: expected-failure\.spec\.ts :: known failure hidden by test\.fail/
+    );
+  });
+
+  it('keeps an expected-status failure that was skipped under the reviewed skip baseline', () => {
+    const report = reportWith();
+    report.suites[0].specs[0].tests[0].expectedStatus = 'failed';
+
+    expect(assertE2ESkipBaseline(report, baseline())).toHaveLength(2);
   });
 
   it('requires each baseline identity to remain skipped once per platform', () => {
