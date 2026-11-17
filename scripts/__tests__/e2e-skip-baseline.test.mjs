@@ -292,6 +292,13 @@ describe('E2E skipped-test baseline', () => {
     );
   });
 
+  it('rejects an unknown Playwright expected status instead of accepting a changed report schema', () => {
+    const report = reportWith();
+    report.suites[0].specs[0].tests[0].expectedStatus = 'pending';
+
+    expect(() => collectSkippedTests(report)).toThrow(/unknown expectedStatus/);
+  });
+
   it('keeps an expected-status failure that was skipped under the reviewed skip baseline', () => {
     const report = reportWith();
     report.suites[0].specs[0].tests[0].expectedStatus = 'failed';
