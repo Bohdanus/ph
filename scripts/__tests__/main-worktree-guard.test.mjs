@@ -163,8 +163,8 @@ describe('the landing gate binds mirror E2E to the checked-out candidate', () =>
         sourceSha: incomingSha,
         workflowSha: proof.workflowSha,
         runId: proof.runId,
-        candidatePath,
       });
+      expect(realpathSync(verified.candidatePath)).toBe(realpathSync(candidatePath));
       expect(verified.verifiedAt).toBe(new Date(now).toISOString());
       expect(api).toHaveBeenCalledTimes(2);
     } finally {
@@ -988,7 +988,7 @@ describe('the guard is actually installed', () => {
       git(reusedMainPath, ['commit', '--quiet', '--allow-empty', '-m', 'foreign']);
 
       const roster = git(fixture, ['worktree', 'list', '--porcelain']);
-      expect(roster).toContain(`worktree ${reusedMainPath.replace(/\\/g, '/')}`);
+      expect(roster).toContain(`worktree ${realpathSync(reusedMainPath).replace(/\\/g, '/')}`);
       expect(roster).toContain('branch refs/heads/main');
       expect(roster).not.toMatch(/\nprunable(?:\s|$)/);
 
