@@ -259,10 +259,11 @@ function commitThroughMainLanding() {
   return git(['rev-parse', 'HEAD']);
 }
 
-function recordPreparedMergeState(cwd, phase = 'before') {
+function recordPreparedMergeState(cwd, phase = 'before', env = process.env) {
   const result = spawnSync(process.execPath, [LANDING_MESSAGE_GUARD_PATH, `--record-prepared-merge-${phase}`], {
     cwd,
     encoding: 'utf8',
+    env,
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
@@ -2504,6 +2505,65 @@ describe('pinned main landing', () => {
     expect(gitAt(featureWorktree, ['show', 'HEAD:ordinary-change.txt'])).toBe('ordinary');
   });
 
+  it('preserves staged work while explicitly discarding state from an aborted merge', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+    gitAt(featureWorktree, ['merge', '--abort']);
+
+    const changePath = join(featureWorktree, 'after-abort.txt');
+    writeFileSync(changePath, 'keep this working-tree change\n');
+    gitAt(featureWorktree, ['add', 'after-abort.txt']);
+    const blocked = recordPreparedMergeState(featureWorktree);
+    expect(blocked.status).not.toBe(0);
+    expect(blocked.stderr).toContain('a previous prepared merge left unresolved state');
+
+    gitAt(featureWorktree, ['reset', '--mixed', 'HEAD']);
+    const discard = spawnSync(process.execPath, [LANDING_MESSAGE_GUARD_PATH, '--discard-abandoned-prepared-merge'], {
+      cwd: featureWorktree,
+      encoding: 'utf8',
+    });
+    expect(discard.status).toBe(0);
+    expect(gitAt(featureWorktree, ['status', '--porcelain'])).toContain('?? after-abort.txt');
+    expect(readFileSync(changePath, 'utf8')).toBe('keep this working-tree change\n');
+
+    gitAt(featureWorktree, ['add', 'after-abort.txt']);
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+    expect(gitAt(featureWorktree, ['diff', '--cached', '--name-only'])).toBe('after-abort.txt');
+  });
+
+  it('does not suggest resetting the index when HEAD moved after an abandoned merge', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+    gitAt(featureWorktree, ['merge', '--abort']);
+
+    writeFileSync(join(featureWorktree, 'later-commit.txt'), 'later commit\n');
+    gitAt(featureWorktree, ['add', 'later-commit.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Later commit', '-m', 'Chat: test-session']);
+    writeFileSync(join(featureWorktree, 'staged-after-commit.txt'), 'keep this staged change\n');
+    gitAt(featureWorktree, ['add', 'staged-after-commit.txt']);
+
+    const discard = spawnSync(process.execPath, [LANDING_MESSAGE_GUARD_PATH, '--discard-abandoned-prepared-merge'], {
+      cwd: featureWorktree,
+      encoding: 'utf8',
+    });
+    expect(discard.status).not.toBe(0);
+    expect(discard.stderr).toContain('HEAD no longer matches the recorded pre-merge commit');
+    expect(discard.stderr).not.toContain('reset the index to HEAD');
+    const statePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(existsSync(statePath)).toBe(true);
+    expect(gitAt(featureWorktree, ['show', 'HEAD:later-commit.txt'])).toBe('later commit');
+    expect(gitAt(featureWorktree, ['diff', '--cached', '--name-only'])).toBe('staged-after-commit.txt');
+  });
+
   it('clears stale prepared-merge state after the exact merge commit is already HEAD', () => {
     const refs = prepareDisjointMerge();
     const featureWorktree = join(dir, 'feature-worktree');
@@ -2593,6 +2653,254 @@ describe('pinned main landing', () => {
       'commit-reviewed-landing-message-guard: a previous prepared merge left unresolved state'
     );
     expect(existsSync(mergeStatePath)).toBe(true);
+  });
+
+  it('clears a completed pinned merge only when its saved Branch and Chat trailers match', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    const preparedTree = gitAt(featureWorktree, ['write-tree']);
+    const pinnedMergeEnv = {
+      ...process.env,
+      KILO_EXPECTED_MAIN_SHA: refs.main,
+      KILO_EXPECTED_INCOMING_SHA: refs.incoming,
+      KILO_EXPECTED_TREE_SHA: preparedTree,
+      KILO_EXPECTED_BRANCH: 'feat',
+      KILO_EXPECTED_CHAT_ID: 'test-session',
+    };
+    expect(recordPreparedMergeState(featureWorktree, 'before', pinnedMergeEnv).status).toBe(0);
+
+    const emptyHooksPath = join(dir, 'empty-hooks');
+    mkdirSync(emptyHooksPath);
+    gitAt(featureWorktree, [
+      '-c',
+      `core.hooksPath=${emptyHooksPath}`,
+      'commit',
+      '-m',
+      'Completed prepared merge',
+      '-m',
+      'Branch: feat\nChat: test-session',
+    ]);
+
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+    const statePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(existsSync(statePath)).toBe(false);
+  });
+
+  it('keeps saved landing pins when a prepared merge retry omits pin environment', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    const preparedTree = gitAt(featureWorktree, ['write-tree']);
+    const pinnedMergeEnv = {
+      ...process.env,
+      KILO_EXPECTED_MAIN_SHA: refs.main,
+      KILO_EXPECTED_INCOMING_SHA: refs.incoming,
+      KILO_EXPECTED_TREE_SHA: preparedTree,
+      KILO_EXPECTED_BRANCH: 'feat',
+      KILO_EXPECTED_CHAT_ID: 'test-session',
+    };
+    expect(recordPreparedMergeState(featureWorktree, 'before', pinnedMergeEnv).status).toBe(0);
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+
+    gitAt(featureWorktree, [
+      '-c',
+      `core.hooksPath=${join(dir, 'empty-hooks')}`,
+      'commit',
+      '-m',
+      'Completed merge with the wrong Branch trailer',
+      '-m',
+      'Branch: other\nChat: test-session',
+    ]);
+
+    const blocked = recordPreparedMergeState(featureWorktree);
+    expect(blocked.status).not.toBe(0);
+    expect(blocked.stderr).toContain('a previous prepared merge left unresolved state');
+    const statePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).expectedLandingPins).toEqual({
+      main: refs.main,
+      incoming: refs.incoming,
+      tree: preparedTree,
+      branch: 'feat',
+      chat: 'test-session',
+    });
+  });
+
+  it.each([
+    { changed: 'Branch', message: 'Branch: other\nChat: test-session' },
+    { changed: 'Chat', message: 'Branch: feat\nChat: another-session' },
+  ])('keeps a completed pinned merge blocked when its $changed trailer differs from the saved pin', ({ message }) => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    const preparedTree = gitAt(featureWorktree, ['write-tree']);
+    const pinnedMergeEnv = {
+      ...process.env,
+      KILO_EXPECTED_MAIN_SHA: refs.main,
+      KILO_EXPECTED_INCOMING_SHA: refs.incoming,
+      KILO_EXPECTED_TREE_SHA: preparedTree,
+      KILO_EXPECTED_BRANCH: 'feat',
+      KILO_EXPECTED_CHAT_ID: 'test-session',
+    };
+    expect(recordPreparedMergeState(featureWorktree, 'before', pinnedMergeEnv).status).toBe(0);
+
+    const emptyHooksPath = join(dir, 'empty-hooks');
+    mkdirSync(emptyHooksPath);
+    gitAt(featureWorktree, [
+      '-c',
+      `core.hooksPath=${emptyHooksPath}`,
+      'commit',
+      '-m',
+      `Completed prepared merge with a changed ${message.changed} trailer`,
+      '-m',
+      message.message,
+    ]);
+
+    const blocked = recordPreparedMergeState(featureWorktree);
+    expect(blocked.status).not.toBe(0);
+    expect(blocked.stderr).toContain('a previous prepared merge left unresolved state');
+    const statePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(existsSync(statePath)).toBe(true);
+  });
+
+  it('keeps completed unpinned merge state when its Chat trailer is missing', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+
+    const emptyHooksPath = join(dir, 'empty-hooks');
+    mkdirSync(emptyHooksPath);
+    gitAt(featureWorktree, [
+      '-c',
+      `core.hooksPath=${emptyHooksPath}`,
+      'commit',
+      '-m',
+      'Completed prepared merge without a Chat trailer',
+    ]);
+
+    const blocked = recordPreparedMergeState(featureWorktree);
+    expect(blocked.status).not.toBe(0);
+    expect(blocked.stderr).toContain('a previous prepared merge left unresolved state');
+  });
+
+  it('fails closed when saved prepared-merge landing pins are malformed', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    const preparedTree = gitAt(featureWorktree, ['write-tree']);
+    const pinnedMergeEnv = {
+      ...process.env,
+      KILO_EXPECTED_MAIN_SHA: refs.main,
+      KILO_EXPECTED_INCOMING_SHA: refs.incoming,
+      KILO_EXPECTED_TREE_SHA: preparedTree,
+      KILO_EXPECTED_BRANCH: 'feat',
+      KILO_EXPECTED_CHAT_ID: 'test-session',
+    };
+    expect(recordPreparedMergeState(featureWorktree, 'before', pinnedMergeEnv).status).toBe(0);
+
+    const statePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    const state = JSON.parse(readFileSync(statePath, 'utf8'));
+    state.expectedLandingPins.chat = '';
+    writeFileSync(statePath, `${JSON.stringify(state)}\n`);
+
+    const blocked = recordPreparedMergeState(featureWorktree);
+    expect(blocked.status).not.toBe(0);
+    expect(blocked.stderr).toContain('prepared merge state has invalid landing pins');
+    expect(existsSync(statePath)).toBe(true);
+  });
+
+  it.each([41, 63])('rejects an expected landing pin with an impossible %i-character object ID', (length) => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    const partialPinsEnv = {
+      ...process.env,
+      KILO_EXPECTED_MAIN_SHA: 'a'.repeat(length),
+      KILO_EXPECTED_INCOMING_SHA: refs.incoming,
+      KILO_EXPECTED_TREE_SHA: gitAt(featureWorktree, ['write-tree']),
+      KILO_EXPECTED_BRANCH: 'feat',
+      KILO_EXPECTED_CHAT_ID: 'test-session',
+    };
+
+    const rejected = recordPreparedMergeState(featureWorktree, 'before', partialPinsEnv);
+    expect(rejected.status).not.toBe(0);
+    expect(rejected.stderr).toContain('expected landing pins are incomplete or invalid');
+    const statePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(existsSync(statePath)).toBe(false);
+    expect(gitAt(featureWorktree, ['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+  });
+
+  it('accepts SHA-256-length expected landing pins', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    const pins = {
+      main: 'a'.repeat(64),
+      incoming: 'b'.repeat(64),
+      tree: 'c'.repeat(64),
+      branch: 'feat',
+      chat: 'test-session',
+    };
+    const pinnedMergeEnv = {
+      ...process.env,
+      KILO_EXPECTED_MAIN_SHA: pins.main,
+      KILO_EXPECTED_INCOMING_SHA: pins.incoming,
+      KILO_EXPECTED_TREE_SHA: pins.tree,
+      KILO_EXPECTED_BRANCH: pins.branch,
+      KILO_EXPECTED_CHAT_ID: pins.chat,
+    };
+
+    expect(recordPreparedMergeState(featureWorktree, 'before', pinnedMergeEnv).status).toBe(0);
+    const statePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).expectedLandingPins).toEqual(pins);
+  });
+
+  it('rejects partial expected landing pins before writing prepared-merge state', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    const partialPinsEnv = {
+      ...process.env,
+      KILO_EXPECTED_MAIN_SHA: refs.main,
+      KILO_EXPECTED_BRANCH: 'feat',
+    };
+
+    const rejected = recordPreparedMergeState(featureWorktree, 'before', partialPinsEnv);
+    expect(rejected.status).not.toBe(0);
+    expect(rejected.stderr).toContain('expected landing pins are incomplete or invalid');
+    const statePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(existsSync(statePath)).toBe(false);
+    expect(gitAt(featureWorktree, ['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
   });
 
   it('discards an aborted prepared merge before recording a different merge', () => {

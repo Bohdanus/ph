@@ -169,9 +169,11 @@ describe('toolDescriptions', () => {
     const increaseBrushShortcut = quick.shortcuts.find((shortcut) => shortcut.keys === ']');
     expect(decreaseBrushShortcut?.action).toMatch(/decreases the Quick Selection brush size/i);
     expect(increaseBrushShortcut?.action).toMatch(/increases the Quick Selection brush size/i);
+    expect(decreaseBrushShortcut?.action).toMatch(/Adobe Learn directly demonstrates this key/i);
+    expect(increaseBrushShortcut?.action).toMatch(/applying it here is an inference/i);
     expect(quick.sources).toEqual(
       expect.arrayContaining([
-        'https://www.adobe.com/learn/photoshop/web/use-quick-selection-tool',
+        'https://www.adobe.com/learn/photoshop/web/compositing',
         'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html',
         'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/select-area-intersected-by-other-selections.html',
         'https://helpx.adobe.com/lt/photoshop/how-to/add-to-subtract-from-selections.html',

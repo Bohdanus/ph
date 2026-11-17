@@ -154,7 +154,7 @@ export const REFUSALS = {
   'main-worktree': () =>
     'This is the main checkout. It is never a deletion candidate — it is the landing site every other session resolves paths through.',
   'main-worktree-path-unavailable': () =>
-    'Git did not report exactly one registered main worktree path. The disposer needs that surviving checkout to verify the base and delete the branch after removing this worktree.',
+    'Git did not verify a registered main checkout and its common Git directory. The disposer needs both to verify the base and delete the branch after removing this worktree.',
   detached: () => 'HEAD is detached, so there is no branch to delete and no name to anchor. Resolve the branch first.',
   'no-branch': () => 'This worktree reports no branch, so there is nothing safe to delete after the worktree goes.',
   locked: (reason) =>
@@ -493,7 +493,7 @@ export function preflight({
   // bare working directory. Protect the base branch independently of Git's
   // `isPrimary` marker so a stale inventory cannot classify it for removal.
   if (gitState.isPrimary || gitState.branch === 'main') refuse('main-worktree');
-  if (!keepBranch && !gitState.mainWorktreePath) refuse('main-worktree-path-unavailable');
+  if (!keepBranch && (!gitState.mainWorktreePath || !gitState.commonDir)) refuse('main-worktree-path-unavailable');
   if (gitState.detached) refuse('detached');
   // `readGitState` writes one of two parenthesised placeholders when
   // `git worktree list --porcelain` gave no `branch` line. They are matched by
@@ -756,11 +756,6 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
   if (!match) return { found: false, known: entries.map((e) => basename(e.path)) };
 
   const absolutePath = match.path;
-  // After removal, the invoking cwd may be the directory Git just deleted.
-  // Capture a usable, surviving checkout from the same roster before mutation.
-  const mainWorktrees = entries.filter((entry) => entry.bare !== true && entry.branch === 'main');
-  const registeredMainPath = mainWorktrees.length === 1 ? mainWorktrees[0].path : null;
-  const mainWorktreePath = registeredMainPath && existsSync(registeredMainPath) ? registeredMainPath : null;
   let commonDir = '';
   let gitDir = '';
   try {
@@ -772,6 +767,25 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     /* detection failure is reported as "not primary" below, which is the fail-open
        direction and matches main-worktree-guard.mjs: policy fails closed, detection
        fails open, and the two are different questions. */
+  }
+
+  // After removal, the invoking cwd may be the directory Git just deleted.
+  // Capture a surviving main checkout from the same repository before mutation.
+  const mainWorktrees = entries.filter(
+    (entry) => entry.bare !== true && entry.branch === 'main' && !entry.prunableReason
+  );
+  const registeredMainPath = mainWorktrees.length === 1 ? mainWorktrees[0].path : null;
+  let mainWorktreePath = null;
+  if (registeredMainPath && existsSync(registeredMainPath) && commonDir) {
+    try {
+      const mainCommonDir = realpathIfExists(
+        run(registeredMainPath, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim()
+      );
+      const mainBranch = run(registeredMainPath, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
+      if (mainBranch === 'main' && samePath(mainCommonDir, commonDir)) mainWorktreePath = registeredMainPath;
+    } catch {
+      // A stale or reused path cannot be the surviving checkout for this repository.
+    }
   }
 
   let tip = null;
@@ -1572,9 +1586,9 @@ export function dispose(
   } = {}
 ) {
   const steps = [];
-  if (!keepBranch && !gitState.mainWorktreePath) {
+  if (!keepBranch && (!gitState.mainWorktreePath || !gitState.commonDir)) {
     steps.push(
-      `KEPT worktree ${gitState.absolutePath}: Git did not report a registered main worktree to use after removal`
+      `KEPT worktree ${gitState.absolutePath}: Git did not report a registered main checkout and common directory to use after removal`
     );
     return {
       steps,
@@ -1586,6 +1600,9 @@ export function dispose(
     };
   }
   const mainWorktreeCwd = gitState.mainWorktreePath ?? cwd;
+  // Keep ref operations bound to the captured repository even if that checkout
+  // path is replaced after readGitState validates it.
+  const runInRepository = (args) => run(mainWorktreeCwd, ['--git-dir', gitState.commonDir, ...args]);
   // NO ANCHOR WHEN THE BRANCH SURVIVES. The anchor exists so a deleted branch is
   // still reachable; a branch that is deliberately kept is already reachable,
   // and writing `refs/keep/disposed/<slug>` for it would put a ref that reads as
@@ -1609,8 +1626,9 @@ export function dispose(
 
   const noOpMergeBaseIsCurrent = () => {
     if (deleteReason !== 'merge-tree-no-op') return true;
+    if (!gitState.commonDir) return false;
     try {
-      return run(mainWorktreeCwd, ['rev-parse', '--verify', 'main^{commit}']).stdout.trim() === expectedBaseHead;
+      return runInRepository(['rev-parse', '--verify', 'main^{commit}']).stdout.trim() === expectedBaseHead;
     } catch {
       return false;
     }
@@ -1732,7 +1750,7 @@ export function dispose(
     }
     const deleteFlag = deleteUnmergedBranch ? '-D' : '-d';
     try {
-      run(mainWorktreeCwd, ['branch', deleteFlag, gitState.branch]);
+      runInRepository(['branch', deleteFlag, gitState.branch]);
       branchDeleted = true;
       if (deleteUnmergedBranch) {
         steps.push(
