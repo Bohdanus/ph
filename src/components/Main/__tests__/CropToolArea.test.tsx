@@ -978,30 +978,15 @@ describe('CropToolArea', () => {
       expect(container.querySelector('[data-testid="crop-composition-guide"]')).not.toBeNull();
     });
 
-    it('dims the in-frame pixels outside the crop with four local overlay bands', () => {
+    it('dims the in-frame pixels outside the crop with one gap-free even-odd mask', () => {
       toolArgsState.toolArgs.rect = { x1: 100, y1: 100, x2: 400, y2: 300 };
       const { container } = render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
       repaint(toolArgsState.toolArgs.rect);
 
-      const bands = [...container.querySelectorAll('[data-testid="crop-frame-dim"]')].map((node) => {
-        const element = node as HTMLDivElement;
-        return {
-          x: Number.parseFloat(element.style.left),
-          y: Number.parseFloat(element.style.top),
-          width: Number.parseFloat(element.style.width),
-          height: Number.parseFloat(element.style.height),
-          color: element.style.backgroundColor,
-        };
-      });
-      expect(bands).toHaveLength(4);
-      expect(bands).toEqual(
-        expect.arrayContaining([
-          { x: 0, y: 0, width: 800, height: 100, color: 'rgba(0, 0, 0, 0.7)' },
-          { x: 0, y: 300, width: 800, height: 300, color: 'rgba(0, 0, 0, 0.7)' },
-          { x: 0, y: 100, width: 100, height: 200, color: 'rgba(0, 0, 0, 0.7)' },
-          { x: 400, y: 100, width: 400, height: 200, color: 'rgba(0, 0, 0, 0.7)' },
-        ])
-      );
+      const mask = container.querySelector('[data-testid="crop-frame-dim"]');
+      expect(mask?.tagName.toLowerCase()).toBe('svg');
+      expect(mask?.querySelector('path')?.getAttribute('fill-rule')).toBe('evenodd');
+      expect(mask?.querySelector('path')?.getAttribute('d')).toBe('M0 0 H800 V600 H0 Z M100 100 h300 v200 h-300 Z');
     });
 
     it('renders the overhang once the box leaves the document', () => {
