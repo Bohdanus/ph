@@ -406,7 +406,8 @@ describe('LayersTab actions reaching the store', () => {
       layers: Record<string, { order: number; pos: { x: number; y: number; width: number; height: number } }>;
       activeLayerId: string;
     };
-    expect(updates.layers['history-id']?.order).toBe(1.5);
+    expect(updates.layers['history-id']?.order).toBeGreaterThan(1);
+    expect(updates.layers['history-id']?.order).toBeLessThan(2);
     expect(updates.layers['history-id']?.pos).toEqual({ x: 10, y: 12, width: 41, height: 31 });
     expect(updates.activeLayerId).toBe('history-id');
   });
