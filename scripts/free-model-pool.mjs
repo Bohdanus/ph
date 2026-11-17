@@ -98,6 +98,37 @@ export const MAX_GROQ_KEYS = 8;
 const GROQ_KEY_PROBE_CACHE = join(homedir(), '.cache', 'ph', 'groq-key-probe.json');
 const GROQ_KEY_PROBE_TTL_MS = 60 * 60 * 1000;
 
+const OPENCODE_RUNTIME_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'USERPROFILE',
+  'USER',
+  'LOGNAME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'NO_COLOR',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_CACHE_HOME',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'PROGRAMDATA',
+  'SYSTEMROOT',
+  'WINDIR',
+  'COMSPEC',
+];
+
+function opencodeRuntimeEnvironment(environment) {
+  return Object.fromEntries(
+    OPENCODE_RUNTIME_ENV_KEYS.flatMap((key) => (typeof environment[key] === 'string' ? [[key, environment[key]]] : []))
+  );
+}
+
 async function loadGroqKeyProbeCache() {
   const { readFile } = await import('node:fs/promises');
   try {
@@ -1053,7 +1084,7 @@ export async function runOpenCodeCompletion({
   try {
     await writeFile(promptPath, prompt, { encoding: 'utf8', mode: 0o600 });
     const env = {
-      ...process.env,
+      ...opencodeRuntimeEnvironment(process.env),
       OPENCODE_CONFIG_CONTENT: OPENCODE_TOOL_DENY_CONFIG,
       OPENCODE_DISABLE_AUTOUPDATE: '1',
       OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',

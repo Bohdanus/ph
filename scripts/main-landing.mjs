@@ -1634,6 +1634,9 @@ async function recoverPersistentOrphanAutoMerge(
   }
 }
 
+const WATCHER_READ_RETRY_MAX = 3;
+const WATCHER_READ_RETRY_BASE_MS = 500;
+
 export async function watch(
   paths,
   leaseId,
@@ -1643,17 +1646,38 @@ export async function watch(
     recoveryOptions = {},
   } = {}
 ) {
+  let consecutiveReadFailures = 0;
   for (;;) {
     await sleep(WATCH_POLL_MS);
     let owner;
     try {
       owner = readOwner(paths);
+      consecutiveReadFailures = 0;
     } catch (error) {
+      consecutiveReadFailures += 1;
       appendFileSync(
         join(paths.lockDir, 'alert-failures.log'),
-        new Date().toISOString() + ' watcher: ' + error.message + '\n'
+        new Date().toISOString() +
+          ' watcher readOwner failed (attempt ' +
+          consecutiveReadFailures +
+          '/' +
+          WATCHER_READ_RETRY_MAX +
+          '): ' +
+          error.message +
+          '\n'
       );
-      return 1;
+      if (consecutiveReadFailures >= WATCHER_READ_RETRY_MAX) {
+        appendFileSync(
+          join(paths.lockDir, 'alert-failures.log'),
+          new Date().toISOString() +
+            ' watcher: readOwner failed ' +
+            WATCHER_READ_RETRY_MAX +
+            ' consecutive times; exiting\n'
+        );
+        return 1;
+      }
+      await sleep(WATCHER_READ_RETRY_BASE_MS * consecutiveReadFailures);
+      continue;
     }
     if (!owner || owner.leaseId !== leaseId) return 0;
     try {
