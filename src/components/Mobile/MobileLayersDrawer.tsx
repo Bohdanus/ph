@@ -97,14 +97,15 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   if (!isOpen && pendingDeleteLayer === null) return null;
 
   const requestLayerRemoval = (layerId: LayerId) => {
-    if (!layers[layerId] || textEditingLayerId === layerId) return;
-    setPendingDelete({ id: layerId, layer: layers[layerId] });
+    const layer = layers[layerId];
+    if (!layer || layer.locked || textEditingLayerId === layerId) return;
+    setPendingDelete({ id: layerId, layer });
   };
 
   const confirmLayerRemoval = () => {
     const request = pendingDelete;
     setPendingDelete(null);
-    if (request && layers[request.id] === request.layer && textEditingLayerId !== request.id) {
+    if (request && layers[request.id] === request.layer && !request.layer.locked && textEditingLayerId !== request.id) {
       removeLayer(request.id);
     }
   };
@@ -344,13 +345,15 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                   type="button"
                   onClick={() => requestLayerRemoval(activeLayerId)}
                   data-testid="mobile-delete-layer-button"
-                  disabled={textEditingLayerId === activeLayerId}
+                  disabled={layers[activeLayerId]?.locked === true || textEditingLayerId === activeLayerId}
                   className="flex min-h-11 min-w-11 items-center justify-center text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 rounded-lg"
                   aria-label="Delete active layer"
                   title={
-                    textEditingLayerId === activeLayerId
-                      ? 'Finish text editing before removing this layer'
-                      : 'Delete active layer'
+                    layers[activeLayerId]?.locked
+                      ? 'Unlock layer before removing it'
+                      : textEditingLayerId === activeLayerId
+                        ? 'Finish text editing before removing this layer'
+                        : 'Delete active layer'
                   }
                 >
                   <TrashIcon />

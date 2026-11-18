@@ -1173,7 +1173,7 @@ export const useLayers = () => {
 
   const removeLayer = (id: LayerId) => {
     const layer = layers[id];
-    if (!layer) return;
+    if (!layer || isLayerLocked(layer)) return;
     if (activeTextEditArgs()?.editingLayerId === id) return;
 
     const { [id]: removedLayer, ...remainingLayers } = layers;
