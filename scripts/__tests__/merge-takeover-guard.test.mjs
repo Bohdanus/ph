@@ -2029,7 +2029,7 @@ describe('pinned main landing', () => {
     removePreMergeGuard();
   });
 
-  it('writes the reviewed source branch and chat trailers into the landing commit', () => {
+  it('writes the reviewed source branch, chat, and co-author trailers into the landing commit', () => {
     prepareMainLandingFixture();
     const refs = prepareDisjointMerge();
     installPinnedPreCommitGuards({ gitDirHooks: true });
@@ -2038,7 +2038,7 @@ describe('pinned main landing', () => {
     });
 
     expect(git(['show', '-s', '--format=%B', 'HEAD']).trim()).toBe(
-      'Merge feat into main\n\nBranch: feat\nChat: test-session'
+      'Merge feat into main\n\nBranch: feat\nChat: test-session\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'
     );
     expect(git(['status', '--porcelain'])).toBe('');
   });
