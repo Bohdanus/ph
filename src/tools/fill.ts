@@ -15,10 +15,9 @@ export type FillToolName = 'magic-eraser' | 'paint-bucket';
 
 /**
  * Adobe's tolerance scale for the bucket, the magic eraser and the background eraser is 0-255,
- * not the 0-100 the Magic Wand uses: those three scale 0-255 onto a 3-channel maximum, and a pixel
- * differing only in alpha counts as inside the region. `createFloodFillMask` takes the same 0-255
- * scale, and both Options bars render the slider with `max={FILL_TOLERANCE_MAX}` so the two cannot
- * drift into each other.
+ * not the 0-100 the Magic Wand uses. The fill scales tolerance across the full RGBA distance;
+ * `createFloodFillMask` uses the same 0-255 scale, and both Options bars render the slider with
+ * `max={FILL_TOLERANCE_MAX}` so the two cannot drift into each other.
  */
 export const FILL_TOLERANCE_MAX = 255;
 
