@@ -826,6 +826,29 @@ describe('LayersTab', () => {
     expect('layer-3' in liveStore.snapshot.layers).toBe(false);
   });
 
+  it('disables removal of a full-locked layer from its row and the action bar', () => {
+    const lockedLayers = {
+      ...mockLayers,
+      'layer-2': createMockLayer({ id: 'layer-2', name: 'Layer 2', order: 1, locked: true }),
+    };
+    seed(lockedLayers, 'layer-2');
+    render(<LayersTab />);
+
+    const rowDelete = getListItemFor('Layer 2').querySelector<HTMLButtonElement>('button[aria-label="Remove layer"]');
+    if (!rowDelete) throw new Error('no remove button for locked Layer 2');
+    const activeDelete = screen.getByTestId('layers-delete-active-button');
+
+    expect(rowDelete).toBeDisabled();
+    expect(rowDelete).toHaveAttribute('title', 'Unlock layer before removing it');
+    expect(activeDelete).toBeDisabled();
+    expect(activeDelete).toHaveAttribute('title', 'Unlock layer before deleting it');
+    fireEvent.click(rowDelete);
+    fireEvent.click(activeDelete);
+
+    expect(layerMocks.removeLayer).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+  });
+
   it('closes deletion confirmation if the layer disappears externally', async () => {
     render(<LayersTab />);
     const trashButton = getLayerDivs()[0].querySelector<HTMLButtonElement>('button[aria-label="Remove layer"]');

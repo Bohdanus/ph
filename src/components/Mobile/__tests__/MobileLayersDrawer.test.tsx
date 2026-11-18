@@ -240,6 +240,19 @@ describe('MobileLayersDrawer', () => {
     expect(removeLayerMock).not.toHaveBeenCalled();
   });
 
+  it('disables deletion of the active full-locked layer', () => {
+    storeStateMock.layers.upper = { ...storeStateMock.layers.upper, locked: true };
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    const deleteButton = screen.getByRole('button', { name: 'Delete active layer' });
+    expect(deleteButton).toBeDisabled();
+    expect(deleteButton).toHaveAttribute('title', 'Unlock layer before removing it');
+    fireEvent.click(deleteButton);
+
+    expect(removeLayerMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+  });
+
   it('keeps the selected layer when a text commit fails on touch selection', () => {
     currentToolState.toolArgs = {
       toolName: 'text',
