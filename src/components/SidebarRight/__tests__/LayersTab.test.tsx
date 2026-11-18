@@ -356,13 +356,18 @@ describe('LayersTab', () => {
     expect(layerMocks.updateLayer).not.toHaveBeenCalled();
   });
 
-  it('places Lock All in the fourth Photoshop lock slot', () => {
+  it('shows all four Photoshop lock slots and disables unsupported partial locks', () => {
     render(<LayersTab />);
 
     const protectionControls = screen.getByRole('group', { name: 'Layer protection controls' });
     const lockButton = screen.getByRole('button', { name: 'Lock Layer 2' });
 
-    expect(protectionControls).toHaveClass('grid', 'w-36', 'grid-cols-4');
+    expect(protectionControls).toHaveClass('grid', 'w-[7.5rem]', 'grid-cols-4');
+    expect(protectionControls.querySelectorAll('button')).toHaveLength(4);
+    expect(screen.getByRole('button', { name: 'Lock Transparent Pixels (unavailable)' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Lock Image Pixels (unavailable)' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Lock Position (unavailable)' })).toBeDisabled();
+    expect(lockButton).toBeEnabled();
     expect(lockButton).toHaveClass('col-start-4');
   });
 

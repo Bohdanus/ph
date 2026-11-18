@@ -226,18 +226,43 @@ test.describe('Layers panel', () => {
     await expect(canvas).toBeVisible();
   });
 
-  test('places Lock All in the fourth lock-row slot', async ({ page }) => {
+  test('keeps the Photoshop lock row compact at desktop and tablet widths', async ({ page }) => {
     const controls = page.getByRole('group', { name: 'Layer protection controls' });
-    const lockButton = controls.getByRole('button');
     await expect(controls).toBeVisible();
+    await expect(controls.getByRole('button')).toHaveCount(4);
+    await expect(controls.getByRole('button').nth(0)).toBeDisabled();
+    await expect(controls.getByRole('button').nth(1)).toBeDisabled();
+    await expect(controls.getByRole('button').nth(2)).toBeDisabled();
+    await expect(controls.getByRole('button').nth(3)).toHaveAttribute('aria-label', 'Lock Blank 1');
 
-    const controlsBox = await controls.boundingBox();
-    const lockButtonBox = await lockButton.boundingBox();
-    expect(controlsBox).not.toBeNull();
-    expect(lockButtonBox).not.toBeNull();
-    expect(
-      Math.abs(controlsBox!.x + controlsBox!.width - (lockButtonBox!.x + lockButtonBox!.width))
-    ).toBeLessThanOrEqual(1);
+    const lockLabel = page.getByText('Lock:', { exact: true });
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 1024, height: 768 },
+    ]) {
+      await page.setViewportSize(viewport);
+      const labelBox = await lockLabel.boundingBox();
+      const controlsBox = await controls.boundingBox();
+      const unavailableBoxes = await Promise.all(
+        [0, 1, 2].map((index) => controls.getByRole('button').nth(index).boundingBox())
+      );
+      const lockAllBox = await controls.getByRole('button').nth(3).boundingBox();
+
+      expect(labelBox).not.toBeNull();
+      expect(controlsBox).not.toBeNull();
+      expect(unavailableBoxes.every((box) => box !== null)).toBe(true);
+      expect(lockAllBox).not.toBeNull();
+      const labelGap = controlsBox!.x - labelBox!.x - labelBox!.width;
+      expect(labelGap).toBeGreaterThanOrEqual(0);
+      expect(labelGap).toBeLessThanOrEqual(4);
+      expect(controlsBox!.height).toBeLessThanOrEqual(28);
+      expect(Math.abs(controlsBox!.x + controlsBox!.width - (lockAllBox!.x + lockAllBox!.width))).toBeLessThanOrEqual(
+        1
+      );
+      expect(unavailableBoxes[0]!.x).toBeLessThan(unavailableBoxes[1]!.x);
+      expect(unavailableBoxes[1]!.x).toBeLessThan(unavailableBoxes[2]!.x);
+      expect(unavailableBoxes[2]!.x).toBeLessThan(lockAllBox!.x);
+    }
   });
 
   test('New Layer inserts above the selected row and is one undoable history step', async ({ page }) => {

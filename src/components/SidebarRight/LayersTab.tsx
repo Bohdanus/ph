@@ -65,6 +65,59 @@ function LayerLockIcon({ locked, className = 'h-4 w-4' }: { locked: boolean; cla
   );
 }
 
+function LayerProtectionUnavailableButton({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={`${label} (unavailable)`}
+      disabled
+      title={`${label} is not supported`}
+      className="inline-flex h-7 w-7 items-center justify-center rounded text-gray-500 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-400"
+    >
+      {children}
+    </button>
+  );
+}
+
+function LockTransparentPixelsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M2 2h3v3H2zM8 2h3v3H8zM5 5h3v3H5zM11 5h3v3h-3zM2 8h3v3H2zM8 8h3v3H8zM5 11h3v3H5zM11 11h3v3h-3z"
+      />
+    </svg>
+  );
+}
+
+function LockImagePixelsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" aria-hidden="true">
+      <path
+        d="m9.5 2 4.5 4.5-6.2 6.2a3.3 3.3 0 0 1-3.1.9L3 15l.3-1.7a3.3 3.3 0 0 1 .9-3.1L9.5 5.2M8.2 3.3l4.5 4.5"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function LockPositionIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" aria-hidden="true">
+      <path
+        d="M8 1.5v13m-6.5-6.5h13M8 1.5 5.8 3.7M8 1.5l2.2 2.2M14.5 8l-2.2-2.2M14.5 8l-2.2 2.2M8 14.5l-2.2-2.2M8 14.5l2.2-2.2M1.5 8l2.2-2.2M1.5 8l2.2 2.2"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function LayerBlendModeSelect({
   layer,
   updateLayer,
@@ -106,11 +159,13 @@ export function LayerLockToggle({
   layer,
   updateLayer,
   textEditActive = false,
+  compact = false,
   className = '',
 }: {
   layer: Layer;
   updateLayer: UpdateLayer;
   textEditActive?: boolean;
+  compact?: boolean;
   className?: string;
 }) {
   const action = layer.locked ? UNLOCK_LAYER_ACTION : LOCK_LAYER_ACTION;
@@ -133,7 +188,11 @@ export function LayerLockToggle({
         event.stopPropagation();
         if (!lockDisabled) updateLayer(layer.id, { locked: !layer.locked }, action);
       }}
-      className={`inline-flex min-h-9 min-w-9 items-center justify-center gap-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700 ${className}`}
+      className={`inline-flex items-center justify-center gap-1 text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:text-gray-200 dark:hover:bg-gray-700 ${
+        compact
+          ? 'h-7 w-7 min-h-7 min-w-7 rounded'
+          : 'min-h-9 min-w-9 rounded border border-gray-300 dark:border-gray-600'
+      } ${className}`}
     >
       <LayerLockIcon locked={layer.locked} />
       <span className="sr-only">{layer.locked ? 'Locked' : 'Unlocked'}</span>
@@ -235,13 +294,27 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
           </details>
         </div>
       </div>
-      <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-white">
+      <div className="flex items-center gap-1 text-xs text-gray-600 dark:text-white">
         <span>Lock:</span>
-        <div role="group" aria-label="Layer protection controls" className="grid w-36 grid-cols-4 items-center">
+        <div
+          role="group"
+          aria-label="Layer protection controls"
+          className="grid w-[7.5rem] grid-cols-4 items-center justify-items-center"
+        >
+          <LayerProtectionUnavailableButton label="Lock Transparent Pixels">
+            <LockTransparentPixelsIcon />
+          </LayerProtectionUnavailableButton>
+          <LayerProtectionUnavailableButton label="Lock Image Pixels">
+            <LockImagePixelsIcon />
+          </LayerProtectionUnavailableButton>
+          <LayerProtectionUnavailableButton label="Lock Position">
+            <LockPositionIcon />
+          </LayerProtectionUnavailableButton>
           <LayerLockToggle
             layer={layer}
             updateLayer={updateLayer}
             textEditActive={textEditActive}
+            compact
             className="col-start-4"
           />
         </div>
