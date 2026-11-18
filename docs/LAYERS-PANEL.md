@@ -960,6 +960,11 @@ A requirement is not done until a test fails without the change. For this panel 
 5. **Is the drag handle staying?** Photoshop's row is the drag handle
    ([§3](#3-layer-row-anatomy)). Keeping `DragHandleIcon` is a defensible affordance for a row that is
    also a rename target; removing it is more faithful. Nobody has decided.
+6. **What is the keyboard and focus contract for layer rows?** A prior hardening plan proposed
+   listbox semantics, arrow/Home/End navigation, and comma and `Alt`-bracket shortcuts, but did not
+   establish these as Photoshop behavior. `Ctrl+/` is already documented as the Photoshop lock
+   shortcut in [§2.5](#25-the-lock-row-and-fill); validate accessible focus semantics and any
+   additional shortcuts against current Photoshop before adopting the proposal.
 
 ---
 
