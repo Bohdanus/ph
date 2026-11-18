@@ -1033,9 +1033,8 @@ test.describe('Text tool in-place editing', () => {
     await expect(overlay(page)).toHaveCount(0);
     await expect(layerRows).toHaveCount(2);
 
-    // The row is the layer thumbnail/name surface in this app. Double-clicking it must hydrate the
-    // retained source args rather than create a second layer or place a fresh draft at the origin.
-    await layerRows.nth(0).dblclick();
+    // Double-click the thumbnail to reopen the retained source rather than create a new draft.
+    await layerRows.nth(0).getByTestId('layer-thumbnail').dblclick();
     await expect(overlay(page), 'double-clicking the committed text row did not reopen the editor').toBeVisible();
     expect(await overlayText(page), 're-entry did not hydrate the committed characters').toBe('Reenter');
     await page.keyboard.type('Edited');
@@ -1173,14 +1172,14 @@ test.describe('Text tool in-place editing', () => {
 
     // The raster-width oracle distinguishes these candidate strings. Re-enter both committed rows
     // as well so the multi-click transition also proves the exact stored text through the editor.
-    await layerRows.nth(1).dblclick();
+    await layerRows.nth(1).getByTestId('layer-thumbnail').dblclick();
     await expect(overlay(page), 'the first committed layer could not be reopened').toBeVisible();
     expect(await overlayText(page), 'the first committed layer did not retain its exact text').toBe(FIRST_TEXT);
     await page.keyboard.press('Escape');
     await expect(overlay(page), 'the first layer stayed open after the readback').toHaveCount(0);
     await expect(layerRows, 'reading back the first layer created another row').toHaveCount(3);
 
-    await layerRows.nth(0).dblclick();
+    await layerRows.nth(0).getByTestId('layer-thumbnail').dblclick();
     await expect(overlay(page), 'the second committed layer could not be reopened').toBeVisible();
     expect(await overlayText(page), 'the second committed layer did not retain its exact text').toBe(SECOND_TEXT);
     await page.keyboard.press('Escape');
@@ -1945,7 +1944,7 @@ test.describe('Desktop Type click-count selection', () => {
     await expect(overlay(page)).toHaveCount(0);
     const layerRows = page.getByTitle('Drag to reorder');
     await expect(layerRows).toHaveCount(2);
-    await layerRows.nth(0).dblclick();
+    await layerRows.nth(0).getByTestId('layer-thumbnail').dblclick();
     await expect(overlay(page)).toBeVisible();
     expect(await overlayText(page)).toBe(CLICK_LADDER_TEXT);
     expect(

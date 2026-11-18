@@ -118,7 +118,7 @@ function createDataTransfer() {
 function commitRename(name: string, nextName: string) {
   const span = getNameSpan(getRow(name));
   act(() => {
-    fireEvent.mouseDown(span);
+    fireEvent.doubleClick(span);
   });
   act(() => {
     span.textContent = nextName;

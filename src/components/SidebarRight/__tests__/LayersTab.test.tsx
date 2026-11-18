@@ -515,7 +515,82 @@ describe('LayersTab', () => {
     expect(layerMocks.beginTextLayerEdit).toHaveBeenCalledWith('text');
   });
 
-  it('commits and focuses once during the real row double-click sequence, even when text is unchanged', () => {
+  it('refocuses an already editing text layer when its thumbnail is double-clicked', () => {
+    const args: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'Editable text',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+      editingLayerId: 'text',
+    };
+    seed(
+      {
+        text: createMockLayer({
+          id: 'text',
+          name: 'Text layer',
+          source: { kind: 'tool', args } as ToolLayerSource,
+        }),
+      },
+      'text'
+    );
+    currentToolState.toolArgs = args;
+    render(<LayersTab />);
+
+    fireEvent.doubleClick(screen.getByTestId('layer-thumbnail'));
+
+    expect(layerMocks.beginTextLayerEdit).not.toHaveBeenCalled();
+    expect(currentToolState.setToolArgs).not.toHaveBeenCalled();
+    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledExactlyOnceWith({
+      kind: 'select-all',
+      layerId: 'text',
+    });
+  });
+
+  it('renames a text layer from its name without entering text editing', () => {
+    const args: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'Editable text',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+    };
+    seed(
+      {
+        text: createMockLayer({
+          id: 'text',
+          name: 'Text layer',
+          source: { kind: 'tool', args } as ToolLayerSource,
+        }),
+      },
+      null
+    );
+    currentToolState.toolArgs = { toolName: 'text' };
+    render(<LayersTab />);
+    const name = getNameSpan('Text layer');
+
+    act(() => {
+      fireEvent.click(name);
+      fireEvent.click(name);
+      fireEvent.doubleClick(name);
+    });
+
+    expect(name).toHaveAttribute('contenteditable', 'true');
+    expect(layerMocks.beginTextLayerEdit).not.toHaveBeenCalled();
+    expect(currentToolState.setToolArgs).not.toHaveBeenCalled();
+  });
+
+  it('commits and keeps focus through the thumbnail double-click sequence when text is unchanged', () => {
     const args: TextToolArgs = {
       toolName: 'text',
       align: 'left',
@@ -570,16 +645,18 @@ describe('LayersTab', () => {
 
     render(<LayersTab />);
     const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
-    if (!row) throw new Error('no row for Target text');
+    const thumbnail = getListItemFor('Target text').querySelector<HTMLElement>('[data-testid="layer-thumbnail"]');
+    if (!row || !thumbnail) throw new Error('no row or thumbnail for Target text');
     act(() => {
       fireEvent.click(row);
       fireEvent.click(row);
-      fireEvent.doubleClick(row);
+      fireEvent.doubleClick(thumbnail);
     });
 
     expect(order).toEqual(['commit', 'active', 'begin-edit', 'hydrate', 'focus']);
     expect(layerMocks.commitDirtyTool).toHaveBeenCalledOnce();
-    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledExactlyOnceWith({
+    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledTimes(2);
+    expect(currentToolState.requestTextEditFocus).toHaveBeenLastCalledWith({
       kind: 'select-all',
       layerId: 'target',
     });
@@ -641,10 +718,10 @@ describe('LayersTab', () => {
     });
 
     render(<LayersTab />);
-    const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
-    if (!row) throw new Error('no row for Target text');
+    const thumbnail = getListItemFor('Target text').querySelector<HTMLElement>('[data-testid="layer-thumbnail"]');
+    if (!thumbnail) throw new Error('no thumbnail for Target text');
     act(() => {
-      fireEvent.doubleClick(row);
+      fireEvent.doubleClick(thumbnail);
     });
 
     expect(order).toEqual(['commit', 'active', 'begin-edit', 'hydrate', 'focus']);
@@ -658,7 +735,7 @@ describe('LayersTab', () => {
     });
   });
 
-  it('preserves the current edit when commit fails during a row double-click', () => {
+  it('preserves the current edit when commit fails during a thumbnail double-click', () => {
     const args: TextToolArgs = {
       toolName: 'text',
       align: 'left',
@@ -694,11 +771,12 @@ describe('LayersTab', () => {
     render(<LayersTab />);
 
     const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
-    if (!row) throw new Error('no row for Target text');
+    const thumbnail = getListItemFor('Target text').querySelector<HTMLElement>('[data-testid="layer-thumbnail"]');
+    if (!row || !thumbnail) throw new Error('no row or thumbnail for Target text');
     act(() => {
       fireEvent.click(row);
       fireEvent.click(row);
-      fireEvent.doubleClick(row);
+      fireEvent.doubleClick(thumbnail);
     });
 
     expect(layerMocks.commitDirtyTool).toHaveBeenCalled();
@@ -875,7 +953,19 @@ describe('LayersTab inline rename', () => {
     expect(getLayerDivs()[0]).toHaveAttribute('draggable', 'true');
   });
 
-  it('turns the name span into an editable region on mouse down', () => {
+  it('selects a layer on a single click without entering rename mode', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+
+    act(() => {
+      fireEvent.click(span);
+    });
+
+    expect(layerMocks.setActiveLayer).toHaveBeenCalledWith('layer-3');
+    expect(span).toHaveAttribute('contenteditable', 'false');
+  });
+
+  it('does not enter rename mode on a single mouse press', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
 
@@ -883,8 +973,21 @@ describe('LayersTab inline rename', () => {
       fireEvent.mouseDown(span);
     });
 
+    expect(span).toHaveAttribute('contenteditable', 'false');
+  });
+
+  it('turns the name span into an editable region on double-click and selects its text', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+
+    act(() => {
+      fireEvent.doubleClick(span);
+    });
+
     expect(span).toHaveAttribute('contenteditable', 'true');
     expect(span).toHaveStyle({ background: '#fff' });
+    expect(span).toHaveFocus();
+    expect(span.ownerDocument.getSelection()?.toString()).toBe('Top Layer');
   });
 
   it('turns the name span into an editable region on a touch press', () => {
@@ -896,6 +999,7 @@ describe('LayersTab inline rename', () => {
     });
 
     expect(span).toHaveAttribute('contenteditable', 'true');
+    expect(span).not.toHaveFocus();
   });
 
   it('suspends dragging for the layer that is being renamed', () => {
@@ -903,7 +1007,7 @@ describe('LayersTab inline rename', () => {
     const span = getNameSpan('Top Layer');
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
 
     expect(getLayerDivs()[0]).toHaveAttribute('draggable', 'false');
@@ -913,7 +1017,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
 
     const row = getLayerDivs()[0];
@@ -926,15 +1030,15 @@ describe('LayersTab inline rename', () => {
     expect(document.body).not.toHaveClass('cursor-grabbing');
   });
 
-  it('stays in rename mode when the name is pressed again', () => {
+  it('stays in rename mode when the name is double-clicked again', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
 
     expect(span).toHaveAttribute('contenteditable', 'true');
@@ -944,7 +1048,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = '  Sky  ';
@@ -967,7 +1071,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
 
     act(() => {
@@ -985,7 +1089,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = 'Sky';
@@ -1014,7 +1118,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = 'Discarded';
@@ -1035,7 +1139,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = 'Sky';
@@ -1057,7 +1161,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = nextName;
@@ -1069,17 +1173,17 @@ describe('LayersTab inline rename', () => {
     expect(liveStore.snapshot.layers['layer-3'].name).toBe('Top Layer');
   });
 
-  // Regression — src/components/SidebarRight/LayersTab.tsx:90-104.
+  // Regression — `handleNameChange` must write the stored label back when it refuses a blank rename.
   // `handleNameChange` refuses to commit a blank name, and because the span is no longer
   // editable the DOM text is no longer owned by React, so the refused path has to write the
-  // stored name back itself — exactly as the Escape branch at LayersTab.tsx:231 does. Without
+  // stored name back itself — exactly as the Escape handler does. Without
   // that write React re-renders with the same text child, changes nothing, and the row keeps
   // showing the blank label: a nameless layer that still exists.
   it('restores the previous label in the row when a blank rename is rejected', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = '   ';
@@ -1240,7 +1344,7 @@ describe('LayersTab drag and drop guards', () => {
     expect(lockedThumbnail).not.toHaveClass('touch-none');
     expect(bedrockThumbnail).not.toHaveClass('touch-none');
     expect(editingThumbnail).toHaveClass('touch-none');
-    fireEvent.mouseDown(getNameSpan('Layer 2'));
+    fireEvent.doubleClick(getNameSpan('Layer 2'));
     expect(editingThumbnail).not.toHaveClass('touch-none');
 
     const layersList = screen.getByTestId('layers-list');
