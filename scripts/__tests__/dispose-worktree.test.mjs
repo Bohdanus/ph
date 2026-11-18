@@ -2258,7 +2258,10 @@ describe('locating the inventory', () => {
   it('refuses a stale task-local inventory instead of reading it', () => {
     const repositoryRoot = mkdtempSync(join(tmpdir(), 'dispose-inventory-root-'));
     const cwd = join(repositoryRoot, '.kilo', 'worktrees', 'task');
-    const canonicalPath = join(realpathSync(repositoryRoot), 'WORKTREES.json');
+    // This fixture injects identityRealpath into readInventory, so its canonical
+    // path stays in the same lexical form returned by mkdtempSync. Calling
+    // realpathSync here would compare /private/var with /var on macOS.
+    const canonicalPath = join(repositoryRoot, 'WORKTREES.json');
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(cwd, 'WORKTREES.json'),

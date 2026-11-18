@@ -211,14 +211,23 @@ the final index tree to match the tree pre-commit approved; a message hook canno
 stage a different merge resolution after the takeover check. After an aborted
 merge, the next pre-commit clears the record only when the index has returned to
 the original `HEAD` tree and no `AUTO_MERGE` marker remains; otherwise, restore
-or inspect that worktree before committing. A leftover `MERGE_MSG` alone does
-not block an ordinary commit after a clean abort. If a prepared merge was already
+or inspect that worktree before committing. If the abort is confirmed but staged
+changes keep the old record from clearing, preserve the working-tree contents,
+run `git reset --mixed HEAD`, then run
+`node scripts/commit-reviewed-landing-message-guard.mjs --discard-abandoned-prepared-merge`.
+That resets only the index; restage the intended changes after the record is
+discarded. The command refuses while merge markers remain or when `HEAD` is not
+the recorded parent. A leftover `MERGE_MSG` alone does not block an ordinary
+commit after a clean abort. If a prepared merge was already
 committed but its cleanup hook did not run, the next pre-commit clears the record
 only when `HEAD` is a two-parent commit with the exact recorded parent order and
 result tree, and neither `MERGE_HEAD` nor `AUTO_MERGE` remains. This check is
 independent of later staged changes; the new commit still goes through its ordinary
-checks. A different commit with the same tree does not satisfy the recorded merge
-and remains blocked.
+checks. It also validates the completed merge's trailers: saved Branch and Chat pins
+for a pinned landing, or exactly one non-empty Chat trailer on a feature worktree.
+A retry that omits pin environment keeps the recorded pins. A main-worktree record
+without saved landing pins stays blocked. A different commit with the same tree or a
+commit with invalid trailers does not satisfy the recorded merge and remains blocked.
 The merge record begins when the `pre-commit` dispatcher runs. If an operator
 runs `git merge --quit` before that first snapshot, Git removes the merge state
 while leaving the staged result; the guard cannot recover the discarded parent

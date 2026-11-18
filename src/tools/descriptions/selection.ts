@@ -987,12 +987,12 @@ export const selectionDescriptions: Record<
       {
         keys: '[',
         action:
-          'Decreases the Quick Selection brush size. Adobe demonstrates this shortcut in its Quick Selection tutorial. With no document open, [ has no effect.',
+          'Decreases the Quick Selection brush size. Adobe Learn directly demonstrates this key in its Compositing tutorial. With no document open, [ has no effect.',
       },
       {
         keys: ']',
         action:
-          'Increases the Quick Selection brush size. Adobe demonstrates this shortcut in its Quick Selection tutorial. With no document open, ] has no effect.',
+          'Increases the Quick Selection brush size. Adobe’s shortcut reference documents ] for brush-size increases on Brush and Stamp tools, but does not name Quick Selection; applying it here is an inference. With no document open, ] has no effect.',
       },
     ],
     implementation: 'partial',
@@ -1026,7 +1026,7 @@ export const selectionDescriptions: Record<
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html',
-      'https://www.adobe.com/learn/photoshop/web/use-quick-selection-tool',
+      'https://www.adobe.com/learn/photoshop/web/compositing',
       'https://www.photoshopessentials.com/basics/selections/quick-selection-tool',
       'https://cod.pressbooks.pub/photoshopmastery1250/chapter/selections',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
