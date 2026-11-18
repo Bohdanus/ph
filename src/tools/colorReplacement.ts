@@ -121,9 +121,9 @@ const luminance = (r: number, g: number, b: number): number =>
   LUMINANCE_RED * r + LUMINANCE_GREEN * g + LUMINANCE_BLUE * b;
 
 /**
- * The factor that converts this tool's 0-100 Tolerance to the 0-255 scale used by
- * `src/util/floodFill.ts`. Both implementations compare the same RGB distance; using this scale
- * before squaring it keeps their threshold arithmetic aligned.
+ * The factor that converts this tool's 0-100 Tolerance to a 0-255 value before applying its own
+ * RGB distance. This does not share the Paint Bucket's RGBA matcher; it preserves this tool's
+ * normalized threshold when using the 0-255 input scale.
  */
 export const COLOR_REPLACEMENT_TOLERANCE_TO_FILL_TOLERANCE_SCALE = 255 / COLOR_REPLACEMENT_TOLERANCE_MAX;
 
