@@ -57,7 +57,7 @@ still retained because Adobe documents resizing panel edges and dividers.
 | Layer creation / ordering | `src/contexts/layer-utils.ts`                                                      | `createLayerSource()` places a new layer above its selected anchor; `getSortedLayersArray()`, `reorderLayers()`                                                                            |
 | Mutations                 | `src/contexts/useLayer.ts`, `LayersTab.tsx`                                        | New Layer and Delete actions, `updateLayer()`, `removeLayer()`, `setActiveLayer()`, `toggleVisibility()`, `moveLayerAfter()`, `convertBedrockLayer()`, text re-entry, opacity, blend, lock |
 | Property application      | `src/contexts/layer-renderer.ts` — `drawLayer()`                                   | `ctx.globalAlpha = layer.opacity`, `ctx.globalCompositeOperation = layer.blendMode`                                                                                                        |
-| Lock enforcement          | `src/contexts/useLayer.ts` — `isLayerLocked()`                                     | Checked by tool edits, temporary edits, `replaceLayerSource()`, and `moveLayerAfter()`; PSD import and the Layers panel can set the full-lock boolean                                      |
+| Lock enforcement          | `src/contexts/useLayer.ts` — `isLayerLocked()`                                     | Checked by tool edits, temporary edits, `replaceLayerSource()`, `moveLayerAfter()`, and layer removal; PSD import and the Layers panel can set the full-lock boolean                       |
 | History / undo            | `src/contexts/history-replay.ts` — `replayHistory()`                               | Layer insertion anchors replay with the creation action; the document-frame and selection arms remain per-action                                                                           |
 | Durable property path     | `src/contexts/history-adapter.ts` — `LayerPropertyKey`                             | Explicit actions derive and validate `visible`, `name`, `opacity`, `blendMode`, and `locked` patches                                                                                       |
 | Tablet touch panel        | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | Tablet touch surface: new-layer-above-selection, confirmed delete, rename, move up/down, opacity, blend mode, and full lock; handheld phones are out of scope                              |
@@ -960,6 +960,11 @@ A requirement is not done until a test fails without the change. For this panel 
 5. **Is the drag handle staying?** Photoshop's row is the drag handle
    ([§3](#3-layer-row-anatomy)). Keeping `DragHandleIcon` is a defensible affordance for a row that is
    also a rename target; removing it is more faithful. Nobody has decided.
+6. **What is the keyboard and focus contract for layer rows?** A prior hardening plan proposed
+   listbox semantics, arrow/Home/End navigation, and comma and `Alt`-bracket shortcuts, but did not
+   establish these as Photoshop behavior. `Ctrl+/` is already documented as the Photoshop lock
+   shortcut in [§2.5](#25-the-lock-row-and-fill); validate accessible focus semantics and any
+   additional shortcuts against current Photoshop before adopting the proposal.
 
 ---
 

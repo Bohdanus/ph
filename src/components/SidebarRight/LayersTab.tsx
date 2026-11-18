@@ -556,18 +556,19 @@ export default function LayersTab() {
   }
 
   function requestLayerRemoval(layerId: LayerId, skipConfirmation = false) {
-    if (!layers[layerId] || textEditingLayerId === layerId) return;
+    const layer = layers[layerId];
+    if (!layer || layer.locked || textEditingLayerId === layerId) return;
     if (skipConfirmation) {
       removeLayer(layerId);
       return;
     }
-    setPendingDelete({ id: layerId, layer: layers[layerId] });
+    setPendingDelete({ id: layerId, layer });
   }
 
   function confirmLayerRemoval() {
     const request = pendingDelete;
     setPendingDelete(null);
-    if (request && layers[request.id] === request.layer && textEditingLayerId !== request.id) {
+    if (request && layers[request.id] === request.layer && !request.layer.locked && textEditingLayerId !== request.id) {
       removeLayer(request.id);
     }
   }
@@ -949,13 +950,15 @@ export default function LayersTab() {
                       event.stopPropagation();
                       requestLayerRemoval(layer.id, event.altKey);
                     }}
-                    disabled={textEditingLayerId === layer.id}
+                    disabled={layer.locked || textEditingLayerId === layer.id}
                     className={DELETE_BUTTON_ICON}
                     aria-label="Remove layer"
                     title={
-                      textEditingLayerId === layer.id
-                        ? 'Finish text editing before removing this layer'
-                        : 'Remove layer'
+                      layer.locked
+                        ? 'Unlock layer before removing it'
+                        : textEditingLayerId === layer.id
+                          ? 'Finish text editing before removing this layer'
+                          : 'Remove layer'
                     }
                   >
                     <TrashIcon />
@@ -1043,15 +1046,20 @@ export default function LayersTab() {
           data-testid="layers-delete-active-button"
           aria-label="Delete layer"
           title={
-            textEditingLayerId === activeLayerId && activeLayerId
-              ? 'Finish text editing before deleting this layer'
-              : activeLayer
-                ? `Delete ${activeLayer.name}`
-                : 'Drag a layer here to delete it'
+            draggedLayerId
+              ? 'Drag a layer here to delete it'
+              : activeLayer?.locked
+                ? 'Unlock layer before deleting it'
+                : textEditingLayerId === activeLayerId && activeLayerId
+                  ? 'Finish text editing before deleting this layer'
+                  : activeLayer
+                    ? `Delete ${activeLayer.name}`
+                    : 'Drag a layer here to delete it'
           }
           disabled={
             Object.keys(layers).length === 0 ||
             (!activeLayerId && !draggedLayerId) ||
+            (Boolean(activeLayerId) && activeLayer?.locked === true && !draggedLayerId) ||
             (Boolean(activeLayerId) && textEditingLayerId === activeLayerId && !draggedLayerId)
           }
           onClick={(event) => {

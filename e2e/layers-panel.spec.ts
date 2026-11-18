@@ -811,6 +811,27 @@ test.describe('Layers panel', () => {
     await expect(page.getByText('No layers yet.')).toBeVisible();
   });
 
+  test('a full-locked layer cannot be deleted until it is unlocked', async ({ page }) => {
+    await page.getByTestId('layers-new-layer-button').click();
+    const row = layerRow(page, 'Blank 2');
+
+    await page.getByRole('button', { name: 'Lock Blank 2' }).click();
+    const rowDelete = row.getByRole('button', { name: 'Remove layer' });
+    await expect(rowDelete).toBeDisabled();
+    await expect(rowDelete).toHaveAttribute('title', 'Unlock layer before removing it');
+    await expect(page.getByTestId('layers-delete-active-button')).toBeDisabled();
+    await expect(page.getByTestId('confirm-dialog')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Unlock Blank 2' }).click();
+    await expect(rowDelete).toBeEnabled();
+    await expect(page.getByTestId('layers-delete-active-button')).toBeEnabled();
+
+    await rowDelete.click();
+    await page.getByTestId('confirm-dialog-confirm-button').click();
+    await expect(row).toHaveCount(0);
+    await expect(layerRows(page)).toHaveCount(1);
+  });
+
   /**
    * A rename that resolves to empty (blank, spaces, or whitespace-only) must be refused: the
    * name stays as-is and no history entry is written. `handleNameChange` in `LayersTab.tsx`
