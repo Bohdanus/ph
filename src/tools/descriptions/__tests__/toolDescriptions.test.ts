@@ -169,9 +169,11 @@ describe('toolDescriptions', () => {
     const increaseBrushShortcut = quick.shortcuts.find((shortcut) => shortcut.keys === ']');
     expect(decreaseBrushShortcut?.action).toMatch(/decreases the Quick Selection brush size/i);
     expect(increaseBrushShortcut?.action).toMatch(/increases the Quick Selection brush size/i);
+    expect(decreaseBrushShortcut?.action).toMatch(/Adobe Learn directly demonstrates this key/i);
+    expect(increaseBrushShortcut?.action).toMatch(/applying it here is an inference/i);
     expect(quick.sources).toEqual(
       expect.arrayContaining([
-        'https://www.adobe.com/learn/photoshop/web/use-quick-selection-tool',
+        'https://www.adobe.com/learn/photoshop/web/compositing',
         'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html',
         'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/select-area-intersected-by-other-selections.html',
         'https://helpx.adobe.com/lt/photoshop/how-to/add-to-subtract-from-selections.html',
@@ -244,6 +246,25 @@ describe('toolDescriptions', () => {
   it('does not infer a Blur Mode from global blend-mode lists while its control is unconfirmed', () => {
     expect(toolDescriptions.blur.options.find((option) => option.control === 'Mode')).toBeUndefined();
     expect(toolDescriptions.blur.purpose).toMatch(/Blur-specific control remains unconfirmed/i);
+  });
+
+  it('keeps Color Replacement Tolerance bounds source-qualified', () => {
+    const replacement = toolDescriptions['color-replacement'];
+    const tolerance = replacement.options.find((option) => option.control === 'Tolerance');
+
+    expect(replacement.purpose).toMatch(
+      /Adobe describes Tolerance qualitatively as a percentage.*lower values.*higher values.*does not state numeric bounds/i
+    );
+    expect(replacement.purpose).not.toMatch(/0(?:–|-)?255/i);
+    expect(tolerance?.detail).toMatch(
+      /Adobe's archived 2015 reference does not state numeric bounds.*third-party mirrors says 0–255.*not corroborated by Adobe/i
+    );
+    expect(replacement.appNotes).toMatch(
+      /Adobe does not state numeric bounds.*app uses a 0-100 slider.*exact Photoshop parity is unverified/i
+    );
+    expect(replacement.sources).toContain(
+      'https://helpx.adobe.com/archive/en/photoshop/cc/2015/photoshop_reference.pdf'
+    );
   });
 
   it('resolves a shape figure to its own description rather than the generic one', () => {
