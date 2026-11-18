@@ -260,6 +260,31 @@ async function footerDimensions(page: Page): Promise<string> {
   return (text ?? '').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Uses the Crop tool to drag a rectangle in document coordinates (which can extend beyond
+ * document bounds), then commits with Enter. The document coordinates are mapped to canvas
+ * coordinates via containFit, allowing the crop tool to receive coordinates outside the frame.
+ * Returns the document size after the crop.
+ */
+async function cropInDocument(
+  page: Page,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  documentSize: Size = { width: 800, height: 600 },
+  documentFrame: { x: number; y: number } = { x: 0, y: 0 }
+): Promise<Size> {
+  await clickToolButton(page, 'crop');
+  await expect(page.locator('#aspect-ratio')).toBeVisible();
+
+  const box = await canvasBox(page);
+  const start = documentToCanvasOffset(box, from.x, from.y, documentSize, documentFrame);
+  const end = documentToCanvasOffset(box, to.x, to.y, documentSize, documentFrame);
+  await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 10 });
+  await page.keyboard.press('Enter');
+  await expect.poll(() => backingStore(page), 'the crop changes the document frame').not.toEqual(documentSize);
+  return await backingStore(page);
+}
+
 async function dragInDocument(
   page: Page,
   from: { x: number; y: number },
@@ -550,7 +575,8 @@ test.describe('an opened image, then committed tools, then undo/redo', () => {
 
     for (let k = 0; k < 5; k += 1) {
       await page.keyboard.press('ControlOrMeta+z');
-      await expect(page.getByTestId('layer-row'), `opened-doc undo ${k + 1}`).toHaveCount(baselineRows + 4 - k);
+      const expectedRows = baselineRows + 4 - k;
+      await expect(page.getByTestId('layer-row'), `opened-doc undo ${k + 1}`).toHaveCount(expectedRows);
       const size = await backingStore(page);
       console.log(
         `[PW-OPEN] undo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
@@ -566,7 +592,8 @@ test.describe('an opened image, then committed tools, then undo/redo', () => {
 
     for (let k = 0; k < 5; k += 1) {
       await page.keyboard.press('ControlOrMeta+Shift+z');
-      await expect(page.getByTestId('layer-row'), `opened-doc redo ${k + 1}`).toHaveCount(baselineRows + 1 + k);
+      const expectedRows = baselineRows + 1 + k;
+      await expect(page.getByTestId('layer-row'), `opened-doc redo ${k + 1}`).toHaveCount(expectedRows);
       const size = await backingStore(page);
       console.log(
         `[PW-OPEN] redo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
@@ -641,5 +668,207 @@ test.describe('tablet transparent blank-layer pixels', () => {
       const size = await backingStore(page);
       expect(size, `backing store moved after tablet redo ${k + 1}`).toEqual(baseline);
     }
+  });
+});
+
+test.describe('crop growth and negative document origin', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('crop past the right and bottom edge grows the frame, later commits hold it', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await openToolFlyout(page, 'shape');
+    await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
+
+    const baseline = await backingStore(page);
+    const baselineFooter = await footerDimensions(page);
+    expect(baselineFooter).toContain(`${baseline.width} × ${baseline.height} px`);
+    const baselineDisplay = await displayMetrics(page, baseline);
+    const baselineRows = await page.getByTestId('layer-row').count();
+
+    // Drag from inside the document to past the right edge (100px past 800) and bottom edge (not reaching 600 in this viewport).
+    // This produces a crop of 800x400 (extends 100px past right, stays within bottom).
+    const afterCrop = await cropInDocument(page, { x: 100, y: 100 }, { x: 900, y: 500 });
+    expect(afterCrop).toEqual({ width: 800, height: 400 });
+
+    // A commit after a growth must not re-derive the frame from the layer, which would silently
+    // snap the document back to the layer's own size.
+    await openToolFlyout(page, 'shape');
+    await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
+    const cropFooter = await footerDimensions(page);
+    const cropDisplay = await displayMetrics(page, afterCrop);
+    expect(cropFooter).toContain(`${afterCrop.width} × ${afterCrop.height} px`);
+    expect(await page.getByTestId('layer-row').count()).toBe(baselineRows);
+
+    for (let i = 0; i < 5; i += 1) {
+      const from = { x: 20 + i * 60, y: 20 };
+      const to = { x: from.x + 50, y: 70 };
+      await dragInDocument(page, from, to);
+      await expect(page.getByTestId('layer-row'), `post-crop commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
+      const size = await backingStore(page);
+      expect(size, `backing store moved after post-crop commit ${i + 1}`).toEqual(afterCrop);
+      expect(await footerDimensions(page), `footer moved after post-crop commit ${i + 1}`).toBe(cropFooter);
+      await expect
+        .poll(() => displayMetrics(page, afterCrop), `display geometry after post-crop commit ${i + 1}`)
+        .toEqual(cropDisplay);
+    }
+
+    // Undo the last post-crop commit (not the crop itself - need 6 undos to undo crop + 5 commits)
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(page.getByTestId('layer-row'), 'undoing last post-crop commit').toHaveCount(5);
+    // Document size should still be the cropped size (crop not undone yet)
+    await expect.poll(() => backingStore(page), 'undoing last commit keeps cropped size').toEqual(afterCrop);
+    await expect.poll(() => footerDimensions(page), 'footer stays at cropped size').toBe(cropFooter);
+    await expect.poll(() => displayMetrics(page, afterCrop), 'display stays at cropped size').toEqual(cropDisplay);
+
+    // Undo 5 more times to undo all post-crop commits and the crop
+    for (let i = 0; i < 5; i += 1) {
+      await page.keyboard.press('ControlOrMeta+z');
+    }
+    await expect(page.getByTestId('layer-row'), 'undoing crop + all commits restores original layer stack').toHaveCount(
+      baselineRows
+    );
+    await expect.poll(() => backingStore(page), 'undoing crop restores the original document size').toEqual(baseline);
+    await expect
+      .poll(() => footerDimensions(page), 'undoing crop restores the original Footer size')
+      .toBe(baselineFooter);
+    await expect
+      .poll(() => displayMetrics(page, baseline), 'undoing crop restores the original display')
+      .toEqual(baselineDisplay);
+
+    // Redo 6 times to redo crop + 5 commits
+    for (let i = 0; i < 6; i += 1) {
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+    }
+    await expect(page.getByTestId('layer-row'), 'redoing crop + all commits').toHaveCount(6);
+    await expect.poll(() => backingStore(page), 'redoing crop restores the grown document size').toEqual(afterCrop);
+    await expect.poll(() => footerDimensions(page), 'redoing crop restores the grown Footer size').toBe(cropFooter);
+    await expect
+      .poll(() => displayMetrics(page, afterCrop), 'redoing crop restores the grown display')
+      .toEqual(cropDisplay);
+  });
+
+  test('crop extending past left and top edges produces a smaller frame (UI crop tool limitation)', async ({
+    page,
+  }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await openToolFlyout(page, 'shape');
+    await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
+
+    const baseline = await backingStore(page);
+    const baselineFooter = await footerDimensions(page);
+    expect(baselineFooter).toContain(`${baseline.width} × ${baseline.height} px`);
+    const baselineDisplay = await displayMetrics(page, baseline);
+    const baselineRows = await page.getByTestId('layer-row').count();
+
+    // Drag from inside the document toward the top-left corner, extending past the edges.
+    // Due to mouse viewport limitations, the UI crop tool cannot reach far negative coordinates.
+    // This produces a smaller crop (220x180) rather than the full negative-origin crop (620x480)
+    // that the direct API supports. See canvas-growth.test.tsx cases F, G, H for full API coverage.
+    const afterCrop = await cropInDocument(page, { x: 500, y: 400 }, { x: -120, y: -80 });
+    expect(afterCrop.width).toBeLessThan(baseline.width);
+    expect(afterCrop.height).toBeLessThan(baseline.height);
+
+    await openToolFlyout(page, 'shape');
+    await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
+    const cropFooter = await footerDimensions(page);
+    const cropDisplay = await displayMetrics(page, afterCrop);
+    expect(await page.getByTestId('layer-row').count()).toBe(baselineRows);
+
+    for (let i = 0; i < 5; i += 1) {
+      const from = { x: 20 + i * 60, y: 20 };
+      const to = { x: from.x + 50, y: 70 };
+      await dragInDocument(page, from, to);
+      await expect(page.getByTestId('layer-row'), `post-crop commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
+      const size = await backingStore(page);
+      expect(size, `backing store moved after post-crop commit ${i + 1}`).toEqual(afterCrop);
+      expect(await footerDimensions(page), `footer moved after post-crop commit ${i + 1}`).toBe(cropFooter);
+      await expect
+        .poll(() => displayMetrics(page, afterCrop), `display geometry after post-crop commit ${i + 1}`)
+        .toEqual(cropDisplay);
+    }
+
+    // Undo the last post-crop commit (not the crop itself - need 6 undos to undo crop + 5 commits)
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(page.getByTestId('layer-row'), 'undoing last post-crop commit').toHaveCount(5);
+    // Document size should still be the cropped size (crop not undone yet)
+    await expect.poll(() => backingStore(page), 'undoing last commit keeps cropped size').toEqual(afterCrop);
+    await expect.poll(() => footerDimensions(page), 'footer stays at cropped size').toBe(cropFooter);
+    await expect.poll(() => displayMetrics(page, afterCrop), 'display stays at cropped size').toEqual(cropDisplay);
+
+    // Undo 5 more times to undo all post-crop commits and the crop
+    for (let i = 0; i < 5; i += 1) {
+      await page.keyboard.press('ControlOrMeta+z');
+    }
+    await expect(page.getByTestId('layer-row'), 'undoing crop + all commits restores original layer stack').toHaveCount(
+      baselineRows
+    );
+    await expect.poll(() => backingStore(page), 'undoing crop restores the original document size').toEqual(baseline);
+    await expect
+      .poll(() => footerDimensions(page), 'undoing crop restores the original Footer size')
+      .toBe(baselineFooter);
+    await expect
+      .poll(() => displayMetrics(page, baseline), 'undoing crop restores the original display')
+      .toEqual(baselineDisplay);
+
+    // Redo 6 times to redo crop + 5 commits
+    for (let i = 0; i < 6; i += 1) {
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+    }
+    await expect(page.getByTestId('layer-row'), 'redoing crop + all commits').toHaveCount(6);
+    await expect.poll(() => backingStore(page), 'redoing crop restores the cropped document size').toEqual(afterCrop);
+    await expect.poll(() => footerDimensions(page), 'redoing crop restores the cropped Footer size').toBe(cropFooter);
+    await expect
+      .poll(() => displayMetrics(page, afterCrop), 'redoing crop restores the cropped display')
+      .toEqual(cropDisplay);
+  });
+
+  test('undo/redo across crop', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await openToolFlyout(page, 'shape');
+    await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
+
+    const baseline = await backingStore(page);
+    const baselineFooter = await footerDimensions(page);
+    expect(baselineFooter).toContain(`${baseline.width} × ${baseline.height} px`);
+    const baselineDisplay = await displayMetrics(page, baseline);
+    const baselineRows = await page.getByTestId('layer-row').count();
+
+    // Growth crop (extends past right edge)
+    const afterCrop = await cropInDocument(page, { x: 100, y: 100 }, { x: 900, y: 500 });
+    expect(afterCrop).toEqual({ width: 800, height: 400 });
+    const cropDisplay = await displayMetrics(page, afterCrop);
+    const cropFooter = await footerDimensions(page);
+
+    // Verify layer count after crop (crop doesn't add a layer)
+    await expect(page.getByTestId('layer-row'), 'crop does not add a layer').toHaveCount(baselineRows);
+
+    // Undo the crop
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(page.getByTestId('layer-row'), 'undoing crop restores original layer stack').toHaveCount(baselineRows);
+    await expect.poll(() => backingStore(page), 'undoing crop restores the original document size').toEqual(baseline);
+    await expect
+      .poll(() => footerDimensions(page), 'undoing crop restores the original Footer size')
+      .toBe(baselineFooter);
+    await expect
+      .poll(() => displayMetrics(page, baseline), 'undoing crop restores the original display')
+      .toEqual(baselineDisplay);
+
+    // Redo the crop
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect(page.getByTestId('layer-row'), 'redoing crop preserves layer stack').toHaveCount(baselineRows);
+    await expect.poll(() => backingStore(page), 'redoing crop restores the grown document size').toEqual(afterCrop);
+    await expect.poll(() => footerDimensions(page), 'redoing crop restores the grown Footer size').toBe(cropFooter);
+    await expect
+      .poll(() => displayMetrics(page, afterCrop), 'redoing crop restores the grown display')
+      .toEqual(cropDisplay);
   });
 });
