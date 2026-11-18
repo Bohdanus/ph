@@ -360,6 +360,8 @@ describe('LayersTab actions reaching the store', () => {
     act(() => {
       fireEvent.click(screen.getByTestId('layers-delete-active-button'));
     });
+    expect(screen.getByTestId('confirm-dialog')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
 
     const action = onlyDispatched();
     expect(action.type).toBe('COMMIT_DOCUMENT_EDIT');
@@ -442,6 +444,7 @@ describe('LayersTab actions reaching the store', () => {
     act(() => {
       fireEvent.click(getRow('Background').querySelector('button[aria-label="Remove layer"]')!);
     });
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
 
     const updates = onlyDispatched().payload.updates as { activeLayerId: string | null };
     expect(updates.activeLayerId).toBe('layer-2');
@@ -457,6 +460,7 @@ describe('LayersTab actions reaching the store', () => {
     act(() => {
       fireEvent.click(getRow('Only Layer').querySelector('button[aria-label="Remove layer"]')!);
     });
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
 
     const updates = onlyDispatched().payload.updates as { layers: Record<string, unknown>; activeLayerId: unknown };
     expect(updates.layers).toEqual({});

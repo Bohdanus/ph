@@ -728,6 +728,7 @@ test.describe('Layers panel', () => {
   test('removing the last layer shows the panel empty state', async ({ page }) => {
     await expect(layerRow(page, 'Blank 1')).toBeVisible();
     await layerRow(page, 'Blank 1').getByRole('button', { name: 'Remove layer' }).click();
+    await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(layerRows(page)).toHaveCount(0);
     await expect(page.getByText('No layers yet.')).toBeVisible();
   });
@@ -896,8 +897,8 @@ test.describe('Layers panel', () => {
   });
 
   /**
-   * The trash button calls `e.stopPropagation()` before `handleConfirmRemove`
-   * (`LayersTab.tsx:318-321`), so clicking it must NOT also fire the row's `onClick`,
+   * The trash button calls `e.stopPropagation()` before requesting removal, so clicking it
+   * must NOT also fire the row's `onClick`,
    * which would call `selectLayer` and change which layer is active.
    *
    * The test activates one layer, then clicks trash on the OTHER layer and checks that
@@ -926,6 +927,7 @@ test.describe('Layers panel', () => {
 
     // Click trash on the RED row (the one that is NOT active).
     await redRow.getByRole('button', { name: 'Remove layer' }).click();
+    await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(redRow).toHaveCount(0);
 
     // The green row must still be the active one.

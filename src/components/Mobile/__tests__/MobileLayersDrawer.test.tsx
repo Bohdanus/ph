@@ -707,11 +707,61 @@ describe('MobileLayersDrawer', () => {
     const { rerender } = render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: 'Delete active layer' }));
+    expect(removeLayerMock).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId('confirm-dialog-confirm-button'));
     expect(removeLayerMock).toHaveBeenCalledWith('upper');
 
     storeStateMock.layers = { bottom: makeLayer('bottom', 'Bottom', 0) };
     rerender(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Delete active layer' })).toBeNull();
+  });
+
+  it('cancels deletion and restores the drawer as the active modal', async () => {
+    const user = userEvent.setup();
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    const deleteButton = screen.getByRole('button', { name: 'Delete active layer' });
+    await user.click(deleteButton);
+
+    const drawer = screen.getByTestId('mobile-layers-drawer');
+    expect(drawer).toHaveAttribute('aria-hidden', 'true');
+    expect(drawer).not.toHaveAttribute('aria-modal');
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Delete Layer?');
+
+    await user.click(screen.getByTestId('confirm-dialog-cancel-button'));
+
+    expect(removeLayerMock).not.toHaveBeenCalled();
+    expect(drawer).not.toHaveAttribute('aria-hidden');
+    expect(drawer).toHaveAttribute('aria-modal', 'true');
+    expect(document.activeElement).toBe(deleteButton);
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+  });
+
+  it('closes deletion confirmation if the layer disappears externally', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Delete active layer' }));
+
+    const layers = { ...storeStateMock.layers };
+    delete layers.upper;
+    storeStateMock.layers = layers;
+    rerender(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+    expect(screen.getByTestId('mobile-layers-drawer')).toHaveAttribute('aria-modal', 'true');
+  });
+
+  it('restores focus to the delete trigger after Escape cancels confirmation', async () => {
+    const user = userEvent.setup();
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const deleteButton = screen.getByRole('button', { name: 'Delete active layer' });
+
+    await user.click(deleteButton);
+    await user.keyboard('{Escape}');
+
+    expect(removeLayerMock).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(deleteButton);
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
   });
 
   it('titles history steps with the real getHistoryItemTitle, not an identity function', async () => {

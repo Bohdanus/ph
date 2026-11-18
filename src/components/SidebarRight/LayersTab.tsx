@@ -26,6 +26,7 @@ import {
   SET_LAYER_OPACITY_ACTION,
   UNLOCK_LAYER_ACTION,
 } from '../../util/constants.ts';
+import ConfirmDialog from '../ConfirmDialog/ConfirmDialog.tsx';
 import LayerThumbnail from './LayerThumbnail.tsx';
 
 type UpdateLayer = ReturnType<typeof useLayers>['updateLayer'];
@@ -271,6 +272,11 @@ export default function LayersTab() {
   const [isOverTrash, setIsOverTrash] = useState(false);
 
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ id: LayerId; layer: Layer } | null>(null);
+  const layersPanelRef = useRef<HTMLDivElement>(null);
+  const pendingDeleteLayer =
+    pendingDelete && layers[pendingDelete.id] === pendingDelete.layer ? pendingDelete.layer : null;
+
   const canReorderLayer = (layerId: LayerId | null): layerId is LayerId =>
     isMovableLayer(layerId) && editingLayerId !== layerId;
 
@@ -448,10 +454,21 @@ export default function LayersTab() {
     }, 200);
   }
 
-  function handleConfirmRemove(layerId: LayerId) {
-    if (textEditingLayerId === layerId) return;
-    // todo: draw a "undo" button that disappears in few seconds
-    removeLayer(layerId);
+  function requestLayerRemoval(layerId: LayerId, skipConfirmation = false) {
+    if (!layers[layerId] || textEditingLayerId === layerId) return;
+    if (skipConfirmation) {
+      removeLayer(layerId);
+      return;
+    }
+    setPendingDelete({ id: layerId, layer: layers[layerId] });
+  }
+
+  function confirmLayerRemoval() {
+    const request = pendingDelete;
+    setPendingDelete(null);
+    if (request && layers[request.id] === request.layer && textEditingLayerId !== request.id) {
+      removeLayer(request.id);
+    }
   }
 
   function handleNameChange(layerId: LayerId, newName: string, labelNode: HTMLElement) {
@@ -581,7 +598,7 @@ export default function LayersTab() {
     clearPointerDrag(event);
     if (active) suppressPointerClickRef.current = true;
     if (active && canReorderLayer(layerId) && overTrash) {
-      handleConfirmRemove(layerId);
+      requestLayerRemoval(layerId, true);
     } else if (active && canReorderLayer(layerId) && (targetId || overBottom)) {
       animateMove(layerId, targetId ?? undefined);
     }
@@ -594,7 +611,13 @@ export default function LayersTab() {
   }
 
   return (
-    <div className={`flex flex-col gap-2 h-full ${draggedLayerId ? 'is-dragging' : ''}`}>
+    <div
+      ref={layersPanelRef}
+      role="group"
+      aria-label="Layers panel"
+      tabIndex={-1}
+      className={`flex flex-col gap-2 h-full ${draggedLayerId ? 'is-dragging' : ''}`}
+    >
       {activeLayer && (
         <LayerOpacityControl
           key={activeLayer.id}
@@ -814,7 +837,7 @@ export default function LayersTab() {
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      handleConfirmRemove(layer.id);
+                      requestLayerRemoval(layer.id, event.altKey);
                     }}
                     disabled={textEditingLayerId === layer.id}
                     className={DELETE_BUTTON_ICON}
@@ -923,7 +946,7 @@ export default function LayersTab() {
           }
           onClick={(event) => {
             event.stopPropagation();
-            if (activeLayerId) handleConfirmRemove(activeLayerId);
+            if (activeLayerId) requestLayerRemoval(activeLayerId, event.altKey);
           }}
           onDragOver={(event) => {
             if (!isMovableLayer(draggedLayerId) || textEditingLayerId === draggedLayerId) {
@@ -943,7 +966,7 @@ export default function LayersTab() {
             setIsOverBottom(false);
             setIsOverTrash(false);
             if (layerId && canReorderLayer(layerId) && textEditingLayerId !== layerId) {
-              handleConfirmRemove(layerId);
+              requestLayerRemoval(layerId, true);
             }
           }}
           className={[
@@ -954,6 +977,17 @@ export default function LayersTab() {
           <TrashIcon />
         </button>
       </div>
+
+      {pendingDelete && pendingDeleteLayer && (
+        <ConfirmDialog
+          title="Delete Layer?"
+          message={`Are you sure you want to delete "${pendingDeleteLayer.name}"?`}
+          confirmLabel="Delete"
+          onConfirm={confirmLayerRemoval}
+          onCancel={() => setPendingDelete(null)}
+          returnFocusRef={layersPanelRef}
+        />
+      )}
 
       {/* Ghost element for custom drag image */}
       <div
