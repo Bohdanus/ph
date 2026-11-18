@@ -226,8 +226,10 @@ Note that four visible controls do not imply four model fields: Adobe's UXP `Lay
 
 - `PARTIAL` — the panel can apply and remove Photoshop's full lock through distinct
   `LOCK_LAYER_ACTION` and `UNLOCK_LAYER_ACTION` history entries. The locked state is shown beside the
-  layer name, and tablet rows expose a 44px lock control. The model still cannot represent the three
-  partial lock flags independently; PSD import collapses any such flag to full-layer-locked.
+  layer name, and tablet rows expose a 44px lock control. In the desktop lock row, the full-lock
+  padlock occupies Photoshop's fourth (rightmost) lock slot; the three partial-lock slots remain
+  unavailable because the model cannot represent those flags independently. PSD import collapses
+  any such flag to full-layer-locked.
 - `GAP` — no Fill control. `Fill:` is not a synonym for Opacity; see [§9.1](#91-opacity-and-fill-are-not-the-same-field).
 - The panel lock state renders **on the row** as a solid padlock when fully locked. Partial-lock and
   locked-group rendering remain unavailable because neither state exists in the flat layer model.

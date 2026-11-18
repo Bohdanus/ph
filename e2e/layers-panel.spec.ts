@@ -203,6 +203,20 @@ test.describe('Layers panel', () => {
     await expect(canvas).toBeVisible();
   });
 
+  test('places Lock All in the fourth lock-row slot', async ({ page }) => {
+    const controls = page.getByRole('group', { name: 'Layer protection controls' });
+    const lockButton = controls.getByRole('button');
+    await expect(controls).toBeVisible();
+
+    const controlsBox = await controls.boundingBox();
+    const lockButtonBox = await lockButton.boundingBox();
+    expect(controlsBox).not.toBeNull();
+    expect(lockButtonBox).not.toBeNull();
+    expect(
+      Math.abs(controlsBox!.x + controlsBox!.width - (lockButtonBox!.x + lockButtonBox!.width))
+    ).toBeLessThanOrEqual(1);
+  });
+
   test('New Layer inserts above the selected row and is one undoable history step', async ({ page }) => {
     const rows = page.getByTestId(LAYER_ROW);
     const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
