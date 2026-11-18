@@ -1,5 +1,5 @@
 // src/components/SidebarRight/LayersTab.tsx
-import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -303,7 +303,7 @@ export default function LayersTab() {
   const [isShrinking, setIsShrinking] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
 
-  const selectLayer = (id: LayerId) => {
+  const selectLayer = (id: LayerId, allowTextEdit = true) => {
     let layersAfterCommit = layers;
     if (textEditActive && toolArgs.toolName === 'text') {
       if (toolArgs.editingLayerId === id) return;
@@ -316,6 +316,7 @@ export default function LayersTab() {
     const source = selectedLayer?.source;
     if (source?.kind === 'tool' && source.args.toolName === toolArgs.toolName) {
       if (source.args.toolName === 'text') {
+        if (!allowTextEdit) return;
         const target = textLayerEditTarget(selectedLayer, documentFrame ?? documentFrameFromSize(totalSize));
         if (target) {
           beginTextLayerEdit(target.layerId);
@@ -334,7 +335,10 @@ export default function LayersTab() {
     let target = textLayerEditTarget(layer, documentFrame ?? documentFrameFromSize(totalSize));
     if (!target) return;
     if (textEditActive && toolArgs.toolName === 'text') {
-      if (toolArgs.editingLayerId === id) return;
+      if (toolArgs.editingLayerId === id) {
+        requestTextEditFocus({ kind: 'select-all', layerId: target.layerId });
+        return;
+      }
       const committedLayers = commitDirtyTool();
       if (committedLayers === null) return;
       target = textLayerEditTarget(committedLayers[id], documentFrame ?? documentFrameFromSize(totalSize));
@@ -349,8 +353,25 @@ export default function LayersTab() {
   };
 
   const listItemRefs = useRef<Record<LayerId, HTMLLIElement | null>>({});
+  const layerNameRefs = useRef<Record<LayerId, HTMLSpanElement | null>>({});
+  const focusNameOnEditRef = useRef(false);
   const dragImageRef = useRef<HTMLDivElement>(null);
   const dragImageNameRef = useRef<HTMLSpanElement>(null);
+
+  useLayoutEffect(() => {
+    if (!editingLayerId || !focusNameOnEditRef.current) return;
+    focusNameOnEditRef.current = false;
+    const name = layerNameRefs.current[editingLayerId];
+    if (!name) return;
+
+    name.focus();
+    const selection = name.ownerDocument.getSelection();
+    if (!selection) return;
+    const range = name.ownerDocument.createRange();
+    range.selectNodeContents(name);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }, [editingLayerId]);
 
   // The shared drag lock, not a direct write to `document.body`. A layer drag that ended while a
   // dock gesture was still running used to remove the grabbing cursor and the selection lock
@@ -741,7 +762,6 @@ export default function LayersTab() {
                     suppressPointerClickRef.current = false;
                     selectLayer(layer.id);
                   }}
-                  onDoubleClick={() => enterTextLayer(layer.id)}
                   className={[
                     'flex items-center gap-2 rounded px-2 py-1 select-none',
                     'border border-transparent',
@@ -766,7 +786,11 @@ export default function LayersTab() {
                     <EyeIcon open={layer.visible} />
                   </button>
 
-                  <LayerThumbnail layer={previewLayer} touchReorderEnabled={canReorder} />
+                  <LayerThumbnail
+                    layer={previewLayer}
+                    touchReorderEnabled={canReorder}
+                    onDoubleClick={() => enterTextLayer(layer.id)}
+                  />
 
                   {layer.isBedrock ? <BedrockIcon /> : <LayerTypeIcon source={layer.source} />}
 
@@ -774,22 +798,28 @@ export default function LayersTab() {
 
                   <div className="flex-1 min-w-0" onClick={(e) => isEditable && e.stopPropagation()}>
                     <span
+                      ref={(el) => {
+                        layerNameRefs.current[layer.id] = el;
+                      }}
                       data-testid="layer-name"
                       contentEditable={isEditable}
                       suppressContentEditableWarning
                       onPointerDown={(e) => {
                         if (e.pointerType === 'mouse') return;
+                        focusNameOnEditRef.current = false;
                         e.stopPropagation();
                         if (!isEditable) setEditingLayerId(layer.id);
                       }}
-                      onMouseDown={(e: React.MouseEvent<HTMLDivElement>) => {
+                      onClick={(e: React.MouseEvent<HTMLSpanElement>) => {
                         e.stopPropagation();
-                        if (isEditable) return;
-                        setEditingLayerId(layer.id);
+                        if (!isEditable) selectLayer(layer.id, false);
                       }}
-                      onClick={(e: React.MouseEvent<HTMLDivElement>) => {
-                        // prevent row selection when clicking while editing
+                      onDoubleClick={(e: React.MouseEvent<HTMLSpanElement>) => {
                         e.stopPropagation();
+                        if (!isEditable) {
+                          focusNameOnEditRef.current = true;
+                          setEditingLayerId(layer.id);
+                        }
                       }}
                       onBlur={(e) => {
                         handleNameChange(layer.id, e.currentTarget.textContent || '', e.currentTarget);

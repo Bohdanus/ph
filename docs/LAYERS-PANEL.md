@@ -353,7 +353,7 @@ between the eye and the name is a control that Photoshop does not have.**
 | Thumbnail   | `HAVE`    | `LayerThumbnail` draws a 48x32 checkerboard-backed preview from the live preview layer or committed layer through `drawLayerSource()`. `LayersTab.test.tsx` — `it('renders one preview thumbnail for every layer row')` — pins row coverage. |
 | `T` badge   | `PARTIAL` | `LayerThumbnail` marks retained Text-tool thumbnails; dedicated type metadata and a Smart Object icon are unavailable. See `docs/TOOLS.md` §Horizontal Type Tool                                                                             |
 | Disclosure  | `GAP`     | No layer has children to disclose                                                                                                                                                                                                            |
-| Name        | `HAVE`    | `LayersTab.tsx` — the `layer-name` span; see [§7](#7-rename) for the mousedown gap                                                                                                                                                           |
+| Name        | `HAVE`    | `LayersTab.tsx` — double-click the `layer-name` span to rename; see [§7](#7-rename)                                                                                                                                                          |
 | `fx`        | `GAP`     | `Layer.operations` (`layer-types.ts` — `LayerOperation`) holds three filter args plus affine, not layer styles                                                                                                                               |
 | Padlock     | `GAP`     | `Layer.locked` exists and is never set by the UI                                                                                                                                                                                             |
 
@@ -504,19 +504,18 @@ Photoshop's model, in Adobe's words:
 
 - **Double-click the name**, type, press **Enter (Windows) / Return (macOS)**. Also `Layer > Rename
 Layer`. (Adobe, primary, twice.)
-- **The precision requirement**: double-clicking _on the name text_ renames; double-clicking elsewhere
-  on the row — the thumbnail, the empty row area — opens the **Layer Style** dialog instead. (Adobe
-  primary: "Access the Layer Style dialog by double-clicking a layer (outside the layer name or
-  thumbnail)".) **This rule is not implementable before layer styles are** — [§9](#9-the-layer-model-the-panel-requires)
-  marks them `GAP` and no §17 row builds them. Do not add the double-click gesture without also
-  recording that its Layer Style half is deferred with the dialog, or the row grows a gesture that
-  opens nothing.
+- **The precision requirement**: double-clicking _on the name text_ renames. Adobe documents Layer
+  Style for a double-click outside both the name and thumbnail ("Access the Layer Style dialog by
+  double-clicking a layer (outside the layer name or thumbnail)"). [§9](#9-the-layer-model-the-panel-requires)
+  marks layer styles `GAP`, so other row regions must not claim that gesture until the dialog exists.
+  In this app, double-clicking a text-layer thumbnail continues to open text editing.
 - Tab / Shift-Tab walk the rename edit box down and up through the layers. (Third-party.)
 
-- `HAVE` — `contentEditable` on mousedown (the `layer-name` span in `LayersTab.tsx` — its
-  `contentEditable` attribute and its `onMouseDown`), commit on
-  blur (`onBlur`), Enter commits (`onKeyDown`), Escape restores the stored name (`onKeyDown`), and a
-  blank or whitespace-only name is refused **and the previous label written back** (`handleNameChange()`).
+- `HAVE` — double-clicking the `layer-name` span enters `contentEditable`, with the current name
+  focused and selected. A single click selects the row without entering rename mode. Blur and Enter
+  commit (`onBlur` / `onKeyDown`); Escape restores the stored name (`onKeyDown`); a blank or
+  whitespace-only name is refused **and the previous label written back** (`handleNameChange()`).
+  The tablet drawer keeps its separate explicit Rename button.
   That
   last clause was a real defect — a refused rename used to leave a nameless layer on screen, because
   the span stops being `contentEditable` and React no longer owns its text — and it is now pinned as
@@ -526,9 +525,8 @@ Layer`. (Adobe, primary, twice.)
   block in `LayersTab.test.tsx` and by the `test('renaming a layer commits the new name when Enter is
 pressed')` and `test('abandoning a rename with Escape keeps the original name')` cases in
   `e2e/layers-panel.spec.ts`.
-- `GAP` — a **single mousedown** enters rename mode, not Photoshop's double-click gesture. The drag
-  collision is an implementation concern, not an override. The row must preserve Photoshop's
-  double-click-on-the-name rename and its separate thumbnail and Layer Style gestures.
+- `HAVE` — name double-click stops at the name span and cannot also trigger text editing; other row
+  regions have no double-click action until the Layer Style dialog exists.
 - `GAP` — Tab / Shift-Tab navigation between rows during a rename.
 - **Locator trap, load-bearing.** A layer row's `title` is `"Drag to reorder"` (the row `<div>` in
   `LayersTab.tsx`) and `page.getByTitle` matches on **substring**. That string is a locator used

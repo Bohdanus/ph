@@ -842,7 +842,7 @@ test.describe('Layers panel', () => {
     await expect(textOptions).toHaveCount(0);
 
     const row = page.getByTestId(LAYER_ROW).first();
-    await row.dblclick();
+    await row.getByTestId('layer-thumbnail').dblclick();
 
     // A lit overflow tile would still match after switching to another collapsed tool.
     await expect(drawOptions).toBeVisible();
@@ -1015,22 +1015,12 @@ test.describe('Layers panel', () => {
 });
 
 /**
- * Puts a layer row's name into edit mode the way a user does: a click on the name, whose
- * mousedown sets `editingLayerId`, and a second click, which is the browser's own default
- * action of placing a caret inside what is by then a `contentEditable` span. The first click
- * is what enters edit mode; the second is what makes the caret deterministic.
- *
- * Both steps ASSERT their state, which is the reason this exists rather than two bare
- * clicks: `LayersTab.tsx:214-218` enters edit mode on `onMouseDown`, and the second click
- * only lands a caret once React's discrete-event flush has re-rendered the span as
- * `contentEditable`. Without the assertions, a late flush makes `ControlOrMeta+a` select the
- * document, the typed text goes into the body, `Enter` does nothing, and the caller fails
- * several lines later with an unexplained "expected 1, received 0" on the layer count.
+ * Puts a layer name into edit mode with Photoshop's double-click gesture and waits for the
+ * resulting editable span to receive focus before the caller types.
  */
 async function enterRenameMode(row: Locator): Promise<void> {
   const name = layerName(row);
-  await name.click();
+  await name.dblclick();
   await expect(name).toHaveAttribute('contenteditable', 'true');
-  await name.click();
   await expect(name).toBeFocused();
 }

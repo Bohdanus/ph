@@ -123,7 +123,7 @@ describe('LayersTab dispatch edge cases', () => {
     const span = getNameSpan(getRow('Top Layer'));
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     expect(span).toHaveAttribute('contenteditable', 'true');
 
@@ -191,7 +191,7 @@ describe('LayersTab dispatch edge cases', () => {
     const span = getNameSpan(getRow('Top Layer'));
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
 
     expect(span).toHaveAttribute('contenteditable', 'true');
