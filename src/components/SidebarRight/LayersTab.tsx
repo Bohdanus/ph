@@ -237,7 +237,14 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
       </div>
       <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-white">
         <span>Lock:</span>
-        <LayerLockToggle layer={layer} updateLayer={updateLayer} textEditActive={textEditActive} />
+        <div role="group" aria-label="Layer protection controls" className="grid w-36 grid-cols-4 items-center">
+          <LayerLockToggle
+            layer={layer}
+            updateLayer={updateLayer}
+            textEditActive={textEditActive}
+            className="col-start-4"
+          />
+        </div>
       </div>
     </div>
   );

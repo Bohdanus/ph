@@ -356,6 +356,16 @@ describe('LayersTab', () => {
     expect(layerMocks.updateLayer).not.toHaveBeenCalled();
   });
 
+  it('places Lock All in the fourth Photoshop lock slot', () => {
+    render(<LayersTab />);
+
+    const protectionControls = screen.getByRole('group', { name: 'Layer protection controls' });
+    const lockButton = screen.getByRole('button', { name: 'Lock Layer 2' });
+
+    expect(protectionControls).toHaveClass('grid', 'w-36', 'grid-cols-4');
+    expect(lockButton).toHaveClass('col-start-4');
+  });
+
   it('disables Lock All while a text edit is active', () => {
     currentToolState.toolArgs = {
       toolName: 'text',
