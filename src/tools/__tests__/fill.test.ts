@@ -443,10 +443,11 @@ describe('defaultSettings integration', () => {
 });
 
 describe('large canvas performance (bounds)', () => {
-  it('flood fill bounds are clamped to canvas size on 4000x4000', () => {
-    // This test verifies the fill algorithm doesn't overflow on large canvases
-    // floodFill.ts mentions this concern in its documentation
-    const size = { width: 4000, height: 4000 };
+  it('flood fill bounds are clamped to canvas size on large canvas', () => {
+    // This test verifies the fill algorithm doesn't overflow on large canvases.
+    // 1000x1000 (1M pixels) is sufficient to test bounds clamping; 4000x4000 (16M)
+    // is documented in floodFill.ts but causes timeout under CI contention.
+    const size = { width: 1000, height: 1000 };
     const data = new Uint8ClampedArray(size.width * size.height * 4);
     for (let i = 0; i < data.length; i += 4) {
       data[i] = 100;

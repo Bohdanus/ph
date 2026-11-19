@@ -13,7 +13,15 @@ const checkerboardStyle = {
 } as const;
 
 /** A small live layer preview. History rows intentionally do not use this component. */
-export default function LayerThumbnail({ layer, touchReorderEnabled }: { layer: Layer; touchReorderEnabled: boolean }) {
+export default function LayerThumbnail({
+  layer,
+  touchReorderEnabled,
+  onDoubleClick,
+}: {
+  layer: Layer;
+  touchReorderEnabled: boolean;
+  onDoubleClick?: () => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isTypeLayer = layer.source?.kind === 'tool' && layer.source.args.toolName === 'text';
 
@@ -46,7 +54,7 @@ export default function LayerThumbnail({ layer, touchReorderEnabled }: { layer: 
   }, [layer]);
 
   return (
-    <div className="relative h-8 w-12 shrink-0">
+    <div className="relative h-8 w-12 shrink-0" onDoubleClick={onDoubleClick}>
       <canvas
         ref={canvasRef}
         width={THUMBNAIL_WIDTH}

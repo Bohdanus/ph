@@ -35,6 +35,7 @@ import {
   type LayersRecord,
   type ToolLayerSource,
 } from './layer-types.ts';
+import { setLayerMapEntryAfter } from './layer-utils.ts';
 import type { BitmapSource, Size } from './general-types.ts';
 import type { NewBedrockSize, ToolArgs, VectorToolName } from './tool-types.ts';
 import { deriveSelectionBaseline, isValidLegacySelectionSnapshot, selectionSnapshot } from './selection-baseline.ts';
@@ -1310,10 +1311,14 @@ export function legacyHistoryToDurable(
       if (malformedSource) throw new Error(malformedSource);
       const source = legacyLayerSourceFromItem(item);
       if ((item.actionName === NEW_LAYER_ACTION || (item.actionName === TOOL_ACTION && source)) && source) {
-        const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers);
+        const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers, item.insertAfterLayerId);
         const layer = convertLayer(runtimeLayer, assetOwnerId, registry);
-        if (enabled) currentLayers.set(layer.id, layer);
-        operation = Object.freeze({ kind: 'create-layer', layer });
+        if (enabled) setLayerMapEntryAfter(currentLayers, layer.id, layer, item.insertAfterLayerId);
+        operation = Object.freeze({
+          kind: 'create-layer',
+          layer,
+          ...(item.insertAfterLayerId !== undefined ? { insertAfterLayerId: item.insertAfterLayerId } : {}),
+        });
       } else if (isSetLayerPropertiesAction(item.actionName)) {
         const layerPropertiesEntry = deriveSetLayerPropertiesEntry(item);
         if (layerPropertiesEntry) {
@@ -1701,7 +1706,8 @@ export const convertLegacyHistory = legacyHistoryToDurable;
 export function sourceToRuntimeLayer(
   id: LayerId,
   source: LayerSource,
-  layers: Map<LayerId, DurableLayerSnapshot> | Readonly<Record<LayerId, Pick<Layer, 'order'>>>
+  layers: Map<LayerId, DurableLayerSnapshot> | Readonly<Record<LayerId, { order: number; name?: string }>>,
+  insertAfterLayerId?: LayerId
 ): Layer {
   const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
   const pos = source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos };
@@ -1711,7 +1717,7 @@ export function sourceToRuntimeLayer(
   } else {
     for (const [layerId, layer] of Object.entries(layers)) orders[layerId as LayerId] = layer;
   }
-  const { name, order } = deriveLayerNameAndOrder(orders, source);
+  const { name, order } = deriveLayerNameAndOrder(orders, source, insertAfterLayerId);
   return {
     id,
     name,

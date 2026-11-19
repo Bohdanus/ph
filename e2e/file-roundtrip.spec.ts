@@ -3,18 +3,14 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { writePsdBuffer } from 'ag-psd';
 import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { documentClipInBox } from './helpers/document-sampling';
 import {
   dominantRed,
-  drawLine,
   drawLineFromDocument,
   getColorAtPoint,
   getWorkspaceCanvas,
   hasRedPixels,
   loadImageData,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
   viewportClip,
   type ViewportClip,
   type ImageDataResult,
@@ -355,8 +351,8 @@ async function verifyPngRoundTrip(page: Page, testInfo: TestInfo, expectedDpr: n
 
   await clickToolButton(page, 'draw');
   await setForegroundColor(page, STROKE_HEX, true);
-  await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-  await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'the red stroke' });
+  await drawLineFromDocument(page, box, 150, 150, 350, 150);
+  await waitForCanvasPixels(page, documentClipInBox(box), hasRedPixels, { description: 'the red stroke' });
 
   const beforeDocument = await readWorkspaceDocumentRaster(page, expectedDpr);
   const beforeCapture = await captureCanvasScreenshot(

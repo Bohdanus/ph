@@ -131,6 +131,43 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
     void registry;
   });
 
+  it('replays a selected-layer insertion when adjacent orders have no representable midpoint', () => {
+    const selected = { ...createBaselineLayer('selected'), order: 1 };
+    const top = { ...createBaselineLayer('top'), order: 1 + Number.EPSILON };
+    const document = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId: 'selected',
+          documentSource: {
+            layers: { selected, top },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'inserted',
+          actionName: NEW_LAYER_ACTION,
+          layerId: 'inserted',
+          layerSource: blankLayerSource(layerPos),
+          insertAfterLayerId: 'selected',
+        },
+      ],
+      { documentId: 'ordered-insertion' }
+    ).document;
+
+    const entry = document.history[0]!;
+    expect(entry.operation).toMatchObject({ kind: 'create-layer', insertAfterLayerId: 'selected' });
+
+    const replay = replayDurableDocument(document);
+    const orderedIds = Object.values(replay.layers)
+      .sort((left, right) => left.snapshot.order - right.snapshot.order)
+      .map((layer) => layer.snapshot.id);
+
+    expect(orderedIds).toEqual(['selected', 'inserted', 'top']);
+  });
+
   it('remove-layer drops the layer at the tip and retains it at prior cursors', () => {
     // The previous fixture converted a `REMOVE_ACTION` for a layer the baseline
     // never contained — `documentSource` below holds only `layer-1` — so the

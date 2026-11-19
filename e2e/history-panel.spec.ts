@@ -2,16 +2,16 @@ import { expect, type Locator, type Page, test } from './fixtures/extended-test'
 import {
   CANVAS_REDRAW_TIMEOUT_MS,
   type BoundingBox,
+  documentToCanvasOffset,
   drawLine,
   documentOnlyPixelMask,
   getWorkspaceCanvas,
   hasDarkPixels,
   hasRedPixels,
-  LINE_END_X,
-  LINE_START_X,
-  LINE_START_Y,
 } from './helpers/canvas-helpers';
-import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { documentClipInBox } from './helpers/document-sampling';
+import { viewportClip, type ViewportClip } from './helpers/screenshot-scale';
 import { clickToolButton, navigateAndSelectInFlyout, openToolFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
@@ -20,8 +20,31 @@ import { committedAntsOutline, waitForCommittedAnts, waitForNoCommittedAnts } fr
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask));
 
-/** The standard test line, black, on the row offset from the box origin. */
-const ROW_OFFSET = 200;
+/**
+ * Document-space coordinates for the standard test lines.
+ * Mirrors the box-relative LINE_* constants but expressed in the 800x600 document space.
+ * Two lines: first at y=150, second at y=350 (150 + ROW_OFFSET).
+ */
+const DOC_LINE_START_X = 150;
+const DOC_LINE_END_X = 350;
+const DOC_LINE_Y_1 = 150;
+const DOC_LINE_Y_2 = 350;
+
+/**
+ * Computes a viewport clip around a document-space line.
+ * 20px padding around the line in box space, matching the pattern in `color.spec.ts`
+ * and `adjustments.spec.ts`.
+ */
+function computeLineClip(box: BoundingBox, docY: number): ViewportClip {
+  const start = documentToCanvasOffset(box, DOC_LINE_START_X, docY);
+  const end = documentToCanvasOffset(box, DOC_LINE_END_X, docY);
+  return viewportClip({
+    x: box.x + Math.min(start.x, end.x) - 20,
+    y: box.y + Math.min(start.y, end.y) - 20,
+    width: Math.abs(end.x - start.x) + 40,
+    height: 40,
+  } as const);
+}
 
 async function canvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
@@ -56,11 +79,15 @@ test.describe('History panel', () => {
 
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, '#000000', true);
-    await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y);
-    await waitForCanvasPixels(page, canvasRedrawClip(box), hasDarkPixels, { description: 'the first stroke' });
+    const start1 = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y_1);
+    const end1 = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_Y_1);
+    await drawLine(page, box, start1.x, start1.y, end1.x, end1.y);
+    await waitForCanvasPixels(page, documentClipInBox(box), hasDarkPixels, { description: 'the first stroke' });
     await expect(drawRows(page), 'one row after one stroke').toHaveCount(1);
 
-    await drawLine(page, box, LINE_START_X, LINE_START_Y + ROW_OFFSET, LINE_END_X, LINE_START_Y + ROW_OFFSET);
+    const start2 = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y_2);
+    const end2 = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_Y_2);
+    await drawLine(page, box, start2.x, start2.y, end2.x, end2.y);
     await expect(drawRows(page), 'one row per stroke, not per panel').toHaveCount(2);
 
     // Newest first, and only the tip is marked as the current state.
@@ -72,19 +99,20 @@ test.describe('History panel', () => {
   test('clicking an earlier row rewinds the canvas without touching the undo button', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     const box = await canvasBox(page);
-    const base = canvasRedrawClip(box);
-    const firstClip = base;
-    const secondClip = { ...base, y: base.y + ROW_OFFSET };
+    const start1 = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y_1);
+    const end1 = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_Y_1);
+    const start2 = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y_2);
+    const end2 = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_Y_2);
+    const firstClip = computeLineClip(box, DOC_LINE_Y_1);
+    const secondClip = computeLineClip(box, DOC_LINE_Y_2);
 
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, '#000000', true);
-    await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y);
+    await drawLine(page, box, start1.x, start1.y, end1.x, end1.y);
     await waitForCanvasPixels(page, firstClip, hasDarkPixels, { description: 'the first stroke' });
-    await drawLine(page, box, LINE_START_X, LINE_START_Y + ROW_OFFSET, LINE_END_X, LINE_START_Y + ROW_OFFSET);
+    await drawLine(page, box, start2.x, start2.y, end2.x, end2.y);
     await waitForCanvasPixels(page, secondClip, hasDarkPixels, { description: 'the second stroke' });
 
-    // The rows are newest first, so the LAST one is the state that held after the first
-    // stroke and nothing else.
     await drawRows(page).last().click();
     await waitForCanvasPixels(page, secondClip, hasNoDarkPixels, { description: 'the rewound second stroke' });
     await expect
@@ -110,15 +138,18 @@ test.describe('History panel', () => {
   test('the eye disables an entry, and the current state is recomputed without it', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     const box = await canvasBox(page);
-    const base = canvasRedrawClip(box);
-    const firstClip = base;
-    const secondClip = { ...base, y: base.y + ROW_OFFSET };
+    const firstClip = computeLineClip(box, DOC_LINE_Y_1);
+    const secondClip = computeLineClip(box, DOC_LINE_Y_2);
+    const start1 = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y_1);
+    const end1 = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_Y_1);
+    const start2 = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y_2);
+    const end2 = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_Y_2);
 
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, '#000000', true);
-    await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y);
+    await drawLine(page, box, start1.x, start1.y, end1.x, end1.y);
     await waitForCanvasPixels(page, firstClip, hasDarkPixels, { description: 'the first stroke' });
-    await drawLine(page, box, LINE_START_X, LINE_START_Y + ROW_OFFSET, LINE_END_X, LINE_START_Y + ROW_OFFSET);
+    await drawLine(page, box, start2.x, start2.y, end2.x, end2.y);
     await waitForCanvasPixels(page, secondClip, hasDarkPixels, { description: 'the second stroke' });
 
     // `toggleDisabled` replays to the SAME cursor with the entry flagged out, so the
@@ -146,7 +177,7 @@ test.describe('History panel', () => {
 
   test('a new document starts a fresh timeline, not the previous one', async ({ page }) => {
     const box = await canvasBox(page);
-    const strokeClip = canvasRedrawClip(box);
+    const clip = computeLineClip(box, DOC_LINE_Y_1);
 
     // The panel only renders once the store has a document, and a document's own opening
     // entry is already on its timeline — so a fresh document has exactly one opening row,
@@ -157,8 +188,10 @@ test.describe('History panel', () => {
 
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, '#000000', true);
-    await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y);
-    await waitForCanvasPixels(page, strokeClip, hasDarkPixels, { description: "the first document's stroke" });
+    const start1 = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y_1);
+    const end1 = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_Y_1);
+    await drawLine(page, box, start1.x, start1.y, end1.x, end1.y);
+    await waitForCanvasPixels(page, clip, hasDarkPixels, { description: "the first document's stroke" });
     await expect(drawRows(page), 'the first document has an entry for the second to lose').toHaveCount(1);
     await expect(page.getByTestId('undo-button')).toBeEnabled();
 
@@ -180,7 +213,7 @@ test.describe('History panel', () => {
     await expect(historyRows(page).first()).toBeVisible();
     await expect(page.getByTestId('undo-button'), 'a new document starts with nothing to undo').toBeDisabled();
     await expect(page.getByTestId('redo-button')).toBeDisabled();
-    await waitForCanvasPixels(page, strokeClip, hasNoDarkPixels, { description: "the first document's stroke" });
+    await waitForCanvasPixels(page, clip, hasNoDarkPixels, { description: "the first document's stroke" });
   });
 
   test.describe('HANDOFF item 32: selection rows in History panel', () => {
@@ -207,15 +240,19 @@ test.describe('History panel', () => {
 
     test('magic wand selection creates a SELECTION_ACTION row', async ({ page }) => {
       const box = await canvasBox(page);
+      const clip = documentClipInBox(box);
       // First draw something to select
       await clickToolButton(page, 'draw');
       await setForegroundColor(page, '#cc0000', true);
-      await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y);
-      await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'the stroke to select' });
+      const start1 = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_Y_1);
+      const end1 = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_Y_1);
+      await drawLine(page, box, start1.x, start1.y, end1.x, end1.y);
+      await waitForCanvasPixels(page, clip, hasRedPixels, { description: 'the stroke to select' });
 
       await openToolFlyout(page, 'magic-wand');
       await navigateAndSelectInFlyout(page, 'magic-wand', 'Magic Wand Tool');
-      await page.mouse.click(box.x + (LINE_START_X + LINE_END_X) / 2, box.y + LINE_START_Y);
+      const centre = documentToCanvasOffset(box, (DOC_LINE_START_X + DOC_LINE_END_X) / 2, DOC_LINE_Y_1);
+      await page.mouse.click(box.x + centre.x, box.y + centre.y);
       // Wait for selection to be committed
       await waitForCommittedAnts(page, 'the magic wand selection to be created');
       // Verify selection row appears

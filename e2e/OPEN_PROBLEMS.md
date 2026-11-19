@@ -43,10 +43,20 @@ breakage or unmaintainable. **P3** = cosmetic / robustness.
 
 ## Observed failures
 
-The latest full headless run recorded above had no failures. This is one machine's
-observation, not a baseline; run `npm run test:e2e` for the current result. The
-open findings below describe independent weaknesses in the suite and remain work
-even when a full run passes.
+The latest full headless run (2026-11-18) reported 695 passed and 9 failed. The
+text-overlay geometry assertion has since been corrected and its focused E2E passes;
+the seven export-baseline mismatches and the Windows cleanup failure remain
+unresolved. This is one machine's observation, not a baseline; run
+`npm run test:e2e` for the current result. The open findings below describe
+independent weaknesses in the suite and remain work even when a full run passes.
+
+### Windows-only — `test:e2e:clean` uses a POSIX command
+
+`package.json`'s `test:e2e:clean` script invokes `rm -rf`, which is not available in
+the default Windows command shell. The Windows validation run failed at this cleanup
+step before it could clean the test output. This platform-specific issue is left
+unfixed per the current task's scope; use a Windows-compatible cleanup command or a
+cross-platform Node script when addressing it.
 
 ### Invariant — headless is the default, and the refusal is structural
 
@@ -295,8 +305,9 @@ and `156.0.8078.48` on Windows and macOS. The Linux images in
 `export-baselines/linux/` match its artifact byte-for-byte. An earlier Chrome
 `155.0.8059.39` run exceeded the strict 100-pixel budget on six formats. This records
 provenance, not a pin: CI installs each OS's current stable Chrome, which can drift.
-Choosing a per-platform version policy remains open; do not widen the pixel budget to
-mask drift.
+The 2026-11-18 validation run resolved Chrome `158.0.8127.36` and exceeded the strict
+budget on all seven export formats. Choosing a per-platform version policy remains
+open; do not widen the pixel budget or re-record baselines merely to mask drift.
 
 ## P3 — no dedicated mobile/HiDPI project; touch coverage and the full 2x suite remain partial
 

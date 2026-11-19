@@ -2460,6 +2460,7 @@ export class Board {
         path: lock.path,
         agent: lock.agent_id,
         worktree: lock.worktree,
+        expires_at: lock.expires_at,
         releaseable: true,
       };
       findings.push(finding);
@@ -2468,54 +2469,68 @@ export class Board {
     if (dryRun) return findings;
 
     const releasedFindings = [];
-    for (const { finding, expected, expectedLocks } of staleRows) {
-      if (finding.issue) {
-        const result = this.releaseClaim(finding.issue, {
-          agent: finding.agent,
-          force: true,
-          expected,
-          expectedLocks,
-        });
-        if (result.released) releasedFindings.push(finding);
-      } else if (finding.path) {
-        /**
-         * NO `force` here, and that is the whole point of the line.
-         *
-         * `releaseFiles` skips any row whose `agent_id` is not the one named —
-         * UNLESS `force` is set, and `force` skips the check on EVERY row for
-         * the path, not just the offending one. A sweep therefore used to revoke
-         * live holders, not stale ones.
-         *
-         * The sequence needs no `--force` anywhere. A's lock on P lapses, so
-         * `liveLocks` stops seeing it and B is granted P; two live rows for one
-         * path are schema-legal, because the key is `(path, agent_id)`. Then ANY
-         * `swarm` command from ANY agent runs `autoSweep` — `agent-board.mjs`
-         * calls it on every command except `doctor` itself — and the sweep
-         * released A's stale row *and B's live one*, handing the file to a third
-         * agent while B was mid-edit.
-         *
-         * Without `force`, `finding.agent` is the holder of the row this sweep
-         * actually found expired, so the guard releases exactly that row and
-         * leaves every other holder alone. A separate finding is generated for
-         * each expired row, so a second stale holder is still collected.
-         *
-         * A sweep agent may reclaim what has lapsed. It may NOT take a file away
-         * from an agent that is still writing: only the operator stops a chat.
-         *
-         * `reason: 'swept'` is the ONLY thing this branch adds to the line, and
-         * it is a log discriminator, not a permission: it is what makes a swept
-         * `lock.release` distinguishable from an `unlock` a human asked for, in a
-         * column that has no `path` to tell them apart by. `force` is left off
-         * because adding it back would re-open the hole the paragraph above
-         * documents, in exchange for nothing this change needs.
-         */
-        const result = this.releaseFiles([finding.path], {
-          agent: finding.agent,
-          reason: 'swept',
-          expected,
-        });
-        if (result.released.includes(finding.path)) releasedFindings.push(finding);
+    try {
+      for (const { finding, expected, expectedLocks } of staleRows) {
+        if (finding.issue) {
+          const result = this.releaseClaim(finding.issue, {
+            agent: finding.agent,
+            force: true,
+            expected,
+            expectedLocks,
+          });
+          if (result.released) releasedFindings.push(finding);
+        } else if (finding.path) {
+          /**
+           * NO `force` here, and that is the whole point of the line.
+           *
+           * `releaseFiles` skips any row whose `agent_id` is not the one named —
+           * UNLESS `force` is set, and `force` skips the check on EVERY row for
+           * the path, not just the offending one. A sweep therefore used to revoke
+           * live holders, not stale ones.
+           *
+           * The sequence needs no `--force` anywhere. A's lock on P lapses, so
+           * `liveLocks` stops seeing it and B is granted P; two live rows for one
+           * path are schema-legal, because the key is `(path, agent_id)`. Then ANY
+           * `swarm` command from ANY agent runs `autoSweep` — `agent-board.mjs`
+           * calls it on every command except `doctor` itself — and the sweep
+           * released A's stale row *and B's live one*, handing the file to a third
+           * agent while B was mid-edit.
+           *
+           * Without `force`, `finding.agent` is the holder of the row this sweep
+           * actually found expired, so the guard releases exactly that row and
+           * leaves every other holder alone. A separate finding is generated for
+           * each expired row, so a second stale holder is still collected.
+           *
+           * A sweep agent may reclaim what has lapsed. It may NOT take a file away
+           * from an agent that is still writing: only the operator stops a chat.
+           *
+           * `reason: 'swept'` is the ONLY thing this branch adds to the line, and
+           * it is a log discriminator, not a permission: it is what makes a swept
+           * `lock.release` distinguishable from an `unlock` a human asked for, in a
+           * column that has no `path` to tell them apart by. `force` is left off
+           * because adding it back would re-open the hole the paragraph above
+           * documents, in exchange for nothing this change needs.
+           */
+          const result = this.releaseFiles([finding.path], {
+            agent: finding.agent,
+            reason: 'swept',
+            expected,
+          });
+          if (result.released.includes(finding.path)) releasedFindings.push(finding);
+        }
       }
+    } catch (error) {
+      if (record && releasedFindings.length > 0) {
+        try {
+          this.addEvent('doctor.run', {
+            message: `${releasedFindings.length} stale holding(s) released before sweep failed`,
+            data: { partial: true },
+          });
+        } catch (recordError) {
+          throw new AggregateError([error, recordError], 'doctor sweep and partial summary both failed');
+        }
+      }
+      throw error;
     }
 
     // A sweep is recorded only when compare-and-swap actually reclaimed a
@@ -2757,11 +2772,46 @@ export class Board {
    * worktree still exists. This is not proof that a session ended: a long task
    * that outlives its lease can lose the claim to a peer's next board command.
    */
-  autoSweep({ at = this.now(), dryRun = false } = {}) {
-    if (dryRun) return { renewed: [], renewedFiles: [], released: this.doctor({ at, dryRun, record: false }) };
-    const renewed = this.renewOwnClaims({ at });
-    const renewedFiles = this.renewOwnLocks({ at });
-    const released = this.doctor({ at, dryRun, record: true });
+  autoSweep({ at, dryRun = false } = {}) {
+    let sweepAt = at === undefined ? this.now() : at;
+    if (dryRun) return { renewed: [], renewedFiles: [], released: this.doctor({ at: sweepAt, dryRun, record: false }) };
+    const agentId = this.identity?.agentId;
+    const worktree = this.identity?.worktree;
+    const canRenew = Boolean(agentId && worktree && existsDir(worktree));
+    const claimsNeedRenewal =
+      canRenew &&
+      this.db
+        .prepare(
+          'SELECT lease_until FROM claims WHERE released_at IS NULL AND agent_id = ? AND (worktree IS NULL OR worktree = ?)'
+        )
+        .all(agentId, worktree)
+        .some((claim) => needsLeaseRenewal(claim.lease_until, sweepAt, DEFAULT_LEASE_MS));
+    const locksNeedRenewal =
+      canRenew &&
+      this.db
+        .prepare('SELECT expires_at FROM file_locks WHERE released_at IS NULL AND agent_id = ? AND worktree = ?')
+        .all(agentId, worktree)
+        .some((lock) => needsLeaseRenewal(lock.expires_at, sweepAt, DEFAULT_LEASE_MS));
+
+    let renewed = [];
+    let renewedFiles = [];
+    if (claimsNeedRenewal || locksNeedRenewal) {
+      // A sweep between these two renewals could reclaim the still-expired lock
+      // after seeing its claim renewed. Keep both lease sets under one writer lock.
+      // Sample the clock after acquiring it so the lock wait does not shorten the new lease.
+      const result = this.transaction(() => {
+        const renewalAt = at === undefined ? this.now() : at;
+        return {
+          renewed: this.renewOwnClaims({ at: renewalAt }),
+          renewedFiles: this.renewOwnLocks({ at: renewalAt }),
+          at: renewalAt,
+        };
+      });
+      renewed = result.renewed;
+      renewedFiles = result.renewedFiles;
+      sweepAt = result.at;
+    }
+    const released = this.doctor({ at: sweepAt, dryRun, record: true });
     return { renewed, renewedFiles, released };
   }
 

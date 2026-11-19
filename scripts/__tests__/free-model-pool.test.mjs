@@ -884,6 +884,51 @@ console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }))
     }
   });
 
+  it('passes runtime paths but isolates OpenCode from unrelated credentials and config', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-env-test-'));
+    const overrides = {
+      HOME: '/fixture/opencode-home',
+      XDG_CONFIG_HOME: '/fixture/opencode-config',
+      XDG_DATA_HOME: '/fixture/opencode-data',
+      OPENROUTER_API_KEY: 'must-not-reach-opencode',
+      GROQ_API_KEY: 'must-not-reach-opencode',
+      KILO_CONFIG_CONTENT: 'must-not-reach-opencode',
+      OPENCODE_CONFIG_CONTENT: 'caller-config-must-be-replaced',
+      OPENCODE_CONFIG_DIR: '/fixture/private-opencode-config',
+      UNRELATED_SECRET: 'must-not-reach-opencode',
+    };
+    const previous = new Map(Object.keys(overrides).map((key) => [key, process.env[key]]));
+    const command = await writeFakeOpenCode(
+      directory,
+      `const expectedRuntime = {
+  HOME: '/fixture/opencode-home',
+  XDG_CONFIG_HOME: '/fixture/opencode-config',
+  XDG_DATA_HOME: '/fixture/opencode-data',
+};
+const mismatched = Object.entries(expectedRuntime).filter(([key, value]) => process.env[key] !== value);
+const leaked = ['OPENROUTER_API_KEY', 'GROQ_API_KEY', 'KILO_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR', 'UNRELATED_SECRET']
+  .filter((key) => process.env[key] !== undefined);
+if (mismatched.length || leaked.length) process.exit(10);
+if (process.env.OPENCODE_CONFIG_CONTENT === 'caller-config-must-be-replaced') process.exit(11);
+if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(12);
+if (process.env.OPENCODE_DISABLE_AUTOUPDATE !== '1' || process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS !== '1') process.exit(13);
+console.log(JSON.stringify({ type: 'text', part: { text: 'isolated answer' } }));`
+    );
+
+    for (const [key, value] of Object.entries(overrides)) process.env[key] = value;
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'private prompt', maxTokens: 64 })
+      ).resolves.toMatchObject({ content: 'isolated answer', finishReason: 'stop', model: 'beam-free' });
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(process.platform !== 'win32')('launches a bare OpenCode command from PATH on Windows', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
     const commandPath = await writeFakeOpenCode(
@@ -1566,6 +1611,44 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], chat });
     await expect(completeWithFreeModel('prompt', { fetchImpl })).rejects.toThrow(/No free model completed/);
     expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('calls onAllFreeExhausted once only after every free source fails', async () => {
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')] });
+    const runKilo = vi.fn().mockResolvedValue({ error: 'free tier exhausted', exhaustSource: true });
+    const onAllFreeExhausted = vi.fn();
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        kiloCommand: '/fake-kilo',
+        runKilo,
+        onAllFreeExhausted,
+      })
+    ).rejects.toThrow(/No free model completed/);
+
+    expect(onAllFreeExhausted).toHaveBeenCalledOnce();
+    expect(onAllFreeExhausted).toHaveBeenCalledWith({
+      requestCounts: { kilo: 1, openrouter: 0 },
+      errors: ['kilo/k1: free tier exhausted'],
+    });
+  });
+
+  it('does not call onAllFreeExhausted after a free model succeeds', async () => {
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')] });
+    const runKilo = vi.fn().mockResolvedValue({ model: 'k1', content: 'done', finishReason: 'stop' });
+    const onAllFreeExhausted = vi.fn();
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        kiloCommand: '/fake-kilo',
+        runKilo,
+        onAllFreeExhausted,
+      })
+    ).resolves.toMatchObject({ source: 'kilo', model: 'k1', content: 'done' });
+
+    expect(onAllFreeExhausted).not.toHaveBeenCalled();
   });
 
   it('exhausts a single-key provider on HTTP 401 to avoid retrying an invalid key', async () => {

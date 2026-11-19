@@ -123,7 +123,7 @@ describe('LayersTab dispatch edge cases', () => {
     const span = getNameSpan(getRow('Top Layer'));
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     expect(span).toHaveAttribute('contenteditable', 'true');
 
@@ -151,6 +151,7 @@ describe('LayersTab dispatch edge cases', () => {
     act(() => {
       fireEvent.click(getRow('Top Layer').querySelector('button[aria-label="Remove layer"]')!);
     });
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
 
     const action = dispatched()[0];
     expect(action.type).toBe('COMMIT_DOCUMENT_EDIT');
@@ -190,7 +191,7 @@ describe('LayersTab dispatch edge cases', () => {
     const span = getNameSpan(getRow('Top Layer'));
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
 
     expect(span).toHaveAttribute('contenteditable', 'true');

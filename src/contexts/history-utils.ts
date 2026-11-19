@@ -92,6 +92,7 @@ export function createHistoryItem(input: NewHistoryItem, id = uuidv4()): History
     actionName: input.actionName,
     layerId: input.layerId,
     ...(layerSource ? { layerSource } : {}),
+    ...(input.insertAfterLayerId !== undefined ? { insertAfterLayerId: input.insertAfterLayerId } : {}),
     ...(documentSource ? { documentSource } : {}),
     ...(input.args ? { args: cloneArgs(input.args) } : {}),
   };
