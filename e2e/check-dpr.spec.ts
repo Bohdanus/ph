@@ -111,6 +111,102 @@ test.describe('Device pixel ratio', () => {
     expect(Math.abs(line.right - end.x), 'line end far from cursor').toBeLessThan(toleranceFor(box));
     expect(Math.abs((line.top + line.bottom) / 2 - start.y), 'line shifted in Y').toBeLessThan(toleranceFor(box));
   });
+
+  test('committing a Draw stroke preserves the live HiDPI preview pixels', async ({ page }) => {
+    test.setTimeout(90_000);
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
+
+    const workspace = getWorkspaceCanvas(page);
+    const box = await workspace.boundingBox();
+    if (!box) throw new Error('canvas not found');
+    const initialCursor = await workspace.getAttribute('data-presentation-paint-cursor');
+
+    await clickToolButton(page, 'draw');
+    const start = { x: box.x + box.width * 0.25, y: box.y + box.height * 0.3 };
+    const end = { x: box.x + box.width * 0.7, y: box.y + box.height * 0.63 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 3 });
+    await page.waitForTimeout(100);
+
+    await page.evaluate(() => {
+      const workspaceCanvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+      const overlayCanvas = document.querySelector<HTMLCanvasElement>('[data-testid="tool-overlay-canvas"]');
+      if (!workspaceCanvas || !overlayCanvas) throw new Error('Workspace canvas stack is incomplete');
+      if (workspaceCanvas.width !== overlayCanvas.width || workspaceCanvas.height !== overlayCanvas.height) {
+        throw new Error('Workspace and tool overlay backing stores differ');
+      }
+
+      const snapshot = document.createElement('canvas');
+      snapshot.width = workspaceCanvas.width;
+      snapshot.height = workspaceCanvas.height;
+      const context = snapshot.getContext('2d');
+      if (!context) throw new Error('Could not create the Draw preview snapshot');
+      context.drawImage(workspaceCanvas, 0, 0);
+      context.drawImage(overlayCanvas, 0, 0);
+      (window as Window & { __drawPreviewPixels?: Uint8ClampedArray }).__drawPreviewPixels = context.getImageData(
+        0,
+        0,
+        snapshot.width,
+        snapshot.height
+      ).data;
+    });
+
+    await page.mouse.up();
+    await expect.poll(() => workspace.getAttribute('data-presentation-paint-cursor')).not.toBe(initialCursor);
+
+    const comparison = await page.evaluate(() => {
+      const preview = (window as Window & { __drawPreviewPixels?: Uint8ClampedArray }).__drawPreviewPixels;
+      const workspaceCanvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+      const overlayCanvas = document.querySelector<HTMLCanvasElement>('[data-testid="tool-overlay-canvas"]');
+      if (!preview || !workspaceCanvas || !overlayCanvas) throw new Error('Draw pixel comparison inputs are missing');
+      const context = workspaceCanvas.getContext('2d');
+      if (!context) throw new Error('Workspace canvas has no 2D context');
+      const committed = context.getImageData(0, 0, workspaceCanvas.width, workspaceCanvas.height).data;
+      let differingPixels = 0;
+      let maxChannelDelta = 0;
+      let left = workspaceCanvas.width;
+      let top = workspaceCanvas.height;
+      let right = -1;
+      let bottom = -1;
+      for (let offset = 0; offset < committed.length; offset += 4) {
+        let differs = false;
+        for (let channel = 0; channel < 4; channel += 1) {
+          const delta = Math.abs(committed[offset + channel]! - preview[offset + channel]!);
+          maxChannelDelta = Math.max(maxChannelDelta, delta);
+          if (delta !== 0) differs = true;
+        }
+        if (differs) {
+          differingPixels += 1;
+          const pixel = offset / 4;
+          const x = pixel % workspaceCanvas.width;
+          const y = Math.floor(pixel / workspaceCanvas.width);
+          left = Math.min(left, x);
+          top = Math.min(top, y);
+          right = Math.max(right, x);
+          bottom = Math.max(bottom, y);
+        }
+      }
+      return {
+        differingPixels,
+        maxChannelDelta,
+        bounds: differingPixels === 0 ? null : { left, top, right, bottom },
+        presentationSource: workspaceCanvas.dataset.presentationPaintSource,
+      };
+    });
+
+    expect(
+      comparison,
+      'commit should render the same device pixels as the live preview; presentation source: ' +
+        comparison.presentationSource
+    ).toMatchObject({
+      differingPixels: 0,
+      maxChannelDelta: 0,
+      bounds: null,
+    });
+  });
 });
 
 test.describe('Canvas backing store at 1x', () => {

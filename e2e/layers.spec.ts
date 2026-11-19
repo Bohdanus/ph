@@ -150,6 +150,7 @@ test.describe('Layers', () => {
     const removeLayer = async (name: string) => {
       const row = layerRow(name);
       await row.getByRole('button', { name: 'Remove layer' }).click();
+      await page.getByTestId('confirm-dialog-confirm-button').click();
       await expect(row).toHaveCount(0);
     };
     const removeAndCapture = async (name: string, screenshotName: string) => {
@@ -369,8 +370,8 @@ test.describe('Layers', () => {
    * deletion that published no entry leaves the canvas correct and every pixel assertion green,
    * while the layer is silently un-undoable — which is the regression this pins.
    *
-   * `removeLayer` in the test above calls `handleConfirmRemove`, dispatched as `REMOVE_ACTION`
-   * (`src/util/constants.ts`), so the row title is the product's own lower-case spelling read
+   * `removeLayer` in the test above confirms `requestLayerRemoval`'s request, dispatched as
+   * `REMOVE_ACTION` (`src/util/constants.ts`), so the row title is the product's own spelling read
    * through the same case-insensitive filter `REORDER_ENTRY` uses for reorders.
    */
   test('deleting a layer is a history entry of its own', async ({ page }) => {
@@ -392,6 +393,7 @@ test.describe('Layers', () => {
     const beforeDelete = await historyRows.count();
 
     await drawnRow.getByRole('button', { name: 'Remove layer' }).click();
+    await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(drawnRow).toHaveCount(0);
 
     await expect(historyRows, 'deleting a layer is ONE entry of its own, not zero').toHaveCount(beforeDelete + 1);

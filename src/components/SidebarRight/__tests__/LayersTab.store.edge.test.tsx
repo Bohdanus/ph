@@ -132,6 +132,7 @@ describe('LayersTab store edge cases', () => {
     act(() => {
       fireEvent.click(getRowByName('Draw').querySelector('button[aria-label="Remove layer"]')!);
     });
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
 
     expect(layerActions.removeLayer).toHaveBeenCalledWith('layer-tool');
     expect(screen.queryByText('Draw')).toBeNull();

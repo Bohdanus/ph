@@ -1,3 +1,4 @@
+import type { RefObject } from 'react';
 import { PRIMARY_BUTTON, DIALOG_SECONDARY_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { useDialogFocusContainment } from '../../hooks/useDialogFocusContainment.ts';
 
@@ -7,6 +8,7 @@ interface ConfirmDialogProps {
   confirmLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
+  returnFocusRef?: RefObject<HTMLElement | null>;
 }
 
 /**
@@ -23,8 +25,8 @@ interface ConfirmDialogProps {
  * messages are the ones those calls already used, carried over verbatim so the
  * decision the user is being asked to make has not changed along with the widget.
  */
-const ConfirmDialog = ({ title, message, confirmLabel, onConfirm, onCancel }: ConfirmDialogProps) => {
-  const { panelRef, handleKeyDown } = useDialogFocusContainment({ onEscape: onCancel });
+const ConfirmDialog = ({ title, message, confirmLabel, onConfirm, onCancel, returnFocusRef }: ConfirmDialogProps) => {
+  const { panelRef, handleKeyDown } = useDialogFocusContainment({ onEscape: onCancel, returnFocusRef });
 
   return (
     <div
@@ -50,6 +52,7 @@ const ConfirmDialog = ({ title, message, confirmLabel, onConfirm, onCancel }: Co
             <button
               className="ml-auto border-0 bg-transparent p-1 text-3xl font-semibold leading-none text-black opacity-50 outline-none hover:opacity-100 focus:outline-none dark:text-white"
               onClick={onCancel}
+              aria-label="Close"
               data-testid="confirm-dialog-close-button"
             >
               <span className="relative top-[-7px] block h-6 w-6 text-2xl">×</span>

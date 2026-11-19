@@ -289,6 +289,7 @@ describe('useRect', () => {
       initialRect?: { x1: number; y1: number; x2: number; y2: number } | null;
       isMoveTool?: boolean;
       hideBlend?: boolean;
+      externalOverlay?: boolean;
       incrementalOverlay?: boolean;
       rotationEnabled?: boolean;
       rotation?: number;
@@ -304,6 +305,7 @@ describe('useRect', () => {
       imageSize: { width: 800, height: 600 },
       initialRect: options.initialRect ?? null,
       hideBlend: options.hideBlend ?? false,
+      externalOverlay: options.externalOverlay ?? false,
       incrementalOverlay: options.incrementalOverlay ?? false,
       isMoveTool: options.isMoveTool ?? false,
       rotationEnabled: options.rotationEnabled ?? false,
@@ -408,6 +410,19 @@ describe('useRect', () => {
 
     expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 800, 600);
     expect(ctx.clearRect).toHaveBeenCalledWith(-50, -40, 100, 80);
+  });
+
+  it('clears the shared canvas when an external overlay is mounted for the first time', () => {
+    const initialRect = { x1: 100, y1: 120, x2: 200, y2: 200 };
+    const ctx = testContext.overlayCanvas.getContext('2d') as unknown as ReturnType<typeof createMockCanvasContext>;
+    const { result } = renderUseRect({ initialRect, externalOverlay: true });
+
+    expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    vi.mocked(ctx.clearRect).mockClear();
+    act(() => result.current.rectHandles.redraw());
+
+    expect(ctx.clearRect).not.toHaveBeenCalled();
   });
 
   it('restores the dimmed frame before cutting out a rotated crop on a full repaint', () => {

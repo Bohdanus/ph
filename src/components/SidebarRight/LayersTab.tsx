@@ -1,5 +1,5 @@
 // src/components/SidebarRight/LayersTab.tsx
-import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -26,6 +26,7 @@ import {
   SET_LAYER_OPACITY_ACTION,
   UNLOCK_LAYER_ACTION,
 } from '../../util/constants.ts';
+import ConfirmDialog from '../ConfirmDialog/ConfirmDialog.tsx';
 import LayerThumbnail from './LayerThumbnail.tsx';
 
 type UpdateLayer = ReturnType<typeof useLayers>['updateLayer'];
@@ -60,6 +61,59 @@ function LayerLockIcon({ locked, className = 'h-4 w-4' }: { locked: boolean; cla
         strokeWidth="1.8"
       />
       <path d="M12 14v3" stroke={locked ? 'white' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function LayerProtectionUnavailableButton({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={`${label} (unavailable)`}
+      disabled
+      title={`${label} is not supported`}
+      className="inline-flex h-7 w-7 items-center justify-center rounded text-gray-500 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-400"
+    >
+      {children}
+    </button>
+  );
+}
+
+function LockTransparentPixelsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M2 2h3v3H2zM8 2h3v3H8zM5 5h3v3H5zM11 5h3v3h-3zM2 8h3v3H2zM8 8h3v3H8zM5 11h3v3H5zM11 11h3v3h-3z"
+      />
+    </svg>
+  );
+}
+
+function LockImagePixelsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" aria-hidden="true">
+      <path
+        d="m9.5 2 4.5 4.5-6.2 6.2a3.3 3.3 0 0 1-3.1.9L3 15l.3-1.7a3.3 3.3 0 0 1 .9-3.1L9.5 5.2M8.2 3.3l4.5 4.5"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function LockPositionIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" aria-hidden="true">
+      <path
+        d="M8 1.5v13m-6.5-6.5h13M8 1.5 5.8 3.7M8 1.5l2.2 2.2M14.5 8l-2.2-2.2M14.5 8l-2.2 2.2M8 14.5l-2.2-2.2M8 14.5l2.2-2.2M1.5 8l2.2-2.2M1.5 8l2.2 2.2"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -105,11 +159,13 @@ export function LayerLockToggle({
   layer,
   updateLayer,
   textEditActive = false,
+  compact = false,
   className = '',
 }: {
   layer: Layer;
   updateLayer: UpdateLayer;
   textEditActive?: boolean;
+  compact?: boolean;
   className?: string;
 }) {
   const action = layer.locked ? UNLOCK_LAYER_ACTION : LOCK_LAYER_ACTION;
@@ -132,7 +188,11 @@ export function LayerLockToggle({
         event.stopPropagation();
         if (!lockDisabled) updateLayer(layer.id, { locked: !layer.locked }, action);
       }}
-      className={`inline-flex min-h-9 min-w-9 items-center justify-center gap-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700 ${className}`}
+      className={`inline-flex items-center justify-center gap-1 text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:text-gray-200 dark:hover:bg-gray-700 ${
+        compact
+          ? 'h-7 w-7 min-h-7 min-w-7 rounded'
+          : 'min-h-9 min-w-9 rounded border border-gray-300 dark:border-gray-600'
+      } ${className}`}
     >
       <LayerLockIcon locked={layer.locked} />
       <span className="sr-only">{layer.locked ? 'Locked' : 'Unlocked'}</span>
@@ -234,19 +294,41 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
           </details>
         </div>
       </div>
-      <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-white">
+      <div className="flex items-center gap-1 text-xs text-gray-600 dark:text-white">
         <span>Lock:</span>
-        <LayerLockToggle layer={layer} updateLayer={updateLayer} textEditActive={textEditActive} />
+        <div
+          role="group"
+          aria-label="Layer protection controls"
+          className="grid w-[7.5rem] grid-cols-4 items-center justify-items-center"
+        >
+          <LayerProtectionUnavailableButton label="Lock Transparent Pixels">
+            <LockTransparentPixelsIcon />
+          </LayerProtectionUnavailableButton>
+          <LayerProtectionUnavailableButton label="Lock Image Pixels">
+            <LockImagePixelsIcon />
+          </LayerProtectionUnavailableButton>
+          <LayerProtectionUnavailableButton label="Lock Position">
+            <LockPositionIcon />
+          </LayerProtectionUnavailableButton>
+          <LayerLockToggle
+            layer={layer}
+            updateLayer={updateLayer}
+            textEditActive={textEditActive}
+            compact
+            className="col-start-4"
+          />
+        </div>
       </div>
     </div>
   );
 }
 
 export default function LayersTab() {
-  const [{ layers, activeLayerId, documentFrame, totalSize, previewLayers }] = useStore();
+  const [{ layers, activeLayerId, documentFrame, totalSize, previewLayers, hasImage }] = useStore();
   const {
     toggleVisibility,
     removeLayer,
+    createBlankLayer,
     moveLayerAfter,
     setActiveLayer,
     updateLayer,
@@ -267,8 +349,14 @@ export default function LayersTab() {
   const [draggedLayerId, setDraggedLayerId] = useState<LayerId | null>(null);
   const [dropTargetId, setDropTargetId] = useState<LayerId | null>(null);
   const [isOverBottom, setIsOverBottom] = useState(false);
+  const [isOverTrash, setIsOverTrash] = useState(false);
 
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ id: LayerId; layer: Layer } | null>(null);
+  const layersPanelRef = useRef<HTMLDivElement>(null);
+  const pendingDeleteLayer =
+    pendingDelete && layers[pendingDelete.id] === pendingDelete.layer ? pendingDelete.layer : null;
+
   const canReorderLayer = (layerId: LayerId | null): layerId is LayerId =>
     isMovableLayer(layerId) && editingLayerId !== layerId;
 
@@ -285,6 +373,7 @@ export default function LayersTab() {
     active: boolean;
     targetId: LayerId | null;
     overBottom: boolean;
+    overTrash: boolean;
   } | null>(null);
   const suppressClickRef = useRef(false);
   const suppressPointerClickRef = useRef(false);
@@ -294,7 +383,7 @@ export default function LayersTab() {
   const [isShrinking, setIsShrinking] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
 
-  const selectLayer = (id: LayerId) => {
+  const selectLayer = (id: LayerId, allowTextEdit = true) => {
     let layersAfterCommit = layers;
     if (textEditActive && toolArgs.toolName === 'text') {
       if (toolArgs.editingLayerId === id) return;
@@ -307,6 +396,7 @@ export default function LayersTab() {
     const source = selectedLayer?.source;
     if (source?.kind === 'tool' && source.args.toolName === toolArgs.toolName) {
       if (source.args.toolName === 'text') {
+        if (!allowTextEdit) return;
         const target = textLayerEditTarget(selectedLayer, documentFrame ?? documentFrameFromSize(totalSize));
         if (target) {
           beginTextLayerEdit(target.layerId);
@@ -325,7 +415,10 @@ export default function LayersTab() {
     let target = textLayerEditTarget(layer, documentFrame ?? documentFrameFromSize(totalSize));
     if (!target) return;
     if (textEditActive && toolArgs.toolName === 'text') {
-      if (toolArgs.editingLayerId === id) return;
+      if (toolArgs.editingLayerId === id) {
+        requestTextEditFocus({ kind: 'select-all', layerId: target.layerId });
+        return;
+      }
       const committedLayers = commitDirtyTool();
       if (committedLayers === null) return;
       target = textLayerEditTarget(committedLayers[id], documentFrame ?? documentFrameFromSize(totalSize));
@@ -340,8 +433,25 @@ export default function LayersTab() {
   };
 
   const listItemRefs = useRef<Record<LayerId, HTMLLIElement | null>>({});
+  const layerNameRefs = useRef<Record<LayerId, HTMLSpanElement | null>>({});
+  const focusNameOnEditRef = useRef(false);
   const dragImageRef = useRef<HTMLDivElement>(null);
   const dragImageNameRef = useRef<HTMLSpanElement>(null);
+
+  useLayoutEffect(() => {
+    if (!editingLayerId || !focusNameOnEditRef.current) return;
+    focusNameOnEditRef.current = false;
+    const name = layerNameRefs.current[editingLayerId];
+    if (!name) return;
+
+    name.focus();
+    const selection = name.ownerDocument.getSelection();
+    if (!selection) return;
+    const range = name.ownerDocument.createRange();
+    range.selectNodeContents(name);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }, [editingLayerId]);
 
   // The shared drag lock, not a direct write to `document.body`. A layer drag that ended while a
   // dock gesture was still running used to remove the grabbing cursor and the selection lock
@@ -394,6 +504,7 @@ export default function LayersTab() {
       setDraggedLayerId(null);
       setDropTargetId(null);
       setIsOverBottom(false);
+      setIsOverTrash(false);
     };
     window.addEventListener('blur', cancelPointerDrag);
     document.addEventListener('visibilitychange', cancelPointerDrag);
@@ -406,6 +517,8 @@ export default function LayersTab() {
 
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
   const activeLayer = activeLayerId ? layers[activeLayerId] : null;
+  const layerFrame = documentFrame ?? documentFrameFromSize(totalSize);
+  const canCreateLayer = hasImage && layerFrame.width > 0 && layerFrame.height > 0;
   // The same two conditions `convertBedrockLayer()` refuses on, kept in step so the
   // control is never present for an action that would be a no-op. The second one is
   // the backing layer being the whole stack: a conversion above any other layer
@@ -442,10 +555,22 @@ export default function LayersTab() {
     }, 200);
   }
 
-  function handleConfirmRemove(layerId: LayerId) {
-    if (textEditingLayerId === layerId) return;
-    // todo: draw a "undo" button that disappears in few seconds
-    removeLayer(layerId);
+  function requestLayerRemoval(layerId: LayerId, skipConfirmation = false) {
+    const layer = layers[layerId];
+    if (!layer || layer.locked || textEditingLayerId === layerId) return;
+    if (skipConfirmation) {
+      removeLayer(layerId);
+      return;
+    }
+    setPendingDelete({ id: layerId, layer });
+  }
+
+  function confirmLayerRemoval() {
+    const request = pendingDelete;
+    setPendingDelete(null);
+    if (request && layers[request.id] === request.layer && !request.layer.locked && textEditingLayerId !== request.id) {
+      removeLayer(request.id);
+    }
   }
 
   function handleNameChange(layerId: LayerId, newName: string, labelNode: HTMLElement) {
@@ -476,6 +601,7 @@ export default function LayersTab() {
     setDraggedLayerId(null);
     setDropTargetId(null);
     setIsOverBottom(false);
+    setIsOverTrash(false);
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>, layerId: LayerId) {
@@ -503,6 +629,7 @@ export default function LayersTab() {
       active: false,
       targetId: null,
       overBottom: false,
+      overTrash: false,
     };
     pointerDragRef.current = pointerDrag;
     try {
@@ -547,6 +674,10 @@ export default function LayersTab() {
     const pointed = document.elementFromPoint(event.clientX, event.clientY);
     const target = pointed?.closest<HTMLElement>('[data-testid="layer-row"]');
     const overBottom = Boolean(!target && pointed?.closest<HTMLElement>('[data-testid="layers-bottom-drop-target"]'));
+    const overTrash = Boolean(
+      textEditingLayerId !== pointerDrag.layerId &&
+      pointed?.closest<HTMLElement>('[data-testid="layers-delete-active-button"]')
+    );
     const targetId = (target?.dataset.layerId as LayerId | undefined) ?? null;
     const targetIndex = targetId ? sortedLayers.findIndex((layer) => layer.id === targetId) : -1;
     const sourceIsImmediatelyAboveTarget = targetIndex > 0 && sortedLayers[targetIndex - 1]?.id === pointerDrag.layerId;
@@ -555,18 +686,24 @@ export default function LayersTab() {
         ? targetId
         : null;
     pointerDrag.overBottom = overBottom;
+    pointerDrag.overTrash = overTrash;
     setDropTargetId(pointerDrag.targetId);
     setIsOverBottom(overBottom);
+    setIsOverTrash(overTrash);
     event.preventDefault();
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
     const pointerDrag = pointerDragRef.current;
     if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
-    const { active, layerId, targetId, overBottom } = pointerDrag;
+    const { active, layerId, targetId, overBottom, overTrash } = pointerDrag;
     clearPointerDrag(event);
     if (active) suppressPointerClickRef.current = true;
-    if (active && canReorderLayer(layerId) && (targetId || overBottom)) animateMove(layerId, targetId ?? undefined);
+    if (active && canReorderLayer(layerId) && overTrash) {
+      requestLayerRemoval(layerId, true);
+    } else if (active && canReorderLayer(layerId) && (targetId || overBottom)) {
+      animateMove(layerId, targetId ?? undefined);
+    }
   }
 
   function handleLostPointerCapture(event: React.PointerEvent<HTMLDivElement>) {
@@ -576,7 +713,13 @@ export default function LayersTab() {
   }
 
   return (
-    <div className={`flex flex-col gap-2 h-full ${draggedLayerId ? 'is-dragging' : ''}`}>
+    <div
+      ref={layersPanelRef}
+      role="group"
+      aria-label="Layers panel"
+      tabIndex={-1}
+      className={`flex flex-col gap-2 h-full ${draggedLayerId ? 'is-dragging' : ''}`}
+    >
       {activeLayer && (
         <LayerOpacityControl
           key={activeLayer.id}
@@ -637,6 +780,8 @@ export default function LayersTab() {
                       return;
                     }
 
+                    setIsOverBottom(false);
+                    setIsOverTrash(false);
                     setDraggedLayerId(layer.id);
                     e.dataTransfer.effectAllowed = 'move';
                     e.dataTransfer.setData('application/x-layer-id', layer.id);
@@ -650,6 +795,7 @@ export default function LayersTab() {
                     setDraggedLayerId(null);
                     setDropTargetId(null);
                     setIsOverBottom(false);
+                    setIsOverTrash(false);
                     suppressClickRef.current = false;
                     suppressPointerClickRef.current = false;
                   }}
@@ -659,6 +805,7 @@ export default function LayersTab() {
 
                     setDropTargetId(layer.id);
                     setIsOverBottom(false);
+                    setIsOverTrash(false);
                     if (!draggedLayerId || !isDropTarget) return; // not allowed
 
                     e.preventDefault();
@@ -668,6 +815,7 @@ export default function LayersTab() {
                     setDraggedLayerId(null);
                     setDropTargetId(null);
                     setIsOverBottom(false);
+                    setIsOverTrash(false);
                     suppressClickRef.current = false;
                     suppressPointerClickRef.current = false;
 
@@ -695,7 +843,6 @@ export default function LayersTab() {
                     suppressPointerClickRef.current = false;
                     selectLayer(layer.id);
                   }}
-                  onDoubleClick={() => enterTextLayer(layer.id)}
                   className={[
                     'flex items-center gap-2 rounded px-2 py-1 select-none',
                     'border border-transparent',
@@ -720,7 +867,11 @@ export default function LayersTab() {
                     <EyeIcon open={layer.visible} />
                   </button>
 
-                  <LayerThumbnail layer={previewLayer} touchReorderEnabled={canReorder} />
+                  <LayerThumbnail
+                    layer={previewLayer}
+                    touchReorderEnabled={canReorder}
+                    onDoubleClick={() => enterTextLayer(layer.id)}
+                  />
 
                   {layer.isBedrock ? <BedrockIcon /> : <LayerTypeIcon source={layer.source} />}
 
@@ -728,22 +879,28 @@ export default function LayersTab() {
 
                   <div className="flex-1 min-w-0" onClick={(e) => isEditable && e.stopPropagation()}>
                     <span
+                      ref={(el) => {
+                        layerNameRefs.current[layer.id] = el;
+                      }}
                       data-testid="layer-name"
                       contentEditable={isEditable}
                       suppressContentEditableWarning
                       onPointerDown={(e) => {
                         if (e.pointerType === 'mouse') return;
+                        focusNameOnEditRef.current = false;
                         e.stopPropagation();
                         if (!isEditable) setEditingLayerId(layer.id);
                       }}
-                      onMouseDown={(e: React.MouseEvent<HTMLDivElement>) => {
+                      onClick={(e: React.MouseEvent<HTMLSpanElement>) => {
                         e.stopPropagation();
-                        if (isEditable) return;
-                        setEditingLayerId(layer.id);
+                        if (!isEditable) selectLayer(layer.id, false);
                       }}
-                      onClick={(e: React.MouseEvent<HTMLDivElement>) => {
-                        // prevent row selection when clicking while editing
+                      onDoubleClick={(e: React.MouseEvent<HTMLSpanElement>) => {
                         e.stopPropagation();
+                        if (!isEditable) {
+                          focusNameOnEditRef.current = true;
+                          setEditingLayerId(layer.id);
+                        }
                       }}
                       onBlur={(e) => {
                         handleNameChange(layer.id, e.currentTarget.textContent || '', e.currentTarget);
@@ -789,17 +946,19 @@ export default function LayersTab() {
                   )}
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleConfirmRemove(layer.id);
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      requestLayerRemoval(layer.id, event.altKey);
                     }}
-                    disabled={textEditingLayerId === layer.id}
+                    disabled={layer.locked || textEditingLayerId === layer.id}
                     className={DELETE_BUTTON_ICON}
                     aria-label="Remove layer"
                     title={
-                      textEditingLayerId === layer.id
-                        ? 'Finish text editing before removing this layer'
-                        : 'Remove layer'
+                      layer.locked
+                        ? 'Unlock layer before removing it'
+                        : textEditingLayerId === layer.id
+                          ? 'Finish text editing before removing this layer'
+                          : 'Remove layer'
                     }
                   >
                     <TrashIcon />
@@ -835,6 +994,7 @@ export default function LayersTab() {
 
           e.preventDefault();
           setIsOverBottom(true);
+          setIsOverTrash(false);
           setDropTargetId(null);
         }}
         onDrop={(e) => {
@@ -842,6 +1002,7 @@ export default function LayersTab() {
           setDraggedLayerId(null);
           setDropTargetId(null);
           setIsOverBottom(false);
+          setIsOverTrash(false);
 
           if (!isMovableLayer(draggedLayerId)) return;
 
@@ -849,6 +1010,102 @@ export default function LayersTab() {
           animateMove(draggedLayerId);
         }}
       />
+
+      <div
+        role="toolbar"
+        aria-label="Layer actions"
+        data-testid="layers-action-bar"
+        className="flex shrink-0 items-center justify-center gap-2 border-t border-gray-200 pt-1 dark:border-gray-700"
+      >
+        <button
+          type="button"
+          data-testid="layers-new-layer-button"
+          aria-label="New Layer"
+          title="Create a new layer above the selected layer"
+          disabled={!canCreateLayer}
+          onClick={() =>
+            createBlankLayer(
+              {
+                color: '#ffffff',
+                opacity: 0,
+                pos: { x: layerFrame.x, y: layerFrame.y, ...totalSize },
+              },
+              false,
+              activeLayerId ?? undefined
+            )
+          }
+          className="grid min-h-11 min-w-11 place-items-center rounded text-gray-600 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-300 dark:hover:bg-gray-700"
+        >
+          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+            <path d="M5 3.75h9l5 5v11.5H5zM14 4v5h5" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+            <path d="M12 12v5m-2.5-2.5h5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          data-testid="layers-delete-active-button"
+          aria-label="Delete layer"
+          title={
+            draggedLayerId
+              ? 'Drag a layer here to delete it'
+              : activeLayer?.locked
+                ? 'Unlock layer before deleting it'
+                : textEditingLayerId === activeLayerId && activeLayerId
+                  ? 'Finish text editing before deleting this layer'
+                  : activeLayer
+                    ? `Delete ${activeLayer.name}`
+                    : 'Drag a layer here to delete it'
+          }
+          disabled={
+            Object.keys(layers).length === 0 ||
+            (!activeLayerId && !draggedLayerId) ||
+            (Boolean(activeLayerId) && activeLayer?.locked === true && !draggedLayerId) ||
+            (Boolean(activeLayerId) && textEditingLayerId === activeLayerId && !draggedLayerId)
+          }
+          onClick={(event) => {
+            event.stopPropagation();
+            if (activeLayerId) requestLayerRemoval(activeLayerId, event.altKey);
+          }}
+          onDragOver={(event) => {
+            if (!isMovableLayer(draggedLayerId) || textEditingLayerId === draggedLayerId) {
+              setIsOverTrash(false);
+              return;
+            }
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+            setIsOverTrash(true);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const layerId = draggedLayerId;
+            setDraggedLayerId(null);
+            setDropTargetId(null);
+            setIsOverBottom(false);
+            setIsOverTrash(false);
+            if (layerId && canReorderLayer(layerId) && textEditingLayerId !== layerId) {
+              requestLayerRemoval(layerId, true);
+            }
+          }}
+          className={[
+            'grid min-h-11 min-w-11 place-items-center rounded text-gray-600 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-300 dark:hover:bg-gray-700',
+            isOverTrash ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' : '',
+          ].join(' ')}
+        >
+          <TrashIcon />
+        </button>
+      </div>
+
+      {pendingDelete && pendingDeleteLayer && (
+        <ConfirmDialog
+          title="Delete Layer?"
+          message={`Are you sure you want to delete "${pendingDeleteLayer.name}"?`}
+          confirmLabel="Delete"
+          onConfirm={confirmLayerRemoval}
+          onCancel={() => setPendingDelete(null)}
+          returnFocusRef={layersPanelRef}
+        />
+      )}
 
       {/* Ghost element for custom drag image */}
       <div

@@ -39,6 +39,50 @@ vi.setConfig({ testTimeout: 120_000 });
 
 const REPO_ROOT = realpathSync(join(import.meta.dirname, '..', '..'));
 
+describe('the main landing watcher retries unreadable owner records', () => {
+  it('continues after one transient read error and rechecks the lease', async () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-watch-owner-retry-'));
+    const ownerPath = join(lockDir, 'owner.json');
+    writeFileSync(ownerPath, '{not-json');
+    const sleepCalls = [];
+
+    try {
+      const result = await watch({ lockDir }, 'active-lease', {
+        sleep: async (milliseconds) => {
+          sleepCalls.push(milliseconds);
+          if (sleepCalls.length === 2) writeFileSync(ownerPath, JSON.stringify({ leaseId: 'replaced-lease' }));
+        },
+      });
+
+      expect(result).toBe(0);
+      expect(sleepCalls).toEqual([30_000, 500, 30_000]);
+      expect(readFileSync(join(lockDir, 'alert-failures.log'), 'utf8')).toMatch(/attempt 1\/3/);
+    } finally {
+      rmSync(lockDir, { recursive: true, force: true });
+    }
+  });
+
+  it('stops after three consecutive owner-read errors', async () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-watch-owner-exhausted-'));
+    writeFileSync(join(lockDir, 'owner.json'), '{not-json');
+    const sleepCalls = [];
+
+    try {
+      const result = await watch({ lockDir }, 'active-lease', {
+        sleep: async (milliseconds) => sleepCalls.push(milliseconds),
+      });
+      const failures = readFileSync(join(lockDir, 'alert-failures.log'), 'utf8');
+
+      expect(result).toBe(1);
+      expect(sleepCalls).toEqual([30_000, 500, 30_000, 1_000, 30_000]);
+      expect(failures.match(/watcher readOwner failed/g)).toHaveLength(3);
+      expect(failures).toContain('watcher: readOwner failed 3 consecutive times; exiting');
+    } finally {
+      rmSync(lockDir, { recursive: true, force: true });
+    }
+  });
+});
+
 function runHook(dispatcher, args, options) {
   if (process.platform !== 'win32') return spawnSync(dispatcher, args, options);
   const gitExecPath = execFileSync('git', ['--exec-path'], { encoding: 'utf8' }).trim();
