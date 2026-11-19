@@ -480,13 +480,12 @@ test.describe('Keyboard shortcuts', () => {
       await expect(commit, 'a tool selection places no box').toHaveCount(0);
       await expect(cancel, 'a tool selection places no box').toHaveCount(0);
 
-      // `LayersTab` mints the name span without `contenteditable` until a mousedown
-      // flips it, and that flip does not focus: the first click enters edit mode and the
-      // second is what the browser focuses.
+      // Layer names enter edit mode on Photoshop's double-click gesture.
       const row = page.getByTitle('Drag to reorder').first();
       const name = row.getByTestId('layer-name');
-      await name.click();
-      await name.click();
+      await name.dblclick();
+      await expect(name).toHaveAttribute('contenteditable', 'true');
+      await expect(name).toBeFocused();
       await page.keyboard.type('v');
 
       await expect(name, 'the letter belongs to the name').toContainText('v');

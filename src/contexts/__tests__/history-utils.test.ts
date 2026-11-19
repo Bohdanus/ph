@@ -70,6 +70,21 @@ describe('clonePlainData', () => {
 });
 
 describe('createHistoryItem layer sources', () => {
+  it('preserves the selected-layer anchor on a new-layer history item', () => {
+    const item = createHistoryItem(
+      {
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'new-layer',
+        layerSource: { kind: 'blank', color: '#ffffff', opacity: 0, isBedrock: false, pos: { ...pos } },
+        insertAfterLayerId: 'selected-layer',
+      },
+      'insert-above'
+    );
+
+    expect(item.insertAfterLayerId).toBe('selected-layer');
+    expect(Object.isFrozen(item)).toBe(true);
+  });
+
   it('clones a blank layer source, keeping colour and opacity but dropping the runtime pos', () => {
     const source: LayerSource = { kind: 'blank', color: '#ff8800', opacity: 0.4, isBedrock: false, pos: { ...pos } };
 

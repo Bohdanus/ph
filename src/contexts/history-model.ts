@@ -127,7 +127,7 @@ export type DurableLayerPropertyPatch = Readonly<
 export type LayerPropertyPatch = DurableLayerPropertyPatch;
 
 export type DurableOperation =
-  | Readonly<{ kind: 'create-layer'; layer: DurableLayerSnapshot }>
+  | Readonly<{ kind: 'create-layer'; layer: DurableLayerSnapshot; insertAfterLayerId?: LayerId }>
   | Readonly<{ kind: 'remove-layer'; layerId: LayerId }>
   | Readonly<{ kind: 'set-layer-properties'; layerId: LayerId; patch: DurableLayerPropertyPatch }>
   | Readonly<{

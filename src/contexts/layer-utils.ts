@@ -18,6 +18,35 @@ export function getSortedLayersArray(layersRecord: Record<LayerId, Layer>): Laye
   return Object.values(layersRecord).sort((a, b) => a.order - b.order);
 }
 
+export function insertLayerRecordAfter(layers: LayersRecord, layer: Layer, afterLayerId?: LayerId): LayersRecord {
+  const entries = Object.entries(layers).filter(([id]) => id !== layer.id);
+  if (afterLayerId === undefined) return Object.fromEntries([...entries, [layer.id, layer]]);
+
+  const anchorIndex = entries.findIndex(([id]) => id === afterLayerId);
+  if (anchorIndex < 0) throw new Error(`Cannot insert a layer after missing layer "${afterLayerId}"`);
+  entries.splice(anchorIndex + 1, 0, [layer.id, layer]);
+  return Object.fromEntries(entries);
+}
+
+export function setLayerMapEntryAfter<T>(
+  layers: Map<LayerId, T>,
+  layerId: LayerId,
+  layer: T,
+  afterLayerId?: LayerId
+): void {
+  const entries = [...layers.entries()].filter(([id]) => id !== layerId);
+  if (afterLayerId === undefined) {
+    layers.set(layerId, layer);
+    return;
+  }
+
+  const anchorIndex = entries.findIndex(([id]) => id === afterLayerId);
+  if (anchorIndex < 0) throw new Error(`Cannot insert a layer after missing layer "${afterLayerId}"`);
+  entries.splice(anchorIndex + 1, 0, [layerId, layer]);
+  layers.clear();
+  for (const [id, value] of entries) layers.set(id, value);
+}
+
 /**
  * Converts an array of layers into a Record indexed by layer ID.
  * @param layersArray - Array of Layer objects
@@ -121,21 +150,16 @@ export function createAffineLayerOperation(transform: AffineTransform, id = uuid
 }
 
 /**
- * The only part of a layer set that naming and placement read.
- *
- * One number — `maxLayerOrder(layers)` — decides both, and nothing else in
- * `createLayerSource` looks at the layers it was given. Typing the parameter by that
- * one field rather than by `LayersRecord` is what lets a caller holding durable
- * snapshots instead of runtime `Layer` objects reach the rule at all, which is the
- * whole point: the durable converter has no runtime `Layer` to hand, and a rule it
- * could not call is a rule it re-derives.
+ * The part of a layer set that naming and placement read. Durable snapshots carry
+ * the same fields, so both conversion and replay share this derivation.
  */
-export type LayerOrderRecord = Record<LayerId, { order: number }>;
+export type LayerOrderRecord = Record<LayerId, { order: number; name?: string }>;
 
 type LayerSourceParams = {
   layerId?: LayerId;
   layers: LayerOrderRecord;
   source: LayerSource;
+  insertAfterLayerId?: LayerId;
 };
 
 /**
@@ -176,13 +200,8 @@ function getNameFromSource(source: LayerSource) {
 }
 
 /**
- * The one derivation of a created layer's `name` and `order`.
- *
- * Both come from a single number — `maxLayerOrder(layers) + 1` — so they cannot be
- * derived separately without becoming a third rule: a caller that takes `name` from
- * here and folds `order` itself re-introduces the disagreement this exists to end.
- * An empty layer set yields `1`, which is what makes the first layer of a document
- * `'<name> 1'` rather than `'<name>'` at order `0`.
+ * Derives a created layer's unique name and stack position. An empty layer set
+ * yields `1`, making the first layer `'<name> 1'` rather than `'<name>'` at order `0`.
  *
  * It is exported, and separate from {@link createLayerSource}, because the durable
  * converter must derive the same pair from a set of durable snapshots and has no
@@ -191,15 +210,56 @@ function getNameFromSource(source: LayerSource) {
  * `imageProcessor` per tool source — and a conversion that wants two fields would
  * start failing on args no conversion ever needed.
  */
-export function deriveLayerNameAndOrder(layers: LayerOrderRecord, source: LayerSource) {
-  const order = maxLayerOrder(layers) + 1;
-  return { name: `${getNameFromSource(source)} ${order}`, order };
+function orderImmediatelyAfter(layers: LayerOrderRecord, afterLayerId: LayerId): number {
+  const ordered = Object.entries(layers).sort(([, left], [, right]) => left.order - right.order);
+  const targetIndex = ordered.findIndex(([id]) => id === afterLayerId);
+  if (targetIndex < 0) throw new Error(`Cannot insert a layer after missing layer "${afterLayerId}"`);
+
+  const target = ordered[targetIndex]![1];
+  if (!Number.isFinite(target.order)) {
+    throw new RangeError(`Cannot insert a layer after "${afterLayerId}" because its order is not finite`);
+  }
+
+  const next = ordered[targetIndex + 1]?.[1];
+  if (!next) {
+    const order = target.order + 1;
+    return Number.isFinite(order) && order > target.order ? order : target.order;
+  }
+  if (!Number.isFinite(next.order) || next.order < target.order) {
+    throw new RangeError(`Cannot insert a layer after "${afterLayerId}" because adjacent layer order is invalid`);
+  }
+  if (next.order === target.order) return target.order;
+
+  const midpoint = target.order / 2 + next.order / 2;
+  if (Number.isFinite(midpoint) && midpoint > target.order && midpoint < next.order) return midpoint;
+
+  // Equal orders are ordered by the record/map position, which the insertion helpers preserve.
+  return target.order;
 }
 
-export function createLayerSource({ layerId: idFromHistory, layers, source }: LayerSourceParams): Layer {
+export function deriveLayerNameAndOrder(layers: LayerOrderRecord, source: LayerSource, insertAfterLayerId?: LayerId) {
+  const maxOrder = maxLayerOrder(layers);
+  const order = insertAfterLayerId !== undefined ? orderImmediatelyAfter(layers, insertAfterLayerId) : maxOrder + 1;
+  const existingNames = new Set(Object.values(layers).flatMap((layer) => (layer.name ? [layer.name] : [])));
+  const baseName = getNameFromSource(source);
+  let nameOrder = Math.max(1, Math.ceil(maxOrder + 1));
+  let name = `${baseName} ${nameOrder}`;
+  while (existingNames.has(name)) {
+    nameOrder += 1;
+    name = `${baseName} ${nameOrder}`;
+  }
+  return { name, order };
+}
+
+export function createLayerSource({
+  layerId: idFromHistory,
+  layers,
+  source,
+  insertAfterLayerId,
+}: LayerSourceParams): Layer {
   const { kind, isBedrock } = source;
   const id = idFromHistory ?? uuidv4(); // when layer is re-created from history it should get the saved id
-  const { name, order } = deriveLayerNameAndOrder(layers, source);
+  const { name, order } = deriveLayerNameAndOrder(layers, source, insertAfterLayerId);
 
   let pos: Pos;
   if (isBedrock) {
