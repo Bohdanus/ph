@@ -40,6 +40,10 @@ fail closed.
 
 The CLI defaults to six hours when `--hours` is omitted.
 
+Quarantine loaders prune expired entries and persist that cleanup under the existing file lock.
+The low-level `readQuarantineState` helper remains non-mutating; `free:quarantine -- prune` is still
+available for an explicit cleanup pass.
+
 ## Find credentials safely
 
 If the operator says credentials were saved, search the relevant local chat before concluding they
