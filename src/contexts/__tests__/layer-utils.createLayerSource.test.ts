@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createLayerSource, createAffineLayerOperation, createLayerOperation, maxLayerOrder } from '../layer-utils.ts';
+import {
+  createLayerSource,
+  createAffineLayerOperation,
+  createLayerOperation,
+  getSortedLayersArray,
+  insertLayerRecordAfter,
+  maxLayerOrder,
+} from '../layer-utils.ts';
 import type { Layer, LayerOperation, LayersRecord } from '../layer-types.ts';
 import type { BlankLayerSource, ImageLayerSource, ToolLayerSource } from '../layer-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
@@ -86,6 +93,54 @@ describe('createLayerSource naming and ordering', () => {
     expect(layer.name).toBe('Photo.png 1');
     expect(layer.order).toBe(1);
     expect(maxLayerOrder({})).toBe(0);
+  });
+
+  it('inserts a layer directly above its anchor and keeps its name unique', () => {
+    const layers = {
+      bottom: { order: 0, name: 'Bottom' },
+      selected: { order: 1, name: 'Selected' },
+      top: { order: 2, name: 'Top' },
+      renamed: { order: 3, name: 'Photo.png 4' },
+    };
+
+    const layer = createLayerSource({
+      layers,
+      source: bitmapSource(),
+      insertAfterLayerId: 'selected',
+    });
+
+    expect(layer.order).toBeGreaterThan(1);
+    expect(layer.order).toBeLessThan(2);
+    expect(layer.name).toBe('Photo.png 5');
+  });
+
+  it('keeps inserting above the selected layer after its numeric order gap is exhausted', () => {
+    const base = existingLayers().low!;
+    let layers: LayersRecord = {
+      selected: { ...base, id: 'selected', name: 'Selected', order: 1 },
+      top: { ...base, id: 'top', name: 'Top', order: 2 },
+    };
+
+    for (let index = 0; index < 64; index += 1) {
+      const layer = createLayerSource({
+        layers,
+        source: bitmapSource(),
+        insertAfterLayerId: 'selected',
+      });
+
+      layers = insertLayerRecordAfter(layers, layer, 'selected');
+      expect(getSortedLayersArray(layers)[1]!.id).toBe(layer.id);
+    }
+  });
+
+  it('rejects insertion after a layer that is not present', () => {
+    expect(() =>
+      createLayerSource({
+        layers: existingLayers(),
+        source: bitmapSource(),
+        insertAfterLayerId: 'missing',
+      })
+    ).toThrow('Cannot insert a layer after missing layer "missing"');
   });
 
   it('truncates a long image name with an ellipsis', () => {

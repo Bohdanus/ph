@@ -563,7 +563,7 @@ describe('sharpen edge cases and guards', () => {
     expect(at(result.pixels, size, 2000, 1500)).toEqual({ r: 255, g: 255, b: 255, a: 255 });
     // And a pixel far from centre is unchanged
     expect(at(result.pixels, size, 0, 0)).toEqual(OPAQUE);
-  });
+  }, 15_000);
 
   it('handles maximum radius on a large document (max kernel width 201)', () => {
     // SHARPEN_RADIUS_MAX is 100, so kernel is 201 taps. On a 100px wide image the

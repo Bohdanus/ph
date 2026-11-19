@@ -51,22 +51,34 @@ describe('useModalA11y', () => {
     unmount();
   });
 
-  it('moves focus to the panel when isOpen becomes true', () => {
+  it('moves focus into the panel when it opens from outside', () => {
     const onClose = vi.fn();
-    renderHook(() => useModalA11y(true, onClose, panelRef));
-
-    // The effect should have called panel.focus().
-    // jsdom does not actually move `document.activeElement` on focus(), but the call is made.
+    const trigger = makeFocusable();
+    trigger.focus();
     const focusSpy = vi.spyOn(panel, 'focus');
-    // Re-trigger by toggling: close then open.
     const { rerender } = renderHook(({ open }) => useModalA11y(open, onClose, panelRef), {
-      initialProps: { open: true },
+      initialProps: { open: false },
     });
 
-    rerender({ open: false });
     rerender({ open: true });
 
     expect(focusSpy).toHaveBeenCalled();
+  });
+
+  it('keeps focus on a control inside the panel when the modal resumes', () => {
+    const onClose = vi.fn();
+    const control = makeFocusable();
+    panel.appendChild(control);
+    control.focus();
+    const focusSpy = vi.spyOn(panel, 'focus');
+    const { rerender } = renderHook(({ open }) => useModalA11y(open, onClose, panelRef), {
+      initialProps: { open: false },
+    });
+
+    rerender({ open: true });
+
+    expect(focusSpy).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(control);
   });
 
   it('captures the element that had focus before the modal opened', () => {
@@ -88,6 +100,7 @@ describe('useModalA11y', () => {
     focusSpy.mockClear();
 
     // Close: focus should be restored to the trigger.
+    panel.remove();
     rerender({ open: false });
 
     expect(focusSpy).toHaveBeenCalled();

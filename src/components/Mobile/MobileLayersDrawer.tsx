@@ -12,6 +12,7 @@ import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
 import { useModalA11y } from './useModalA11y.ts';
 import { LayerBlendModeSelect, LayerLockToggle } from '../SidebarRight/LayersTab.tsx';
+import ConfirmDialog from '../ConfirmDialog/ConfirmDialog.tsx';
 
 export interface MobileLayersDrawerProps {
   isOpen: boolean;
@@ -47,6 +48,10 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   const [activeTab, setActiveTab] = useState<'layers' | 'history'>('layers');
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<{ id: LayerId; layer: Layer } | null>(null);
+  const pendingDeleteLayer =
+    pendingDelete && layers[pendingDelete.id] === pendingDelete.layer ? pendingDelete.layer : null;
+  const isDrawerModalOpen = isOpen && pendingDeleteLayer === null;
   const [opacityDraftState, setOpacityDraftState] = useState<{
     isOpen: boolean;
     layers: typeof layers;
@@ -82,14 +87,28 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
     opacityInputPointerIdRef.current = null;
   }, [layers]);
 
-  useModalA11y(isOpen, onClose, panelRef);
+  useModalA11y(isDrawerModalOpen, onClose, panelRef);
 
   // Index 0 is the TOP layer: `getSortedLayersArray` is ascending, and the drawer
   // shows the stack the way Photoshop does.
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
   const sortedHistory = useMemo(() => [...historyPanelProjection.rows].reverse(), [historyPanelProjection.rows]);
 
-  if (!isOpen) return null;
+  if (!isOpen && pendingDeleteLayer === null) return null;
+
+  const requestLayerRemoval = (layerId: LayerId) => {
+    const layer = layers[layerId];
+    if (!layer || layer.locked || textEditingLayerId === layerId) return;
+    setPendingDelete({ id: layerId, layer });
+  };
+
+  const confirmLayerRemoval = () => {
+    const request = pendingDelete;
+    setPendingDelete(null);
+    if (request && layers[request.id] === request.layer && !request.layer.locked && textEditingLayerId !== request.id) {
+      removeLayer(request.id);
+    }
+  };
 
   const handleFinishRename = (layerId: LayerId) => {
     const trimmed = editingName.trim();
@@ -241,11 +260,12 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
     toggleDisabled(itemId);
   };
 
-  return (
+  const drawer = isOpen ? (
     <div
       className="fixed inset-0 z-50 flex flex-col justify-end select-none"
       role="dialog"
-      aria-modal="true"
+      aria-modal={pendingDeleteLayer === null ? 'true' : undefined}
+      aria-hidden={pendingDeleteLayer !== null ? true : undefined}
       aria-label="Layers & History Drawer"
       data-testid="mobile-layers-drawer"
     >
@@ -303,11 +323,15 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
               <button
                 type="button"
                 onClick={() =>
-                  createBlankLayer({
-                    color: '#ffffff',
-                    opacity: 0,
-                    pos: { x: documentFrame.x, y: documentFrame.y, ...totalSize },
-                  })
+                  createBlankLayer(
+                    {
+                      color: '#ffffff',
+                      opacity: 0,
+                      pos: { x: documentFrame.x, y: documentFrame.y, ...totalSize },
+                    },
+                    false,
+                    activeLayerId ?? undefined
+                  )
                 }
                 data-testid="mobile-add-layer-button"
                 className="flex min-h-11 min-w-11 items-center gap-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm"
@@ -319,15 +343,17 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
               {activeLayerId && sortedLayers.length > 1 && (
                 <button
                   type="button"
-                  onClick={() => removeLayer(activeLayerId)}
+                  onClick={() => requestLayerRemoval(activeLayerId)}
                   data-testid="mobile-delete-layer-button"
-                  disabled={textEditingLayerId === activeLayerId}
+                  disabled={layers[activeLayerId]?.locked === true || textEditingLayerId === activeLayerId}
                   className="flex min-h-11 min-w-11 items-center justify-center text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 rounded-lg"
                   aria-label="Delete active layer"
                   title={
-                    textEditingLayerId === activeLayerId
-                      ? 'Finish text editing before removing this layer'
-                      : 'Delete active layer'
+                    layers[activeLayerId]?.locked
+                      ? 'Unlock layer before removing it'
+                      : textEditingLayerId === activeLayerId
+                        ? 'Finish text editing before removing this layer'
+                        : 'Delete active layer'
                   }
                 >
                   <TrashIcon />
@@ -599,5 +625,21 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
         )}
       </div>
     </div>
+  ) : null;
+
+  return (
+    <>
+      {drawer}
+      {pendingDelete && pendingDeleteLayer && (
+        <ConfirmDialog
+          title="Delete Layer?"
+          message={`Are you sure you want to delete "${pendingDeleteLayer.name}"?`}
+          confirmLabel="Delete"
+          onConfirm={confirmLayerRemoval}
+          onCancel={() => setPendingDelete(null)}
+          returnFocusRef={panelRef}
+        />
+      )}
+    </>
   );
 };

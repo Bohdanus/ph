@@ -16,6 +16,7 @@ export type NewHistoryItem = {
 
   layerId: LayerId;
   layerSource?: LayerSource;
+  insertAfterLayerId?: LayerId;
   documentSource?: { layers: LayersRecord; size: Size; frame?: DocumentFrame };
   args?: ToolArgs | object;
 };

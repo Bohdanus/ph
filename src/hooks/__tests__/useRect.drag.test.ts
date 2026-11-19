@@ -1134,6 +1134,8 @@ describe('useRect pointer up and move tool', () => {
   it('leaves painting to the external overlay while still reporting rect geometry', () => {
     const onRepaint = vi.fn();
     const { ctx, result, event, flushFrame } = setup({ initialRect: RECT, externalOverlay: true, onRepaint });
+    vi.mocked(ctx.clearRect).mockClear();
+    vi.mocked(ctx.fillRect).mockClear();
     startDrag({ result, event }, { x: 200, y: 175 });
     act(() => {
       result.current.pointerHandlers.onPointerMove(event(240, 175));

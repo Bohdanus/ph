@@ -179,7 +179,7 @@ export function cssPointToImage(image: ImageSize, box: CssBox, point: Point): Po
  *
  * `left` / `top` / `right` / `bottom` are INCLUSIVE image pixel indices -- the shape
  * `screenshotBoundsToCss` in canvas-helpers.ts produces, and what
- * `viewport-drawing.spec.ts` and `text-tool.spec.ts` feed in. `right` and `bottom` are still converted as
+ * `viewport-drawing.spec.ts`, `text-tool.spec.ts` and `text-edit.spec.ts` feed in. `right` and `bottom` are still converted as
  * points, so they land on the CENTRE of the last covered pixel rather than on its outer
  * edge.
  *
@@ -188,8 +188,9 @@ export function cssPointToImage(image: ImageSize, box: CssBox, point: Point): Po
  * pixel. Image pixels 10..14 inclusive are five of them, and at 1:1 with the box the
  * span reports 4 rather than 5. A caller that wants the covered AREA, or a drag DELTA,
  * has to add one image pixel itself (half a CSS pixel on a 2x capture) before the
- * multiplication. Neither current consumer does: they want a location or a tolerant
- * comparison, so nothing breaks today.
+ * multiplication. The text-overlay geometry assertion accounts for this when comparing
+ * the measured frame's dimensions; location-only and tolerant-bound consumers retain the
+ * centre-to-centre mapping.
  *
  * Do not "fix" this by mapping `right`/`bottom` to the outer edge instead. Two existing
  * cases in `screenshot-scale.unit.test.ts` pin the centre-of-the-last-pixel answer as the

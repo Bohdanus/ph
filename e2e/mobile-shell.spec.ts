@@ -323,10 +323,10 @@ test.describe('Mobile shell', () => {
     await expect(page.getByTestId('mobile-delete-layer-button'), 'present with two layers').toHaveCount(1);
     await expect(page.getByTestId('mobile-delete-layer-button'), 'present with two layers').toBeVisible();
 
-    // Clicking the button calls `removeLayer(activeLayerId)`, which drops the count
-    // back to one and retracts the button with no confirmation prompt — `removeLayer`
-    // has no guard (`useLayer.ts`).
+    // The tablet delete control confirms before removing the active layer.
     await page.getByTestId('mobile-delete-layer-button').click();
+    await expect(page.getByTestId('mobile-layers-drawer')).toHaveAttribute('aria-hidden', 'true');
+    await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(toggle, 'the layer was removed, so the toggle no longer shows a multi-layer count').not.toContainText(
       '2'
     );
@@ -520,5 +520,25 @@ test.describe('Tablet touch bottom bar', () => {
         }
       )
       .toBe(true);
+  });
+
+  test('confirms layer deletion through tablet touch without overlapping modal drawers', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('mobile-layers-toggle-button').tap();
+    const drawer = page.getByTestId('mobile-layers-drawer');
+    await expect(drawer).toBeVisible();
+    await page.getByTestId('mobile-add-layer-button').tap();
+
+    const deleteButton = page.getByTestId('mobile-delete-layer-button');
+    await expect(deleteButton).toBeVisible();
+    await deleteButton.tap();
+
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await expect(drawer).toHaveAttribute('aria-hidden', 'true');
+    await expect(drawer).not.toHaveAttribute('aria-modal');
+    await page.getByTestId('confirm-dialog-confirm-button').tap();
+
+    await expect(drawer).toHaveAttribute('aria-modal', 'true');
+    await expect(page.getByTestId('mobile-delete-layer-button')).toHaveCount(0);
   });
 });

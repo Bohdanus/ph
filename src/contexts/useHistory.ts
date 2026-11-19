@@ -228,8 +228,8 @@ export const useHistory = () => {
         {
           // Replay layers keep their tmpCanvas: a cache is promoted only when the
           // user commits an edit, and the renderer draws from the canvas.
-          createLayer: ({ layerId, layers: runtimeLayers, source }) =>
-            createLayerSource({ layerId, layers: runtimeLayers, source }),
+          createLayer: ({ layerId, layers: runtimeLayers, source, insertAfterLayerId }) =>
+            createLayerSource({ layerId, layers: runtimeLayers, source, insertAfterLayerId }),
           applyRasterTool: (layer, args) => {
             const bitmap = layer.tmpCanvas ?? layer.bitmap;
             if (!bitmap) return layer;
