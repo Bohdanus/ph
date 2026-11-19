@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
 import type { LayerId, LayersRecord } from '@/contexts/layer-types.ts';
@@ -6,7 +6,7 @@ import { createMockLayer, createBedrockLayer, createToolLayer } from '@/__tests_
 
 /**
  * Edge-case tests for LayersTab against a live layer store: ordering under
- * arbitrary `order` values, equal-order collisions, the bedrock glyph, and
+ * arbitrary `order` values, equal-order collisions, and
  * removal across mixed layer kinds.
  */
 const { liveStore, subscribe, getSnapshot, noopDispatch } = vi.hoisted(() => {
@@ -32,8 +32,6 @@ vi.mock('../../Icons/EyeIcon.tsx', () => ({
 }));
 vi.mock('../../Icons/TrashIcon.tsx', () => ({ TrashIcon: () => <span data-testid="trash-icon" /> }));
 vi.mock('../../Icons/DragHandleIcon.tsx', () => ({ DragHandleIcon: () => <span data-testid="drag-handle" /> }));
-vi.mock('../../Icons/BedrockIcon.tsx', () => ({ BedrockIcon: () => <span data-testid="bedrock-icon" /> }));
-
 vi.mock('@/contexts/StoreContext.tsx', async () => {
   const { useSyncExternalStore } = await import('react');
   return {
@@ -111,27 +109,28 @@ describe('LayersTab store edge cases', () => {
     expect(getRowByName('B')).toBeInTheDocument();
   });
 
-  it('renders the bedrock background icon for a bedrock layer', () => {
+  it('renders the bedrock layer without an extra source-type glyph', () => {
     seed({
       'layer-1': createBedrockLayer({ id: 'layer-1', name: 'Background', order: 0 }),
       'layer-2': createMockLayer({ id: 'layer-2', name: 'Layer 2', order: 1 }),
     });
     render(<LayersTab />);
-    expect(getRowByName('Background').querySelector('[data-testid="bedrock-icon"]')).toBeInTheDocument();
-    expect(getRowByName('Layer 2').querySelector('[data-testid="bedrock-icon"]')).toBeNull();
+    expect(getRowByName('Background').querySelector('svg')).toBeNull();
+    expect(getRowByName('Layer 2').querySelector('svg')).toBeNull();
   });
 
   it('removes the correct layer when the stack holds mixed layer kinds', () => {
-    seed({
-      'layer-bedrock': createBedrockLayer({ id: 'layer-bedrock', name: 'Background', order: 0 }),
-      'layer-tool': createToolLayer('draw', { id: 'layer-tool', name: 'Draw', order: 1 }),
-      'layer-blank': createMockLayer({ id: 'layer-blank', name: 'Blank', order: 2 }),
-    });
+    seed(
+      {
+        'layer-bedrock': createBedrockLayer({ id: 'layer-bedrock', name: 'Background', order: 0 }),
+        'layer-tool': createToolLayer('draw', { id: 'layer-tool', name: 'Draw', order: 1 }),
+        'layer-blank': createMockLayer({ id: 'layer-blank', name: 'Blank', order: 2 }),
+      },
+      'layer-tool'
+    );
     render(<LayersTab />);
 
-    act(() => {
-      fireEvent.click(getRowByName('Draw').querySelector('button[aria-label="Remove layer"]')!);
-    });
+    fireEvent.click(screen.getByTestId('layers-delete-active-button'));
     fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
 
     expect(layerActions.removeLayer).toHaveBeenCalledWith('layer-tool');
