@@ -64,7 +64,13 @@ export interface DialogFocusContainment {
  * in one of the two dialogs that use it — `NewImageDialog` closes on unmount, while
  * `SaveDialog`'s `onSave` resolves and the CALLER closes it.
  */
-export function useDialogFocusContainment({ onEscape }: { onEscape: () => void }): DialogFocusContainment {
+export function useDialogFocusContainment({
+  onEscape,
+  returnFocusRef,
+}: {
+  onEscape: () => void;
+  returnFocusRef?: RefObject<HTMLElement | null>;
+}): DialogFocusContainment {
   const panelRef = useRef<HTMLDivElement>(null);
   const lastFocusedRef = useRef<HTMLElement | null>(null);
   // The mount effect runs once, so it cannot close over a live `onEscape` without
@@ -81,6 +87,7 @@ export function useDialogFocusContainment({ onEscape }: { onEscape: () => void }
     const panel = panelRef.current;
     if (!panel) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
+    const returnFocusTarget = returnFocusRef?.current;
 
     // Containment, leg 1: a click on the panel's own non-interactive text (a title, a
     // label with no htmlFor) blurs the focused control and leaves focus on <body>. It
@@ -141,9 +148,26 @@ export function useDialogFocusContainment({ onEscape }: { onEscape: () => void }
       document.removeEventListener('focusin', onFocusIn);
       document.removeEventListener('keydown', onDocumentKeyDown, true);
       panel.removeEventListener('focusout', onFocusOut);
-      previouslyFocused?.focus?.();
+      const target =
+        previouslyFocused?.isConnected && !previouslyFocused.matches(':disabled')
+          ? previouslyFocused
+          : returnFocusTarget;
+      if (target?.isConnected && !target.matches(':disabled')) target.focus();
+      if (previouslyFocused && target === previouslyFocused && returnFocusTarget) {
+        const opener = previouslyFocused;
+        const fallback = returnFocusTarget;
+        queueMicrotask(() => {
+          if (
+            (!opener.isConnected || opener.matches(':disabled') || document.activeElement === document.body) &&
+            fallback.isConnected &&
+            !fallback.matches(':disabled')
+          ) {
+            fallback.focus();
+          }
+        });
+      }
     };
-  }, []);
+  }, [returnFocusRef]);
 
   const handleKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     // Safe here because every app-level keydown listener (document in

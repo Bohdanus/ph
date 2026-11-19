@@ -414,9 +414,14 @@ const TEXT_COLOR = '#ff0000';
 
 /** `HANDLE_SIZE` from `src/util/constants.ts`; see {@link TEXT_PADDING_DOC_PX} for why it is a copy. */
 const HANDLE_SIZE_DOC_PX = 12;
+/** `ROTATE_HOTZONE` and the rotation arc radius in `src/hooks/useRect.ts`. */
+const ROTATE_HOTZONE_DOC_PX = 24;
+const ROTATE_HANDLE_RADIUS_DOC_PX = 4;
+/** `useRect` draws the rotation arc with `lineWidth: 1 / scale`, one CSS pixel on screen. */
+const ROTATE_HANDLE_STROKE_WIDTH_CSS_PX = 1;
 
 /**
- * How far outside the box the draft frame reaches, in CSS px, on every side.
+ * How far the corner grips reach outside the box, in CSS px.
  *
  * The outline is centred on the box edge, but the corner handles are deliberately drawn OUTSIDE the
  * contenteditable box so their hit area is not covered by the editor. `useRect`'s `drawMask` fills
@@ -1033,9 +1038,8 @@ test.describe('Text tool in-place editing', () => {
     await expect(overlay(page)).toHaveCount(0);
     await expect(layerRows).toHaveCount(2);
 
-    // The row is the layer thumbnail/name surface in this app. Double-clicking it must hydrate the
-    // retained source args rather than create a second layer or place a fresh draft at the origin.
-    await layerRows.nth(0).dblclick();
+    // Double-click the thumbnail to reopen the retained source rather than create a new draft.
+    await layerRows.nth(0).getByTestId('layer-thumbnail').dblclick();
     await expect(overlay(page), 'double-clicking the committed text row did not reopen the editor').toBeVisible();
     expect(await overlayText(page), 're-entry did not hydrate the committed characters').toBe('Reenter');
     await page.keyboard.type('Edited');
@@ -1173,14 +1177,14 @@ test.describe('Text tool in-place editing', () => {
 
     // The raster-width oracle distinguishes these candidate strings. Re-enter both committed rows
     // as well so the multi-click transition also proves the exact stored text through the editor.
-    await layerRows.nth(1).dblclick();
+    await layerRows.nth(1).getByTestId('layer-thumbnail').dblclick();
     await expect(overlay(page), 'the first committed layer could not be reopened').toBeVisible();
     expect(await overlayText(page), 'the first committed layer did not retain its exact text').toBe(FIRST_TEXT);
     await page.keyboard.press('Escape');
     await expect(overlay(page), 'the first layer stayed open after the readback').toHaveCount(0);
     await expect(layerRows, 'reading back the first layer created another row').toHaveCount(3);
 
-    await layerRows.nth(0).dblclick();
+    await layerRows.nth(0).getByTestId('layer-thumbnail').dblclick();
     await expect(overlay(page), 'the second committed layer could not be reopened').toBeVisible();
     expect(await overlayText(page), 'the second committed layer did not retain its exact text').toBe(SECOND_TEXT);
     await page.keyboard.press('Escape');
@@ -1419,33 +1423,43 @@ test.describe('Text tool in-place editing', () => {
       5
     );
 
+    // The pixel bounds are inclusive indices, so their outer edges are half a screenshot pixel
+    // beyond the first/last pixel centres. The rotation grip also reaches farther above the box
+    // than the corner grips reach on its other three sides.
+    const screenshotPixelCssWidth = box.width / image.width;
+    const screenshotPixelCssHeight = box.height / image.height;
+    const handleOverhangX = FRAME_OVERHANG_CSS_PX - screenshotPixelCssWidth / 2;
+    const handleOverhangY = FRAME_OVERHANG_CSS_PX - screenshotPixelCssHeight / 2;
+    const rotationGripOverhangY =
+      ROTATE_HOTZONE_DOC_PX / 2 + ROTATE_HANDLE_RADIUS_DOC_PX + ROTATE_HANDLE_STROKE_WIDTH_CSS_PX / 2;
+    const rotationOverhangY = rotationGripOverhangY - screenshotPixelCssHeight / 2;
+    const frameOuterWidth = frameCss.right - frameCss.left + screenshotPixelCssWidth;
+    const frameOuterHeight = frameCss.bottom - frameCss.top + screenshotPixelCssHeight;
+
     // Containment, in the form that cannot pass on a shifted overlay: each edge of the box, DERIVED
-    // from where the blue stops plus the handle's own overhang, has to sit within a pixel of the
-    // overlay's edge. A document-point-to-client-pixel mapping bug — the letterbox offset dropped,
-    // the scale inverted, a `rect.y1`/`rect.x1` transposition — moves these by tens of pixels, which
-    // is why the margin here is a pixel rather than a tolerance anyone would widen.
+    // from where the blue stops plus the frame's own overhang, has to sit within two CSS pixels of
+    // the overlay's edge. A document-point-to-client-pixel mapping bug — the letterbox offset
+    // dropped, the scale inverted, a `rect.y1`/`rect.x1` transposition — moves these by tens of pixels.
     const edge = (actual: number, derivedFromFrame: number, label: string) =>
       expect(
         Math.abs(actual - derivedFromFrame),
         `${label}: the overlay edge is ${(actual - derivedFromFrame).toFixed(2)} CSS px from the box's own edge`
       ).toBeLessThanOrEqual(2);
 
-    edge(bounds.left, frameCss.left + FRAME_OVERHANG_CSS_PX, 'left');
-    edge(bounds.top, frameCss.top + FRAME_OVERHANG_CSS_PX, 'top');
-    edge(bounds.right, frameCss.right - FRAME_OVERHANG_CSS_PX, 'right');
-    edge(bounds.bottom, frameCss.bottom - FRAME_OVERHANG_CSS_PX, 'bottom');
+    edge(bounds.left, frameCss.left + handleOverhangX, 'left');
+    edge(bounds.top, frameCss.top + rotationOverhangY, 'top');
+    edge(bounds.right, frameCss.right - handleOverhangX, 'right');
+    edge(bounds.bottom, frameCss.bottom - handleOverhangY, 'bottom');
 
     // And the SIZE, which is the half a pure containment check misses: an overlay twice as wide as
-    // its box contains the box perfectly and puts the user's caret in the wrong place. The handles
-    // are `HANDLE_SIZE` outside each edge, so the box is the frame narrowed by twice that.
-    // The frame comes from a device-pixel screenshot while the overlay uses CSS layout, so the
-    // mapped width can carry a fractional-pixel rounding remainder.
+    // its box contains the box perfectly and puts the user's caret in the wrong place. Account for
+    // both the inclusive pixel bounds and the distinct top overhang of the rotation grip.
     expect(
-      Math.abs(bounds.width - (frameCss.right - frameCss.left - 2 * FRAME_OVERHANG_CSS_PX)),
+      Math.abs(bounds.width - (frameOuterWidth - 2 * FRAME_OVERHANG_CSS_PX)),
       'the overlay is not as wide as the box the canvas drew'
     ).toBeLessThanOrEqual(3);
     expect(
-      Math.abs(bounds.height - (frameCss.bottom - frameCss.top - 2 * FRAME_OVERHANG_CSS_PX)),
+      Math.abs(bounds.height - (frameOuterHeight - rotationGripOverhangY - FRAME_OVERHANG_CSS_PX)),
       'the overlay is not as tall as the box the canvas drew'
     ).toBeLessThanOrEqual(2);
   });
@@ -1945,7 +1959,7 @@ test.describe('Desktop Type click-count selection', () => {
     await expect(overlay(page)).toHaveCount(0);
     const layerRows = page.getByTitle('Drag to reorder');
     await expect(layerRows).toHaveCount(2);
-    await layerRows.nth(0).dblclick();
+    await layerRows.nth(0).getByTestId('layer-thumbnail').dblclick();
     await expect(overlay(page)).toBeVisible();
     expect(await overlayText(page)).toBe(CLICK_LADDER_TEXT);
     expect(

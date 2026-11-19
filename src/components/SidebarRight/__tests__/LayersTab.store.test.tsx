@@ -155,7 +155,7 @@ describe('LayersTab against a live layer store', () => {
     const span = getNameSpan(getRowByName('Top Layer'));
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = 'Sky';
@@ -175,6 +175,7 @@ describe('LayersTab against a live layer store', () => {
       act(() => {
         fireEvent.click(row.querySelector('button[aria-label="Remove layer"]')!);
       });
+      fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
       expect(screen.queryByText(name)).toBeNull();
     }
 
@@ -334,7 +335,7 @@ describe('LayersTab against a live layer store', () => {
     const span = getNameSpan(getRowByName('Top Layer'));
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = 'Discarded';
@@ -357,7 +358,7 @@ describe('LayersTab against a live layer store', () => {
     const span = getNameSpan(row);
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = nextName;

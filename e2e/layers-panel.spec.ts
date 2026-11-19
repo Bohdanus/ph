@@ -226,6 +226,70 @@ test.describe('Layers panel', () => {
     await expect(canvas).toBeVisible();
   });
 
+  test('keeps the Photoshop lock row compact at desktop and tablet widths', async ({ page }) => {
+    const controls = page.getByRole('group', { name: 'Layer protection controls' });
+    await expect(controls).toBeVisible();
+    await expect(controls.getByRole('button')).toHaveCount(4);
+    await expect(controls.getByRole('button').nth(0)).toBeDisabled();
+    await expect(controls.getByRole('button').nth(1)).toBeDisabled();
+    await expect(controls.getByRole('button').nth(2)).toBeDisabled();
+    await expect(controls.getByRole('button').nth(3)).toHaveAttribute('aria-label', 'Lock Blank 1');
+
+    const lockLabel = page.getByText('Lock:', { exact: true });
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 1024, height: 768 },
+    ]) {
+      await page.setViewportSize(viewport);
+      const labelBox = await lockLabel.boundingBox();
+      const controlsBox = await controls.boundingBox();
+      const unavailableBoxes = await Promise.all(
+        [0, 1, 2].map((index) => controls.getByRole('button').nth(index).boundingBox())
+      );
+      const lockAllBox = await controls.getByRole('button').nth(3).boundingBox();
+
+      expect(labelBox).not.toBeNull();
+      expect(controlsBox).not.toBeNull();
+      expect(unavailableBoxes.every((box) => box !== null)).toBe(true);
+      expect(lockAllBox).not.toBeNull();
+      const labelGap = controlsBox!.x - labelBox!.x - labelBox!.width;
+      expect(labelGap).toBeGreaterThanOrEqual(0);
+      expect(labelGap).toBeLessThanOrEqual(4);
+      expect(controlsBox!.height).toBeLessThanOrEqual(28);
+      expect(Math.abs(controlsBox!.x + controlsBox!.width - (lockAllBox!.x + lockAllBox!.width))).toBeLessThanOrEqual(
+        1
+      );
+      expect(unavailableBoxes[0]!.x).toBeLessThan(unavailableBoxes[1]!.x);
+      expect(unavailableBoxes[1]!.x).toBeLessThan(unavailableBoxes[2]!.x);
+      expect(unavailableBoxes[2]!.x).toBeLessThan(lockAllBox!.x);
+    }
+  });
+
+  test('New Layer inserts above the selected row and is one undoable history step', async ({ page }) => {
+    const rows = page.getByTestId(LAYER_ROW);
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    const newLayer = page.getByTestId('layers-new-layer-button');
+
+    await expect(rows).toHaveCount(1);
+    await expect(newLayer).toBeEnabled();
+    await newLayer.click();
+    await expect(rows).toHaveCount(2);
+    await activateRow(layerRow(page, 'Blank 1'), layerRow(page, 'Blank 2'));
+    await newLayer.click();
+
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toContainText('Blank 2');
+    await expect(rows.nth(1)).toContainText('Blank 3');
+    await expect(rows.nth(2)).toContainText('Blank 1');
+    await expect(historyRows).toHaveCount(3);
+
+    await page.getByTestId('undo-button').click();
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toContainText('Blank 2');
+    await expect(rows.nth(1)).toContainText('Blank 1');
+    await expect(historyRows).toHaveCount(3);
+  });
+
   /**
    * Everything the five tests share: a stroke that lands on its own new layer (the Draw
    * tool area calls `createLayerFromTool` per stroke, `DrawToolArea.tsx:87`), and a pixel
@@ -742,8 +806,30 @@ test.describe('Layers panel', () => {
   test('removing the last layer shows the panel empty state', async ({ page }) => {
     await expect(layerRow(page, 'Blank 1')).toBeVisible();
     await layerRow(page, 'Blank 1').getByRole('button', { name: 'Remove layer' }).click();
+    await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(layerRows(page)).toHaveCount(0);
     await expect(page.getByText('No layers yet.')).toBeVisible();
+  });
+
+  test('a full-locked layer cannot be deleted until it is unlocked', async ({ page }) => {
+    await page.getByTestId('layers-new-layer-button').click();
+    const row = layerRow(page, 'Blank 2');
+
+    await page.getByRole('button', { name: 'Lock Blank 2' }).click();
+    const rowDelete = row.getByRole('button', { name: 'Remove layer' });
+    await expect(rowDelete).toBeDisabled();
+    await expect(rowDelete).toHaveAttribute('title', 'Unlock layer before removing it');
+    await expect(page.getByTestId('layers-delete-active-button')).toBeDisabled();
+    await expect(page.getByTestId('confirm-dialog')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Unlock Blank 2' }).click();
+    await expect(rowDelete).toBeEnabled();
+    await expect(page.getByTestId('layers-delete-active-button')).toBeEnabled();
+
+    await rowDelete.click();
+    await page.getByTestId('confirm-dialog-confirm-button').click();
+    await expect(row).toHaveCount(0);
+    await expect(layerRows(page)).toHaveCount(1);
   });
 
   /**
@@ -855,7 +941,7 @@ test.describe('Layers panel', () => {
     await expect(textOptions).toHaveCount(0);
 
     const row = page.getByTestId(LAYER_ROW).first();
-    await row.dblclick();
+    await row.getByTestId('layer-thumbnail').dblclick();
 
     // A lit overflow tile would still match after switching to another collapsed tool.
     await expect(drawOptions).toBeVisible();
@@ -910,8 +996,8 @@ test.describe('Layers panel', () => {
   });
 
   /**
-   * The trash button calls `e.stopPropagation()` before `handleConfirmRemove`
-   * (`LayersTab.tsx:318-321`), so clicking it must NOT also fire the row's `onClick`,
+   * The trash button calls `e.stopPropagation()` before requesting removal, so clicking it
+   * must NOT also fire the row's `onClick`,
    * which would call `selectLayer` and change which layer is active.
    *
    * The test activates one layer, then clicks trash on the OTHER layer and checks that
@@ -940,6 +1026,7 @@ test.describe('Layers panel', () => {
 
     // Click trash on the RED row (the one that is NOT active).
     await redRow.getByRole('button', { name: 'Remove layer' }).click();
+    await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(redRow).toHaveCount(0);
 
     // The green row must still be the active one.
@@ -1027,22 +1114,12 @@ test.describe('Layers panel', () => {
 });
 
 /**
- * Puts a layer row's name into edit mode the way a user does: a click on the name, whose
- * mousedown sets `editingLayerId`, and a second click, which is the browser's own default
- * action of placing a caret inside what is by then a `contentEditable` span. The first click
- * is what enters edit mode; the second is what makes the caret deterministic.
- *
- * Both steps ASSERT their state, which is the reason this exists rather than two bare
- * clicks: `LayersTab.tsx:214-218` enters edit mode on `onMouseDown`, and the second click
- * only lands a caret once React's discrete-event flush has re-rendered the span as
- * `contentEditable`. Without the assertions, a late flush makes `ControlOrMeta+a` select the
- * document, the typed text goes into the body, `Enter` does nothing, and the caller fails
- * several lines later with an unexplained "expected 1, received 0" on the layer count.
+ * Puts a layer name into edit mode with Photoshop's double-click gesture and waits for the
+ * resulting editable span to receive focus before the caller types.
  */
 async function enterRenameMode(row: Locator): Promise<void> {
   const name = layerName(row);
-  await name.click();
+  await name.dblclick();
   await expect(name).toHaveAttribute('contenteditable', 'true');
-  await name.click();
   await expect(name).toBeFocused();
 }

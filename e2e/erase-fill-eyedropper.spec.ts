@@ -759,6 +759,79 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     ).toBeGreaterThan(240);
   });
 
+  test('the paint bucket fills inside a closed loop without changing its outline or exterior', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    await openWorkspace(page);
+
+    const centre = { x: 300, y: 300 };
+    const radius = 80;
+    const outline = { x: centre.x, y: centre.y - radius };
+    const exterior = { x: centre.x + 90, y: centre.y };
+    const segments = 64;
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, BLACK, true);
+    const size = page.getByRole('slider', { name: /^Size/ });
+    await size.fill('12');
+    await expect(size).toHaveValue('12');
+    await page.getByRole('slider', { name: /^Opacity/ }).fill('1');
+
+    const box = await canvasBox(page);
+    const toViewport = (point: Point) => {
+      const offset = documentToCanvasOffset(box, point.x, point.y);
+      return { x: box.x + offset.x, y: box.y + offset.y };
+    };
+    const loopPoint = (index: number): Point => {
+      const angle = (2 * Math.PI * index) / segments;
+      return {
+        x: centre.x + radius * Math.cos(angle),
+        y: centre.y + radius * Math.sin(angle),
+      };
+    };
+
+    // Keep the contour in one gesture so separate stroke endpoints cannot introduce gaps.
+    const firstPoint = toViewport(loopPoint(0));
+    await page.mouse.move(firstPoint.x, firstPoint.y);
+    await page.mouse.down();
+    for (let index = 1; index <= segments; index++) {
+      const point = toViewport(loopPoint(index));
+      await page.mouse.move(point.x, point.y, { steps: 2 });
+    }
+    await page.mouse.up();
+    await expect(page.getByTestId('undo-button')).toBeEnabled();
+
+    const isBlack = (color: Rgb) => Math.max(color.red, color.green, color.blue) < 40;
+    await waitForPixel(page, outline, isBlack, 'the closed loop outline to render');
+    await waitForPixel(page, centre, isBackground, 'the loop center to remain unpainted before filling');
+    await waitForPixel(page, exterior, isBackground, 'the area outside the loop to remain unpainted before filling');
+
+    await selectBrushFamilyTool(page, 'brush', 'paint-bucket', 'Paint Bucket Tool');
+    await setForegroundColor(page, GREEN, true);
+    const tolerance = page.getByRole('slider', { name: /^Tolerance/ });
+    await tolerance.fill('0');
+    await expect(tolerance).toHaveValue('0');
+    const contiguous = page.getByRole('checkbox', { name: 'Contiguous' });
+    await contiguous.check();
+    await expect(contiguous).toBeChecked();
+    await clickAt(page, centre);
+
+    const foreground = hexToRgb(GREEN);
+    const isForeground = (color: Rgb) =>
+      Math.max(
+        Math.abs(color.red - foreground.r),
+        Math.abs(color.green - foreground.g),
+        Math.abs(color.blue - foreground.b)
+      ) <= 8;
+    await waitForPixel(page, centre, isForeground, 'the bucket to fill the loop center with the foreground color');
+
+    const filledOutline = (await readPixel(page, outline))!;
+    const filledExterior = (await readPixel(page, exterior))!;
+    expect.soft(isBlack(filledOutline), 'the fill must preserve the black loop boundary').toBe(true);
+    expect
+      .soft(isBackground(filledExterior), 'the fill must not leak into the transparent area outside the loop')
+      .toBe(true);
+  });
+
   // paint bucket: Tolerance must decide which pixels are inside the region
   test('the paint bucket tolerance control changes which pixels are filled', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
