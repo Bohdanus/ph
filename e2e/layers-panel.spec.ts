@@ -804,8 +804,10 @@ test.describe('Layers panel', () => {
   });
 
   test('removing the last layer shows the panel empty state', async ({ page }) => {
-    await expect(layerRow(page, 'Blank 1')).toBeVisible();
-    await layerRow(page, 'Blank 1').getByRole('button', { name: 'Remove layer' }).click();
+    const row = layerRow(page, 'Blank 1');
+    await expect(row).toBeVisible();
+    await row.click();
+    await page.getByTestId('layers-delete-active-button').click();
     await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(layerRows(page)).toHaveCount(0);
     await expect(page.getByText('No layers yet.')).toBeVisible();
@@ -816,17 +818,14 @@ test.describe('Layers panel', () => {
     const row = layerRow(page, 'Blank 2');
 
     await page.getByRole('button', { name: 'Lock Blank 2' }).click();
-    const rowDelete = row.getByRole('button', { name: 'Remove layer' });
-    await expect(rowDelete).toBeDisabled();
-    await expect(rowDelete).toHaveAttribute('title', 'Unlock layer before removing it');
-    await expect(page.getByTestId('layers-delete-active-button')).toBeDisabled();
+    const activeDelete = page.getByTestId('layers-delete-active-button');
+    await expect(activeDelete).toBeDisabled();
     await expect(page.getByTestId('confirm-dialog')).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Unlock Blank 2' }).click();
-    await expect(rowDelete).toBeEnabled();
-    await expect(page.getByTestId('layers-delete-active-button')).toBeEnabled();
+    await expect(activeDelete).toBeEnabled();
 
-    await rowDelete.click();
+    await activeDelete.click();
     await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(row).toHaveCount(0);
     await expect(layerRows(page)).toHaveCount(1);
@@ -995,18 +994,7 @@ test.describe('Layers panel', () => {
     await expect(historyRows, 'the conversion appended exactly one history entry').toHaveCount(2);
   });
 
-  /**
-   * The trash button calls `e.stopPropagation()` before requesting removal, so clicking it
-   * must NOT also fire the row's `onClick`,
-   * which would call `selectLayer` and change which layer is active.
-   *
-   * The test activates one layer, then clicks trash on the OTHER layer and checks that
-   * the first is still active by its resolved `backgroundColor` — `bg-white` for the
-   * active row, `bg-transparent` for an inactive one. Reading the fill, not the click,
-   * is what makes the assertion hold: if the active layer had changed, the clicked row
-   * would be white and the originally-active row would be transparent.
-   */
-  test('clicking the trash button does not select the layer', async ({ page }) => {
+  test('layer deletion is available from the action bar, not individual rows', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     const { stroke } = await setup(page);
@@ -1015,32 +1003,12 @@ test.describe('Layers panel', () => {
 
     const rows = page.getByTestId(LAYER_ROW);
     await expect(rows).toHaveCount(3);
-
-    // draw 3 (green, topmost) is the active layer by default after the second stroke.
-    const greenRow = layerRow(page, 'draw 3');
-    const redRow = layerRow(page, 'draw 2');
-    await activateRow(greenRow, redRow);
-
-    // Click away to clear any hover fill before reading computed styles.
-    await page.mouse.move(0, 0);
-
-    // Click trash on the RED row (the one that is NOT active).
-    await redRow.getByRole('button', { name: 'Remove layer' }).click();
-    await page.getByTestId('confirm-dialog-confirm-button').click();
-    await expect(redRow).toHaveCount(0);
-
-    // The green row must still be the active one.
-    await page.mouse.move(0, 0);
-    await expect
-      .poll(async () => (await rowFill(greenRow)) !== TRANSPARENT_FILL, {
-        message: "the active layer did not change after clicking a different row's trash",
-      })
-      .toBe(true);
+    await expect(rows.getByRole('button', { name: 'Remove layer' })).toHaveCount(0);
+    await expect(page.getByTestId('layers-delete-active-button')).toBeEnabled();
   });
 
   /**
-   * Same stop-propagation contract as the trash button applies to the eye: the handler
-   * calls `e.stopPropagation()` before `toggleVisibility`, so the row's `onClick` never
+   * The eye handler calls `e.stopPropagation()` before `toggleVisibility`, so the row's `onClick` never
    * fires and the active layer is not moved.
    */
   test('clicking the eye button does not select the layer', async ({ page }) => {
