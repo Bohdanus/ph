@@ -222,7 +222,7 @@ export const selectionDescriptions: Record<
       {
         control: 'Feather',
         detail:
-          'Softens the border over a radius in pixels, default 0. Adobe applies the step to the marquee tools generally, but a control that cannot soften a 1-pixel band has no effect, and the scripting API is the sharper evidence: selectRow takes neither a feather nor an antiAlias parameter where selectRectangle takes both. Feather would apply to the selection channel, not the 1-pixel geometry.',
+          'Softens the border over a radius in pixels, default 0. Adobe documents this control on the Single Row/Column Marquee options bar, but a control that cannot soften a 1-pixel band has no visual effect. The scripting API confirms this: selectRow takes neither a feather nor an antiAlias parameter where selectRectangle takes both. Feather would apply to the selection channel, not the 1-pixel geometry.',
         status: 'missing',
       },
       {
@@ -297,7 +297,7 @@ export const selectionDescriptions: Record<
       {
         control: 'Feather',
         detail:
-          'Softens the border over a radius in pixels, default 0. A control that cannot soften a 1-pixel band has no effect, and the scripting API is the sharper evidence: selectColumn takes neither a feather nor an antiAlias parameter where selectRectangle takes both. Feather would apply to the selection channel, not the 1-pixel geometry.',
+          'Softens the border over a radius in pixels, default 0. Adobe documents this control on the Single Row/Column Marquee options bar, but a control that cannot soften a 1-pixel band has no visual effect. The scripting API confirms this: selectColumn takes neither a feather nor an antiAlias parameter where selectRectangle takes both. Feather would apply to the selection channel, not the 1-pixel geometry.',
         status: 'missing',
       },
       {
@@ -843,7 +843,7 @@ export const selectionDescriptions: Record<
       {
         control: 'Feather',
         detail:
-          'Pixel radius, default 0, set before the click — but this row is version-dependent and the record says so rather than picking a side. Adobe\'s current desktop page on softening selection edges (updated 2026-02-23) lists the tools that can be feathered and the wand is **not** among them, and an Adobe mobile page names Anti-alias, Contiguous and Tolerance for this tool with no Feather, while a third-party tutorial of the Photoshop CS era labels the control "Feather (Lasso Tool Only)". Against that, Adobe\'s own **mobile** page for this tool (updated 2025-07-02) says to "access the more menu and adjust the **Feather** slider to define the feathering width as needed", and the UXP `Selection` reference has a `feather` argument defaulting to 0 on the selection-creating calls. The desktop bar as documented in 2025–2026 carries no Feather; whether it did in an earlier release is what the record cannot settle, and the unverified entry in the family notes names the page that came closest.',
+          'Pixel radius, default 0, set before the click. Adobe\'s current desktop help page on softening selection edges (updated 2026-02-23) lists the tools that can be feathered and the wand is **not** among them. Adobe\'s mobile page for this tool (updated 2025-07-02) says to "access the more menu and adjust the **Feather** slider", and the UXP `Selection` reference has a `feather` argument defaulting to 0 on selection-creating calls. The desktop options bar as documented in 2025–2026 carries no Feather control; whether it did in an earlier release is unsettled.',
         status: 'missing',
       },
       {
@@ -949,6 +949,12 @@ export const selectionDescriptions: Record<
         status: 'missing',
       },
       {
+        control: 'Select Subject',
+        detail:
+          'AI-powered button (added CC 2020) that automatically detects and selects the most prominent subject in the image. Click the arrow beside it (added 23.5) to choose Device (local, faster) or Cloud (server, more accurate, requires internet) processing. Appears in the Options Bar when Quick Selection, Object Selection or Magic Wand is active.',
+        status: 'missing',
+      },
+      {
         control: 'Sample All Layers',
         detail:
           'When selected, the selection is made from all the visible layers instead of only the currently selected layer, so a subject on one layer can be selected against a background on another.',
@@ -957,7 +963,7 @@ export const selectionDescriptions: Record<
       {
         control: 'Enhance Edge',
         detail:
-          'Automatically improves selection edges by making them smoother and more refined. Adobe’s current desktop documentation calls this Enhance Edge; the older Auto-Enhance label appears in earlier material.',
+          "Automatically improves selection edges by making them smoother and more refined. Adobe's current desktop documentation calls this Enhance Edge; the older Auto-Enhance label appears in earlier material and in the narrow options bar mode (Preferences > Workspace).",
         status: 'missing',
       },
     ],
