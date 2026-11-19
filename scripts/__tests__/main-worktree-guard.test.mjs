@@ -900,7 +900,11 @@ describe('the guard is actually installed', () => {
       git(reusedMainPath, ['commit', '--quiet', '--allow-empty', '-m', 'foreign']);
 
       const roster = git(fixture, ['worktree', 'list', '--porcelain']);
-      expect(roster).toContain(`worktree ${reusedMainPath.replace(/\\/g, '/')}`);
+      expect(
+        roster
+          .split('\n')
+          .some((line) => line.startsWith('worktree ') && samePath(line.slice('worktree '.length), reusedMainPath))
+      ).toBe(true);
       expect(roster).toContain('branch refs/heads/main');
       expect(roster).not.toMatch(/\nprunable(?:\s|$)/);
 

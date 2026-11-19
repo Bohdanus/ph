@@ -249,7 +249,10 @@ async function openWorkspace(page: Page): Promise<void> {
     'the seeded Blank 1 base layer to be in the document'
   ).toBeVisible();
   await expect
-    .poll(async () => readPixel(page, { x: 400, y: 300 }), { message: 'the blank base layer to be composed' })
+    .poll(async () => readPixel(page, { x: 400, y: 300 }), {
+      message: 'the blank base layer to be composed',
+      timeout: CANVAS_REDRAW_TIMEOUT_MS,
+    })
     .not.toBeNull();
 }
 
