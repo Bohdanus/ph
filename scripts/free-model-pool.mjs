@@ -47,8 +47,10 @@ const GROQ_MODELS = 'https://api.groq.com/openai/v1/models';
 const GROQ_CHAT = 'https://api.groq.com/openai/v1/chat/completions';
 export const CONTROL_PLANE_TIMEOUT_MS = 15_000;
 const MAX_ATTEMPTS_PER_SOURCE = 3;
+const MAX_OPENROUTER_RETRIES = 3;
 const MAX_OPENROUTER_RETRY_AFTER_MS = 60_000;
 const MAX_OPENCODE_RETRY_AFTER_MS = 60_000;
+const NEMOTRON_TOKEN_RETRY_MULTIPLIER = 1.5;
 const MAX_PROMPT_CHARS = 120_000;
 const MAX_PROMPT_FILE_BYTES = 480 * 1024;
 const MAX_OPENCODE_OUTPUT_BYTES = 1024 * 1024;
@@ -122,6 +124,11 @@ const OPENCODE_RUNTIME_ENV_KEYS = [
   'WINDIR',
   'COMSPEC',
 ];
+
+function increasedNemotronMaxTokens(maxTokens) {
+  const increased = Math.min(Math.ceil(maxTokens * NEMOTRON_TOKEN_RETRY_MULTIPLIER), MAX_COMPLETION_TOKENS);
+  return increased > maxTokens ? increased : null;
+}
 
 function opencodeRuntimeEnvironment(environment) {
   return Object.fromEntries(
@@ -1478,7 +1485,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
     let openRouterQuotaChecked = false;
     let openRouterQuotaKnownPositive = false;
     let openRouterQuotaInitiallyUnknown = false;
-    let openRouterRetryUsed = false;
+    let openRouterRetryCount = 0;
     const ensureOpenRouterAvailable = async () => {
       if (exhausted.has('openrouter')) return false;
       if (!openRouterQuotaChecked) {
@@ -1632,7 +1639,8 @@ export async function completeWithFreeModel(prompt, options = {}) {
       if (
         !quotaWasPositive ||
         !openRouterQuotaKnownPositive ||
-        openRouterRetryUsed ||
+        (attempts.get('openrouter') ?? 0) >= MAX_ATTEMPTS_PER_SOURCE ||
+        openRouterRetryCount >= MAX_OPENROUTER_RETRIES ||
         (!attributed && !transientServerFailure && !transientTypedFailure)
       ) {
         return { retry: false };
@@ -1660,12 +1668,13 @@ export async function completeWithFreeModel(prompt, options = {}) {
       const routeTimeoutMs = routeProfile.timeoutMs;
       if (candidate.source === 'kilo') {
         try {
+          const effectiveMaxTokens = candidate.maxTokensOverride ?? routeMaxTokens;
           const result = await runKilo({
             command: effectiveKiloCommand,
             source: 'kilo',
             model: candidate.model,
             prompt,
-            maxTokens: routeMaxTokens,
+            maxTokens: effectiveMaxTokens,
             timeoutMs: routeTimeoutMs,
           });
           if (result?.reportedCost === true || hasReportedNonZeroCost(result?.usage)) {
@@ -1688,6 +1697,20 @@ export async function completeWithFreeModel(prompt, options = {}) {
             continue;
           }
           if (result?.finishReason === 'length') {
+            const isNemotron = candidate.model === NEMOTRON_3_ULTRA_FREE_MODEL;
+            const alreadyRetried = candidate.nemotronTokenRetry === true;
+            const increasedTokens = increasedNemotronMaxTokens(routeMaxTokens);
+            if (isNemotron && !alreadyRetried && increasedTokens !== null) {
+              stderr.write(
+                `Nemotron 3 Ultra finish_reason=length; retrying with ${increasedTokens} tokens (was ${routeMaxTokens}).\n`
+              );
+              available.splice(candidateIndex + 1, 0, {
+                ...candidate,
+                nemotronTokenRetry: true,
+                maxTokensOverride: increasedTokens,
+              });
+              continue;
+            }
             errors.push(`kilo/${candidate.model}: incomplete completion (finish_reason=length)`);
             continue;
           }
@@ -1939,7 +1962,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
       const headers = { 'Content-Type': 'application/json' };
       if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
       const quotaWasPositive = candidate.source === 'openrouter' && openRouterQuotaKnownPositive;
-      const effectiveMaxTokens = routeMaxTokens;
+      const effectiveMaxTokens = candidate.maxTokensOverride ?? routeMaxTokens;
       let response;
       const requestStartedAt = Date.now();
       try {
@@ -1983,7 +2006,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
           requestStartedAt,
         });
         if (retryDecision.retry) {
-          openRouterRetryUsed = true;
+          openRouterRetryCount += 1;
           if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
           available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
           continue;
@@ -2025,13 +2048,30 @@ export async function completeWithFreeModel(prompt, options = {}) {
           requestStartedAt,
         });
         if (retryDecision.retry) {
-          openRouterRetryUsed = true;
+          openRouterRetryCount += 1;
           if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
           available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
         }
         continue;
       }
       if (response.ok && finishReason === 'length' && candidate.source === 'openrouter') {
+        const isNemotron = candidate.model === NEMOTRON_3_ULTRA_FREE_MODEL;
+        const alreadyRetried = candidate.nemotronTokenRetry === true;
+        const increasedTokens = increasedNemotronMaxTokens(routeMaxTokens);
+        if (isNemotron && !alreadyRetried && increasedTokens !== null) {
+          const quotaAvailable = await refreshOpenRouterQuotaAfterAttempt();
+          if (quotaAvailable) {
+            stderr.write(
+              `Nemotron 3 Ultra finish_reason=length; retrying with ${increasedTokens} tokens (was ${routeMaxTokens}).\n`
+            );
+            available.splice(candidateIndex + 1, 0, {
+              ...candidate,
+              nemotronTokenRetry: true,
+              maxTokensOverride: increasedTokens,
+            });
+            continue;
+          }
+        }
         await refreshOpenRouterQuotaAfterAttempt();
       }
       if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
@@ -2088,7 +2128,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
       )
         exhausted.add(candidate.source);
       if (retryDecision.retry) {
-        openRouterRetryUsed = true;
+        openRouterRetryCount += 1;
         if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
         available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
         continue;
