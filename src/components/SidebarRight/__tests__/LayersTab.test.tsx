@@ -14,12 +14,6 @@ vi.mock('../../Icons/TrashIcon.tsx', () => ({
   TrashIcon: () => <span data-testid="trash-icon" />,
 }));
 
-vi.mock('../../Icons/DragHandleIcon.tsx', () => ({
-  DragHandleIcon: ({ disabled }: { disabled?: boolean }) => (
-    <span data-testid="drag-handle" data-disabled={disabled ?? false} />
-  ),
-}));
-
 const mockLayers: LayersRecord = {
   'layer-1': createMockLayer({ id: 'layer-1', name: 'Background', order: 0, isBedrock: true }),
   'layer-2': createMockLayer({ id: 'layer-2', name: 'Layer 2', order: 1 }),
@@ -394,12 +388,9 @@ describe('LayersTab', () => {
     };
     render(<LayersTab />);
 
-    const removeButton = getListItemFor('Layer 2').querySelector<HTMLButtonElement>(
-      'button[aria-label="Remove layer"]'
-    );
-    if (!removeButton) throw new Error('no remove button for Layer 2');
+    const removeButton = screen.getByTestId('layers-delete-active-button');
     expect(removeButton).toBeDisabled();
-    expect(removeButton).toHaveAttribute('title', 'Finish text editing before removing this layer');
+    expect(removeButton).toHaveAttribute('title', 'Finish text editing before deleting this layer');
     fireEvent.click(removeButton);
 
     expect(layerMocks.removeLayer).not.toHaveBeenCalled();
@@ -802,21 +793,22 @@ describe('LayersTab', () => {
     expect(currentToolState.toolArgs).toMatchObject({ editingLayerId: 'current', text: 'current draft' });
   });
 
-  it('confirms before removing a layer from its row', async () => {
+  it('confirms before removing the selected layer from the action bar', async () => {
     render(<LayersTab />);
-    const layerDivs = getLayerDivs();
-    const trashButton = layerDivs[0].querySelector<HTMLButtonElement>('button[aria-label="Remove layer"]');
-    if (!trashButton) throw new Error('no remove button for Top Layer');
-    trashButton.focus();
+    const row = getListItemFor('Top Layer').querySelector<HTMLElement>('[data-testid="layer-row-content"]');
+    if (!row) throw new Error('no row for Top Layer');
+    fireEvent.click(row);
+    const removeButton = screen.getByTestId('layers-delete-active-button');
+    removeButton.focus();
     act(() => {
-      fireEvent.click(trashButton!);
+      fireEvent.click(removeButton);
     });
 
     expect(screen.getByTestId('confirm-dialog')).toBeInTheDocument();
     expect(layerMocks.removeLayer).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
     await Promise.resolve();
-    expect(document.activeElement).toBe(screen.getByRole('group', { name: 'Layers panel' }));
+    expect(document.activeElement).toBe(removeButton);
 
     expect(layerMocks.removeLayer).toHaveBeenCalledTimes(1);
     expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
@@ -826,7 +818,7 @@ describe('LayersTab', () => {
     expect('layer-3' in liveStore.snapshot.layers).toBe(false);
   });
 
-  it('disables removal of a full-locked layer from its row and the action bar', () => {
+  it('disables removal of a full-locked active layer in the action bar', () => {
     const lockedLayers = {
       ...mockLayers,
       'layer-2': createMockLayer({ id: 'layer-2', name: 'Layer 2', order: 1, locked: true }),
@@ -834,15 +826,10 @@ describe('LayersTab', () => {
     seed(lockedLayers, 'layer-2');
     render(<LayersTab />);
 
-    const rowDelete = getListItemFor('Layer 2').querySelector<HTMLButtonElement>('button[aria-label="Remove layer"]');
-    if (!rowDelete) throw new Error('no remove button for locked Layer 2');
     const activeDelete = screen.getByTestId('layers-delete-active-button');
 
-    expect(rowDelete).toBeDisabled();
-    expect(rowDelete).toHaveAttribute('title', 'Unlock layer before removing it');
     expect(activeDelete).toBeDisabled();
     expect(activeDelete).toHaveAttribute('title', 'Unlock layer before deleting it');
-    fireEvent.click(rowDelete);
     fireEvent.click(activeDelete);
 
     expect(layerMocks.removeLayer).not.toHaveBeenCalled();
@@ -851,9 +838,8 @@ describe('LayersTab', () => {
 
   it('closes deletion confirmation if the layer disappears externally', async () => {
     render(<LayersTab />);
-    const trashButton = getLayerDivs()[0].querySelector<HTMLButtonElement>('button[aria-label="Remove layer"]');
-    if (!trashButton) throw new Error('no remove button for Top Layer');
-    fireEvent.click(trashButton);
+    fireEvent.click(getListItemFor('Top Layer').querySelector<HTMLElement>('[data-testid="layer-row-content"]')!);
+    fireEvent.click(screen.getByTestId('layers-delete-active-button'));
     expect(screen.getByTestId('confirm-dialog')).toBeInTheDocument();
 
     act(() => {
@@ -869,16 +855,13 @@ describe('LayersTab', () => {
 
   it('leaves a layer unchanged when deletion is cancelled', () => {
     render(<LayersTab />);
-    const trashButton = getLayerDivs()[0].querySelector<HTMLButtonElement>('button[aria-label="Remove layer"]');
-    if (!trashButton) throw new Error('no remove button for Top Layer');
-    trashButton.focus();
-    fireEvent.click(trashButton);
+    fireEvent.click(getListItemFor('Top Layer').querySelector<HTMLElement>('[data-testid="layer-row-content"]')!);
+    fireEvent.click(screen.getByTestId('layers-delete-active-button'));
 
     fireEvent.click(screen.getByTestId('confirm-dialog-cancel-button'));
 
     expect(layerMocks.removeLayer).not.toHaveBeenCalled();
     expect(screen.getByText('Top Layer')).toBeInTheDocument();
-    expect(document.activeElement).toBe(trashButton);
     expect(screen.queryByTestId('confirm-dialog')).toBeNull();
   });
 
@@ -891,22 +874,12 @@ describe('LayersTab', () => {
     expect(screen.queryByTestId('confirm-dialog')).toBeNull();
   });
 
-  it('stops propagation on trash click', () => {
+  it('keeps delete in the action bar instead of individual rows', () => {
     render(<LayersTab />);
-    const layerDivs = getLayerDivs();
-    const trashButton = layerDivs[0].querySelector('button[aria-label="Remove layer"]');
-    act(() => {
-      fireEvent.click(trashButton!);
-    });
-    expect(screen.getByTestId('confirm-dialog')).toBeInTheDocument();
-    expect(layerMocks.removeLayer).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
-    expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
-    expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
-
-    expect(screen.queryByText('Top Layer')).toBeNull();
-    expect(getLayerDivs()[0]).toHaveTextContent('Layer 2');
-    expect(getLayerDivs()[0]).toHaveClass('bg-white');
+    for (const row of getLayerDivs()) {
+      expect(row.querySelector('button[aria-label="Remove layer"]')).toBeNull();
+    }
+    expect(screen.getByTestId('layers-delete-active-button')).toBeInTheDocument();
   });
 
   it('stops propagation on eye button click', () => {
@@ -943,30 +916,19 @@ describe('LayersTab', () => {
     expect(container.classList.contains('h-full')).toBe(true);
   });
 
-  it('keeps remove control available for a bedrock layer', () => {
-    seed({ bedrock: createMockLayer({ id: 'bedrock', name: 'Background', isBedrock: true }) }, null);
+  it('keeps the action-bar delete control available for a selected bedrock layer', () => {
+    seed({ bedrock: createMockLayer({ id: 'bedrock', name: 'Background', isBedrock: true }) }, 'bedrock');
     render(<LayersTab />);
     const [bedrockRow] = getLayerDivs();
     expect(bedrockRow).toHaveTextContent('Background');
-    expect(bedrockRow.querySelector('button[aria-label="Remove layer"]')).toBeInTheDocument();
+    expect(screen.getByTestId('layers-delete-active-button')).toBeEnabled();
   });
 
-  it('shows drag handle icon', () => {
+  it('uses the row itself as the drag target without an extra handle glyph', () => {
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
-    const dragHandles = layerDivs.map((div) => div.querySelector('[data-testid="drag-handle"]'));
-    expect(dragHandles[0]).toBeInTheDocument();
-    expect(dragHandles[1]).toBeInTheDocument();
-    expect(dragHandles[2]).toBeInTheDocument();
-  });
-
-  it('shows trash icon for each layer', () => {
-    render(<LayersTab />);
-    const layerDivs = getLayerDivs();
-    const trashButtons = layerDivs.map((div) => div.querySelector('button[aria-label="Remove layer"]'));
-    expect(trashButtons[0]).toBeInTheDocument();
-    expect(trashButtons[1]).toBeInTheDocument();
-    expect(trashButtons[2]).toBeInTheDocument();
+    expect(layerDivs.map((div) => div.getAttribute('draggable'))).toEqual(['true', 'true', 'false']);
+    expect(layerDivs.every((div) => !div.querySelector('[data-testid="drag-handle"]'))).toBe(true);
   });
 });
 
@@ -1028,7 +990,7 @@ describe('LayersTab inline rename', () => {
     expect(span.ownerDocument.getSelection()?.toString()).toBe('Top Layer');
   });
 
-  it('turns the name span into an editable region on a touch press', () => {
+  it('requires a double-click on the name to enter rename mode on touch', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
 
@@ -1036,8 +998,20 @@ describe('LayersTab inline rename', () => {
       fireEvent.pointerDown(span, { pointerId: 9, pointerType: 'touch' });
     });
 
-    expect(span).toHaveAttribute('contenteditable', 'true');
+    expect(span).toHaveAttribute('contenteditable', 'false');
     expect(span).not.toHaveFocus();
+
+    act(() => {
+      fireEvent.click(span);
+    });
+    expect(liveStore.snapshot.activeLayerId).toBe('layer-3');
+    expect(span).toHaveAttribute('contenteditable', 'false');
+
+    act(() => {
+      fireEvent.doubleClick(span);
+    });
+    expect(span).toHaveAttribute('contenteditable', 'true');
+    expect(span).toHaveFocus();
   });
 
   it('suspends dragging for the layer that is being renamed', () => {
@@ -1400,6 +1374,29 @@ describe('LayersTab drag and drop guards', () => {
     expect(capture.setPointerCapture).not.toHaveBeenCalled();
   });
 
+  it('keeps pen double-click rename available on a layer name', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[2]!;
+    const name = getNameSpan('Top Layer');
+    const capture = mockPointerCapture(source);
+
+    act(() => {
+      fireEvent.pointerDown(name, {
+        pointerId: 12,
+        pointerType: 'pen',
+        isPrimary: true,
+        clientX: 10,
+        clientY: 10,
+      });
+    });
+
+    expect(capture.setPointerCapture).not.toHaveBeenCalled();
+    act(() => {
+      fireEvent.doubleClick(name);
+    });
+    expect(name).toHaveAttribute('contenteditable', 'true');
+  });
+
   it('uses the exact 250ms thumbnail hold contract', () => {
     expect(LAYER_REORDER_LONG_PRESS_MS).toBe(250);
   });
@@ -1669,7 +1666,7 @@ describe('LayersTab drag and drop guards', () => {
     Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
 
     expect(backingRow).toHaveAttribute('draggable', 'false');
-    expect(backingRow.querySelector('[data-testid="drag-handle"]')).toHaveAttribute('data-disabled', 'true');
+    expect(backingRow.querySelector('[data-testid="drag-handle"]')).toBeNull();
 
     act(() => {
       fireEvent(backingRow, event);
@@ -1695,7 +1692,7 @@ describe('LayersTab drag and drop guards', () => {
     Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
 
     expect(lockedRow).toHaveAttribute('draggable', 'false');
-    expect(lockedRow.querySelector('[data-testid="drag-handle"]')).toHaveAttribute('data-disabled', 'true');
+    expect(lockedRow.querySelector('[data-testid="drag-handle"]')).toBeNull();
 
     act(() => {
       fireEvent(lockedRow, event);
