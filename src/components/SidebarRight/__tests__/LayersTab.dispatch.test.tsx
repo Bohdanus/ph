@@ -431,19 +431,17 @@ describe('LayersTab actions reaching the store', () => {
     });
   });
 
-  it('keeps the active layer selected when a different layer is removed', () => {
+  it('deletes the active bedrock layer and activates the neighboring layer', () => {
     seedStore({
       layers: {
         'layer-1': createMockLayer({ id: 'layer-1', name: 'Background', order: 0, isBedrock: true }),
         'layer-2': createMockLayer({ id: 'layer-2', name: 'Layer 2', order: 1 }),
       },
-      activeLayerId: 'layer-2',
+      activeLayerId: 'layer-1',
     });
     render(<LayersTab />);
 
-    act(() => {
-      fireEvent.click(getRow('Background').querySelector('button[aria-label="Remove layer"]')!);
-    });
+    fireEvent.click(screen.getByTestId('layers-delete-active-button'));
     fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
 
     const updates = onlyDispatched().payload.updates as { activeLayerId: string | null };
@@ -457,9 +455,7 @@ describe('LayersTab actions reaching the store', () => {
     });
     render(<LayersTab />);
 
-    act(() => {
-      fireEvent.click(getRow('Only Layer').querySelector('button[aria-label="Remove layer"]')!);
-    });
+    fireEvent.click(screen.getByTestId('layers-delete-active-button'));
     fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
 
     const updates = onlyDispatched().payload.updates as { layers: Record<string, unknown>; activeLayerId: unknown };
