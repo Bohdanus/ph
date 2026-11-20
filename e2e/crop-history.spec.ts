@@ -6249,6 +6249,47 @@ test.describe('Crop history', () => {
   // gives for its own viewport, for a different reason.
   test.use({ viewport: { width: 1600, height: 1200 } });
 
+  test('crop horizontal selection edges do not continue outside the crop', async ({ page }) => {
+    await openDocument(page);
+    const fit = await openCropTool(page);
+    await dragOnCanvas(page, fit, { x: 100, y: 100 }, { x: 700, y: 500 });
+    await dragOnCanvas(page, fit, { x: 400, y: 300 }, { x: 430, y: 330 });
+
+    const workspace = page.getByTestId('workspace-container');
+    const workspaceBox = await workspace.boundingBox();
+    const cropBox = await page.getByTestId('crop-selection-outline').boundingBox();
+    expect(workspaceBox).not.toBeNull();
+    expect(cropBox).not.toBeNull();
+    const screenshot = await workspace.screenshot();
+    const { data, info } = await sharp(screenshot).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const scaleX = info.width / workspaceBox!.width;
+    const scaleY = info.height / workspaceBox!.height;
+    const left = Math.max(2, Math.floor((cropBox!.x - workspaceBox!.x - 5) * scaleX));
+    const right = Math.min(info.width - 2, Math.ceil((cropBox!.x + cropBox!.width - workspaceBox!.x + 5) * scaleX));
+    const top = Math.round((cropBox!.y - workspaceBox!.y) * scaleY);
+    const bottom = Math.round((cropBox!.y + cropBox!.height - workspaceBox!.y) * scaleY);
+    const luminance = (x: number, y: number) => {
+      const offset = (y * info.width + x) * info.channels;
+      return 0.2126 * data[offset]! + 0.7152 * data[offset + 1]! + 0.0722 * data[offset + 2]!;
+    };
+    const edgeContrast = (edgeY: number) => {
+      let pixels = 0;
+      for (const y of [edgeY - 1, edgeY, edgeY + 1]) {
+        for (let x = 2; x < info.width - 2; x++) {
+          if (x >= left && x < right) continue;
+          const center = luminance(x, y);
+          if (Math.abs(center - luminance(x, y - 3)) > 18 && Math.abs(center - luminance(x, y + 3)) > 18) {
+            pixels++;
+          }
+        }
+      }
+      return pixels;
+    };
+
+    expect(edgeContrast(top), 'top crop edge pixels outside selection').toBeLessThan(10);
+    expect(edgeContrast(bottom), 'bottom crop edge pixels outside selection').toBeLessThan(10);
+  });
+
   test('the crop overlay selector exposes six guides and O cycles the active guide', async ({ page }) => {
     await openDocument(page);
     await openCropTool(page);

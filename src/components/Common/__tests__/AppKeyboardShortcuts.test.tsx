@@ -416,6 +416,8 @@ describe('AppKeyboardShortcuts guards', () => {
     for (const key of ['b', 'c', 'v', 'j', 'u', 't', 'l', 'w', 'm', 'p']) {
       press(key);
     }
+    expect(press('t', { metaKey: true })).toBe(false);
+    expect(press('t', { ctrlKey: true })).toBe(false);
     press('z', { metaKey: true });
     press('y', { metaKey: true });
 
@@ -1419,6 +1421,30 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     press('w');
 
     expect(goToTool.mock.calls).toEqual([['text'], ['magic-wand']]);
+  });
+
+  it.each([{ metaKey: true }, { ctrlKey: true }])(
+    'opens Free Transform with the platform modifier and T',
+    (modifier) => {
+      renderShortcuts();
+
+      expect(press('t', modifier)).toBe(true);
+
+      expect(goToTool).toHaveBeenCalledExactlyOnceWith('transform');
+    }
+  );
+
+  it.each([
+    { metaKey: true, shiftKey: true },
+    { ctrlKey: true, shiftKey: true },
+    { metaKey: true, altKey: true },
+    { ctrlKey: true, altKey: true },
+  ])('does not consume modified transform chords', (modifiers) => {
+    renderShortcuts();
+
+    expect(press('t', modifiers)).toBe(false);
+
+    expect(goToTool).not.toHaveBeenCalled();
   });
 
   it('enters the shape tool with a bare U from another tool', () => {

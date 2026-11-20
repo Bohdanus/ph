@@ -12,13 +12,7 @@ import { lockDragCursor, unlockDragCursor } from '../../hooks/dragCursorLock.ts'
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { DragHandleIcon } from '../Icons/DragHandleIcon.tsx';
-import { BedrockIcon } from '../Icons/BedrockIcon.tsx';
-import { LayerTypeIcon } from '../Icons/LayerTypeIcon.tsx';
-import {
-  ICON_TOGGLE_BUTTON_VISIBLE,
-  ICON_TOGGLE_BUTTON_HIDDEN,
-  DELETE_BUTTON_ICON,
-} from '../ToolbarsRight/buttonStyles.ts';
+import { ICON_TOGGLE_BUTTON_VISIBLE, ICON_TOGGLE_BUTTON_HIDDEN } from '../ToolbarsRight/buttonStyles.ts';
 import {
   LOCK_LAYER_ACTION,
   RENAME_LAYER_ACTION,
@@ -617,6 +611,10 @@ export default function LayersTab() {
     const startedOnThumbnail =
       event.target instanceof Element && event.target.closest('[data-testid="layer-thumbnail"]') !== null;
     if (isTouch && !startedOnThumbnail) return;
+    const startedOnInteractiveControl =
+      event.target instanceof Element &&
+      event.target.closest('button, [data-testid="layer-name"], [data-testid="layer-thumbnail"]') !== null;
+    if (event.pointerType === 'pen' && startedOnInteractiveControl) return;
 
     const pointerDrag = {
       pointerId: event.pointerId,
@@ -873,10 +871,6 @@ export default function LayersTab() {
                     onDoubleClick={() => enterTextLayer(layer.id)}
                   />
 
-                  {layer.isBedrock ? <BedrockIcon /> : <LayerTypeIcon source={layer.source} />}
-
-                  <DragHandleIcon disabled={isPickedLayer || layer.isBedrock || layer.locked} />
-
                   <div className="flex-1 min-w-0" onClick={(e) => isEditable && e.stopPropagation()}>
                     <span
                       ref={(el) => {
@@ -885,12 +879,6 @@ export default function LayersTab() {
                       data-testid="layer-name"
                       contentEditable={isEditable}
                       suppressContentEditableWarning
-                      onPointerDown={(e) => {
-                        if (e.pointerType === 'mouse') return;
-                        focusNameOnEditRef.current = false;
-                        e.stopPropagation();
-                        if (!isEditable) setEditingLayerId(layer.id);
-                      }}
                       onClick={(e: React.MouseEvent<HTMLSpanElement>) => {
                         e.stopPropagation();
                         if (!isEditable) selectLayer(layer.id, false);
@@ -944,25 +932,6 @@ export default function LayersTab() {
                       <LayerLockIcon locked />
                     </span>
                   )}
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      requestLayerRemoval(layer.id, event.altKey);
-                    }}
-                    disabled={layer.locked || textEditingLayerId === layer.id}
-                    className={DELETE_BUTTON_ICON}
-                    aria-label="Remove layer"
-                    title={
-                      layer.locked
-                        ? 'Unlock layer before removing it'
-                        : textEditingLayerId === layer.id
-                          ? 'Finish text editing before removing this layer'
-                          : 'Remove layer'
-                    }
-                  >
-                    <TrashIcon />
-                  </button>
                 </div>
               </li>
             );

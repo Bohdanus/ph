@@ -203,6 +203,14 @@ describe('MobileLayersDrawer', () => {
     expect(renderedLayerNames()).toEqual(['Top', 'Upper', 'Lower', 'Bottom']);
   });
 
+  it('renders a thumbnail for each row without capturing touch scrolling', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    const thumbnails = screen.getAllByTestId('layer-thumbnail');
+    expect(thumbnails).toHaveLength(4);
+    expect(thumbnails.every((thumbnail) => !thumbnail.classList.contains('touch-none'))).toBe(true);
+  });
+
   it('exposes a 44px full-lock toggle for each non-background layer', () => {
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 

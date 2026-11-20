@@ -72,23 +72,19 @@ this pass, the source wins, and the two places it loses are recorded at the end.
   Add to and Subtract from — but broader Adobe pages say any selection tool can intersect, and an
   Adobe tutorial explicitly includes Quick Selection. Whether Photoshop Quick Selection has an
   Intersect mode is unresolved; the Quick Selection section records the conflicting sources.
-- **No selection tool reads a combination-mode modifier, and most read no modifier at all.**
+- **Combination-mode modifiers are only partly implemented.**
   A grep for `shiftKey|altKey|metaKey|ctrlKey` across `src/components/Main/*.tsx` returns
   production hits in `CloneStampToolArea`, `EllipticalSelectionToolArea`,
-  `FeatherMagneticLassoToolArea`, `RectangularSelectionToolArea`, `ShapeToolArea` and
-  `TextToolArea` only. Of the nine tools here, that leaves exactly three whose `modifiers[]`
-  rows describe anything real: the rectangular marquee (Shift → square, Alt → from centre,
-  `RectangularSelectionToolArea.tsx` asking for both in its `useRect` call and
-  `useRect.ts` — `sampleFreshDragModifiers()` — sampling them per pointer event), the elliptical
-  marquee (`EllipticalSelectionToolArea.tsx` — the drag record `handlePointerDown()` starts,
-  carrying `constrainToCircle` and `fromCentre`), and the magnetic lasso's one `Alt` read
-  (`FeatherMagneticLassoToolArea.tsx` — the `createMagneticSegment()` call in `startDraft()`), the
-  freehand lasso, polygonal lasso, Magic Wand and Quick Selection read no modifier
-  key whatsoever, so every combination-mode row on those four — and the Quick Selection's two
-  modifier rows — is a Photoshop binding with no implementation. The `options[]` rows already
-  said `missing`; the `modifiers[]` rows did not say anything, which read as implemented. They
-  are kept, because the file describes Photoshop, and each absence is now stated in `appNotes`
-  with the file that proves it.
+  `FeatherMagneticLassoToolArea`, `QuickSelectionToolArea`, `RectangularSelectionToolArea`,
+  `ShapeToolArea` and `TextToolArea`. Quick Selection now temporarily maps Shift to Add and Alt to
+  Subtract for the portion of a stroke where each modifier is held; Shift+Alt intersection remains
+  unsupported. Quick Selection implements the two modes offered by its dropdown; the rectangular
+  marquee uses Shift for square geometry and Alt from-centre geometry, the elliptical marquee uses
+  Shift for circle geometry and Alt from-centre geometry, and the magnetic lasso reads Alt for its
+  segment behavior. The freehand lasso, polygonal lasso and Magic Wand read no modifier key; their
+  selection-combination modifiers remain unimplemented. The `options[]` rows already said `missing`;
+  the remaining `modifiers[]` rows describe Photoshop behavior and their absences are stated in
+  `appNotes`.
   **`RectangularSelectionToolArea` is on that list because of the second pass.** The previous
   version of this section put it there and then reported — wrongly — that the marquee's
   Shift/Alt did nothing during a fresh drag, on the strength of reading `useRect`'s single
@@ -964,9 +960,9 @@ Alt-drag size gesture and the live size/opacity readout are not bound. Every tra
 committed, including disconnected components and enclosed holes; the active selection remains a
 contour model with derived masks rather than a persistent Photoshop-style alpha channel.
 
-**The modifier gestures are absent from the app.** `QuickSelectionToolArea` reads no modifier key,
-so neither the temporary `Shift`-add or `Alt`-subtract stroke gesture is implemented. The rows are
-kept as Photoshop descriptions and the absence is stated in `appNotes`.
+**The modifier gestures are partly implemented.** `QuickSelectionToolArea` temporarily uses Shift
+for Add and Alt/Option for Subtract while the modifier is held, then returns to the options-bar mode
+when released. Shift+Alt intersection remains unsupported because the app has no intersect mode.
 
 **The second row was also a false claim about Photoshop, and is now corrected in the data file.** It
 read "the same gesture Photoshop binds on every brush tool" for a plain `Alt`-drag. Adobe's own

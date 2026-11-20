@@ -57,7 +57,7 @@ platform limit.
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                                                          |
 | Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                                                        |
 | View / navigation | `partial`   | The Ruler measures; no pan, no canvas rulers, no guides                                                      |
-| Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                                                         |
+| Keyboard          | `partial`   | 46 bindings against Photoshop's ~200                                                                         |
 | Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                                               |
 | Export options    | `partial`   | JPEG quality is the only user-controllable option                                                            |
 | Tablet touch      | `partial`   | Tablet-sized touch shell; Retina/high-DPI matters; handheld phone layouts are out of scope                   |
@@ -365,7 +365,7 @@ absent. The implementation deliberately caps the options-bar zoom control at
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 64 `useKeyDownShortcut` call sites: 49 in
+**This app:** 65 `useKeyDownShortcut` call sites: 50 in
 `AppKeyboardShortcuts.tsx`; six in three small command modules — `SelectionShortcuts.tsx`
 (two), `AdjustmentShortcuts.tsx` (one) and `ScreenModeShortcuts.tsx` (three); eight in the two
 polygon tool areas
@@ -377,7 +377,7 @@ same registration path.
 **Status:** `partial`
 
 **Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O, H, Z, R; `Ctrl+Z`, `Shift+Ctrl+Z`,
-`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Ctrl+S`; `Ctrl+A` (Select All, replacing any
+`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Cmd/Ctrl+T`, `Ctrl+S`; `Ctrl+A` (Select All, replacing any
 selection), `Ctrl+D` (Deselect) and `Ctrl+I` (`Image > Adjustments > Invert` on the active
 non-bedrock layer, clipped by the active selection); `Tab` to hide or show the Tools panel,
 options bar and panels; `F` / `Shift+F` to cycle Standard, Full Screen With Menu Bar and Full
