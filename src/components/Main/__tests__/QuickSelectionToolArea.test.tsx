@@ -280,11 +280,11 @@ describe('QuickSelectionToolArea', () => {
   });
 
   it.each([
-    { mode: 'add' as const, modifier: 'shiftKey' as const },
-    { mode: 'add' as const, modifier: 'altKey' as const },
-    { mode: 'subtract' as const, modifier: 'shiftKey' as const },
-    { mode: 'subtract' as const, modifier: 'altKey' as const },
-  ])('keeps the options-bar $mode mode while $modifier is held', ({ mode, modifier }) => {
+    { mode: 'add' as const, modifier: 'shiftKey' as const, expectedMode: 'add' },
+    { mode: 'add' as const, modifier: 'altKey' as const, expectedMode: 'subtract' },
+    { mode: 'subtract' as const, modifier: 'shiftKey' as const, expectedMode: 'add' },
+    { mode: 'subtract' as const, modifier: 'altKey' as const, expectedMode: 'subtract' },
+  ])('uses $modifier to temporarily select $expectedMode during a $mode stroke', ({ mode, modifier, expectedMode }) => {
     toolState.toolArgs = { ...toolState.toolArgs!, mode };
     growAlongStrokeSpy = vi.spyOn(quickSelectionUtil, 'growAlongStroke');
     const toolArea = renderQuickSelectionArea();
@@ -296,25 +296,20 @@ describe('QuickSelectionToolArea', () => {
 
     const strokeModes = growAlongStrokeSpy.mock.calls.map((call: unknown[]) => (call[3] as { mode: string }).mode);
     expect(strokeModes.length).toBeGreaterThan(0);
-    expect(new Set(strokeModes)).toEqual(new Set([mode]));
+    expect(new Set(strokeModes)).toEqual(new Set([expectedMode]));
   });
 
-  it.each([
-    { mode: 'add' as const, modifier: 'altKey' as const },
-    { mode: 'subtract' as const, modifier: 'shiftKey' as const },
-  ])('ignores $modifier pressed after a $mode stroke starts', ({ mode, modifier }) => {
-    toolState.toolArgs = { ...toolState.toolArgs!, mode };
+  it('switches modes for the portion of a stroke where a modifier is held', () => {
     growAlongStrokeSpy = vi.spyOn(quickSelectionUtil, 'growAlongStroke');
     const toolArea = renderQuickSelectionArea();
-    const pressedModifier = { [modifier]: true };
 
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
-    fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 8, clientY: 8, ...pressedModifier });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 8, clientY: 8, ...pressedModifier });
+    fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 8, clientY: 8, altKey: true });
+    fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 11, clientY: 11 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 14, clientY: 14 });
 
     const strokeModes = growAlongStrokeSpy.mock.calls.map((call: unknown[]) => (call[3] as { mode: string }).mode);
-    expect(strokeModes.length).toBeGreaterThan(0);
-    expect(new Set(strokeModes)).toEqual(new Set([mode]));
+    expect(strokeModes).toEqual(['add', 'subtract', 'add', 'add']);
   });
 
   it('uses the updated options-bar mode for the next stroke', () => {
@@ -967,6 +962,25 @@ describe('QuickSelectionToolArea', () => {
     const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string; payload?: unknown });
     const clear = actions.find((action) => action.type === 'COMMIT_DOCUMENT_EDIT');
     expect(clear).toBeDefined();
+    expect(clear?.payload).toMatchObject({
+      updates: { selections: [], activeSelectionId: null, selectionDraft: { status: 'idle' } },
+    });
+    expect(actions.some((action) => action.type === 'CANCEL_SELECTION_DRAFT')).toBe(false);
+  });
+
+  it('clears an emptied selection when Alt is released before pointer-up', () => {
+    storeState.selections = [activeSelectionInFrame];
+    storeState.activeSelectionId = activeSelectionInFrame.id;
+    toolState.toolArgs = { size: 16, tolerance: 0, mode: 'add', alpha: 1, toolName: 'quick-selection' };
+    vi.mocked(rasterizeSelectionState).mockReturnValue(new Uint8Array(IMAGE_SIZE.width * IMAGE_SIZE.height).fill(1));
+
+    const toolArea = renderQuickSelectionArea();
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5, altKey: true });
+    fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: -10, clientY: 5, altKey: true });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: -10, clientY: 5 });
+
+    const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string; payload?: unknown });
+    const clear = actions.find((action) => action.type === 'COMMIT_DOCUMENT_EDIT');
     expect(clear?.payload).toMatchObject({
       updates: { selections: [], activeSelectionId: null, selectionDraft: { status: 'idle' } },
     });
