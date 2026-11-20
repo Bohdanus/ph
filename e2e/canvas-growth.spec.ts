@@ -279,7 +279,7 @@ async function cropInDocument(
   const box = await canvasBox(page);
   const start = documentToCanvasOffset(box, from.x, from.y, documentSize, documentFrame);
   const end = documentToCanvasOffset(box, to.x, to.y, documentSize, documentFrame);
-  await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 10 });
+  await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: 10 });
   await page.keyboard.press('Enter');
   await expect.poll(() => backingStore(page), 'the crop changes the document frame').not.toEqual(documentSize);
   return await backingStore(page);
@@ -453,7 +453,7 @@ test.describe('document size across many tool commits', () => {
     for (let i = 0; i < 5; i += 1) {
       const from = { x: 20 + i * 60, y: 20 };
       const to = { x: from.x + 50, y: 70 };
-      await dragInDocument(page, from, to);
+      await dragInDocument(page, from, to, afterCrop);
       await expect(page.getByTestId('layer-row'), `post-crop commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
       const size = await backingStore(page);
       expect(size, `backing store moved after post-crop commit ${i + 1}`).toEqual(afterCrop);
@@ -674,7 +674,7 @@ test.describe('tablet transparent blank-layer pixels', () => {
 test.describe('crop growth and negative document origin', () => {
   test.use({ viewport: { width: 1280, height: 900 } });
 
-  test('crop past the right and bottom edge grows the frame, later commits hold it', async ({ page }) => {
+  test('crop past the right edge grows the frame, later commits preserve it', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await page.goto('/');
@@ -688,10 +688,9 @@ test.describe('crop growth and negative document origin', () => {
     const baselineDisplay = await displayMetrics(page, baseline);
     const baselineRows = await page.getByTestId('layer-row').count();
 
-    // Drag from inside the document to past the right edge (100px past 800) and bottom edge (not reaching 600 in this viewport).
-    // This produces a crop of 800x400 (extends 100px past right, stays within bottom).
-    const afterCrop = await cropInDocument(page, { x: 100, y: 100 }, { x: 900, y: 500 });
-    expect(afterCrop).toEqual({ width: 800, height: 400 });
+    // Keep 50px from the left while including 100px beyond the right edge, growing the frame by 50px.
+    const afterCrop = await cropInDocument(page, { x: 50, y: 100 }, { x: 900, y: 500 });
+    expect(afterCrop).toEqual({ width: 850, height: 400 });
 
     // A commit after a growth must not re-derive the frame from the layer, which would silently
     // snap the document back to the layer's own size.
@@ -703,9 +702,9 @@ test.describe('crop growth and negative document origin', () => {
     expect(await page.getByTestId('layer-row').count()).toBe(baselineRows);
 
     for (let i = 0; i < 5; i += 1) {
-      const from = { x: 20 + i * 60, y: 20 };
+      const from = { x: 80 + i * 60, y: 20 };
       const to = { x: from.x + 50, y: 70 };
-      await dragInDocument(page, from, to);
+      await dragInDocument(page, from, to, afterCrop);
       await expect(page.getByTestId('layer-row'), `post-crop commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
       const size = await backingStore(page);
       expect(size, `backing store moved after post-crop commit ${i + 1}`).toEqual(afterCrop);
@@ -717,7 +716,7 @@ test.describe('crop growth and negative document origin', () => {
 
     // Undo the last post-crop commit (not the crop itself - need 6 undos to undo crop + 5 commits)
     await page.keyboard.press('ControlOrMeta+z');
-    await expect(page.getByTestId('layer-row'), 'undoing last post-crop commit').toHaveCount(5);
+    await expect(page.getByTestId('layer-row'), 'undoing last post-crop commit').toHaveCount(baselineRows + 4);
     // Document size should still be the cropped size (crop not undone yet)
     await expect.poll(() => backingStore(page), 'undoing last commit keeps cropped size').toEqual(afterCrop);
     await expect.poll(() => footerDimensions(page), 'footer stays at cropped size').toBe(cropFooter);
@@ -750,9 +749,7 @@ test.describe('crop growth and negative document origin', () => {
       .toEqual(cropDisplay);
   });
 
-  test('crop extending past left and top edges produces a smaller frame (UI crop tool limitation)', async ({
-    page,
-  }) => {
+  test('crop extending past the left and top edges commits a negative-origin frame', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await page.goto('/');
@@ -766,13 +763,10 @@ test.describe('crop growth and negative document origin', () => {
     const baselineDisplay = await displayMetrics(page, baseline);
     const baselineRows = await page.getByTestId('layer-row').count();
 
-    // Drag from inside the document toward the top-left corner, extending past the edges.
-    // Due to mouse viewport limitations, the UI crop tool cannot reach far negative coordinates.
-    // This produces a smaller crop (220x180) rather than the full negative-origin crop (620x480)
-    // that the direct API supports. See canvas-growth.test.tsx cases F, G, H for full API coverage.
+    // The released rectangle spans from (-120,-80) through (500,400), so its extent proves the
+    // committed origin is negative on both axes.
     const afterCrop = await cropInDocument(page, { x: 500, y: 400 }, { x: -120, y: -80 });
-    expect(afterCrop.width).toBeLessThan(baseline.width);
-    expect(afterCrop.height).toBeLessThan(baseline.height);
+    expect(afterCrop).toEqual({ width: 620, height: 480 });
 
     await openToolFlyout(page, 'shape');
     await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
@@ -783,7 +777,7 @@ test.describe('crop growth and negative document origin', () => {
     for (let i = 0; i < 5; i += 1) {
       const from = { x: 20 + i * 60, y: 20 };
       const to = { x: from.x + 50, y: 70 };
-      await dragInDocument(page, from, to);
+      await dragInDocument(page, from, to, afterCrop);
       await expect(page.getByTestId('layer-row'), `post-crop commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
       const size = await backingStore(page);
       expect(size, `backing store moved after post-crop commit ${i + 1}`).toEqual(afterCrop);
@@ -795,7 +789,7 @@ test.describe('crop growth and negative document origin', () => {
 
     // Undo the last post-crop commit (not the crop itself - need 6 undos to undo crop + 5 commits)
     await page.keyboard.press('ControlOrMeta+z');
-    await expect(page.getByTestId('layer-row'), 'undoing last post-crop commit').toHaveCount(5);
+    await expect(page.getByTestId('layer-row'), 'undoing last post-crop commit').toHaveCount(baselineRows + 4);
     // Document size should still be the cropped size (crop not undone yet)
     await expect.poll(() => backingStore(page), 'undoing last commit keeps cropped size').toEqual(afterCrop);
     await expect.poll(() => footerDimensions(page), 'footer stays at cropped size').toBe(cropFooter);
@@ -820,7 +814,7 @@ test.describe('crop growth and negative document origin', () => {
     for (let i = 0; i < 6; i += 1) {
       await page.keyboard.press('ControlOrMeta+Shift+z');
     }
-    await expect(page.getByTestId('layer-row'), 'redoing crop + all commits').toHaveCount(6);
+    await expect(page.getByTestId('layer-row'), 'redoing crop + all commits').toHaveCount(baselineRows + 5);
     await expect.poll(() => backingStore(page), 'redoing crop restores the cropped document size').toEqual(afterCrop);
     await expect.poll(() => footerDimensions(page), 'redoing crop restores the cropped Footer size').toBe(cropFooter);
     await expect
@@ -842,9 +836,9 @@ test.describe('crop growth and negative document origin', () => {
     const baselineDisplay = await displayMetrics(page, baseline);
     const baselineRows = await page.getByTestId('layer-row').count();
 
-    // Growth crop (extends past right edge)
-    const afterCrop = await cropInDocument(page, { x: 100, y: 100 }, { x: 900, y: 500 });
-    expect(afterCrop).toEqual({ width: 800, height: 400 });
+    // Growth crop: keep 50px from the left while including 100px beyond the right edge.
+    const afterCrop = await cropInDocument(page, { x: 50, y: 100 }, { x: 900, y: 500 });
+    expect(afterCrop).toEqual({ width: 850, height: 400 });
     const cropDisplay = await displayMetrics(page, afterCrop);
     const cropFooter = await footerDimensions(page);
 
