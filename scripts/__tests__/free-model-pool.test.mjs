@@ -401,6 +401,20 @@ describe('free model catalog filtering', () => {
     });
   });
 
+  it('retries truncated Kilo Nemotron once with a larger response-length budget', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({ kilo: [kiloRow(model)] });
+    const runKilo = vi
+      .fn()
+      .mockResolvedValueOnce({ model, content: 'partial', finishReason: 'length' })
+      .mockResolvedValueOnce({ model, content: 'complete', finishReason: 'stop' });
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, kiloCommand: '/fake-kilo', runKilo })
+    ).resolves.toMatchObject({ source: 'kilo', model, content: 'complete' });
+    expect(runKilo.mock.calls.map(([options]) => options?.maxTokens)).toEqual([4096, 6144]);
+  });
+
   it('blocks noncanonical Nemotron variants before any inference request', async () => {
     const model = 'nvidia/nemotron-3-ultra-550b-a55b-v2:free';
     const chat = vi.fn();
