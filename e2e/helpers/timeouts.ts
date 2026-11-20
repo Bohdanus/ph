@@ -60,3 +60,9 @@ export const PAINT_TOOLS_TEST_TIMEOUT_MS = 120_000;
  * so 60s is insufficient. 180s provides ~4s per load headroom.
  */
 export const SEARCH_TEST_TIMEOUT_MS = 180_000;
+
+/**
+ * The export geometry sweep reloads and saves across eight desktop/tablet layouts, beyond the
+ * routine test budget.
+ */
+export const EXPORT_LAYOUT_SWEEP_TEST_TIMEOUT_MS = 120_000;

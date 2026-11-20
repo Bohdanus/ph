@@ -7,6 +7,7 @@ import { execSync } from 'node:child_process';
 import { compareScreenshots } from '../helpers/image-comparison';
 import { containFit, DEFAULT_DOCUMENT_SIZE, getWorkspaceCanvas } from '../helpers/canvas-helpers';
 import { clickToolButton } from '../helpers/toolbar-helpers';
+import { EXPORT_LAYOUT_SWEEP_TEST_TIMEOUT_MS } from '../helpers/timeouts';
 import {
   assertExportGeometry,
   browserVerifiedFormats,
@@ -258,7 +259,7 @@ test.describe('Export visual regression', () => {
    * regression in the export geometry, not an OS rendering difference.
    */
   test('the export is independent of the shell layout @os-agnostic', async ({ page }, testInfo) => {
-    test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
+    test.setTimeout(EXPORT_LAYOUT_SWEEP_TEST_TIMEOUT_MS);
 
     const configurations: { label: string; width: number; height: number; toolbarLayout: 'default' | 'toggled' }[] = [];
     for (const height of [720, 560]) {
