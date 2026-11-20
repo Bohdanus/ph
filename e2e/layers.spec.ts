@@ -149,7 +149,8 @@ test.describe('Layers', () => {
     };
     const removeLayer = async (name: string) => {
       const row = layerRow(name);
-      await row.getByRole('button', { name: 'Remove layer' }).click();
+      await row.click();
+      await page.getByTestId('layers-delete-active-button').click();
       await page.getByTestId('confirm-dialog-confirm-button').click();
       await expect(row).toHaveCount(0);
     };
@@ -392,7 +393,8 @@ test.describe('Layers', () => {
     await expect(historyRows, 'the document entry plus the stroke').toHaveCount(2);
     const beforeDelete = await historyRows.count();
 
-    await drawnRow.getByRole('button', { name: 'Remove layer' }).click();
+    await drawnRow.click();
+    await page.getByTestId('layers-delete-active-button').click();
     await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(drawnRow).toHaveCount(0);
 
@@ -482,13 +484,11 @@ test.describe('Layers', () => {
     const rowCount = await rows.count();
     expect(rowCount, 'a stroke plus the bedrock layer').toBe(2);
 
-    // Per-layer glyphs are also decorative SVGs, so identify the drag affordance explicitly.
-    const handleCount = await rows.evaluateAll((nodes) =>
-      nodes.reduce((count, row) => {
-        return count + row.querySelectorAll('[data-testid="drag-handle-icon"]').length;
-      }, 0)
-    );
-    expect(handleCount, 'every row renders exactly one drag handle').toBe(rowCount);
+    const draggableStates = await rows.evaluateAll((nodes) => nodes.map((row) => row.getAttribute('draggable')));
+    expect(draggableStates, 'the row itself is the drag handle except for the backing layer').toEqual([
+      'true',
+      'false',
+    ]);
   });
 
   /**

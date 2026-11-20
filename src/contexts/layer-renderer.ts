@@ -1,5 +1,5 @@
 import type { BitmapSource, Pos, Size } from './general-types.ts';
-import type { Layer, LayerOperation } from './layer-types.ts';
+import type { Layer, LayerOperation, ToolLayerSource } from './layer-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import { findToolProcessor, type CreatorToolParams } from '../tools/toolProcessors.ts';
 import { documentFrameSize, type DocumentFrame } from './document-frame.ts';
@@ -18,6 +18,8 @@ import {
   type PresentationDrawTarget,
   type PresentationOperation,
 } from './presentation-evaluator.ts';
+import { drawLine } from '../util/draw.ts';
+import { setupDrawCtx, type DrawToolArgs } from '../tools/draw.ts';
 import { drawShape, normalizeFigure, setShapeCtx, type ShapeToolArgs } from '../tools/shape.ts';
 
 function enabledFilterOperations(
@@ -58,6 +60,10 @@ const rasterPreviewCanvases = new WeakSet<object>();
 const sourceOnlyShapeBitmapCache = new WeakMap<object, { source: object; isSourceOnly: boolean }>();
 const SHAPE_BITMAP_COMPARE_TILE_SIZE = 256;
 const MAX_SHAPE_BITMAP_COMPARE_PIXELS = 16_777_216;
+
+function isPositionedDrawSource(source: Layer['source']): source is ToolLayerSource & { args: DrawToolArgs; pos: Pos } {
+  return source?.kind === 'tool' && 'pos' in source && source.args.toolName === 'draw';
+}
 
 function outputScale(ctx: CanvasRenderingContext2D): number {
   const getTransform = (ctx as CanvasRenderingContext2D & { getTransform?: () => DOMMatrix }).getTransform;
@@ -266,6 +272,38 @@ export function drawLayerSource(
 
   const source = layer.source;
   const isRetainedVectorSource = source?.kind === 'tool' && vectorToolNames.has(source.args.toolName);
+  if (
+    isPositionedDrawSource(source) &&
+    !source.args.blockStamp &&
+    source.args.composite !== 'destination-out' &&
+    // Spray stamps overlap; reduced layer opacity must composite the cached stroke as a group.
+    (source.args.penType !== 'spray' || layer.opacity === 1) &&
+    operations.length === 0 &&
+    (presentationBounds === null || presentationBounds === undefined) &&
+    layer.blendMode === 'source-over' &&
+    source.pos.width === position.width &&
+    source.pos.height === position.height &&
+    !preferCachedSource
+  ) {
+    const x = position.x - (documentFrame?.x ?? 0);
+    const y = position.y - (documentFrame?.y ?? 0);
+    ctx.save();
+    try {
+      ctx.filter = 'none';
+      ctx.beginPath();
+      ctx.rect(x, y, position.width, position.height);
+      ctx.clip();
+      ctx.translate(x, y);
+      const layerOpacity = ctx.globalAlpha;
+      setupDrawCtx(ctx, source.args);
+      if (source.args.penType !== 'spray') ctx.globalAlpha = source.args.alpha * layerOpacity;
+      drawLine({ args: source.args, ctx });
+    } finally {
+      ctx.restore();
+    }
+    return true;
+  }
+
   const shapeSourcePos = source?.kind === 'tool' && 'pos' in source ? source.pos : undefined;
   const shapeSourceArgs =
     source?.kind === 'tool' && 'figure' in source.args ? (source.args as unknown as ShapeToolArgs) : null;

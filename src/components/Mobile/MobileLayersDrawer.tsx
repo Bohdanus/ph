@@ -13,6 +13,7 @@ import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/consta
 import { useModalA11y } from './useModalA11y.ts';
 import { LayerBlendModeSelect, LayerLockToggle } from '../SidebarRight/LayersTab.tsx';
 import ConfirmDialog from '../ConfirmDialog/ConfirmDialog.tsx';
+import LayerThumbnail from '../SidebarRight/LayerThumbnail.tsx';
 
 export interface MobileLayersDrawerProps {
   isOpen: boolean;
@@ -413,6 +414,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                         >
                           <EyeIcon open={layer.visible} />
                         </button>
+                        <LayerThumbnail layer={layer} touchReorderEnabled={false} />
 
                         {isEditing ? (
                           <input
