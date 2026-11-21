@@ -2096,3 +2096,20 @@ the eventual ruling differs from this app, add a shape-specific decision to `doc
 OVR-2 is about the Draw tool, not shapes. Preserve the `!!args.backgroundColor` half of the fill
 gate either way; it prevents a filled figure without a colour from painting with whatever
 `fillStyle` the shared overlay last carried.
+
+## 229. Fixed-size marquee's ordinary-click anchor lacks Photoshop evidence
+
+**Problem.** `useRect.adjustFreshPoint()` centers the configured fixed-size rectangle on the press
+point, and the current `e2e/selection-tools.spec.ts` fixed-size test pins that behavior. The
+unlanded `salvage/systemic-marquee-20261117` change clarifies that later drag movement does not
+change those dimensions. Adobe's current [Marquee tools guide](https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/make-selections-with-marquee-tools.html)
+defines Fixed Size as exact pixel dimensions and describes center-origin drawing for Alt/Option-drag,
+but does not establish the anchor for an ordinary click in Fixed Size style. Treat center-on-press as
+the app's current behavior, not verified Photoshop parity; do not expand the test's compatibility
+claim until a current Photoshop observation or authoritative source settles the anchor.
+
+**Affected.** `src/hooks/useRect.ts` — `adjustFreshPoint()`; `src/components/Main/RectangularSelectionToolArea.tsx`;
+`e2e/selection-tools.spec.ts` — the fixed-size rectangular marquee test.
+
+**Blocker.** The fixed-size click anchor needs a version-specific Photoshop observation or an
+authoritative source before this behavior can be accepted as a compatibility contract.
