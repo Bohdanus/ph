@@ -220,11 +220,11 @@ export const REFUSALS = {
   'ignored-content': (count, paths) =>
     `The working tree holds ${count} gitignored path(s) that no command rebuilds, so they exist in no commit, no ref and no reflog: ${paths.slice(0, 8).join(', ')}${paths.length > 8 ? `, +${paths.length - 8} more` : ''}. \`git status\` does not list these, which is why a tree holding only them reads as clean. Commit them with \`git add -f\`, or move them out, before removing the directory.`,
   'operation-in-progress': (detail, remedy, ownership, remedyless) =>
-    `A git operation is in progress in this worktree, and removing the directory deletes the state files that are its only record: ${detail}. Nothing about it is in a commit, a ref or the reflog, so this is unrecoverable rather than merely inconvenient. ` +
+    `Git operation state is present in this worktree, and removing the directory deletes the state files that are its only record: ${detail}. Nothing about that state is in a commit, a ref or the reflog, so this is unrecoverable rather than merely inconvenient. ` +
     (remedy
       ? `Finish or abandon it deliberately — ${remedy} — and re-run this. If every conflict is already resolved, COMMIT it instead: the abort throws the resolution away, which is the one outcome this refusal exists to prevent. `
       : remedyless
-        ? `Git has no command that abandons ${remedyless}, so there is nothing to run: finish or commit the resolution there, or reset the worktree by hand. `
+        ? `No safe abort command can be selected for ${remedyless}. Verify the owner and follow the owner-checked recovery procedure before changing any marker; otherwise finish or commit the resolution there, or reset the worktree by hand. `
         : `No operation marker is set, so no abort will clean this up — inspect \`git diff --name-only --diff-filter=U\` there and resolve or stage it by hand. `) +
     (ownership ?? ''),
   'operation-state-unreadable': (detail, command) =>
@@ -628,7 +628,11 @@ export function preflight({
   } else if (state.readError) {
     refuse('operation-state-unreadable', state.readError, 'git diff --name-only --diff-filter=U');
   } else if (state.operations.length > 0 || state.unmerged.length > 0) {
-    const named = state.operations.map((o) => `${o.operation} (${o.marker}${o.value ? ` -> ${o.value}` : ''})`);
+    const named = state.operations.map((o) =>
+      typeof o.operation === 'string'
+        ? `${o.operation} (${o.marker}${o.value ? ` -> ${o.value}` : ''})`
+        : `${o.marker ?? 'Unknown'} marker without a primary operation marker`
+    );
     const unmerged = state.unmerged.length > 0 ? [`${state.unmerged.length} unmerged path(s) in the index`] : [];
     // No remedy name when there is no command to name. `git merge --abort` does nothing
     // for an unresolvable index with no operation behind it, and a squash has no abandon
@@ -642,7 +646,11 @@ export function preflight({
       remedy === '' && state.operations.length > 0
         ? state.operations
             .filter((o) => abortCommand(o) === null)
-            .map((o) => `a ${o.operation}`)
+            .map((o) =>
+              typeof o.operation === 'string'
+                ? `a ${o.operation}`
+                : `the unpaired ${o.marker ?? 'unknown'} marker, which does not identify an operation`
+            )
             .join(' or ')
         : null;
     refuse(
