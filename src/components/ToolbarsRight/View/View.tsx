@@ -30,6 +30,7 @@ function ViewButtons({
         data-testid={testIdPrefix ? `${testIdPrefix}-fit-on-screen` : undefined}
         type="button"
         onClick={() => setViewState(DEFAULT_VIEW_STATE)}
+        className="text-sm font-medium text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white"
       >
         Fit On Screen
       </button>
@@ -45,6 +46,7 @@ function ViewButtons({
             minimumZoomOverride: undefined,
           })
         }
+        className="text-sm font-medium text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white"
       >
         100%
       </button>
@@ -74,11 +76,23 @@ export function Hand() {
 
   return (
     <div className="flex items-center gap-2">
-      <span data-testid="hand-zoom-level">{formatViewZoomPercent(magnification)}</span>
-      <button data-testid="hand-zoom-out" type="button" onClick={() => step(0.8)}>
+      <span data-testid="hand-zoom-level" className="font-mono font-bold text-gray-900 dark:text-gray-200">
+        {formatViewZoomPercent(magnification)}
+      </span>
+      <button
+        data-testid="hand-zoom-out"
+        type="button"
+        onClick={() => step(0.8)}
+        className="text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white"
+      >
         −
       </button>
-      <button data-testid="hand-zoom-in" type="button" onClick={() => step(1.25)}>
+      <button
+        data-testid="hand-zoom-in"
+        type="button"
+        onClick={() => step(1.25)}
+        className="text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white"
+      >
         +
       </button>
       <ViewButtons devicePixelRatio={devicePixelRatio} fitScale={fitScale} testIdPrefix="hand" />
@@ -130,7 +144,10 @@ export function Zoom() {
 
   return (
     <div className="flex items-center gap-2">
-      <label className="w-24 shrink-0 whitespace-nowrap text-right tabular-nums" htmlFor="view-zoom-slider">
+      <label
+        className="w-24 shrink-0 whitespace-nowrap text-right tabular-nums text-gray-700 dark:text-gray-200"
+        htmlFor="view-zoom-slider"
+      >
         Zoom {formatViewZoomPercent(zoom)}
       </label>
       <input
@@ -181,7 +198,9 @@ export function RotateView() {
   };
   return (
     <div className="flex items-center gap-1">
-      <label htmlFor="view-rotation-slider">Rotation {Math.round(rotation)}°</label>
+      <label className="text-gray-700 dark:text-gray-200" htmlFor="view-rotation-slider">
+        Rotation {Math.round(rotation)}°
+      </label>
       <input
         data-testid="rotate-view-angle"
         id="view-rotation-slider"
@@ -192,7 +211,12 @@ export function RotateView() {
         value={rotation}
         onChange={(event) => setViewState({ rotation: normalizeRotation(Number(event.target.value)) })}
       />
-      <button data-testid="rotate-view-reset" type="button" onClick={() => setViewState({ rotation: 0 })}>
+      <button
+        data-testid="rotate-view-reset"
+        type="button"
+        onClick={() => setViewState({ rotation: 0 })}
+        className="text-sm font-medium text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white"
+      >
         Reset View
       </button>
     </div>

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import ConfirmDialog from '../ConfirmDialog.tsx';
 
@@ -32,6 +32,7 @@ describe('ConfirmDialog', () => {
     const { onConfirm, onCancel } = setup();
     expect(screen.getByTestId('confirm-dialog-confirm-button')).toHaveTextContent('Discard');
     expect(screen.getByTestId('confirm-dialog-cancel-button')).toHaveTextContent('Cancel');
+    expect(screen.getByTestId('confirm-dialog-close-button')).toHaveAccessibleName('Close');
 
     fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
     expect(onConfirm).toHaveBeenCalledTimes(1);
@@ -63,5 +64,60 @@ describe('ConfirmDialog', () => {
     fireEvent.keyDown(dialog, { key: 'z', metaKey: true });
     document.removeEventListener('keydown', (event) => seen.push(event));
     expect(seen).toHaveLength(0);
+  });
+
+  it('restores focus to its fallback when the opener is removed', () => {
+    const opener = document.createElement('button');
+    document.body.append(opener);
+    opener.focus();
+    const fallback = document.createElement('button');
+    document.body.append(fallback);
+
+    const { unmount } = render(
+      <ConfirmDialog
+        title="Delete Layer?"
+        message="Are you sure?"
+        confirmLabel="Delete"
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        returnFocusRef={{ current: fallback }}
+      />
+    );
+    try {
+      opener.remove();
+      unmount();
+      expect(document.activeElement).toBe(fallback);
+    } finally {
+      opener.remove();
+      fallback.remove();
+    }
+  });
+
+  it('restores focus when React removes the opener just after dialog cleanup', async () => {
+    const opener = document.createElement('button');
+    document.body.append(opener);
+    opener.focus();
+    const fallback = document.createElement('div');
+    fallback.tabIndex = -1;
+    document.body.append(fallback);
+
+    const { unmount } = render(
+      <ConfirmDialog
+        title="Delete Layer?"
+        message="Are you sure?"
+        confirmLabel="Delete"
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        returnFocusRef={{ current: fallback }}
+      />
+    );
+    try {
+      unmount();
+      opener.remove();
+      await waitFor(() => expect(document.activeElement).toBe(fallback));
+    } finally {
+      opener.remove();
+      fallback.remove();
+    }
   });
 });

@@ -79,8 +79,9 @@ const REVIEWED = {
     patterns: `filesystem-write:mkdtemp=1 filesystem-write:rm=1`,
   },
   'free-model-quarantine.test.mjs': {
-    scope: 'Quarantine fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=11 filesystem-write:rm=11`,
+    scope:
+      'Quarantine state fixtures use unique OS temporary directories, including regular and locked expiry-load persistence checks.',
+    patterns: `filesystem-write:mkdtemp=12 filesystem-write:rm=12`,
   },
   'free-model-sweep.test.mjs': {
     scope: 'Sweep and quarantine fixtures use unique OS temporary directories.',

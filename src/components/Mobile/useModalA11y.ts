@@ -42,8 +42,9 @@ export function useModalA11y(isOpen: boolean, onClose: () => void, panelRef: Ref
     if (!isOpen) return;
 
     const panel = panelRef.current;
-    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    panel?.focus();
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    restoreFocusRef.current = activeElement;
+    if (!activeElement || !panel?.contains(activeElement)) panel?.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -85,7 +86,7 @@ export function useModalA11y(isOpen: boolean, onClose: () => void, panelRef: Ref
       document.removeEventListener('keydown', handleKeyDown);
       const restoreTo = restoreFocusRef.current;
       restoreFocusRef.current = null;
-      restoreTo?.focus();
+      if (panel && !panel.isConnected) restoreTo?.focus();
     };
   }, [isOpen, panelRef]);
 }

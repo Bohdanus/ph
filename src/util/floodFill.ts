@@ -3,15 +3,13 @@ import type { RgbaColor } from './magicWand.ts';
 import { isRasterSelectionSizeWithinBudget } from './selection-mask.ts';
 
 /**
- * RGB flood fill behind the Paint Bucket, Magic Eraser and Color Replacement. This is deliberately
- * separate from the RGBA region mask used by `magicWand.ts` and Quick Selection: those selection
- * tools trace and retain every boundary loop, while fill and color-replacement processors need a
- * pixel mask. Their color metrics differ too. Magic Wand folds alpha into a 4-D distance and uses
- * a 0-100 tolerance scale; this fill follows Photoshop's 0-255 scale over RGB and treats a pixel
- * with the same RGB values as matching regardless of alpha. The fill compares squared distances,
- * so a 4000x4000 operation costs no `Math.sqrt` and creates no per-pixel color object.
+ * RGBA flood fill behind the Paint Bucket and Magic Eraser. It is separate from the RGBA region
+ * mask used by `magicWand.ts` and Quick Selection: those selection tools trace and retain every
+ * boundary loop, while fill processors need a pixel mask. The tolerance scales differ: the wand
+ * uses 0-100, while this fill uses 0-255. The fill compares squared RGBA distances, so a
+ * 4000x4000 operation costs no `Math.sqrt` and creates no per-pixel color object.
  */
-const MAX_COLOR_DISTANCE = Math.sqrt(255 * 255 * 3);
+const MAX_COLOR_DISTANCE = Math.sqrt(255 * 255 * 4);
 const MAX_TOLERANCE = 255;
 const DEFAULT_TOLERANCE = 32;
 
@@ -77,8 +75,9 @@ function isPixelWithinTolerance(
   const dr = data[dataIndex] - sampleColor.r;
   const dg = data[dataIndex + 1] - sampleColor.g;
   const db = data[dataIndex + 2] - sampleColor.b;
+  const da = data[dataIndex + 3] - sampleColor.a;
 
-  return dr * dr + dg * dg + db * db <= tolerance * tolerance;
+  return dr * dr + dg * dg + db * db + da * da <= tolerance * tolerance;
 }
 
 function enqueuePixel(index: number, visited: Uint8Array, queue: Int32Array, queueEnd: number): number {
@@ -162,12 +161,11 @@ function createContiguousScan(
 }
 
 /**
- * Selects every pixel within `tolerance` of the seed's colour, 4-connected from the seed unless
- * `contiguous` is false, and returns the unreduced mask. RGB only: a pixel identical in r, g and
- * b is inside the region whatever its alpha, which is the opposite of `getMagicWandColorDistance`
- * and is not a bug. Returns null when the seed is outside the image or nothing matched, so a
- * caller never has to distinguish "no region here" from "no region because the tolerance was
- * nonsense".
+ * Selects every pixel within `tolerance` of the seed's RGBA value, 4-connected from the seed
+ * unless `contiguous` is false, and returns the unreduced mask. Including alpha keeps transparent
+ * pixels from crossing opaque, anti-aliased boundaries that share their RGB values. Returns null
+ * when the seed is outside the image or nothing matched, so a caller never has to distinguish
+ * "no region here" from "no region because the tolerance was nonsense".
  */
 export function createFloodFillMask(
   imageData: ImageData,

@@ -67,7 +67,7 @@ function gitResult(args, cwd = process.cwd(), env = process.env) {
     cwd,
     env,
     encoding: 'utf8',
-    timeout: 20_000,
+    timeout: 60_000,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -1127,7 +1127,13 @@ async function runPinnedLanding(paths, owner, pins, { run = runChild } = {}) {
     throw new Error('prepared merge tree differs from the reviewed tree; preserving state');
 
   heartbeat(paths, owner, 'committing reviewed landing', null);
-  const message = 'Merge ' + pins.branch + ' into main\n\nBranch: ' + pins.branch + '\nChat: ' + pins.chatId;
+  const message = [
+    'Merge ' + pins.branch + ' into main',
+    '',
+    'Branch: ' + pins.branch,
+    'Chat: ' + pins.chatId,
+    'Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>',
+  ].join('\n');
   const commitEnv = {
     ...process.env,
     KILO_EXPECTED_MAIN_SHA: pins.mainSha,

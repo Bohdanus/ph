@@ -401,6 +401,20 @@ describe('free model catalog filtering', () => {
     });
   });
 
+  it('retries truncated Kilo Nemotron once with a larger response-length budget', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({ kilo: [kiloRow(model)] });
+    const runKilo = vi
+      .fn()
+      .mockResolvedValueOnce({ model, content: 'partial', finishReason: 'length' })
+      .mockResolvedValueOnce({ model, content: 'complete', finishReason: 'stop' });
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, kiloCommand: '/fake-kilo', runKilo })
+    ).resolves.toMatchObject({ source: 'kilo', model, content: 'complete' });
+    expect(runKilo.mock.calls.map(([options]) => options?.maxTokens)).toEqual([4096, 6144]);
+  });
+
   it('blocks noncanonical Nemotron variants before any inference request', async () => {
     const model = 'nvidia/nemotron-3-ultra-550b-a55b-v2:free';
     const chat = vi.fn();
@@ -937,18 +951,26 @@ console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }))
     const previous = new Map(Object.keys(overrides).map((key) => [key, process.env[key]]));
     const command = await writeFakeOpenCode(
       directory,
-      `const expectedRuntime = {
+      `const path = require('node:path');
+const isolatedHome = process.env.HOME;
+const callerProfilePaths = {
   HOME: '/fixture/opencode-home',
   XDG_CONFIG_HOME: '/fixture/opencode-config',
   XDG_DATA_HOME: '/fixture/opencode-data',
 };
-const mismatched = Object.entries(expectedRuntime).filter(([key, value]) => process.env[key] !== value);
+const mismatched = Object.entries(callerProfilePaths).filter(([key, value]) => process.env[key] === value);
+const isolatedProfilePaths = [
+  ['XDG_CONFIG_HOME', 'xdg-config'],
+  ['XDG_DATA_HOME', 'xdg-data'],
+  ['XDG_CACHE_HOME', 'xdg-cache'],
+].filter(([key, suffix]) => path.resolve(process.env[key]) !== path.resolve(isolatedHome, suffix));
 const leaked = ['OPENROUTER_API_KEY', 'GROQ_API_KEY', 'KILO_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR', 'UNRELATED_SECRET']
   .filter((key) => process.env[key] !== undefined);
-if (mismatched.length || leaked.length) process.exit(10);
+if (mismatched.length || isolatedProfilePaths.length || leaked.length) process.exit(10);
 if (process.env.OPENCODE_CONFIG_CONTENT === 'caller-config-must-be-replaced') process.exit(11);
 if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(12);
 if (process.env.OPENCODE_DISABLE_AUTOUPDATE !== '1' || process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS !== '1') process.exit(13);
+if (process.env.OPENCODE_PURE !== '1' || process.env.OPENCODE_DISABLE_PROJECT_CONFIG !== '1') process.exit(14);
 console.log(JSON.stringify({ type: 'text', part: { text: 'isolated answer' } }));`
     );
 

@@ -149,7 +149,9 @@ test.describe('Layers', () => {
     };
     const removeLayer = async (name: string) => {
       const row = layerRow(name);
-      await row.getByRole('button', { name: 'Remove layer' }).click();
+      await row.click();
+      await page.getByTestId('layers-delete-active-button').click();
+      await page.getByTestId('confirm-dialog-confirm-button').click();
       await expect(row).toHaveCount(0);
     };
     const removeAndCapture = async (name: string, screenshotName: string) => {
@@ -369,8 +371,8 @@ test.describe('Layers', () => {
    * deletion that published no entry leaves the canvas correct and every pixel assertion green,
    * while the layer is silently un-undoable — which is the regression this pins.
    *
-   * `removeLayer` in the test above calls `handleConfirmRemove`, dispatched as `REMOVE_ACTION`
-   * (`src/util/constants.ts`), so the row title is the product's own lower-case spelling read
+   * `removeLayer` in the test above confirms `requestLayerRemoval`'s request, dispatched as
+   * `REMOVE_ACTION` (`src/util/constants.ts`), so the row title is the product's own spelling read
    * through the same case-insensitive filter `REORDER_ENTRY` uses for reorders.
    */
   test('deleting a layer is a history entry of its own', async ({ page }) => {
@@ -391,7 +393,9 @@ test.describe('Layers', () => {
     await expect(historyRows, 'the document entry plus the stroke').toHaveCount(2);
     const beforeDelete = await historyRows.count();
 
-    await drawnRow.getByRole('button', { name: 'Remove layer' }).click();
+    await drawnRow.click();
+    await page.getByTestId('layers-delete-active-button').click();
+    await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(drawnRow).toHaveCount(0);
 
     await expect(historyRows, 'deleting a layer is ONE entry of its own, not zero').toHaveCount(beforeDelete + 1);
@@ -480,13 +484,11 @@ test.describe('Layers', () => {
     const rowCount = await rows.count();
     expect(rowCount, 'a stroke plus the bedrock layer').toBe(2);
 
-    // Per-layer glyphs are also decorative SVGs, so identify the drag affordance explicitly.
-    const handleCount = await rows.evaluateAll((nodes) =>
-      nodes.reduce((count, row) => {
-        return count + row.querySelectorAll('[data-testid="drag-handle-icon"]').length;
-      }, 0)
-    );
-    expect(handleCount, 'every row renders exactly one drag handle').toBe(rowCount);
+    const draggableStates = await rows.evaluateAll((nodes) => nodes.map((row) => row.getAttribute('draggable')));
+    expect(draggableStates, 'the row itself is the drag handle except for the backing layer').toEqual([
+      'true',
+      'false',
+    ]);
   });
 
   /**

@@ -1,19 +1,16 @@
 /**
- * Pins the fill-grade contract of `src/util/floodFill.ts`: a 0-255 tolerance, a 3-D RGB
+ * Pins the fill-grade contract of `src/util/floodFill.ts`: a 0-255 tolerance, a 4-D RGBA
  * distance, a 4-connected flood, holes kept in the mask, and `null` in place of an empty mask.
  *
- * The cases that carry the weight are the ones where this module must differ from
- * `src/util/magicWand.ts`, which is a sibling module and not a template for this one. The wand
- * folds the alpha delta into its distance and clamps tolerance to 0-100;
- * the fill uses `getToleranceDistance` over `MAX_COLOR_DISTANCE = sqrt(255 * 255 * 3)` and a
- * squared comparison, so the alpha cases here are the ones that fail if the sibling is copied.
- * Both entry points preserve holes in their own representations: this module retains the binary
- * mask, while the wand traces every boundary loop. Their pixel coverage is compared below.
+ * The wand also folds alpha into its distance but clamps tolerance to 0-100; fill uses its own
+ * 0-255 scale. Both entry points preserve holes in their own representations: this module retains
+ * the binary mask, while the wand traces every boundary loop. Their pixel coverage is compared
+ * below.
  *
  * Every tolerance threshold below is a number rather than a description, because the whole point
  * of the rescaled metric is that a caller can predict which pixels a given tolerance reaches:
- * a 0-255 tolerance maps onto a maximum RGB distance of `255 * sqrt(3)`, so a pixel at distance
- * `d` is selected at tolerance `d / sqrt(3)`.
+ * a 0-255 tolerance maps onto a maximum RGBA distance of `255 * 2`, so a pixel at distance `d` is
+ * selected at tolerance `d / 2`.
  */
 import { describe, expect, it } from 'vitest';
 import { createFloodFillMask, type FloodFillOptions } from '../floodFill.ts';
@@ -79,17 +76,17 @@ function createCornerTouchingRegions(): ImageData {
 }
 
 /**
- * A 5x1 strip seeded at (0,0) with opaque black and four lit neighbours at RGB distances 50, 173,
- * 255 and `255 * sqrt(3)`, which a 0-255 tolerance reaches at 29, 100, 148 and 255. The last one is
- * the largest distance a 3-channel metric can produce, so it pins the end of the scale: only
- * tolerance 255 reaches it, and a tolerance of 9999 must behave identically to 255.
+ * A 5x1 strip seeded at (0,0) with opaque black and four neighbours at RGBA distances 50, 173,
+ * 255 and 510, which a 0-255 tolerance reaches at 25, 87, 128 and 255. The last one is the largest
+ * distance in RGBA space, so it pins the end of the scale: only tolerance 255 reaches it, and a
+ * tolerance of 9999 must behave identically to 255.
  */
 function createToleranceStrip(): ImageData {
   const imageData = createImageData(5, 1, [0, 0, 0, 255]);
   setPixel(imageData, 1, 0, [50, 0, 0, 255]);
   setPixel(imageData, 2, 0, [173, 0, 0, 255]);
   setPixel(imageData, 3, 0, [0, 0, 255, 255]);
-  setPixel(imageData, 4, 0, [255, 255, 255, 255]);
+  setPixel(imageData, 4, 0, [255, 255, 255, 0]);
 
   return imageData;
 }
@@ -172,14 +169,14 @@ describe('tolerance', () => {
     ['an omitted tolerance falls back to the default of 32', undefined, 2],
     ['a negative tolerance is clamped to zero', -50, 1],
     ['zero selects only the exact match', 0, 1],
-    ['28 is one unit below the threshold for the 50-distance neighbour', 28, 1],
-    ['29 is the first tolerance that reaches the 50-distance neighbour', 29, 2],
-    ['99 is one unit below the threshold for the 173-distance neighbour', 99, 2],
-    ['100 is the first tolerance that reaches the 173-distance neighbour', 100, 3],
-    ['147 is one unit below the threshold for the 255-distance neighbour', 147, 3],
-    ['148 is the first tolerance that reaches the 255-distance neighbour', 148, 4],
-    ['254 cannot reach the maximum distance of the 3-channel metric', 254, 4],
-    ['255 is the maximum of the scale and reaches every RGB distance', 255, 5],
+    ['24 is one unit below the threshold for the 50-distance neighbour', 24, 1],
+    ['25 is the first tolerance that reaches the 50-distance neighbour', 25, 2],
+    ['86 is one unit below the threshold for the 173-distance neighbour', 86, 2],
+    ['87 is the first tolerance that reaches the 173-distance neighbour', 87, 3],
+    ['127 is one unit below the threshold for the 255-distance neighbour', 127, 3],
+    ['128 is the first tolerance that reaches the 255-distance neighbour', 128, 4],
+    ['254 cannot reach the maximum distance of the 4-channel metric', 254, 4],
+    ['255 is the maximum of the scale and reaches every RGBA distance', 255, 5],
     ['a tolerance above 255 is clamped to the maximum', 9999, 5],
     ['a NaN tolerance falls back to the default rather than matching nothing', Number.NaN, 2],
     ['an infinite tolerance falls back to the default rather than clamping to 255', Number.POSITIVE_INFINITY, 2],
@@ -190,8 +187,8 @@ describe('tolerance', () => {
   });
 
   it('includes the neighbours inside the tolerance and excludes the ones past it, mask byte by mask byte', () => {
-    const narrow = createFloodFillMask(createToleranceStrip(), { x: 0, y: 0 }, { tolerance: 29 })!;
-    const wide = createFloodFillMask(createToleranceStrip(), { x: 0, y: 0 }, { tolerance: 100 })!;
+    const narrow = createFloodFillMask(createToleranceStrip(), { x: 0, y: 0 }, { tolerance: 25 })!;
+    const wide = createFloodFillMask(createToleranceStrip(), { x: 0, y: 0 }, { tolerance: 87 })!;
 
     expect([...narrow.mask]).toEqual([1, 1, 0, 0, 0]);
     expect(narrow.bounds).toEqual({ left: 0, top: 0, right: 1, bottom: 0 });
@@ -200,39 +197,44 @@ describe('tolerance', () => {
   });
 });
 
-describe('alpha does not participate', () => {
-  it('selects a fully transparent neighbour of an opaque seed, since only RGB is compared', () => {
-    const imageData = createImageData(3, 3, [0, 0, 0, 255]);
-    setPixel(imageData, 1, 1, [0, 0, 0, 0]);
-    setPixel(imageData, 2, 1, [0, 0, 0, 128]);
+describe('alpha participates in fill boundaries', () => {
+  it('keeps a transparent center enclosed by an opaque outline separate from the exterior', () => {
+    const imageData = createImageData(7, 7, [0, 0, 0, 0]);
+    for (let y = 1; y < 6; y++) {
+      for (let x = 1; x < 6; x++) {
+        if (x === 1 || x === 5 || y === 1 || y === 5) setPixel(imageData, x, y, [0, 0, 0, 255]);
+      }
+    }
 
-    const result = createFloodFillMask(imageData, { x: 0, y: 0 }, { tolerance: 0 });
+    const result = createFloodFillMask(imageData, { x: 3, y: 3 }, { tolerance: 0 })!;
 
-    expect(result?.selectedPixelCount).toBe(9);
-    expect(result?.sampleColor).toEqual({ r: 0, g: 0, b: 0, a: 255 });
-    expect(result?.mask[getPixelIndex(1, 1, 3)]).toBe(1);
-    expect(result?.mask[getPixelIndex(2, 1, 3)]).toBe(1);
+    expect(result.selectedPixelCount).toBe(9);
+    expect(result.mask[getPixelIndex(3, 3, imageData.width)]).toBe(1);
+    expect(result.mask[getPixelIndex(0, 0, imageData.width)]).toBe(0);
+    expect(result.mask[getPixelIndex(1, 3, imageData.width)]).toBe(0);
   });
 
-  it('selects opaque neighbours of a fully transparent seed at the same zero tolerance', () => {
+  it('includes alpha differences in the same 0-255 tolerance scale as RGB', () => {
+    const imageData = createImageData(3, 1, [0, 0, 0, 255]);
+    setPixel(imageData, 1, 0, [0, 0, 0, 128]);
+    setPixel(imageData, 2, 0, [0, 0, 0, 0]);
+
+    const below = createFloodFillMask(imageData, { x: 0, y: 0 }, { tolerance: 63 })!;
+    const above = createFloodFillMask(imageData, { x: 0, y: 0 }, { tolerance: 64 })!;
+
+    expect(below.selectedPixelCount).toBe(1);
+    expect(above.selectedPixelCount).toBe(2);
+  });
+
+  it('isolates a transparent seed from opaque neighbours at zero tolerance', () => {
     const imageData = createImageData(3, 3, [0, 0, 0, 255]);
     setPixel(imageData, 1, 1, [0, 0, 0, 0]);
 
     const result = createFloodFillMask(imageData, { x: 1, y: 1 }, { tolerance: 0 });
 
-    expect(result?.selectedPixelCount).toBe(9);
+    expect(result?.selectedPixelCount).toBe(1);
     expect(result?.sampleColor).toEqual({ r: 0, g: 0, b: 0, a: 0 });
-  });
-
-  it('isolates a transparent seed from an opaque neighbour where the magic wand does not', () => {
-    // The same image under the 4-D metric: `getMagicWandColorDistance` adds the 255-unit alpha
-    // gap, so the opaque neighbours fall outside a zero tolerance and the wand selects one pixel.
-    const imageData = createImageData(3, 3, [0, 0, 0, 255]);
-    setPixel(imageData, 1, 1, [0, 0, 0, 0]);
-
-    expect(createMagicWandSelectionFromImageData(imageData, { x: 1, y: 1 }, { tolerance: 0 })?.selectedPixelCount).toBe(
-      1
-    );
+    expect(result?.mask[getPixelIndex(0, 0, imageData.width)]).toBe(0);
   });
 });
 
