@@ -1,10 +1,13 @@
 # Continue durable history from current main
 
-## Live status — refreshed 2026-11-14 18:03 UTC
+## Current restart contract
 
-This block and [`docs/HISTORY-MIGRATION-NEXT.md`](../../docs/HISTORY-MIGRATION-NEXT.md) are the
-current restart contract. Dated checkpoints and ownership snapshots below are historical; recheck
-live refs, owners, and handoffs before acting on old branch or issue instructions.
+Use the [latest verified continuation reconciliation](../../docs/HISTORY-MIGRATION-NEXT.md#latest-continuation-reconciliation--2026-11-21-2331-utc)
+for current refs, candidate proof, cross-chat coverage, validation, and ordered next steps. The
+snapshot below was last refreshed on 2026-11-14 and is retained as historical evidence only. Recheck
+live refs, owners, and handoffs before acting on any dated branch or issue instruction below.
+
+## Historical live status — refreshed 2026-11-14 18:03 UTC
 
 - The designated local `main` worktree at
   `.kilo/worktrees/landing-main-recovered-20261112` is clean at
