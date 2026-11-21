@@ -6252,8 +6252,11 @@ test.describe('Crop history', () => {
   test('crop horizontal selection edges do not continue outside the crop', async ({ page }) => {
     await openDocument(page);
     const fit = await openCropTool(page);
+    await expect(page.locator('.cursor-crop'), 'the crop starts unrotated').toHaveAttribute('data-rotation', '0');
     const workspace = page.getByTestId('workspace-container');
     const expectNoHorizontalContinuation = async (stage: string) => {
+      await expect(page.getByTestId('crop-selection-outline'), `${stage}: crop outline is painted`).toBeVisible();
+      await expect(page.getByTestId('crop-frame-dim'), `${stage}: crop mask is painted`).toBeVisible();
       const workspaceBox = await workspace.boundingBox();
       const cropBox = await page.getByTestId('crop-selection-outline').boundingBox();
       expect(workspaceBox, `${stage}: workspace bounds`).not.toBeNull();
