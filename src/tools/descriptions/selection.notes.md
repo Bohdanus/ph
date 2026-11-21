@@ -984,25 +984,20 @@ the `[` row is
 `https://www.adobe.com/learn/photoshop/web/compositing`. The app does not bind either bracket key
 for Quick Selection, independently of what Photoshop's configurable defaults are.
 
-**The bar promised a gesture it did not honour — and the promise is now gone.** This section used
-to be the sharpest finding in the family: the quick-selection bar's `hint` read "Shift and Alt
-drag on the canvas" on both its branches — the Subtract one and the default one, in
-`QuickSelection.tsx` — while the tool area consulted neither key. An on-screen promise to the user,
-not a documentation gap — and the only false claim in the family a user reads without opening
-anything.
+**The current Quick Selection hint names supported selection-mode modifiers.** In Add mode,
+the bar says Alt/Option temporarily subtracts; in Subtract mode it says Shift temporarily adds.
+QuickSelectionToolArea.updateStrokeModeFromModifiers() reads those keys during pointer events,
+and its tests cover both base modes and release back to the configured mode. Adobe documents
+Shift-drag for Add and Alt/Option-drag for Subtract with selection tools, and the current Quick
+Selection guide documents Add and Subtract modes in the Options bar.
 
-`7f3b0d19` **removed the promise rather than implementing the gesture**, and this record was not
-updated. The bar's hint is now `Drag over an object to grow the selection along the stroke.`
-(the `hint` in `QuickSelection.tsx`), with a comment directly above it naming Photoshop's Alt-drag
-brush-tip resize and Shift-drag circular constraint as things the app does not do, and saying why
-that is preferable to shipping a guess. The rationale is worth preserving because it is a
-judgement, not an implementation: Photoshop's Alt-drag resize maps _drag distance to size_, not a
-flag, so implementing it badly would replace one false promise with a wrong gesture.
-
-Both `modifiers[]` rows therefore remain unimplemented and are still recorded as such in
-`appNotes`; what is gone is the on-screen claim, and the finding is retained in the data file
-rather than deleted, because a record that says only "this works" is less useful to the next
-reader than one that says "this used to lie here".
+The former finding that the bar promised an unsupported modifier was accurate before these
+handlers and hint text were added back, but the old account is stale and must not describe current
+behavior. Brush-tip resizing is separate: Adobe documents Alt + right-click drag on Windows or
+Control + Option drag on macOS. Shift-to-circle is documented for Marquee tools. The Quick
+Selection hint promises neither brush resizing, hardness control, nor circular brush constraints.
+See [Adobe's cursor controls](https://helpx.adobe.com/uk/photoshop/desktop/get-started/settings-and-preferences/change-tool-pointers.html)
+and [Marquee tool behavior](https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/make-selections-with-marquee-tools.html).
 
 ### Sources
 

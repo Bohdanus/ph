@@ -8,8 +8,8 @@ const TEST_DIRECTORY = join(import.meta.dirname, '.');
 const REVIEWED = {
   'agent-board.test.mjs': {
     scope:
-      'Temporary board directories and test-owned databases; malformed-lease fixtures preserve holder directories, dead-worktree tests remove/recreate only temporary holders, and CLI children use the test board.',
-    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=11 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=29 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
+      'Temporary board directories and test-owned databases; malformed-lease and contributor-lock fixtures preserve holder directories, dead-worktree tests remove/recreate only temporary holders, and CLI children use the test board.',
+    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=13 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=29 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
   },
   'agents-citations.test.mjs': {
     scope: 'Subprocess invocation is part of the citation/tooling contract; review its command and cwd.',
@@ -391,6 +391,7 @@ describe('script-test resource boundary audit', () => {
     expect(() => scanTestSource('const broken = ;', 'broken.test.mjs')).toThrow('Could not parse broken.test.mjs');
   });
 
+  // These two full-tree scans can exceed Vitest's default 5s under parallel suite load.
   it('derives every script test and requires exact reviewed pattern classifications', () => {
     const tests = deriveScriptTests(TEST_DIRECTORY);
     const names = new Set(tests.map(({ name }) => name));
@@ -417,7 +418,7 @@ describe('script-test resource boundary audit', () => {
     expect(unclassified, 'new write-shaped patterns need explicit classification').toEqual([]);
     expect(stale, 'changed resource patterns need review and an updated classification').toEqual([]);
     expect(missingFiles, 'classifications must refer to discovered script tests').toEqual([]);
-  });
+  }, 15_000);
 
   it('requires explicit classification for tests with zero detected side effects', () => {
     const tests = deriveScriptTests(TEST_DIRECTORY);
@@ -428,7 +429,7 @@ describe('script-test resource boundary audit', () => {
       }
     }
     expect(unclassifiedZeroFindings, 'tests with zero findings must be explicitly classified in REVIEWED').toEqual([]);
-  });
+  }, 15_000);
 
   it('keeps intentional shared reads and their boundaries explicit', () => {
     const tests = new Map(deriveScriptTests(TEST_DIRECTORY).map(({ name }) => [name, true]));
