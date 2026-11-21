@@ -43,6 +43,12 @@ updates and the `free:quarantine add` command accept only transient reasons with
 they preserve an active operator ban for the same pair. Unknown reasons and out-of-range durations
 fail closed.
 
+When an older quarantine file is loaded, migration v4 removes only `poor_performance` entries for
+the exact Nemotron 3 Ultra `:free` routes on Kilo and OpenRouter, whose temporary outage holds were
+released after successful free completions. It preserves other reasons for those routes and does
+not change OpenCode entries or any other model/provider pair. The migration runs once and records
+`migration_v4` in the local state file.
+
 The CLI defaults to six hours when `--hours` is omitted.
 
 Quarantine loaders prune expired entries and persist that cleanup under the existing file lock.
