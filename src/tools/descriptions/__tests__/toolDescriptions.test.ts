@@ -151,7 +151,9 @@ describe('toolDescriptions', () => {
         expect.stringMatching(/Alt:.*temporarily subtracts.*while brushing/i),
       ])
     );
-    expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option while brushing to subtract/i);
+    expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
+      /any selection tool can temporarily add with Shift or subtract with Alt\/Option while dragging; the app implements those temporary modifiers for Quick Selection strokes/i
+    );
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
       /Quick Selection and the Intersect with Selection button/i
     );

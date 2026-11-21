@@ -1032,6 +1032,16 @@ test.describe('Rectangular Marquee Tool', () => {
     await expect(page.getByTestId('undo-button')).toBeDisabled();
   });
 
+  test('rectangular marquee is reachable from the sidebar flyout by keyboard', async ({ page }) => {
+    await selectEllipticalMarqueeFromSidebar(page);
+    await openToolFlyoutViaKeyboard(page, 'elliptical-selection');
+    await navigateAndSelectInFlyout(page, 'rectangular-selection', 'Rectangular Marquee Tool');
+    await expectToolSelected(page, 'rectangular-selection');
+    await expect(
+      page.getByText('Drag to draw a rectangle. Hold Shift for a square, Alt to draw from the centre.')
+    ).toBeVisible();
+  });
+
   test('a rectangular marquee drag commits a rectangle matching the drag bounds', async ({ page }) => {
     await clickToolButton(page, 'rectangular-selection');
     const box = await measureCanvas(page);
