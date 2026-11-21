@@ -144,6 +144,81 @@ function hasToolActivity(events) {
   );
 }
 
+function hasKiloFunctionCallText(text) {
+  const skipWhitespaceAndComments = (from) => {
+    let index = from;
+    while (index < text.length) {
+      if (/\s/.test(text[index] ?? '')) {
+        index += 1;
+        continue;
+      }
+      if (text.startsWith('/*', index)) {
+        const closing = text.indexOf('*/', index + 2);
+        if (closing < 0) return null;
+        index = closing + 2;
+        continue;
+      }
+      if (text.startsWith('//', index)) {
+        const newline = text.indexOf('\n', index + 2);
+        if (newline < 0) return text.length;
+        index = newline + 1;
+        continue;
+      }
+      break;
+    }
+    return index;
+  };
+
+  for (const match of text.matchAll(/\bkilo_[A-Za-z0-9_]+/g)) {
+    if (match.index === undefined) continue;
+    const openParen = skipWhitespaceAndComments(match.index + match[0].length);
+    if (openParen === null) return true;
+    if (text[openParen] !== '(') continue;
+    const argument = skipWhitespaceAndComments(openParen + 1);
+    if (argument === null) return true;
+    if (text[argument] === '{') return true;
+  }
+  return false;
+}
+
+function stripInlineCodeSpans(text) {
+  const visible = text.split('');
+  let index = 0;
+  while (index < text.length) {
+    if (text[index] !== '`') {
+      index += 1;
+      continue;
+    }
+    let openingEnd = index + 1;
+    while (text[openingEnd] === '`') openingEnd += 1;
+    const openingLength = openingEnd - index;
+    let searchFrom = openingEnd;
+    let closingStart = -1;
+    let closingEnd = -1;
+    while (searchFrom < text.length) {
+      const candidate = text.indexOf('`', searchFrom);
+      if (candidate < 0) break;
+      let candidateEnd = candidate + 1;
+      while (text[candidateEnd] === '`') candidateEnd += 1;
+      if (candidateEnd - candidate === openingLength) {
+        closingStart = candidate;
+        closingEnd = candidateEnd;
+        break;
+      }
+      searchFrom = candidateEnd;
+    }
+    if (closingStart < 0 || closingEnd < 0) {
+      index = openingEnd;
+      continue;
+    }
+    for (let cursor = index; cursor < closingEnd; cursor += 1) {
+      if (text[cursor] !== '\n' && text[cursor] !== '\r') visible[cursor] = ' ';
+    }
+    index = closingEnd;
+  }
+  return visible.join('');
+}
+
 function isSerializedToolCallText(content) {
   const outsideFencedSegments = [];
   let currentSegment = [];
@@ -166,12 +241,22 @@ function isSerializedToolCallText(content) {
       fence = { character: opening[1][0], length: opening[1].length };
       continue;
     }
+    if (/^(?: {4,}|\t)/.test(line)) {
+      outsideFencedSegments.push(currentSegment.join('\n'));
+      currentSegment = [];
+      continue;
+    }
     currentSegment.push(line);
   }
   outsideFencedSegments.push(currentSegment.join('\n'));
-  return outsideFencedSegments.some((outsideFencedText) =>
-    /(?:<tool_call>\s*)?<function=[A-Za-z0-9_.:-]+>[\s\S]*?<\/function>\s*<\/tool_call>/i.test(outsideFencedText)
-  );
+  return outsideFencedSegments.some((outsideFencedText) => {
+    const visibleText = stripInlineCodeSpans(outsideFencedText);
+    return (
+      /(?:<tool_call\s*>\s*)?<function=[A-Za-z0-9_.:-]+>[\s\S]*?<\/function\s*>(?:\s*<\/tool_call\s*>)?/i.test(
+        visibleText
+      ) || hasKiloFunctionCallText(visibleText)
+    );
+  });
 }
 
 function isExactZeroCost(cost) {

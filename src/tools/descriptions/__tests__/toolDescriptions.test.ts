@@ -152,8 +152,11 @@ describe('toolDescriptions', () => {
         expect.stringMatching(/Alt:.*temporarily subtracts.*while brushing/i),
       ])
     );
-    expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option while brushing to subtract/i);
-    expect(quick.appNotes).toMatch(/Temporary Shift\/Alt gestures.*not implemented/i);
+    expect(quick.options.map((option) => option.detail).join(' ')).toMatch(
+      /temporary Shift-add and Alt\/Option-subtract while brushing.*app implements both gestures/i
+    );
+    expect(quick.appNotes).toMatch(/Holding Shift temporarily adds.*Holding Alt\/Option temporarily subtracts/i);
+    expect(quick.appNotes).toMatch(/Shift\+Alt intersection.*not implemented/i);
     expect(quick.appNotes).toMatch(/bracket-key resizing are not implemented/i);
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
       /whether its Options bar also offers Intersect is unresolved across Adobe sources/i

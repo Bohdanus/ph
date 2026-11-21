@@ -69,8 +69,9 @@ read or print the Kilo auth database or JSON file.
 tool name. The prompt is piped through stdin, keeping it out of process arguments and avoiding
 Kilo's file-attachment and external-directory permission checks. Do not add `--auto`: it would
 broaden permissions beyond the tool-free profile. The runner verifies a clean JSON completion,
-rejects tool events and reported non-zero cost. Nemotron inference has a 12-minute timeout; other
-inference routes use five minutes. Catalog and quota checks use a separate 15-second timeout. It
+rejects tool events, serialized XML or Kilo function-call text, and reported non-zero cost. Nemotron
+inference has a 12-minute timeout; other inference routes use five minutes. Catalog and quota checks
+use a separate 15-second timeout. It
 uses the public Kilo catalog only for model and exact-zero price discovery; it does not send
 inference requests anonymously to the public Gateway endpoint. The child environment is limited to
 runtime paths and locale settings, including the Kilo database selector; unrelated provider keys
@@ -139,15 +140,17 @@ configuration, not proof that credentials are absent. Do not inspect credential 
 database or auth file. See the [OpenCode CLI auth guide](https://opencode.ai/docs/cli/) and
 [storage guide](https://opencode.ai/docs/troubleshooting/).
 
-The completion child receives runtime path variables, but uses a per-request temporary `HOME` and
-XDG directories instead of the operator's OpenCode credentials and config. It does not inherit
-arbitrary provider API-key variables or `OPENCODE_CONFIG_DIR`. `OPENCODE_PURE` and
-`OPENCODE_DISABLE_PROJECT_CONFIG` keep external plugins and project instructions out of the child;
-the hard-deny tool policy remains active. OpenCode's provider-owned free models do not require an API
-key; `opencode auth login` is not needed for this route.
+The completion child receives runtime path variables, but uses a per-request temporary `HOME`, XDG
+directories, and working directory instead of the operator's OpenCode credentials and project
+config. It does not inherit arbitrary provider API-key variables or `OPENCODE_CONFIG_DIR`.
+`OPENCODE_PURE` and `OPENCODE_DISABLE_PROJECT_CONFIG` provide additional isolation. Its injected
+policies deny tool use, MCP servers, plugins, skills, and web search. System-wide OpenCode config
+and managed preferences remain machine policy and are still loaded by the CLI. OpenCode's
+provider-owned free models do not require an API key; `opencode auth login` is not needed for this
+route.
 
 The runner accepts provider-owned model IDs ending in `-free`, plus the exact Nemotron `:free` ID
-only when the catalog marks it `owned_by: opencode`. It denies tool use and requires a clean CLI exit
+only when the catalog marks it `owned_by: opencode`. It denies tool and extension use and requires a clean CLI exit
 with non-empty text. The current OpenCode catalog inspection on 2026-11-12 did not list the exact
 Nemotron model, so no OpenCode Nemotron route was eligible in that check.
 OpenCode CLI JSON output can omit its final `step_finish` event; a clean exit, text response, and free

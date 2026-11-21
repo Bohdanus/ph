@@ -884,7 +884,12 @@ describe('free model rotation', () => {
 const path = require('node:path');
 const args = process.argv.slice(2);
 const model = args[args.indexOf('--model') + 1];
-if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(9);
+const policies = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT).policies;
+for (const action of ['tool.use', 'mcp.use', 'skill.use', 'plugin.use', 'websearch.use']) {
+  if (!policies.some((policy) => policy.action === action && policy.resource === '*' && policy.effect === 'deny')) {
+    process.exit(9);
+  }
+}
 if (process.env.OPENCODE_PURE !== '1' || process.env.OPENCODE_DISABLE_PROJECT_CONFIG !== '1') process.exit(10);
 if (!fs.readFileSync(args[args.indexOf('--file') + 1], 'utf8').includes('private prompt')) process.exit(8);
 const isolatedHome = fs.realpathSync(process.env.HOME);
@@ -968,7 +973,12 @@ const leaked = ['OPENROUTER_API_KEY', 'GROQ_API_KEY', 'KILO_CONFIG_CONTENT', 'OP
   .filter((key) => process.env[key] !== undefined);
 if (mismatched.length || isolatedProfilePaths.length || leaked.length) process.exit(10);
 if (process.env.OPENCODE_CONFIG_CONTENT === 'caller-config-must-be-replaced') process.exit(11);
-if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(12);
+const policies = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT).policies;
+for (const action of ['tool.use', 'mcp.use', 'skill.use', 'plugin.use', 'websearch.use']) {
+  if (!policies.some((policy) => policy.action === action && policy.resource === '*' && policy.effect === 'deny')) {
+    process.exit(12);
+  }
+}
 if (process.env.OPENCODE_DISABLE_AUTOUPDATE !== '1' || process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS !== '1') process.exit(13);
 if (process.env.OPENCODE_PURE !== '1' || process.env.OPENCODE_DISABLE_PROJECT_CONFIG !== '1') process.exit(14);
 console.log(JSON.stringify({ type: 'text', part: { text: 'isolated answer' } }));`

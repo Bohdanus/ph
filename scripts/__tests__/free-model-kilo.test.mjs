@@ -185,6 +185,29 @@ watcher owner read
 </function>
 </tool_call>`,
     ],
+    [
+      'Kilo JavaScript-style calls',
+      `kilo_ls({paths: ["src", "e2e"]})
+kilo_grep({pattern: "magic.wand|MagicWand", paths: ["src"]})
+kilo_grep({pattern: "selection", paths: ["e2e"]})`,
+    ],
+    [
+      'Kilo JavaScript-style calls separated by comments',
+      `kilo_ls /* inspect the source */ ( // keep this call data-only
+  {paths: ["src"]}
+)`,
+    ],
+    [
+      'a Kilo JavaScript-style call hidden by an unterminated comment',
+      `kilo_ls/* unfinished comment
+({paths: ["src"]})`,
+    ],
+    [
+      'bare serialized function markup with a spaced closer',
+      `<function=kilo_memory_recall>
+<parameter=mode>search</parameter>
+</function >`,
+    ],
   ])('rejects %s when returned as text instead of an answer', async (_label, content) => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
     const output = [
@@ -269,6 +292,12 @@ search
 <function=kilo_memory_recall>
 </function>
 </tool_call>`,
+    ],
+    ['a fenced JavaScript-style tool-call example', ['```javascript', 'kilo_ls({paths: ["src"]})', '```'].join('\n')],
+    ['an indented JavaScript-style tool-call example', '    kilo_ls({paths: ["src"]})'],
+    [
+      'an inline JavaScript-style tool-call example',
+      'The tool syntax is `kilo_ls({paths: ["src"]})` in this documentation example.',
     ],
   ])('accepts tool-call markup inside %s as ordinary answer text', async (_label, content) => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));

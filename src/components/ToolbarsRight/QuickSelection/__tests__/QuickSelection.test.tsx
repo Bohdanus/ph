@@ -360,7 +360,9 @@ describe('QuickSelection toolbar', () => {
     it('describes a growing stroke for the add mode', () => {
       render(<QuickSelection />);
 
-      expect(screen.getByText('Drag over an object to grow the selection along the stroke.')).toBeInTheDocument();
+      expect(
+        screen.getByText('Drag over an object to grow the selection along the stroke. Hold Alt/Option to subtract.')
+      ).toBeInTheDocument();
     });
 
     it('describes a shrinking stroke for the subtract mode', () => {
@@ -370,17 +372,24 @@ describe('QuickSelection toolbar', () => {
 
       // The hint is derived from the PUBLISHED mode, so a spy that did not publish would leave
       // the add-mode text on screen and this assertion could never fail.
-      expect(screen.getByText('Drag over what to remove from the selection.')).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'Drag over what to remove from the selection. Hold Shift to add; release it to return to this mode.'
+        )
+      ).toBeInTheDocument();
     });
 
-    it('promises no canvas gesture the tool area does not read', () => {
-      // Adobe's Alt-drag resizes the brush tip and Shift-drag constrains it to a circle. Neither
-      // is implemented here, and a modifier named on screen that does nothing is a defect of its
-      // own: a user who presses Alt expects the tip to change and cannot tell it did not.
+    it('describes only the temporary modifier supported for the current mode', () => {
       render(<QuickSelection />);
 
       const hint = screen.getByText(/^Drag over/);
-      expect(hint.textContent).not.toMatch(/Shift|Alt|Option|\bdrag on the canvas\b/i);
+      expect(hint).toHaveTextContent(/Hold Alt\/Option to subtract/);
+      expect(hint).not.toHaveTextContent(/Hold Shift to add/);
+
+      fireEvent.change(getMode(), { target: { value: 'subtract' } });
+
+      expect(hint).toHaveTextContent(/Hold Shift to add; release it to return to this mode/);
+      expect(hint).not.toHaveTextContent(/Hold Alt\/Option to subtract/);
     });
   });
 

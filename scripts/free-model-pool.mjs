@@ -1044,8 +1044,15 @@ const OPENCODE_TOOL_DENY_CONFIG = JSON.stringify({
     skill: 'deny',
     lsp: 'deny',
   },
+  // Keep tool invocation and separately configured extension sources disabled.
   // V2 policies are hard denies and take precedence over saved approvals.
-  policies: [{ action: 'tool.use', resource: '*', effect: 'deny' }],
+  policies: [
+    { action: 'tool.use', resource: '*', effect: 'deny' },
+    { action: 'mcp.use', resource: '*', effect: 'deny' },
+    { action: 'skill.use', resource: '*', effect: 'deny' },
+    { action: 'plugin.use', resource: '*', effect: 'deny' },
+    { action: 'websearch.use', resource: '*', effect: 'deny' },
+  ],
 });
 
 export async function runOpenCodeCompletion({
