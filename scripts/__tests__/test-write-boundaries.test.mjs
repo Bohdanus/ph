@@ -60,8 +60,14 @@ const REVIEWED = {
     patterns: `filesystem-write:mkdtemp=6 filesystem-write:writeFile=6 filesystem-write:rm=6`,
   },
   'free-model-kilo.test.mjs': {
-    scope: 'Each fake Kilo CLI and configuration fixture uses a unique OS temp directory with finally cleanup.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=23 filesystem-write:rm=23 subprocess:spawnSync=1`,
+    scope:
+      'Each fake Kilo CLI, auth-boundary, and symlinked XDG fixture uses a unique OS temp directory with finally cleanup; project-local auth sentinels remain untouched and child processes use test-owned paths.',
+    patterns: `filesystem-write:mkdir=6 filesystem-write:mkdtemp=25 filesystem-write:rm=25 filesystem-write:symlink=1 filesystem-write:writeFile=8 subprocess:spawnSync=1`,
+  },
+  'kilo-project-boundary.test.mjs': {
+    scope:
+      'Project-marker and canonical Kilo store path fixtures, including the symlinked global data root, use unique OS temp directories and are removed after each test.',
+    patterns: `filesystem-write:mkdir=9 filesystem-write:mkdtemp=2 filesystem-write:rm=3 filesystem-write:symlink=1 filesystem-write:writeFile=3`,
   },
   'free-model-pool-external.test.mjs': {
     scope:
@@ -106,8 +112,8 @@ const REVIEWED = {
   },
   'main-landing-alert.test.mjs': {
     scope:
-      'Alert-claim marker fixtures use a unique temporary directory and are removed after the test. Expanded coverage includes malformed recovery, invalid JSON shapes, sent markers, and lock contention.',
-    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=7 filesystem-write:rmSync=2`,
+      'Alert and bounded failure-log fixtures use unique temporary directories; child workers coordinate concurrent/stale lock scenarios, and symlink/hardlink targets remain inside each fixture.',
+    patterns: `filesystem-write:linkSync=1 filesystem-write:mkdirSync=2 filesystem-write:mkdtempSync=19 filesystem-write:renameSync=1 filesystem-write:rmSync=2 filesystem-write:symlinkSync=2 filesystem-write:writeFileSync=18 subprocess:spawn=2`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',

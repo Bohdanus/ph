@@ -65,17 +65,27 @@ then checks common VS Code, Cursor, and Windsurf extension folders. If discovery
 CLI, set `KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never
 read or print the Kilo auth database or JSON file.
 
-`kilo run` starts with `--pure` and the tracked `free-completion` agent. That profile denies every
-tool name. The prompt is piped through stdin, keeping it out of process arguments and avoiding
-Kilo's file-attachment and external-directory permission checks. Do not add `--auto`: it would
-broaden permissions beyond the tool-free profile. The runner verifies a clean JSON completion,
-rejects tool events, serialized XML or Kilo function-call text, and reported non-zero cost. Nemotron
+`kilo run` starts with `--pure` from a fresh temporary project containing only a generated
+`free-completion` agent whose wildcard permission denies every tool name. Before creating it, the
+adapter resolves the caller environment's configured temporary directory (or the system default)
+and refuses to run if that path is inside a Git or Kilo project boundary. The child gets an
+ephemeral `HOME`, XDG config/cache/data roots, and temporary directories. Repository and caller
+project config, per-user MCP servers, custom agents, session history, and other applications' data
+are therefore outside its project and user config paths. Only the caller's Kilo `auth.json` is
+linked under the temporary XDG data root, preserving Gateway authentication while the run writes
+any new session data under the temporary directory. `KILO_DB` and caller-supplied config variables
+are not forwarded. Organization or system-managed Kilo policy is outside this isolation; verify its
+effective tool policy or skip the Kilo route in managed environments. The prompt is piped through stdin,
+keeping it out of process arguments and avoiding Kilo's file-attachment and
+external-directory permission checks. Do not add `--auto`: it would broaden permissions beyond the
+tool-free profile. The runner verifies a clean JSON completion, rejects tool events, serialized XML
+or Kilo function-call text, and reported non-zero cost. Nemotron
 inference has a 12-minute timeout; other inference routes use five minutes. Catalog and quota checks
 use a separate 15-second timeout. It
 uses the public Kilo catalog only for model and exact-zero price discovery; it does not send
 inference requests anonymously to the public Gateway endpoint. The child environment is limited to
-runtime paths and locale settings, including the Kilo database selector; unrelated provider keys
-and `KILO_CONFIG_CONTENT` are not passed through.
+runtime paths and locale settings; unrelated provider keys and Kilo configuration overrides are
+discarded.
 
 The current Kilo CLI has no `--max-tokens` option. For Kilo completions, the runner's
 `--max-tokens` value is a response-length instruction; Kilo and the model control the actual

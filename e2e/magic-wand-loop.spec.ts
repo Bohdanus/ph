@@ -12,8 +12,8 @@ import { setForegroundColor } from './helpers/color-helpers';
 
 const VIEWPORT = { width: 1280, height: 1000 };
 const LOOP_BRUSH_DOCUMENT_PX = 28;
-// Allows a few CSS pixels for document-pixel rounding while rejecting a contour displaced by the brush radius.
-const OUTLINE_TOLERANCE_CSS_PX = 6;
+// Allow for ant-stroke width and backing-store-to-page rounding on rasterized brush edges.
+const OUTLINE_TOLERANCE_CSS_PX = 1.5;
 
 // Exercise the document-to-screen and marching-ants reads with a Retina backing store.
 test.use({ viewport: VIEWPORT, deviceScaleFactor: 2 });
@@ -27,7 +27,7 @@ type DocumentFrame = {
   logicalHeight: number;
 };
 
-type DocumentRect = { left: number; top: number; right: number; bottom: number };
+type DocumentRect = { left: number; top: number; right: number; bottom: number; cornerRadius?: number };
 type PagePoint = { x: number; y: number };
 type AntsContentBox = { scale: number; left: number; top: number };
 
@@ -201,6 +201,51 @@ const connectedAntBounds = (runsByRow: readonly (readonly AntRun[])[], width: nu
   return components;
 };
 
+const runMatchesContour = (run: AntRun, y: number, contour: DocumentRect, tolerance: number): boolean => {
+  const radius = Math.min(
+    contour.cornerRadius ?? 0,
+    (contour.right - contour.left) / 2,
+    (contour.bottom - contour.top) / 2
+  );
+  const edgeTolerance = tolerance + 0.5;
+  for (let x = run[0]; x <= run[1]; x += 1) {
+    const centerX = x + 0.5;
+    const centerY = y + 0.5;
+    const nearTop =
+      Math.abs(centerY - contour.top) <= edgeTolerance &&
+      centerX >= contour.left + radius - edgeTolerance &&
+      centerX <= contour.right - radius + edgeTolerance;
+    const nearBottom =
+      Math.abs(centerY - contour.bottom) <= edgeTolerance &&
+      centerX >= contour.left + radius - edgeTolerance &&
+      centerX <= contour.right - radius + edgeTolerance;
+    const nearLeft =
+      Math.abs(centerX - contour.left) <= edgeTolerance &&
+      centerY >= contour.top + radius - edgeTolerance &&
+      centerY <= contour.bottom - radius + edgeTolerance;
+    const nearRight =
+      Math.abs(centerX - contour.right) <= edgeTolerance &&
+      centerY >= contour.top + radius - edgeTolerance &&
+      centerY <= contour.bottom - radius + edgeTolerance;
+    if (nearTop || nearBottom || nearLeft || nearRight) continue;
+    if (radius === 0) return false;
+
+    const corners = [
+      { x: contour.left + radius, y: contour.top + radius, left: true, top: true },
+      { x: contour.right - radius, y: contour.top + radius, left: false, top: true },
+      { x: contour.left + radius, y: contour.bottom - radius, left: true, top: false },
+      { x: contour.right - radius, y: contour.bottom - radius, left: false, top: false },
+    ];
+    const nearCornerArc = corners.some((corner) => {
+      if ((corner.left && centerX > corner.x) || (!corner.left && centerX < corner.x)) return false;
+      if ((corner.top && centerY > corner.y) || (!corner.top && centerY < corner.y)) return false;
+      return Math.abs(Math.hypot(centerX - corner.x, centerY - corner.y) - radius) <= edgeTolerance;
+    });
+    if (!nearCornerArc) return false;
+  }
+  return true;
+};
+
 const findUnexpectedContourComponents = (
   runsByRow: readonly (readonly AntRun[])[],
   width: number,
@@ -218,7 +263,7 @@ const findUnexpectedContourComponents = (
   const findIncompleteEdges = (contour: DocumentRect): string[] => {
     // The brush loop has round outer corners. Its bbox carries the extrema, while the straight
     // edge coverage check starts far enough inward to avoid treating those corner arcs as gaps.
-    const cornerInset = tolerance * 2;
+    const cornerInset = Math.max(tolerance * 2, contour.cornerRadius ?? 0);
     const edgeLeft = Math.ceil(contour.left);
     const edgeRight = Math.floor(contour.right);
     const edgeTop = Math.ceil(contour.top);
@@ -227,6 +272,13 @@ const findUnexpectedContourComponents = (
     const lastX = edgeRight - cornerInset;
     const firstY = edgeTop + cornerInset;
     const lastY = edgeBottom - cornerInset;
+    // Ant runs are indexed by integer document pixels. Compare pixel centers to the
+    // geometric straight-edge interval instead of using its fractional coordinates as
+    // run indices (or array indexes).
+    const firstXPixel = Math.ceil(firstX - 0.5);
+    const lastXPixel = Math.floor(lastX - 0.5);
+    const firstYPixel = Math.ceil(firstY - 0.5);
+    const lastYPixel = Math.floor(lastY - 0.5);
     const incompleteEdges: string[] = [];
 
     for (const [edgeName, edgeY] of [
@@ -234,7 +286,7 @@ const findUnexpectedContourComponents = (
       ['bottom', edgeBottom],
     ] as const) {
       let complete = true;
-      for (let x = firstX; x <= lastX; x += 1) {
+      for (let x = firstXPixel; x <= lastXPixel; x += 1) {
         let covered = false;
         for (let y = Math.max(0, edgeY - tolerance); y <= Math.min(runsByRow.length - 1, edgeY + tolerance); y += 1) {
           if (runsByRow[y]?.some(([left, right]) => left <= x && x <= right)) {
@@ -255,7 +307,7 @@ const findUnexpectedContourComponents = (
       ['right', edgeRight],
     ] as const) {
       let complete = true;
-      for (let y = firstY; y <= lastY; y += 1) {
+      for (let y = firstYPixel; y <= lastYPixel; y += 1) {
         if (!runsByRow[y]?.some(([left, right]) => left <= edgeX + tolerance && edgeX - tolerance <= right)) {
           complete = false;
           break;
@@ -310,18 +362,9 @@ const expectOnlyExpectedContours = async (
 
   for (const [y, runs] of runsByRow.entries()) {
     for (const [left, right] of runs) {
-      const matchesExpectedContour = documentContours.some((contour) => {
-        const nearHorizontalEdge =
-          (Math.abs(y - contour.top) <= tolerance || Math.abs(y - contour.bottom) <= tolerance) &&
-          left >= contour.left - tolerance &&
-          right <= contour.right + tolerance;
-        const nearVerticalEdge =
-          y >= contour.top - tolerance &&
-          y <= contour.bottom + tolerance &&
-          ((left >= contour.left - tolerance && right <= contour.left + tolerance) ||
-            (left >= contour.right - tolerance && right <= contour.right + tolerance));
-        return nearHorizontalEdge || nearVerticalEdge;
-      });
+      const matchesExpectedContour = documentContours.some((contour) =>
+        runMatchesContour([left, right], y, contour, tolerance)
+      );
 
       if (!matchesExpectedContour && unexpectedRuns.length < 10) unexpectedRuns.push(`row ${y}: ${left}-${right}`);
     }
@@ -335,6 +378,11 @@ const expectOnlyExpectedContours = async (
 };
 
 test('the contour component check rejects an extra loop inside the edge tolerance band', () => {
+  const rounded = { left: 10, top: 10, right: 90, bottom: 90, cornerRadius: 20 };
+  expect(runMatchesContour([15, 16], 15, rounded, 1)).toBe(true);
+  expect(runMatchesContour([10, 10], 10, rounded, 1)).toBe(false);
+  expect(runMatchesContour([10, 10], 50, rounded, 1)).toBe(true);
+
   const rows = Array.from({ length: 50 }, () => [] as AntRun[]);
   const expected = { left: 5, top: 5, right: 44, bottom: 44 };
   rows[5]?.push([5, 44]);
@@ -361,6 +409,31 @@ test('the contour component check rejects an extra loop inside the edge toleranc
   expect(findUnexpectedContourComponents(outlineOnly, 50, overlappingContours, 5)).toEqual({
     unexpectedComponents: [expected],
     missingContours: overlappingContours,
+    incompleteContours: [],
+  });
+});
+
+test('the contour component check samples fractional rounded edges on integer document pixels', () => {
+  const width = 101;
+  const contour = { left: 10.5, top: 10.5, right: 90.5, bottom: 90.5, cornerRadius: 20.5 };
+  const rows = Array.from({ length: width }, () => [] as AntRun[]);
+
+  for (let y = 0; y < rows.length; y += 1) {
+    let runStart: number | null = null;
+    for (let x = 0; x < width; x += 1) {
+      if (runMatchesContour([x, x], y, contour, 0)) {
+        if (runStart === null) runStart = x;
+      } else if (runStart !== null) {
+        rows[y]?.push([runStart, x - 1]);
+        runStart = null;
+      }
+    }
+    if (runStart !== null) rows[y]?.push([runStart, width - 1]);
+  }
+
+  expect(findUnexpectedContourComponents(rows, width, [contour], 1)).toEqual({
+    unexpectedComponents: [],
+    missingContours: [],
     incompleteContours: [],
   });
 });
@@ -529,7 +602,17 @@ test('the contiguous Magic Wand selects the loop interior, clears it, then selec
     top: loop.top - strokeRadius,
     right: loop.right + strokeRadius,
     bottom: loop.bottom + strokeRadius,
+    cornerRadius: strokeRadius,
   };
+  const cssPerDocumentPixel = Math.min(
+    wandFrame.width / wandFrame.logicalWidth,
+    wandFrame.height / wandFrame.logicalHeight
+  );
+  const outlineToleranceDocumentPixels = Math.ceil(OUTLINE_TOLERANCE_CSS_PX / cssPerDocumentPixel);
+  expect(
+    outlineToleranceDocumentPixels,
+    'the outline allowance stays well below one quarter of the brush radius'
+  ).toBeLessThan(strokeRadius / 4);
   await expectContourNear(
     page,
     expectedExcludedLoop,

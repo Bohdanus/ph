@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_KILO_OUTPUT_BYTES, resolveKiloCli, runKiloCompletion } from '../lib/free-model-kilo.mjs';
@@ -56,12 +56,25 @@ describe('Kilo CLI discovery', () => {
 describe('authenticated Kilo CLI completion', () => {
   it('uses the logged-in provider, private stdin prompt, no-tools agent, and strict JSON completion', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const fixtureDataHome = join(directory, 'fixture-data');
+    await mkdir(join(fixtureDataHome, 'kilo'), { recursive: true });
+    await mkdir(join(fixtureDataHome, 'other-app'), { recursive: true });
+    await writeFile(join(fixtureDataHome, 'kilo', 'auth.json'), 'fixture auth', 'utf8');
+    await writeFile(join(fixtureDataHome, 'kilo', 'history.json'), 'prior conversation', 'utf8');
+    await writeFile(join(fixtureDataHome, 'other-app', 'private.json'), 'not exposed', 'utf8');
+    vi.stubEnv('TMPDIR', directory);
+    vi.stubEnv('TMP', directory);
+    vi.stubEnv('TEMP', directory);
     const command = await writeExecutable(
       join(directory, 'fake-kilo'),
       `const fs = require('node:fs');
+const path = require('node:path');
 const args = process.argv.slice(2);
 const message = fs.readFileSync(0, 'utf8');
 const valueAfter = (flag) => args[args.indexOf(flag) + 1];
+const isolatedKiloData = path.join(process.env.XDG_DATA_HOME, 'kilo');
+const agentPath = path.join(process.cwd(), '.kilo', 'agent', 'free-completion.md');
+const agentPolicy = fs.readFileSync(agentPath, 'utf8');
 if (!args.includes('--pure') || valueAfter('--format') !== 'json') process.exit(4);
 if (valueAfter('--model') !== 'kilo/xingchen-agi/xing4.0-29b-a4b:free') process.exit(5);
 if (valueAfter('--agent') !== 'free-completion') process.exit(6);
@@ -70,8 +83,20 @@ if (args.includes('--file')) process.exit(8);
 if (!message.startsWith('Answer the provided request directly, in plain text, using at most 65536 output tokens.')) process.exit(9);
 if (!message.includes('private prompt')) process.exit(10);
 if (args.join(' ').includes('private prompt')) process.exit(11);
-if (process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS || process.env.KILO_CONFIG_CONTENT || process.env.NODE_OPTIONS || process.env.NODE_PATH || process.env.PWD || process.env.UNRELATED_SECRET) process.exit(12);
-if (process.env.HOME !== '/fixture/home' || process.env.XDG_DATA_HOME !== '/fixture/kilo-data' || process.env.KILO_DB !== '/fixture/kilo.db') process.exit(13);
+if (process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS || process.env.NODE_OPTIONS || process.env.NODE_PATH || process.env.PWD || process.env.UNRELATED_SECRET) process.exit(12);
+if (fs.realpathSync(process.cwd()) !== fs.realpathSync(path.join(process.env.HOME, 'project')) || fs.existsSync(path.join(process.cwd(), 'package.json')) || fs.existsSync(path.join(process.cwd(), 'kilo.jsonc')) || fs.existsSync(path.join(process.cwd(), '.kilo', 'kilo.jsonc'))) process.exit(13);
+if (!agentPolicy.includes('mode: all') || !agentPolicy.includes("  '*': deny") || !agentPolicy.includes('Do not call tools.')) process.exit(14);
+if (process.env.KILO_CONFIG_CONTENT || process.env.KILO_DISABLE_PROJECT_CONFIG) process.exit(15);
+if (process.env.HOME === '/fixture/home' || process.env.USERPROFILE === '/fixture/home' || process.env.XDG_CONFIG_HOME === '/fixture/config') process.exit(22);
+if (!process.env.XDG_DATA_HOME.startsWith(process.env.HOME + path.sep) || !process.env.XDG_CACHE_HOME.startsWith(process.env.HOME + path.sep) || process.env.KILO_DB) process.exit(16);
+if (!process.env.TMPDIR.startsWith(process.env.HOME + path.sep) || process.env.TMP !== process.env.TMPDIR || process.env.TEMP !== process.env.TMPDIR || !fs.existsSync(process.env.TMPDIR)) process.exit(17);
+if (fs.lstatSync(isolatedKiloData).isSymbolicLink() || !fs.lstatSync(path.join(isolatedKiloData, 'auth.json')).isSymbolicLink()) process.exit(18);
+if (fs.readFileSync(path.join(isolatedKiloData, 'auth.json'), 'utf8') !== 'fixture auth') process.exit(19);
+if (fs.existsSync(path.join(isolatedKiloData, 'history.json'))) process.exit(20);
+if (fs.existsSync(path.join(process.env.XDG_DATA_HOME, 'other-app'))) process.exit(21);
+const fixtureDir = path.dirname(process.argv[1]);
+fs.writeFileSync(path.join(fixtureDir, 'isolated-home-path.txt'), process.env.HOME);
+fs.writeFileSync(path.join(fixtureDir, 'isolated-agent-policy.txt'), agentPolicy);
 console.log(JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }));
 console.log(JSON.stringify({ type: 'text', part: { text: 'safe response' } }));
 console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0, tokens: { input: 10, output: 3, reasoning: 1 } } }));`
@@ -87,12 +112,18 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           env: {
             PATH: process.env.PATH,
             HOME: '/fixture/home',
-            XDG_DATA_HOME: '/fixture/kilo-data',
+            USERPROFILE: '/fixture/home',
+            XDG_CONFIG_HOME: '/fixture/config',
+            XDG_DATA_HOME: fixtureDataHome,
+            TMPDIR: directory,
+            TMP: directory,
+            TEMP: directory,
             KILO_DB: '/fixture/kilo.db',
             OPENROUTER_API_KEY: 'test-openrouter-key',
             GROQ_API_KEY: 'test-groq-key',
             GROQ_API_KEYS: 'test-groq-key-list',
             KILO_CONFIG_CONTENT: '{"agent":{"free-completion":{"permission":{"bash":"allow"}}}}',
+            KILO_DISABLE_PROJECT_CONFIG: '0',
             NODE_OPTIONS: '--require /tmp/untrusted-preload.cjs',
             NODE_PATH: '/tmp/untrusted-modules',
             PWD: '/unexpected/worktree',
@@ -106,12 +137,108 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
         usage: { input_tokens: 10, output_tokens: 3, reasoning_tokens: 1, cost: 0 },
       });
 
-      const agent = await readFile(join(process.cwd(), '.kilo', 'agent', 'free-completion.md'), 'utf8');
+      const agent = await readFile(join(directory, 'isolated-agent-policy.txt'), 'utf8');
       expect(agent).toContain("  '*': deny");
+      const isolatedHome = await readFile(join(directory, 'isolated-home-path.txt'), 'utf8');
+      expect(isolatedHome).not.toBe('/fixture/home');
+      expect(existsSync(isolatedHome)).toBe(false);
+      expect(existsSync(join(fixtureDataHome, 'kilo', 'auth.json'))).toBe(true);
+      expect(existsSync(join(fixtureDataHome, 'kilo', 'history.json'))).toBe(true);
+      expect(existsSync(join(fixtureDataHome, 'other-app', 'private.json'))).toBe(true);
     } finally {
+      vi.unstubAllEnvs();
       await rm(directory, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it.each(['.git', '.kilo', '.kilocode'])(
+    'refuses to run when the caller temporary directory is inside a %s project boundary',
+    async (marker) => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-project-temp-'));
+      const projectRoot = join(directory, 'project');
+      const boundaryDirectory = join(projectRoot, marker);
+      await mkdir(boundaryDirectory, { recursive: true });
+      const boundaryFile = join(boundaryDirectory, marker === '.git' ? 'HEAD' : 'kilo.jsonc');
+      const originalBoundaryData = 'caller project data';
+      await writeFile(boundaryFile, originalBoundaryData, 'utf8');
+      const spawnImpl = vi.fn();
+
+      try {
+        const result = await runKiloCompletion({
+          command: 'kilo',
+          model: 'xingchen-agi/xing4.0-29b-a4b:free',
+          prompt: 'safe prompt',
+          maxTokens: 128,
+          env: {
+            PATH: process.env.PATH,
+            HOME: directory,
+            USERPROFILE: directory,
+            TMPDIR: projectRoot,
+            TMP: projectRoot,
+            TEMP: projectRoot,
+          },
+          spawnImpl,
+        });
+
+        expect(result.error).toBe('Kilo completion failed locally');
+        expect(spawnImpl).not.toHaveBeenCalled();
+        expect(await readFile(boundaryFile, 'utf8')).toBe(originalBoundaryData);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each([
+    ['.git', 'home-derived'],
+    ['.kilo', 'home-derived'],
+    ['.kilocode', 'home-derived'],
+    ['.git', 'symlinked-xdg-data'],
+    ['.kilo', 'symlinked-xdg-data'],
+    ['.kilocode', 'symlinked-xdg-data'],
+  ])(
+    'refuses to link Kilo auth data with a %s project marker through %s configuration',
+    async (marker, configuration) => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-project-auth-'));
+      const projectRoot = join(directory, 'project');
+      const dataHome = join(projectRoot, '.local', 'share');
+      const authPath = join(dataHome, 'kilo', 'auth.json');
+      const authContents = 'project-local auth sentinel';
+      await mkdir(join(projectRoot, marker), { recursive: true });
+      await mkdir(join(dataHome, 'kilo'), { recursive: true });
+      await writeFile(authPath, authContents, 'utf8');
+      const xdgDataAlias = join(directory, 'xdg-data-alias');
+      const home = configuration === 'home-derived' ? projectRoot : join(directory, 'home');
+
+      if (configuration === 'symlinked-xdg-data') {
+        await symlink(dataHome, xdgDataAlias, process.platform === 'win32' ? 'junction' : 'dir');
+      }
+
+      const spawnImpl = vi.fn();
+
+      try {
+        const result = await runKiloCompletion({
+          command: 'kilo',
+          model: 'xingchen-agi/xing4.0-29b-a4b:free',
+          prompt: 'safe prompt',
+          env: {
+            PATH: process.env.PATH,
+            HOME: home,
+            USERPROFILE: home,
+            ...(configuration === 'symlinked-xdg-data' ? { XDG_DATA_HOME: xdgDataAlias } : {}),
+            TMPDIR: directory,
+          },
+          spawnImpl,
+        });
+
+        expect(result.error).toBe('Kilo completion failed locally');
+        expect(spawnImpl).not.toHaveBeenCalled();
+        expect(await readFile(authPath, 'utf8')).toBe(authContents);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
 
   it('refuses OpenRouter so it cannot use Kilo-managed credentials', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
@@ -243,6 +370,10 @@ kilo_grep({pattern: "selection", paths: ["e2e"]})`,
     [
       'a serialized call in a nested-list continuation below the code-block threshold',
       ['- outer', '  - inner', '', '      <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a visible call in a nested list paragraph after two markers on one line',
+      ['- - item', '', '      kilo_ls({paths: ["src"]})'].join('\n'),
     ],
     [
       'a serialized call in a blockquote list continuation below the code-block threshold',
@@ -442,12 +573,29 @@ search
       ['>\t- item', '>', '>         <function=kilo_ls></function></tool_call>'].join('\n'),
     ],
     [
+      'an indented code example under a quoted list after a tab following the marker',
+      ['> -\titem', '>', '>       <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a JavaScript-style call in an indented code example under a quoted list after a tab',
+      ['> -\titem', '>', '>       kilo_ls({paths: ["src"]})'].join('\n'),
+    ],
+    [
+      'a paragraph continuation in a nested list after two markers on one line',
+      ['- - item', '', '        kilo_ls({paths: ["src"]})'].join('\n'),
+    ],
+    [
       'a fenced example inside an ordered list',
       ['  10.  item', '', '       ~~~xml', '       <function=kilo_ls></function></tool_call>', '       ~~~'].join('\n'),
     ],
     [
       'a fenced example inside a nested list item',
       ['- outer', '  - inner', '', '    ~~~xml', '    <function=kilo_ls></function></tool_call>', '    ~~~'].join('\n'),
+    ],
+    ['a fenced example opened on the same line as a list item', ['- ~~~js', '  kilo_ls({})', '  ~~~'].join('\n')],
+    [
+      'a fenced example opened on the same line as a nested list item',
+      ['- - ~~~js', '    kilo_ls({})', '    ~~~'].join('\n'),
     ],
     [
       'a root indented code example after a list and a top-level paragraph',

@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, readdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { access, lstat, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { delimiter, isAbsolute, join } from 'node:path';
 import {
   DEFAULT_FREE_COMPLETION_TIMEOUT_MS,
   freeModelProfile,
@@ -12,12 +12,16 @@ import {
 } from './free-model-policy.mjs';
 import { resolveCommandShim } from './windows-command-shim.mjs';
 import { terminateWindowsProcessTree } from './windows-process-tree.mjs';
+import {
+  hasProjectBoundaryAncestor,
+  ignoredKiloAuthProjectMarkers,
+  resolveStandardKiloDataPath,
+} from './kilo-project-boundary.mjs';
 
 export const COMPLETION_TIMEOUT_MS = DEFAULT_FREE_COMPLETION_TIMEOUT_MS;
 export const MAX_KILO_OUTPUT_BYTES = 1024 * 1024;
 const MAX_KILO_STDERR_BYTES = 64 * 1024;
 
-const PROJECT_ROOT = process.cwd();
 const KILO_EXTENSION_ROOTS = [
   '.vscode/extensions',
   '.vscode-insiders/extensions',
@@ -25,6 +29,15 @@ const KILO_EXTENSION_ROOTS = [
   '.cursor/extensions',
   '.windsurf/extensions',
 ];
+const FREE_COMPLETION_AGENT = `---
+description: Free one-shot model completion with every agent tool denied.
+mode: all
+permission:
+  '*': deny
+---
+
+Answer the provided request directly and concisely. Do not call tools.
+`;
 const KILO_RUNTIME_ENV_KEYS = [
   'PATH',
   'HOME',
@@ -40,9 +53,7 @@ const KILO_RUNTIME_ENV_KEYS = [
   'TERM',
   'NO_COLOR',
   'XDG_CONFIG_HOME',
-  'XDG_DATA_HOME',
   'XDG_CACHE_HOME',
-  'KILO_DB',
   'APPDATA',
   'LOCALAPPDATA',
   'PROGRAMDATA',
@@ -51,10 +62,108 @@ const KILO_RUNTIME_ENV_KEYS = [
   'COMSPEC',
 ];
 
-function kiloRuntimeEnvironment(environment) {
-  return Object.fromEntries(
+async function createIsolatedHome(environment, platform) {
+  const tempKeys = platform === 'win32' ? ['TEMP', 'TMP', 'TMPDIR'] : ['TMPDIR', 'TMP', 'TEMP'];
+  const requestedTemp = tempKeys
+    .map((key) => environment[key])
+    .find((value) => typeof value === 'string' && value.trim());
+  const temporaryDirectory = requestedTemp ?? tmpdir();
+  if (!isAbsolute(temporaryDirectory)) throw new Error('Kilo temporary directory must be an absolute path');
+  const temporaryParent = await realpath(temporaryDirectory);
+  if (await hasProjectBoundaryAncestor(temporaryParent)) {
+    throw new Error('Kilo temporary directory is inside a project configuration boundary');
+  }
+  return mkdtemp(join(temporaryParent, 'kilo-free-completion-'));
+}
+
+function kiloRuntimeEnvironment(environment, isolatedHome, isolatedDataHome) {
+  const runtime = Object.fromEntries(
     KILO_RUNTIME_ENV_KEYS.flatMap((key) => (typeof environment[key] === 'string' ? [[key, environment[key]]] : []))
   );
+  const isolatedTemp = join(isolatedHome, 'tmp');
+  return {
+    ...runtime,
+    HOME: isolatedHome,
+    USERPROFILE: isolatedHome,
+    XDG_CONFIG_HOME: join(isolatedHome, 'config'),
+    XDG_CACHE_HOME: join(isolatedHome, 'cache'),
+    XDG_DATA_HOME: isolatedDataHome,
+    TMPDIR: isolatedTemp,
+    TMP: isolatedTemp,
+    TEMP: isolatedTemp,
+    APPDATA: join(isolatedHome, 'appdata'),
+    LOCALAPPDATA: join(isolatedHome, 'localappdata'),
+  };
+}
+
+async function prepareIsolatedKiloRuntime(environment, isolatedHome, platform) {
+  const projectRoot = join(isolatedHome, 'project');
+  const isolatedDataHome = join(isolatedHome, 'data');
+  const isolatedDirectories = [
+    join(projectRoot, '.kilo', 'agent'),
+    join(isolatedHome, 'config'),
+    join(isolatedHome, 'cache'),
+    join(isolatedHome, 'tmp'),
+    join(isolatedHome, 'appdata'),
+    join(isolatedHome, 'localappdata'),
+    join(isolatedDataHome, 'kilo'),
+  ];
+  await Promise.all(isolatedDirectories.map((directory) => mkdir(directory, { recursive: true, mode: 0o700 })));
+  await writeFile(join(projectRoot, '.kilo', 'agent', 'free-completion.md'), FREE_COMPLETION_AGENT, {
+    encoding: 'utf8',
+    mode: 0o600,
+    flag: 'wx',
+  });
+  await createIsolatedKiloDataHome(environment, isolatedHome, platform);
+  return { projectRoot, environment: kiloRuntimeEnvironment(environment, isolatedHome, isolatedDataHome) };
+}
+
+async function createIsolatedKiloDataHome(environment, isolatedHome, platform) {
+  const userHome = environment.USERPROFILE || environment.HOME || homedir();
+  const dataHome = environment.XDG_DATA_HOME || join(userHome, '.local', 'share');
+  if (!isAbsolute(dataHome)) throw new Error('Kilo XDG_DATA_HOME must be an absolute path');
+
+  const isolatedDataHome = join(isolatedHome, 'data');
+  const isolatedKiloData = join(isolatedDataHome, 'kilo');
+  const originalKiloData = join(dataHome, 'kilo');
+  await mkdir(isolatedKiloData, { recursive: true, mode: 0o700 });
+  let dataStat;
+  try {
+    dataStat = await lstat(originalKiloData);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  if (dataStat) {
+    if (!dataStat.isDirectory() || dataStat.isSymbolicLink()) {
+      throw new Error('Kilo data path must be a real directory');
+    }
+    const originalAuthFile = join(originalKiloData, 'auth.json');
+    let authStat;
+    try {
+      authStat = await lstat(originalAuthFile);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    if (authStat) {
+      const resolvedKiloData = await realpath(originalKiloData);
+      const resolvedSystemHome = await realpath(homedir());
+      const resolvedStandardKiloData = await resolveStandardKiloDataPath(resolvedSystemHome);
+      const ignoredMarkersAt = ignoredKiloAuthProjectMarkers({
+        resolvedKiloData,
+        resolvedSystemHome,
+        resolvedStandardKiloData,
+      });
+      if (await hasProjectBoundaryAncestor(resolvedKiloData, { ignoredMarkersAt })) {
+        throw new Error('Kilo auth data must be outside a project configuration boundary');
+      }
+      if (!authStat.isFile() || authStat.isSymbolicLink()) {
+        throw new Error('Kilo auth path must be a regular file');
+      }
+      if (platform === 'win32') await symlink(originalAuthFile, join(isolatedKiloData, 'auth.json'), 'file');
+      else await symlink(originalAuthFile, join(isolatedKiloData, 'auth.json'));
+    }
+  }
+  return isolatedDataHome;
 }
 
 async function isExecutable(path, platform, accessImpl) {
@@ -303,32 +412,24 @@ function stripInlineCodeSpans(text) {
     .join('');
 }
 
-function expandBlockquotePrefixTabs(line) {
+function expandTabsAtColumns(line) {
   let expanded = '';
   let column = 0;
-  let index = 0;
-  while (index < line.length) {
-    const character = line[index];
-    if (character === ' ' || character === '>') {
-      expanded += character;
-      column += 1;
-      index += 1;
-      continue;
-    }
+  for (const character of line) {
     if (character === '\t') {
       const spaces = 4 - (column % 4);
       expanded += ' '.repeat(spaces);
       column += spaces;
-      index += 1;
-      continue;
+    } else {
+      expanded += character;
+      column += 1;
     }
-    break;
   }
-  return expanded + line.slice(index);
+  return expanded;
 }
 
 function parseBlockquoteLine(line) {
-  let text = expandBlockquotePrefixTabs(line);
+  let text = expandTabsAtColumns(line);
   let quoteDepth = 0;
   while (true) {
     const prefix = /^ {0,3}> ?/.exec(text);
@@ -372,22 +473,40 @@ function parseListMarker(line) {
   return { markerIndent: indentation.columns, contentIndent };
 }
 
+function parseListMarkers(line) {
+  const markers = [];
+  let contentStart = 0;
+  while (contentStart < line.length) {
+    const marker = parseListMarker(line.slice(contentStart));
+    if (!marker) break;
+    markers.push({
+      markerIndent: contentStart + marker.markerIndent,
+      contentIndent: contentStart + marker.contentIndent,
+    });
+    contentStart += marker.contentIndent;
+  }
+  return markers;
+}
+
 function updateListStack(listStacks, quoteDepth, line, canStartIndentedCode) {
   for (const depth of listStacks.keys()) {
     if (depth > quoteDepth) listStacks.delete(depth);
   }
 
   const stack = listStacks.get(quoteDepth) ?? [];
-  const marker = parseListMarker(line);
-  if (marker) {
-    while (stack.length > 0 && marker.markerIndent < stack.at(-1).contentIndent) stack.pop();
-    const parent = stack.at(-1);
-    const startsListItem = parent ? marker.markerIndent >= parent.contentIndent : marker.markerIndent <= 3;
-    if (startsListItem) {
+  const markers = parseListMarkers(line);
+  if (markers.length > 0) {
+    let contentStart = 0;
+    for (const marker of markers) {
+      while (stack.length > 0 && marker.markerIndent < stack.at(-1).contentIndent) stack.pop();
+      const parent = stack.at(-1);
+      const startsListItem = parent ? marker.markerIndent >= parent.contentIndent : marker.markerIndent <= 3;
+      if (!startsListItem) break;
       stack.push(marker);
-      listStacks.set(quoteDepth, stack);
-      return stack;
+      contentStart = marker.contentIndent;
     }
+    if (stack.length > 0) listStacks.set(quoteDepth, stack);
+    return { stack, contentStart };
   }
 
   if (canStartIndentedCode) {
@@ -396,7 +515,7 @@ function updateListStack(listStacks, quoteDepth, line, canStartIndentedCode) {
   }
   if (stack.length > 0) listStacks.set(quoteDepth, stack);
   else listStacks.delete(quoteDepth);
-  return stack;
+  return { stack, contentStart: 0 };
 }
 
 function isSerializedToolCallText(content) {
@@ -461,23 +580,27 @@ function isSerializedToolCallText(content) {
         canStartIndentedCode = true;
         break;
       }
-      const listStack = updateListStack(listStacks, quoteDepth, line, canStartIndentedCode);
+      const { stack: listStack, contentStart } = updateListStack(listStacks, quoteDepth, line, canStartIndentedCode);
       const listContentIndent = listStack.at(-1)?.contentIndent ?? 0;
-      const indentation = leadingIndentColumns(line).columns;
-      const opening = /^([ \t]*)(`{3,}|~{3,})(.*)$/.exec(line);
-      if (
-        opening &&
-        indentation >= listContentIndent &&
-        indentation <= listContentIndent + 3 &&
-        !(opening[2][0] === '`' && opening[3].includes('`'))
-      ) {
+      const fenceLine = line.slice(contentStart);
+      const indentation = leadingIndentColumns(fenceLine).columns;
+      const opening = /^([ \t]*)(`{3,}|~{3,})(.*)$/.exec(fenceLine);
+      const fenceOpenerIndentIsValid =
+        contentStart > 0
+          ? indentation <= 3
+          : listStack.length === 0 || indentation >= listContentIndent
+            ? indentation <= listContentIndent + 3
+            : indentation <= 3;
+      const fenceContentIndent =
+        contentStart > 0 || (listStack.length > 0 && indentation >= listContentIndent) ? listContentIndent : 0;
+      if (opening && fenceOpenerIndentIsValid && !(opening[2][0] === '`' && opening[3].includes('`'))) {
         outsideFencedSegments.push(currentSegment.join('\n'));
         currentSegment = [];
         fence = {
           character: opening[2][0],
           length: opening[2].length,
           quoteDepth,
-          listContentIndent,
+          listContentIndent: fenceContentIndent,
         };
         canStartIndentedCode = true;
         break;
@@ -636,7 +759,6 @@ export async function runKiloCompletion({
   prompt,
   maxTokens,
   timeoutMs,
-  projectRoot = PROJECT_ROOT,
   env = process.env,
   spawnImpl = spawn,
   platform = process.platform,
@@ -678,7 +800,10 @@ export async function runKiloCompletion({
   }
 
   const message = `Answer the provided request directly, in plain text, using at most ${profile.maxTokens} output tokens.\n\n${prompt}`;
+  let isolatedHome;
   try {
+    isolatedHome = await createIsolatedHome(env, platform);
+    const isolatedRuntime = await prepareIsolatedKiloRuntime(env, isolatedHome, platform);
     const args = ['run', '--pure', '--format', 'json', '--model', `kilo/${model}`, '--agent', 'free-completion'];
     if (profile.reasoningEffort) args.push('--variant', profile.reasoningEffort);
     const commandShim = resolveCommandShim(command, args);
@@ -688,8 +813,8 @@ export async function runKiloCompletion({
         let child;
         try {
           child = spawnImpl(commandShim.command, commandShim.args, {
-            cwd: projectRoot,
-            env: kiloRuntimeEnvironment(env),
+            cwd: isolatedRuntime.projectRoot,
+            env: isolatedRuntime.environment,
             stdio: ['pipe', 'pipe', 'pipe'],
             shell: false,
             detached: platform !== 'win32',
@@ -930,5 +1055,13 @@ export async function runKiloCompletion({
       error: error?.code === 'KILO_SPAWN' ? 'Kilo CLI could not be started' : 'Kilo completion failed locally',
       exhaustSource: error?.code === 'KILO_SPAWN',
     };
+  } finally {
+    if (isolatedHome) {
+      try {
+        await rm(isolatedHome, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup after child exit; removing the isolated auth symlink preserves its source file.
+      }
+    }
   }
 }

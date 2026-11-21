@@ -131,13 +131,21 @@ describe('toolDescriptions', () => {
       ])
     );
     expect(polygonRows).not.toEqual(expect.arrayContaining([expect.stringMatching(/Alt.*double-click/i)]));
-    expect(polygon.summary).toMatch(/double-click.*right-click.*Enter/i);
+    expect(polygon.summary).toMatch(/In this app,.*double-click.*right-click.*Enter\/Return/i);
     expect(polygon.summary).not.toMatch(/Ctrl\/Command|starting point/i);
-    expect(polygon.summary).not.toMatch(/Return/i);
     expect(polygon.purpose).toMatch(/Ctrl-clicking on Windows \/ Command-clicking on macOS/i);
     expect(polygon.purpose).not.toMatch(/Enter|Return/i);
+    expect(polygon.purpose).not.toMatch(/right-click/i);
+    expect(polygonRows).not.toEqual(expect.arrayContaining([expect.stringMatching(/Ctrl\/Command:.*right-click/i)]));
     expect(polygon.shortcuts.map((shortcut) => shortcut.keys)).not.toContain('Return');
+    expect(polygon.appNotes).toMatch(/In this app,.*double-click, right-click, or Enter\/Return/i);
     expect(polygon.appNotes).toMatch(/modifier keys.*Ctrl\/Command-click closure.*absent/i);
+
+    const smudge = toolDescriptions.smudge;
+    expect(smudge.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
+      expect.arrayContaining([expect.stringMatching(/Alt:.*temporarily reverses the Finger Painting setting/i)])
+    );
+    expect(smudge.appNotes).toMatch(/This app does not bind Alt\/Option to Finger Painting/i);
 
     const magnetic = toolDescriptions['feather-magnetic-lasso'];
     expect(magnetic.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
@@ -159,7 +167,7 @@ describe('toolDescriptions', () => {
     expect(quick.appNotes).toMatch(/Shift\+Alt intersection.*not implemented/i);
     expect(quick.appNotes).toMatch(/bracket-key resizing are not implemented/i);
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
-      /whether its Options bar also offers Intersect is unresolved across Adobe sources/i
+      /general Intersect guide directs any selection tool.*by its wording includes Quick Selection.*2019 keyboard reference separately excludes Quick Selection from the Shift\+Alt\/Option\+Shift gesture.*exact current Intersect support remains unresolved/i
     );
     const quickShortcutKeys = quick.shortcuts.map((shortcut) => shortcut.keys);
     expect(quickShortcutKeys).toContain('[');
