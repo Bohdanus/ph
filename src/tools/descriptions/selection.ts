@@ -925,7 +925,7 @@ export const selectionDescriptions: Record<
       {
         control: 'Selection mode',
         detail:
-          'The current Quick Selection guide lists New, Add to and Subtract from. Adobe’s selection-combination tutorial explicitly includes Quick Selection and the Intersect with Selection button. Adobe’s published keyboard-shortcut reference excludes Quick Selection from the Shift+Alt/Option intersect gesture, so this mode is selected from the Options bar. Adobe documents Alt/Option while brushing to subtract temporarily; the app has no temporary modifier gesture.',
+          'The current Quick Selection guide lists New, Add to and Subtract from. Adobe’s selection-combination tutorial explicitly includes Quick Selection and the Intersect with Selection button. Adobe’s published keyboard-shortcut reference excludes Quick Selection from the Shift+Alt/Option intersect gesture, so this mode is selected from the Options bar. Adobe’s general selection instructions say any selection tool can temporarily add with Shift or subtract with Alt/Option while dragging; the app implements those temporary modifiers for Quick Selection strokes.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:148',
       },

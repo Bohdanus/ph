@@ -36,7 +36,7 @@ const REVIEWED = {
   'e2e-run.test.mjs': {
     scope:
       'Board, run-record, process-tree, and filesystem fixtures are temporary; the live run record and sentinel are read-only tripwires.',
-    patterns: `filesystem-write:mkdtempSync=3 filesystem-write:rmSync=3 subprocess:spawnSync=3 filesystem-write:writeFileSync=1 subprocess:spawn=1`,
+    patterns: `filesystem-write:mkdtempSync=4 filesystem-write:rmSync=4 subprocess:spawnSync=4 filesystem-write:writeFileSync=3 subprocess:spawn=2`,
   },
   'e2e-skip-baseline.test.mjs': {
     scope: 'Baseline and report fixtures use unique OS temporary directories.',
@@ -106,8 +106,8 @@ const REVIEWED = {
   },
   'main-landing-alert.test.mjs': {
     scope:
-      'Alert-claim marker fixtures use a unique temporary directory and are removed after the test. Expanded coverage includes malformed recovery, invalid JSON shapes, sent markers, and lock contention.',
-    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=7 filesystem-write:rmSync=2`,
+      'Alert-claim and status fixtures use unique temporary repositories/directories; coverage includes duration thresholds, invalid timestamp reporting, malformed recovery, sent markers, and lock contention.',
+    patterns: `filesystem-write:mkdtempSync=13 filesystem-write:mkdirSync=1 filesystem-write:writeFileSync=9 filesystem-write:rmSync=2 subprocess:spawnSync=6`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
@@ -149,7 +149,7 @@ const REVIEWED = {
   'repo-state-gate.test.mjs': {
     scope:
       'Git and filesystem fixtures use temporary repositories; child cwd and environment are reviewed, and fixture repo/worktree paths are removed only within scratch roots cleaned by afterEach.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=20 filesystem-write:rmSync=9 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=10 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=23 filesystem-write:rmSync=9 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
   },
   'session-db-snapshot.test.mjs': {
     scope: 'Snapshot fixtures use temporary databases; copies are explicitly opened read-only.',

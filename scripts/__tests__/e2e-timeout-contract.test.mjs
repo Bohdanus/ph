@@ -212,6 +212,7 @@ describe('E2E timeout contract', () => {
     });
     expect(readConditionalTestSkipCounts(scriptTestRoot, WINDOWS_EXCLUDED_SKIP_PATTERN)).toEqual({
       'scripts/__tests__/agent-board.test.mjs': 2,
+      'scripts/__tests__/e2e-run.test.mjs': 1,
       'scripts/__tests__/free-chat-search-agent.test.mjs': 1,
       'scripts/__tests__/merge-takeover-guard.test.mjs': 11,
       'scripts/__tests__/path-identity.test.mjs': 3,

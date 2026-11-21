@@ -345,8 +345,15 @@ export function canRecoverOrphanAutoMerge(owner, now = Date.now(), pids = record
   );
 }
 
-function alertMarker(paths, minutes) {
-  return join(paths.lockDir, 'alert-' + minutes + 'm.json');
+function alertMarker(paths, key) {
+  const label =
+    typeof key === 'number' && ALERTS.some((alert) => alert.minutes === key)
+      ? key + 'm'
+      : key === 'invalid-timestamp'
+        ? key
+        : null;
+  if (!label) throw new Error('unsupported main landing alert key');
+  return join(paths.lockDir, 'alert-' + label + '.json');
 }
 
 function isValidAlertMarker(alert) {
@@ -379,8 +386,8 @@ function isValidAlertMarker(alert) {
   return false;
 }
 
-function readAlert(paths, minutes) {
-  const file = alertMarker(paths, minutes);
+function readAlert(paths, key) {
+  const file = alertMarker(paths, key);
   if (!existsSync(file)) return null;
   let contents;
   try {
@@ -397,7 +404,8 @@ function readAlert(paths, minutes) {
   return isValidAlertMarker(alert) ? alert : { status: 'corrupt' };
 }
 
-export function claimAlert(paths, owner, minutes) {
+export function claimAlert(paths, owner, key) {
+  if (typeof owner?.leaseId !== 'string' || !owner.leaseId.trim()) return false;
   let controlLock;
   try {
     controlLock = acquireRecoveryControl(paths, owner);
@@ -406,8 +414,8 @@ export function claimAlert(paths, owner, minutes) {
     throw error;
   }
   try {
-    const file = alertMarker(paths, minutes);
-    const existing = readAlert(paths, minutes);
+    const file = alertMarker(paths, key);
+    const existing = readAlert(paths, key);
     if (existing?.status === 'sent') return false;
     if (existing?.status === 'pending') {
       const reporter = {
@@ -503,23 +511,45 @@ function alertMessage(owner, minutes) {
   ).replace(/--/g, '- -');
 }
 
-function notifyIfDue(paths, owner, now = Date.now()) {
+function invalidTimestampMessage(owner) {
+  return (
+    'Main landing lease timestamp is invalid or missing: branch=' +
+    alertText(owner.owner?.branch) +
+    ', chat=' +
+    alertText(owner.owner?.chatId) +
+    ', lease=' +
+    alertText(owner.leaseId) +
+    '. Lease age and recovery thresholds are unknown. Preserve the lease and main state while checking owner-session liveness and its process tree.'
+  ).replace(/--/g, '- -');
+}
+
+function deliverClaimedAlert(paths, owner, key, message, postNote) {
+  const file = alertMarker(paths, key);
+  if (postNote(paths, message)) {
+    writeAtomic(file, {
+      status: 'sent',
+      leaseId: owner.leaseId,
+      sentAt: new Date().toISOString(),
+      message,
+    });
+  } else {
+    appendFileSync(join(paths.lockDir, 'alert-failures.log'), new Date().toISOString() + ' ' + message + '\n');
+    rmSync(file, { force: true });
+  }
+}
+
+export function notifyIfDue(paths, owner, now = Date.now(), postNote = boardNote) {
   const elapsed = ageMs(owner, now);
-  if (!Number.isFinite(elapsed)) return;
+  if (!Number.isFinite(elapsed)) {
+    const key = 'invalid-timestamp';
+    if (!claimAlert(paths, owner, key)) return;
+    deliverClaimedAlert(paths, owner, key, invalidTimestampMessage(owner), postNote);
+    return;
+  }
   for (const alert of ALERTS) {
     if (elapsed < alert.minutes * 60_000 || !claimAlert(paths, owner, alert.minutes)) continue;
     const message = alertMessage(owner, alert.minutes);
-    if (boardNote(paths, message)) {
-      writeAtomic(alertMarker(paths, alert.minutes), {
-        status: 'sent',
-        leaseId: owner.leaseId,
-        sentAt: new Date().toISOString(),
-        message,
-      });
-    } else {
-      appendFileSync(join(paths.lockDir, 'alert-failures.log'), new Date().toISOString() + ' ' + message + '\n');
-      rmSync(alertMarker(paths, alert.minutes), { force: true });
-    }
+    deliverClaimedAlert(paths, owner, alert.minutes, message, postNote);
   }
 }
 
@@ -575,14 +605,20 @@ function acquireRecoveryControl(paths, owner) {
 
 function ownerSummary(owner, paths) {
   const state = processState(owner.owner ?? {});
+  const elapsed = ageMs(owner);
+  const ageKnown = Number.isFinite(elapsed);
+  const leaseIdKnown = typeof owner.leaseId === 'string' && owner.leaseId.trim().length > 0;
   return {
     occupied: true,
     mainPath: paths.mainPath,
     gitState: mainGitState(paths),
     ownerControl: readControlLock(paths),
     leaseId: owner.leaseId,
+    leaseIdKnown,
     occupiedSince: owner.occupiedSince,
-    age: formatAge(ageMs(owner)),
+    age: formatAge(elapsed),
+    ageKnown,
+    timestampIntegrityAlert: readAlert(paths, 'invalid-timestamp')?.status ?? 'not sent',
     heartbeatAt: owner.heartbeatAt,
     step: owner.step,
     owner: owner.owner,
@@ -615,6 +651,13 @@ function showStatus(paths, json = false) {
       process.stdout.write(
         'main landing occupied for ' +
           summary.age +
+          [
+            summary.leaseIdKnown ? null : 'missing lease ID',
+            summary.ageKnown ? null : 'invalid or missing lease timestamp',
+          ]
+            .filter(Boolean)
+            .map((warning) => ' (' + warning + ')')
+            .join('') +
           ' by ' +
           safeText(owner.owner?.script) +
           ' on ' +
