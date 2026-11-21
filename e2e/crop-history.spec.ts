@@ -6265,8 +6265,15 @@ test.describe('Crop history', () => {
       const { data, info } = await sharp(screenshot).removeAlpha().raw().toBuffer({ resolveWithObject: true });
       const scaleX = info.width / workspaceBox!.width;
       const scaleY = info.height / workspaceBox!.height;
-      const left = Math.max(2, Math.floor((cropBox!.x - workspaceBox!.x - 5) * scaleX));
-      const right = Math.min(info.width - 2, Math.ceil((cropBox!.x + cropBox!.width - workspaceBox!.x + 5) * scaleX));
+      const frameTopLeft = documentPoint(fit, 0, 0);
+      const frameBottomRight = documentPoint(fit, fit.documentWidth, fit.documentHeight);
+      const frameLeft = Math.max(2, Math.floor((frameTopLeft.x - workspaceBox!.x) * scaleX));
+      const frameRight = Math.min(info.width - 2, Math.ceil((frameBottomRight.x - workspaceBox!.x) * scaleX));
+      const cropGuardLeft = Math.max(2, Math.floor((cropBox!.x - workspaceBox!.x - 5) * scaleX));
+      const cropGuardRight = Math.min(
+        info.width - 2,
+        Math.ceil((cropBox!.x + cropBox!.width - workspaceBox!.x + 5) * scaleX)
+      );
       const top = Math.round((cropBox!.y - workspaceBox!.y) * scaleY);
       const bottom = Math.round((cropBox!.y + cropBox!.height - workspaceBox!.y) * scaleY);
       const luminance = (x: number, y: number) => {
@@ -6276,8 +6283,8 @@ test.describe('Crop history', () => {
       const edgeContrast = (edgeY: number) => {
         let pixels = 0;
         for (const y of [edgeY - 1, edgeY, edgeY + 1]) {
-          for (let x = 2; x < info.width - 2; x++) {
-            if (x >= left && x < right) continue;
+          for (let x = frameLeft; x < frameRight; x++) {
+            if (x >= cropGuardLeft && x < cropGuardRight) continue;
             const center = luminance(x, y);
             if (Math.abs(center - luminance(x, y - 3)) > 18 && Math.abs(center - luminance(x, y + 3)) > 18) {
               pixels++;
