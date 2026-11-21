@@ -26,6 +26,11 @@ receives a response-length instruction instead. Verify the resolved route, non-e
 reason, and cost. The runner ranks Nemotron first across eligible providers, then Xing 4.0, and
 interleaves unranked fallback routes. See [`MODELS.md`](../MODELS.md).
 
+If Nemotron returns `finish_reason: "length"`, the pool retries once with a 1.5x larger token budget,
+capped at 65,536. It sends an OpenRouter retry only after a fresh quota check confirms remaining
+daily capacity. At the maximum budget, no larger retry is possible. Kilo receives the increased
+budget as a response-length instruction, not a provider-side token limit.
+
 ### Operator-managed quarantine entries
 
 The default shared quarantine file is `.kilo/free-model-quarantine.json`.
@@ -39,6 +44,10 @@ they preserve an active operator ban for the same pair. Unknown reasons and out-
 fail closed.
 
 The CLI defaults to six hours when `--hours` is omitted.
+
+Quarantine loaders prune expired entries and persist that cleanup under the existing file lock.
+The low-level `readQuarantineState` helper remains non-mutating; `free:quarantine -- prune` is still
+available for an explicit cleanup pass.
 
 ## Find credentials safely
 

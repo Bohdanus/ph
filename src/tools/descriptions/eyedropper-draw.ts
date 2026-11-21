@@ -4,9 +4,9 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'color-sampler' |
   eyedropper: {
     photoshopName: 'Eyedropper Tool',
     summary:
-      'Samples a color from the composited canvas at the pointer position and writes it to the foreground or background swatch; no drag preview, no history entry.',
+      'Samples a color from the composited canvas while clicking or dragging and writes it to the foreground or background swatch; no history entry.',
     purpose:
-      'The Eyedropper reads a color from the composited workspace canvas and sets it as the foreground color (click) or background color (Alt-click). The sampled color is not added to the Swatches panel in this app. Sample Size sets the averaging footprint: Point Sample reads the exact center pixel, and 3×3 through 101×101 Average read the arithmetic mean of an odd-sided square clipped at the document frame. Adobe documents a drag gesture where the color box updates live; this app samples only on pointer-down, so a drag uses the first pixel, not the release pixel. Holding Alt from any painting tool temporarily activates the Eyedropper at its current Sample Size, sampling to the foreground color.',
+      'The Eyedropper reads a color from the composited workspace canvas and sets it as the foreground color (click or drag) or background color (Alt/Option-click or drag). The sampled color is not added to the Swatches panel in this app. Sample Size sets the averaging footprint: Point Sample reads the exact center pixel, and 3×3 through 101×101 Average read the arithmetic mean of an odd-sided square clipped at the document frame. Holding Alt/Option from any painting tool temporarily activates the Eyedropper at its current Sample Size, sampling to the foreground color.',
     options: [
       {
         control: 'Sample Size',
@@ -18,7 +18,13 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'color-sampler' |
       {
         control: 'Sample',
         detail:
-          'Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, and the No Adjustments variants. Adobe enumerates that menu and states no default. Earlier versions expressed this as a Sample All Layers checkbox. The app renders no control for it. The `sampleAllLayers` field persists in settings (seeded `false` at `src/tools/settings.ts:265`), no control writes it, and a click that finds it `true` refuses loudly with `eyedropper-sample-all-layers-unsupported` rather than silently sampling the composite. The tool always samples the composited workspace canvas.',
+          'Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, All Layers No Adjustments, Current and Below No Adjustments. Adobe enumerates that menu and states no default. Earlier versions expressed this as a Sample All Layers checkbox. The app renders no control for it. The `sampleAllLayers` field persists in settings (seeded `false` at `src/tools/settings.ts:265`), no control writes it, and a click that finds it `true` refuses loudly with `eyedropper-sample-all-layers-unsupported` rather than silently sampling the composite. The tool always samples the composited workspace canvas.',
+        status: 'missing',
+      },
+      {
+        control: 'Show Sampling Ring',
+        detail:
+          'When enabled, a ring appears around the eyedropper cursor showing the newly sampled color (top half) against the current foreground color (bottom half), surrounded by neutral gray to offset surrounding color influence. Requires OpenGL. The app does not render this control.',
         status: 'missing',
       },
     ],
@@ -26,7 +32,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'color-sampler' |
       {
         keys: 'Alt',
         action:
-          'Sets the sampled color as the background color instead of the foreground color. This is a click-only modifier in this app — there is no drag preview, so the sample is taken at pointer-down and the background swatch updates once.',
+          'Sets the sampled color as the background color instead of the foreground color. In this app the modifier works on pointer-down and while dragging or at pointer-up.',
       },
     ],
     shortcuts: [
@@ -54,7 +60,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'color-sampler' |
       'toolbar-mapping.ts:64',
     ],
     appNotes:
-      'The app implements the tool without a processor: it is a member of `PIXEL_FREE_TOOLS`, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches `SET_COLOR` or `SET_BACKGROUND_COLOR` and nothing else — no history entry, not undoable (same class as zoom, panel move, tool switch). Three behaviors diverge from Photoshop: (1) Drag gesture: the app only has `handlePointerDown` wired to `onPointerDown`; no `onPointerMove` or `onPointerUp` handlers exist, so the sample is taken at pointer-down alone, no live preview during drag, and a drag samples the first pixel not the release pixel. (2) Sample All Layers: no control rendered; the `sampleAllLayers` field persists in settings but no control writes it, and `true` triggers a loud refusal (`eyedropper-sample-all-layers-unsupported`). (3) Swatches panel: the sampled color is not added to any swatches panel (the app has no Swatches panel). The composited read samples the workspace canvas (all visible layers composited), not the active layer alone. Alpha is dropped because the foreground/background swatches are `<input type="color">` which cannot express alpha. A click outside the frame dispatches nothing.',
+      'The app implements the tool without a processor: it is a member of `PIXEL_FREE_TOOLS`, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. Pointer-down starts the gesture, pointer-move and pointer-up update the swatch while dragging, and no history entry is created (the same no-history class as sampling and other view-only state changes). Two behaviors diverge from Photoshop: (1) Sample All Layers: no control renders; `sampleAllLayers` persists in settings but no control writes it, and `true` triggers a loud refusal (`eyedropper-sample-all-layers-unsupported`). (2) Swatches panel: the sampled color is not added to a Swatches panel (the app has no Swatches panel). The composited read uses the workspace canvas (all visible layers), not the active layer alone. Alpha is dropped because the foreground/background controls are `<input type="color">` elements that cannot express alpha. A click outside the frame dispatches nothing.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html',

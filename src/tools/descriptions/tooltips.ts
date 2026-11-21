@@ -253,7 +253,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   eyedropper: {
     summary:
-      'Samples a color from the composited canvas at the pointer position and writes it to the foreground or background swatch; no drag preview, no history entry.',
+      'Samples a color from the composited canvas while clicking or dragging and writes it to the foreground or background swatch; no history entry.',
     implementation: 'partial',
     shortcut: 'I',
   },
