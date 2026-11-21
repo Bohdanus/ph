@@ -22,6 +22,8 @@ import { createLayerSource } from '../layer-utils.ts';
 // variable — so the ids grew monotonically for the whole file and every test's first layer
 // was named after how many tests ran before it.
 const mockLayerId = vi.hoisted(() => ({ counter: 0 }));
+type DrawLayersToCanvas = (canvas: HTMLCanvasElement, layers: readonly Layer[], frame: DocumentFrame) => boolean;
+const drawLayersToCanvas = vi.hoisted(() => vi.fn<DrawLayersToCanvas>(() => true));
 
 vi.mock('../layer-utils.ts', async (importActual) => {
   const actual = await importActual<typeof import('../layer-utils.ts')>();
@@ -45,6 +47,11 @@ vi.mock('../layer-utils.ts', async (importActual) => {
     };
   });
   return { ...actual, createLayerSource: mockCreateLayerSource as typeof actual.createLayerSource };
+});
+
+vi.mock('../layer-renderer.ts', async (importActual) => {
+  const actual = await importActual<typeof import('../layer-renderer.ts')>();
+  return { ...actual, drawLayersToCanvas };
 });
 
 function makeTextArgs(overrides: Partial<ToolArgs> = {}): ToolArgs {
@@ -169,20 +176,25 @@ describe('useLayers text commit idempotency boundary', () => {
     const firstDraft = makeTextArgs({ rect, smallCaps: true }) as TextToolArgs;
 
     act(() => {
-      expect(result.current.layers.publishSmallCapsTextDraftPreview(firstDraft, rect)).toBe(true);
+      expect(result.current.layers.publishSmallCapsTextDraftPreview(firstDraft, rect)).toBe('deferred');
     });
 
     const [[draftLayerId, firstPreview]] = Object.entries(result.current.store.previewLayers.current);
     if (!firstPreview) throw new Error('the Small Caps draft preview was not published');
     const previewCanvas = firstPreview.layer.tmpCanvas;
+    if (!previewCanvas) throw new Error('the Small Caps draft canvas was not assigned');
     expect(previewCanvas).toBeInstanceOf(OffscreenCanvas);
+    expect(firstPreview.layer.pos.width % 1).not.toBe(0);
+    expect(firstPreview.layer.pos.height % 1).not.toBe(0);
+    expect(previewCanvas.width).toBe(Math.ceil(firstPreview.layer.pos.width));
+    expect(previewCanvas.height).toBe(Math.ceil(firstPreview.layer.pos.height));
     expect(firstPreview.layer.source).toMatchObject({ kind: 'tool', args: { toolName: 'text', text: 'Hello' } });
     expect(result.current.store.layers).not.toHaveProperty(draftLayerId);
     expect(vi.mocked(createLayerSource)).not.toHaveBeenCalled();
 
     const nextDraft = { ...firstDraft, text: 'Updated' };
     act(() => {
-      expect(result.current.layers.publishSmallCapsTextDraftPreview(nextDraft, rect)).toBe(true);
+      expect(result.current.layers.publishSmallCapsTextDraftPreview(nextDraft, rect)).toBe('deferred');
     });
 
     expect(Object.keys(result.current.store.previewLayers.current)).toEqual([draftLayerId]);
@@ -197,6 +209,224 @@ describe('useLayers text commit idempotency boundary', () => {
     });
     expect(result.current.store.previewLayers.current).toEqual({});
     expect(result.current.store.layers).not.toHaveProperty(draftLayerId);
+  });
+
+  it('recreates the Small Caps draft canvas after its 2D context is unavailable', () => {
+    const result = setupTextTool();
+    act(() => {
+      result.current.store.currentArgs.current = makeTextArgs();
+      result.current.layers.commitDirtyTool();
+    });
+    const layer = result.current.store.layers['mock-layer-1'];
+    if (!layer) throw new Error('the committed text layer is missing');
+    const rect = editArgsForExistingLayer(layer).rect!;
+    const editedArgs = { ...editArgsForExistingLayer(layer), text: 'Updated', smallCaps: true };
+    const NativeOffscreenCanvas = OffscreenCanvas;
+    const canvases: OffscreenCanvas[] = [];
+
+    vi.stubGlobal('OffscreenCanvas', function RecoverableOffscreenCanvas(width: number, height: number) {
+      const canvas = new NativeOffscreenCanvas(width, height);
+      const failsContext = canvases.length === 0;
+      const nativeGetContext = canvas.getContext.bind(canvas);
+      Object.defineProperty(canvas, 'getContext', {
+        configurable: true,
+        value: (
+          contextId: '2d',
+          options?: CanvasRenderingContext2DSettings
+        ): OffscreenCanvasRenderingContext2D | null => {
+          if (failsContext) return null;
+          return nativeGetContext(contextId, options);
+        },
+      });
+      canvases.push(canvas);
+      return canvas;
+    });
+    try {
+      act(() => {
+        result.current.layers.beginTextLayerEdit(layer.id);
+        expect(result.current.layers.publishSmallCapsTextDraftPreview(editedArgs, rect)).toBe('unavailable');
+      });
+      expect(result.current.store.previewLayers.current).not.toHaveProperty(layer.id);
+      expect(canvases).toHaveLength(1);
+
+      act(() => {
+        expect(result.current.layers.publishSmallCapsTextDraftPreview(editedArgs, rect)).not.toBe('unavailable');
+      });
+
+      expect(canvases.length).toBeGreaterThanOrEqual(2);
+      expect(canvases[1]).not.toBe(canvases[0]);
+      expect(result.current.store.previewLayers.current[layer.id]?.layer.tmpCanvas).toBe(canvases[1]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('falls back after a first new-draft compositor refusal without retaining a duplicate preview', () => {
+    const result = setupTextTool();
+    const rect = { x1: 12, y1: 8, x2: 112, y2: 58 };
+    const draft = makeTextArgs({ rect, smallCaps: true }) as TextToolArgs;
+    const canvas = document.createElement('canvas');
+    canvas.width = 800;
+    canvas.height = 600;
+    Object.defineProperty(canvas, 'getContext', { configurable: true, value: vi.fn(() => null) });
+    result.current.store.canvasRef.current = canvas;
+    drawLayersToCanvas.mockReset().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      act(() => {
+        expect(result.current.layers.publishSmallCapsTextDraftPreview(draft, rect)).toBe('failed');
+      });
+
+      expect(result.current.store.previewLayers.current).toEqual({});
+      expect(drawLayersToCanvas).toHaveBeenCalledTimes(2);
+    } finally {
+      consoleError.mockRestore();
+      drawLayersToCanvas.mockReset();
+      drawLayersToCanvas.mockReturnValue(true);
+    }
+  });
+
+  it('keeps an updated new draft compositor-owned after a later draw refusal', () => {
+    const result = setupTextTool();
+    const rect = { x1: 12, y1: 8, x2: 112, y2: 58 };
+    const firstDraft = makeTextArgs({ rect, smallCaps: true }) as TextToolArgs;
+    const nextDraft = { ...firstDraft, text: 'Updated' };
+    const canvas = document.createElement('canvas');
+    canvas.width = 800;
+    canvas.height = 600;
+    Object.defineProperty(canvas, 'getContext', { configurable: true, value: vi.fn(() => null) });
+    result.current.store.canvasRef.current = canvas;
+    drawLayersToCanvas.mockReset().mockReturnValueOnce(true).mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.useFakeTimers();
+
+    try {
+      act(() => {
+        expect(result.current.layers.publishSmallCapsTextDraftPreview(firstDraft, rect)).toBe('rendered');
+      });
+      const [[draftLayerId]] = Object.entries(result.current.store.previewLayers.current);
+
+      act(() => {
+        expect(result.current.layers.publishSmallCapsTextDraftPreview(nextDraft, rect)).toBe('deferred');
+      });
+      expect(result.current.store.previewLayers.current[draftLayerId]?.layer.source).toMatchObject({
+        args: { text: 'Updated' },
+      });
+      expect(drawLayersToCanvas).toHaveBeenCalledTimes(2);
+
+      act(() => vi.advanceTimersByTime(250));
+      expect(drawLayersToCanvas).toHaveBeenCalledTimes(3);
+      expect(result.current.store.previewLayers.current[draftLayerId]?.layer.source).toMatchObject({
+        args: { text: 'Updated' },
+      });
+    } finally {
+      consoleError.mockRestore();
+      drawLayersToCanvas.mockReset();
+      drawLayersToCanvas.mockReturnValue(true);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('releases overlay ownership and recovers after retrying stale new-draft cleanup', () => {
+    const result = setupTextTool();
+    const rect = { x1: 12, y1: 8, x2: 112, y2: 58 };
+    const firstDraft = makeTextArgs({ rect, smallCaps: true }) as TextToolArgs;
+    const nextDraft = { ...firstDraft, text: 'Updated' };
+    const canvas = document.createElement('canvas');
+    canvas.width = 800;
+    canvas.height = 600;
+    Object.defineProperty(canvas, 'getContext', { configurable: true, value: vi.fn(() => null) });
+    result.current.store.canvasRef.current = canvas;
+    drawLayersToCanvas.mockReset().mockReturnValueOnce(true).mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.useFakeTimers();
+
+    try {
+      act(() => {
+        expect(result.current.layers.publishSmallCapsTextDraftPreview(firstDraft, rect)).toBe('rendered');
+      });
+      const [[draftLayerId, preview]] = Object.entries(result.current.store.previewLayers.current);
+      if (!preview?.layer.tmpCanvas) throw new Error('the Small Caps draft canvas was not retained');
+      Object.defineProperty(preview.layer.tmpCanvas, 'getContext', {
+        configurable: true,
+        value: vi.fn(() => null),
+      });
+
+      act(() => {
+        expect(result.current.layers.publishSmallCapsTextDraftPreview(nextDraft, rect)).toBe('overlay-deferred');
+      });
+      expect(result.current.store.previewLayers.current).not.toHaveProperty(draftLayerId);
+
+      act(() => vi.advanceTimersByTime(250));
+      expect(drawLayersToCanvas).toHaveBeenCalledTimes(3);
+      act(() => {
+        expect(result.current.layers.publishSmallCapsTextDraftPreview(nextDraft, rect)).toBe('rendered');
+      });
+      expect(result.current.store.previewLayers.current[draftLayerId]?.layer.tmpCanvas).not.toBe(
+        preview.layer.tmpCanvas
+      );
+    } finally {
+      consoleError.mockRestore();
+      drawLayersToCanvas.mockReset();
+      drawLayersToCanvas.mockReturnValue(true);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('shares last-painted Small Caps ownership across useLayers scopes', () => {
+    const { result } = renderHook(useLayerCommitScopesHarness, { wrapper: StoreProvider });
+    act(() => {
+      result.current.dispatch({
+        type: 'BATCH_UPDATES',
+        payload: {
+          totalSize: { width: 800, height: 600 },
+          documentFrame: documentFrameFromSize({ width: 800, height: 600 }),
+          hasImage: true,
+        },
+      });
+      result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'text' });
+    });
+
+    const rect = { x1: 12, y1: 8, x2: 112, y2: 58 };
+    const firstDraft = makeTextArgs({ rect, smallCaps: true }) as TextToolArgs;
+    const nextDraft = { ...firstDraft, text: 'Updated' };
+    const canvas = document.createElement('canvas');
+    canvas.width = 800;
+    canvas.height = 600;
+    Object.defineProperty(canvas, 'getContext', { configurable: true, value: vi.fn(() => null) });
+    result.current.store.canvasRef.current = null;
+    drawLayersToCanvas.mockReset().mockReturnValueOnce(true).mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.useFakeTimers();
+
+    try {
+      act(() => {
+        expect(result.current.publisher.publishSmallCapsTextDraftPreview(firstDraft, rect)).toBe('deferred');
+      });
+      result.current.store.canvasRef.current = canvas;
+      act(() => expect(result.current.committer.drawAllLayers()).toBe('rendered'));
+
+      act(() => {
+        expect(result.current.publisher.publishSmallCapsTextDraftPreview(nextDraft, rect)).toBe('deferred');
+      });
+      const [[draftLayerId, preview]] = Object.entries(result.current.store.previewLayers.current);
+      expect(preview?.layer.source).toMatchObject({ args: { text: 'Updated' } });
+
+      act(() => vi.advanceTimersByTime(250));
+      expect(drawLayersToCanvas).toHaveBeenCalledTimes(3);
+      expect(result.current.store.previewLayers.current[draftLayerId]?.layer.source).toMatchObject({
+        args: { text: 'Updated' },
+      });
+    } finally {
+      consoleError.mockRestore();
+      drawLayersToCanvas.mockReset();
+      drawLayersToCanvas.mockReturnValue(true);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it('clears a Small Caps draft when a different hook scope commits text', () => {
@@ -217,7 +447,7 @@ describe('useLayers text commit idempotency boundary', () => {
     const args = makeTextArgs({ rect, smallCaps: true }) as TextToolArgs;
     act(() => {
       result.current.store.currentArgs.current = args;
-      expect(result.current.publisher.publishSmallCapsTextDraftPreview(args, rect)).toBe(true);
+      expect(result.current.publisher.publishSmallCapsTextDraftPreview(args, rect)).toBe('deferred');
     });
 
     const [[draftLayerId, preview]] = Object.entries(result.current.store.previewLayers.current);
@@ -248,7 +478,7 @@ describe('useLayers text commit idempotency boundary', () => {
 
     act(() => {
       result.current.layers.beginTextLayerEdit(layer.id);
-      expect(result.current.layers.publishSmallCapsTextDraftPreview(editedArgs, rect)).toBe(true);
+      expect(result.current.layers.publishSmallCapsTextDraftPreview(editedArgs, rect)).toBe('deferred');
     });
 
     expect(result.current.store.previewLayers.current[layer.id]?.layer).toMatchObject({
@@ -271,6 +501,193 @@ describe('useLayers text commit idempotency boundary', () => {
       result.current.layers.cancelLayerPreview(layer.id);
     });
     expect(result.current.store.previewLayers.current).toEqual({});
+    expect(result.current.store.layers[layer.id]).toMatchObject({ visible: true, source: layer.source });
+  });
+
+  it('reports compositor refusal and restores the committed layer for an existing Small Caps edit', () => {
+    const result = setupTextTool();
+    act(() => {
+      result.current.store.currentArgs.current = makeTextArgs();
+      result.current.layers.commitDirtyTool();
+    });
+    const layer = result.current.store.layers['mock-layer-1'];
+    if (!layer) throw new Error('the committed text layer is missing');
+    const rect = editArgsForExistingLayer(layer).rect!;
+    const editedArgs = { ...editArgsForExistingLayer(layer), text: 'Updated', smallCaps: true };
+    const canvas = document.createElement('canvas');
+    canvas.width = 800;
+    canvas.height = 600;
+    Object.defineProperty(canvas, 'getContext', { configurable: true, value: vi.fn(() => null) });
+    result.current.store.canvasRef.current = canvas;
+    drawLayersToCanvas.mockReset();
+    drawLayersToCanvas.mockReturnValueOnce(true).mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      act(() => {
+        result.current.layers.beginTextLayerEdit(layer.id);
+        const publication = result.current.layers.publishSmallCapsTextDraftPreview(editedArgs, rect);
+        expect(
+          publication,
+          JSON.stringify({
+            args: {
+              smallCaps: editedArgs.smallCaps,
+              text: editedArgs.text,
+              rect: editedArgs.rect,
+              editingLayerId: editedArgs.editingLayerId,
+            },
+            layer: {
+              locked: layer.locked,
+              sourceKind: layer.source?.kind,
+              sourceTool: layer.source?.kind === 'tool' ? layer.source.args.toolName : undefined,
+            },
+            drawCalls: drawLayersToCanvas.mock.calls.length,
+          })
+        ).toBe('failed');
+      });
+      expect(drawLayersToCanvas).toHaveBeenCalledTimes(3);
+    } finally {
+      consoleError.mockRestore();
+      drawLayersToCanvas.mockReset();
+      drawLayersToCanvas.mockReturnValue(true);
+    }
+
+    expect(result.current.store.previewLayers.current).not.toHaveProperty(layer.id);
+    expect(result.current.store.layers[layer.id]).toEqual(layer);
+  });
+
+  it('retries committed-source restoration after repeated compositor refusal', () => {
+    const result = setupTextTool();
+    act(() => {
+      result.current.store.currentArgs.current = makeTextArgs();
+      result.current.layers.commitDirtyTool();
+    });
+    const layer = result.current.store.layers['mock-layer-1'];
+    if (!layer) throw new Error('the committed text layer is missing');
+    const rect = editArgsForExistingLayer(layer).rect!;
+    const editedArgs = { ...editArgsForExistingLayer(layer), text: 'Updated', smallCaps: true };
+    const canvas = document.createElement('canvas');
+    canvas.width = 800;
+    canvas.height = 600;
+    Object.defineProperty(canvas, 'getContext', { configurable: true, value: vi.fn(() => null) });
+    result.current.store.canvasRef.current = canvas;
+    drawLayersToCanvas.mockReset();
+    drawLayersToCanvas
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.useFakeTimers();
+
+    try {
+      act(() => {
+        result.current.layers.beginTextLayerEdit(layer.id);
+        expect(result.current.layers.publishSmallCapsTextDraftPreview(editedArgs, rect)).toBe('failed');
+      });
+      expect(drawLayersToCanvas).toHaveBeenCalledTimes(3);
+      expect(result.current.store.previewLayers.current).not.toHaveProperty(layer.id);
+
+      act(() => vi.advanceTimersByTime(250));
+      expect(drawLayersToCanvas).toHaveBeenCalledTimes(4);
+
+      act(() => vi.advanceTimersByTime(500));
+      expect(drawLayersToCanvas).toHaveBeenCalledTimes(5);
+      expect(result.current.store.previewLayers.current).not.toHaveProperty(layer.id);
+      expect(result.current.store.layers[layer.id]).toEqual(layer);
+    } finally {
+      consoleError.mockRestore();
+      drawLayersToCanvas.mockReset();
+      drawLayersToCanvas.mockReturnValue(true);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('hides the committed source again when a refused Small Caps edit returns to DOM text', () => {
+    const result = setupTextTool();
+    act(() => {
+      result.current.store.currentArgs.current = makeTextArgs();
+      result.current.layers.commitDirtyTool();
+    });
+    const layer = result.current.store.layers['mock-layer-1'];
+    if (!layer) throw new Error('the committed text layer is missing');
+    const rect = editArgsForExistingLayer(layer).rect!;
+    const editedArgs = { ...editArgsForExistingLayer(layer), text: 'Updated', smallCaps: true };
+    const canvas = document.createElement('canvas');
+    canvas.width = 800;
+    canvas.height = 600;
+    Object.defineProperty(canvas, 'getContext', { configurable: true, value: vi.fn(() => null) });
+    result.current.store.canvasRef.current = canvas;
+    drawLayersToCanvas.mockReset();
+    drawLayersToCanvas
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.useFakeTimers();
+
+    try {
+      act(() => {
+        result.current.layers.beginTextLayerEdit(layer.id);
+        expect(result.current.layers.publishSmallCapsTextDraftPreview(editedArgs, rect)).toBe('failed');
+      });
+      expect(result.current.store.previewLayers.current).not.toHaveProperty(layer.id);
+
+      act(() => {
+        result.current.layers.clearSmallCapsTextDraftPreview(layer.id, 'hide-committed');
+      });
+      expect(result.current.store.previewLayers.current[layer.id]?.layer).toMatchObject({
+        visible: false,
+        bitmap: null,
+        tmpCanvas: null,
+        source: layer.source,
+      });
+      expect(drawLayersToCanvas).toHaveBeenCalledTimes(4);
+
+      drawLayersToCanvas.mockReturnValueOnce(true);
+      act(() => vi.advanceTimersByTime(250));
+      expect(drawLayersToCanvas).toHaveBeenCalledTimes(5);
+      expect(result.current.store.previewLayers.current[layer.id]?.layer.visible).toBe(false);
+    } finally {
+      consoleError.mockRestore();
+      drawLayersToCanvas.mockReset();
+      drawLayersToCanvas.mockReturnValue(true);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('restores an existing source on early refusal after a prior Small Caps draft', () => {
+    const result = setupTextTool();
+    const rect = { x1: 12, y1: 8, x2: 112, y2: 58 };
+    const newDraft = makeTextArgs({ rect, smallCaps: true }) as TextToolArgs;
+    act(() => {
+      expect(result.current.layers.publishSmallCapsTextDraftPreview(newDraft, rect)).toBe('deferred');
+      result.current.layers.clearSmallCapsTextDraftPreview();
+      result.current.store.currentArgs.current = makeTextArgs();
+      result.current.layers.commitDirtyTool();
+    });
+
+    const layer = result.current.store.layers['mock-layer-1'];
+    if (!layer) throw new Error('the committed text layer is missing');
+    const editedArgs = { ...editArgsForExistingLayer(layer), text: 'Updated', smallCaps: true };
+    act(() => {
+      result.current.layers.beginTextLayerEdit(layer.id);
+      expect(
+        result.current.layers.publishSmallCapsTextDraftPreview(editedArgs, {
+          x1: Number.NaN,
+          y1: 8,
+          x2: 112,
+          y2: 58,
+        })
+      ).toBe('unavailable');
+    });
+
+    expect(result.current.store.previewLayers.current).not.toHaveProperty(layer.id);
     expect(result.current.store.layers[layer.id]).toMatchObject({ visible: true, source: layer.source });
   });
 

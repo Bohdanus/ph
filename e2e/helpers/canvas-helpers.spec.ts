@@ -1,5 +1,11 @@
 import { expect, test, type Page } from '../fixtures/extended-test';
-import { getSelectionBounds, getColorAtPoint, getDarkPixelBounds, loadImageData } from './canvas-helpers';
+import {
+  getSelectionBounds,
+  getColorAtPoint,
+  getDarkPixelBounds,
+  loadImageData,
+  WHOLE_CAPTURE,
+} from './canvas-helpers';
 
 interface DrawingShape {
   type: 'fillRect' | 'strokeRect';
@@ -66,7 +72,7 @@ test.describe('Canvas Helpers', () => {
       shapes: [{ type: 'fillRect', x: 20, y: 20, w: 60, h: 60 }],
     });
 
-    const bounds = await getDarkPixelBounds(screenshot);
+    const bounds = await getDarkPixelBounds(screenshot, WHOLE_CAPTURE);
     expect(bounds).toBeTruthy();
     expect(bounds!.left).toBe(20);
     expect(bounds!.top).toBe(20);
@@ -82,7 +88,7 @@ test.describe('Canvas Helpers', () => {
       shapes: [{ type: 'fillRect', x: 0, y: 0, w: 100, h: 100 }],
     });
 
-    const bounds = await getDarkPixelBounds(screenshot);
+    const bounds = await getDarkPixelBounds(screenshot, WHOLE_CAPTURE);
     expect(bounds).toBeNull();
   });
 

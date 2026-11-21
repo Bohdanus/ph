@@ -680,6 +680,7 @@ interface LocatorSurface {
   count: Mock<() => Promise<number>>;
   isVisible: Mock<() => Promise<boolean>>;
   textContent: Mock<() => Promise<string | null>>;
+  getAttribute: Mock<(name: string) => Promise<string | null>>;
   boundingBox: Mock<() => Promise<Box | null>>;
   evaluate: Mock<(read: (element: unknown) => unknown) => Promise<unknown>>;
   setInputFiles: Mock<(file: string) => Promise<void>>;
@@ -750,20 +751,19 @@ function asPlaywright<T extends object>(surface: object): T {
 }
 
 /**
- * The canvas the default `evaluate` mock hands to a page function.
- *
- * `setupExportTest` reads the element twice, and the two reads want different shapes: the
- * document size comes off the backing store (`width`/`height`) and the source image off
- * `toDataURL()`. A single canned return cannot answer both — the mock used to answer
- * `SOURCE_DATA_URL` for every call, so the backing-store read destructured a string,
- * `documentSize` became `{ width: undefined, height: undefined }`, and every offset derived
- * from it was `NaN`. Running the page function against a duck-typed element answers whichever
- * shape it asks for, and fails loudly if a helper starts reading a property this does not have.
+ * The canvas the default `evaluate` mock hands to a page function. `setupExportTest` reads
+ * its source image with `toDataURL()`; logical dimensions come from the workspace fit
+ * attributes, not this element's physical backing-store width and height.
  */
 const FAKE_CANVAS_ELEMENT = {
   width: DEFAULT_DOCUMENT_WIDTH,
   height: DEFAULT_DOCUMENT_HEIGHT,
   toDataURL: () => SOURCE_DATA_URL,
+};
+const FAKE_HIDPI_CANVAS_ELEMENT = {
+  ...FAKE_CANVAS_ELEMENT,
+  width: DEFAULT_DOCUMENT_WIDTH * 2,
+  height: DEFAULT_DOCUMENT_HEIGHT * 2,
 };
 
 function createLocatorMock(overrides: Partial<LocatorSurface> = {}): LocatorSurface {
@@ -775,6 +775,12 @@ function createLocatorMock(overrides: Partial<LocatorSurface> = {}): LocatorSurf
     count: vi.fn().mockResolvedValue(1),
     isVisible: vi.fn().mockResolvedValue(true),
     textContent: vi.fn().mockResolvedValue(''),
+    getAttribute: vi.fn(async (name: string) => {
+      if (name === 'data-view-rotation') return '0';
+      if (name === 'data-fit-document-width') return String(DEFAULT_DOCUMENT_WIDTH);
+      if (name === 'data-fit-document-height') return String(DEFAULT_DOCUMENT_HEIGHT);
+      return null;
+    }),
     boundingBox: vi.fn().mockResolvedValue(null),
     evaluate: vi.fn(async (read: (element: unknown) => unknown) => read(FAKE_CANVAS_ELEMENT)),
     setInputFiles: vi.fn().mockResolvedValue(undefined),
@@ -1194,12 +1200,19 @@ describe('Export Helpers', () => {
   });
 
   describe('setupExportTest', () => {
-    it('prepares the download directory, strokes the canvas and returns the source data url', async () => {
+    it('uses logical document dimensions when the canvas has a HiDPI backing store', async () => {
       const box: Box = { x: 64, y: 48, width: 512, height: 384 };
-      const canvas = createLocatorMock({ boundingBox: vi.fn().mockResolvedValue(box) });
+      const canvas = createLocatorMock({
+        boundingBox: vi.fn().mockResolvedValue(box),
+        evaluate: vi.fn(async (read) => read(FAKE_HIDPI_CANVAS_ELEMENT)),
+      });
+      const workspaceContainer = createLocatorMock();
       const drawTool = createLocatorMock();
       const { surface, page } = createPageMock({
-        getByTestId: byKey({ 'workspace-canvas': canvas, 'tool-button-draw': drawTool }, canvas),
+        getByTestId: byKey(
+          { 'workspace-canvas': canvas, 'workspace-container': workspaceContainer, 'tool-button-draw': drawTool },
+          canvas
+        ),
       });
 
       const result = await setupExportTest(page, createTestInfoMock());
@@ -1211,14 +1224,16 @@ describe('Export Helpers', () => {
       // this locator on the Draw preview canvas or a hidden overlay depending on which
       // tool is active, so there is deliberately no `locator('canvas')` call here.
       expect(surface.getByTestId).toHaveBeenCalledWith('workspace-canvas');
+      expect(surface.getByTestId).toHaveBeenCalledWith('workspace-container');
       expect(surface.locator).not.toHaveBeenCalled();
       expect(mocks.mockExpect).toHaveBeenCalledWith(canvas);
       expect(drawTool.click).toHaveBeenCalled();
       // The stroke is specified in DOCUMENT space and mapped into this canvas, so the
       // document point it marks does not depend on the canvas size. 512x384 is aspect 1.333,
       // the document's own aspect, so there is no letterbox and the mapping is a plain scale.
-      const start = documentToCanvasOffset(box, EXPORT_LINE_START.x, EXPORT_LINE_START.y);
-      const end = documentToCanvasOffset(box, EXPORT_LINE_END.x, EXPORT_LINE_END.y);
+      const documentSize = { width: DEFAULT_DOCUMENT_WIDTH, height: DEFAULT_DOCUMENT_HEIGHT };
+      const start = documentToCanvasOffset(box, EXPORT_LINE_START.x, EXPORT_LINE_START.y, documentSize);
+      const end = documentToCanvasOffset(box, EXPORT_LINE_END.x, EXPORT_LINE_END.y, documentSize);
       expect(surface.mouse.move.mock.calls).toEqual([
         [box.x + start.x, box.y + start.y],
         [box.x + end.x, box.y + end.y],
@@ -1226,20 +1241,13 @@ describe('Export Helpers', () => {
       expect(surface.mouse.down).toHaveBeenCalled();
       expect(surface.mouse.up).toHaveBeenCalled();
       expect(surface.screenshot).toHaveBeenCalledWith({ clip: redrawClip(box) });
-      expect(canvas.evaluate).toHaveBeenCalled();
-      // The document size is READ off the backing store, not assumed to be the seeded 800x600:
-      // `documentToCanvasOffset` used to divide by a hardcoded size, so a document opened at
-      // any other resolution was drawn somewhere the app never looks and the export stopped
-      // being the line the constants describe. One of the two `evaluate` calls on the canvas
-      // is that read, and its result is handed back so a spec can assert on it.
-      const backingStoreRead = canvas.evaluate.mock.calls.map(([read]) => read(FAKE_CANVAS_ELEMENT));
-      expect(backingStoreRead).toContainEqual({
-        width: DEFAULT_DOCUMENT_WIDTH,
-        height: DEFAULT_DOCUMENT_HEIGHT,
-      });
+      expect(canvas.evaluate).toHaveBeenCalledTimes(1);
+      expect(canvas.evaluate.mock.calls[0]?.[0](FAKE_HIDPI_CANVAS_ELEMENT)).toBe(SOURCE_DATA_URL);
+      expect(workspaceContainer.getAttribute).toHaveBeenCalledWith('data-fit-document-width');
+      expect(workspaceContainer.getAttribute).toHaveBeenCalledWith('data-fit-document-height');
       expect(result).toEqual({
         box,
-        documentSize: { width: DEFAULT_DOCUMENT_WIDTH, height: DEFAULT_DOCUMENT_HEIGHT },
+        documentSize,
         sourceDataUrl: SOURCE_DATA_URL,
         downloadDirectory: DOWNLOAD_DIRECTORY,
       });
@@ -1248,9 +1256,13 @@ describe('Export Helpers', () => {
     it('offsets the stroke by the canvas box origin instead of fixed viewport coordinates', async () => {
       const box: Box = { x: 311, y: 197, width: 640, height: 480 };
       const canvas = createLocatorMock({ boundingBox: vi.fn().mockResolvedValue(box) });
+      const workspaceContainer = createLocatorMock();
       const drawTool = createLocatorMock();
       const { surface, page } = createPageMock({
-        getByTestId: byKey({ 'workspace-canvas': canvas, 'tool-button-draw': drawTool }, canvas),
+        getByTestId: byKey(
+          { 'workspace-canvas': canvas, 'workspace-container': workspaceContainer, 'tool-button-draw': drawTool },
+          canvas
+        ),
         locator: byKey({ canvas }, canvas),
       });
 
@@ -1274,9 +1286,13 @@ describe('Export Helpers', () => {
     it('polls the box-relative redraw region until the stroke reaches the backing store', async () => {
       const box: Box = { x: 12, y: 8, width: 500, height: 500 };
       const canvas = createLocatorMock({ boundingBox: vi.fn().mockResolvedValue(box) });
+      const workspaceContainer = createLocatorMock();
       const drawTool = createLocatorMock();
       const { surface, page } = createPageMock({
-        getByTestId: byKey({ 'workspace-canvas': canvas, 'tool-button-draw': drawTool }, canvas),
+        getByTestId: byKey(
+          { 'workspace-canvas': canvas, 'workspace-container': workspaceContainer, 'tool-button-draw': drawTool },
+          canvas
+        ),
         locator: byKey({ canvas }, canvas),
         screenshot: vi
           .fn()

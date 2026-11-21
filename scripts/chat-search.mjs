@@ -12,7 +12,7 @@
  *   --days           Time window in days (default: 30)
  *   --max-results    Max sessions to retrieve per provider (default: 20)
  *   --max-sessions   Max evidence excerpts to synthesize (default: 10)
- *   --max-tokens     Completion token budget (default: 800, max: 4000)
+ *   --max-tokens     Completion token budget (default: 800, max: 65536)
  *   --output-file    Write result to this file instead of stdout
  *   --probe-openrouter-quota  Check OpenRouter free quota before routing
  *   --groq-free-plan          Enable Groq free plan routing
@@ -25,6 +25,7 @@
  * provider. Databases are opened read-only.
  */
 
+import { pathToFileURL } from 'node:url';
 import { executeChatSearch } from './lib/chat-search.mjs';
 import { sanitizeErrorMessage } from './lib/secrets.mjs';
 
@@ -37,7 +38,7 @@ const USAGE = `Usage: node scripts/chat-search.mjs --query "question" [options]
   --days N                  Search window in days (default: 30)
   --max-results N           Max sessions per provider (default: 20)
   --max-sessions N          Max evidence excerpts to synthesize (default: 10)
-  --max-tokens N            Completion tokens (default: 800, max: 4000)
+  --max-tokens N            Completion tokens (default: 800, max: 65536)
   --output-file PATH        Write result to file
   --probe-openrouter-quota  Check OpenRouter free quota before routing
   --groq-free-plan          Enable Groq free plan routing
@@ -199,7 +200,7 @@ export async function main(
   return code;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .then((code) => {
       process.exitCode = code;

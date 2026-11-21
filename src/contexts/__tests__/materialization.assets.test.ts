@@ -1039,6 +1039,38 @@ describe('materialization document frame presentation', () => {
     registry.shutdown();
   });
 
+  it('copies retained affine frame pixels directly on the integer-aligned pixel grid', async () => {
+    const registry = new AssetRegistry();
+    const frame: DocumentFrame = { x: 8, y: 9, width: 80, height: 60 };
+    const layer = makeLayer('layer-1', blankSource(20, 16), { x: 0, y: 0, width: 20, height: 16 }, [
+      Object.freeze({
+        kind: 'apply-affine-transform' as const,
+        layerId: 'layer-1',
+        transform: Object.freeze({ a: 1, b: 0, c: 0, d: 1, e: 12.25, f: 12.5 }),
+      }),
+    ]);
+
+    try {
+      const result = await materializeLayer(layer, makeRequest(registry, { pixelGridFrame: frame }));
+      const frameContext = recordedContexts.find((context) => vi.mocked(context.getImageData).mock.calls.length > 0);
+      const outputContext = recordedContexts.find((context) => vi.mocked(context.putImageData).mock.calls.length > 0);
+
+      expect(result.bounds).toEqual({ x: 12, y: 12, width: 21, height: 17 });
+      expect(frameContext).toBeDefined();
+      expect(outputContext).toBeDefined();
+
+      const frameRead = vi.mocked(frameContext!.getImageData);
+      expect(frameRead).toHaveBeenCalledOnce();
+      expect(frameRead).toHaveBeenCalledWith(4, 3, 21, 17);
+      const exactPixels = frameRead.mock.results[0]!.value;
+      expect(vi.mocked(outputContext!.putImageData)).toHaveBeenCalledWith(exactPixels, 0, 0);
+
+      result.lease.release();
+    } finally {
+      registry.shutdown();
+    }
+  });
+
   it('keeps the generated presentation on its canvas when framing it', async () => {
     const registry = new AssetRegistry();
     const frame: DocumentFrame = { x: 0, y: 0, width: 50, height: 50 };

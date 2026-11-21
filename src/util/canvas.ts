@@ -14,7 +14,7 @@ export function resizeCanvas(canvas: HTMLCanvasElement, width: number, height: n
     if (canvas.height !== targetHeight) canvas.height = targetHeight;
   }
 
-  // Always ensure the correct transform is applied when ratio > 1.
+  // Always ensure the correct transform is applied when ratio differs from 1.
   // If the canvas was already at the right size but the transform was lost
   // (e.g., external code called setTransform), we need to reapply it.
   if (ratio !== 1) {
@@ -46,6 +46,20 @@ export function resizeCanvas(canvas: HTMLCanvasElement, width: number, height: n
     } catch {
       // Ignore in test environments
     }
+  }
+}
+
+/**
+ * Clear the backing-store rectangle under an identity transform.
+ * The active clipping region still limits the cleared area.
+ */
+export function clearCanvasBackingStore(ctx: Ctx2D) {
+  ctx.save();
+  try {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  } finally {
+    ctx.restore();
   }
 }
 

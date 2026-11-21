@@ -205,9 +205,9 @@ string into an `OffscreenCanvas` 2D context, and both are unreached processors f
 commit kinds; they are cited in the data file because
 they are the registered processors, not because editing runs them.
 
-**The Brightness mapping, stated exactly, because the old note had it inverted.** The
-proportionate curve in `proportionateFactor()` (`src/tools/functions.ts`) is a table over
-Adobe's own travels for this adjustment, and the table is:
+**The app's Brightness/Contrast factor mapping.** The linear mapping in `proportionateFactor()`
+(`src/tools/functions.ts`) uses the slider ranges documented by Adobe, but its factors are
+implementation choices in this app, not Photoshop transfer values:
 
 | control    | slider | factor | emitted |
 | ---------- | ------ | ------ | ------- |
@@ -223,34 +223,28 @@ So **0 is the neutral** on both controls, emitting exactly `brightness(100%) con
 `defaultSettings` in `src/tools/settings.ts` is `{ brightness: 0, contrast: 0 }`, so the panel at
 rest applies nothing.
 
-The two spans are not the same number, and the difference is the whole point of the table.
-Brightness divides by its own negative travel, so −150 lands on a factor of exactly `0` — a
-multiply to zero is the one thing `brightness()` does exactly right. Contrast divides by `100`,
-**not** by its own `−50` travel, because its two ends are not the same kind of endpoint:
-Photoshop's own Legacy contrast at `+100` is a measured gain of exactly `2`, and `1 + c/100`
-puts `+100` on that same `2` while leaving `−50` on `0.5`. Dividing by `50` instead would put
-`−50` on a factor of `0`, which is `contrast(0%)` — every pixel becomes the same mid-grey and
-the image carries no information at all. That is precisely the failure Adobe names when it
-warns against Legacy: "this can cause clipping or loss of image detail in highlight or shadow
-areas."
+The app divides Brightness by the absolute value of its negative minimum and Contrast by its
+positive maximum. That maps Brightness `−150` to factor `0`, and maps Contrast `−50` to factor
+`0.5`. These choices describe the CSS factors emitted by this implementation; they do not
+establish Photoshop's pixel output.
 
-**What "proportionate" is, and where the curve stops.** Adobe's sentence for this adjustment's
-default mode is "In normal mode, Brightness/Contrast applies proportionate (nonlinear)
-adjustments to the image layer, as with Levels and Curves adjustments."
-(<https://helpx.adobe.com/photoshop/using/apply-brightness-contrast-adjustment.html>) Two halves of
-that are claimed here and one is not. **Claimed:** the linear response — a constant factor step
-per slider step, so the same drag feels the same everywhere on the travel rather than gentle at
-one end and abrupt at the other — and the **non-clipping negative half**, which the CSS pipeline
-reproduces exactly on both controls. `brightness(0%..100%)` is a monotone contraction toward
-black and `contrast(0%..100%)` is a monotone contraction about the mid-grey pivot, and neither
-can move a value outside `[0, 1]`. **Not claimed: the nonlinearity.** Adobe pairs "proportionate"
-with "(nonlinear)" and compares the adjustment to Levels and Curves, and its measured response is
-an S — a `+20` brightness reads `10→11`, `128→145`, `250→253`, a set no constant scale and no
-constant offset can produce. CSS `brightness()` is a clamped pure multiply and `contrast()` a
-clamped affine pivot, so every factor above `1` clips: `contrast(f)` clips every input past
-`0.5 + 0.5/f`, and `brightness(f)` cannot create a white that was not already white. Reproducing
-the real curve needs a per-channel lookup table applied per pixel, which is the same absent
-mechanism this file's Levels entry rests on. **That gap is a follow-up, not a claim of parity.**
+**The app's CSS mapping is not Photoshop pixel parity.** [Adobe's current desktop Help page](https://helpx.adobe.com/photoshop/desktop/adjust-color/color-corrections/apply-brightness-and-contrast-adjustment.html)
+gives the Brightness and Contrast ranges and describes their qualitative effects, but it publishes
+no default-mode transfer formula. [An older Adobe Help page](https://helpx.adobe.com/photoshop/using/apply-brightness-contrast-adjustment.html)
+describes normal mode as a proportionate nonlinear adjustment, but also gives no formula for
+reproducing its curve. Keep the app's mapped CSS factors separate from those Photoshop statements.
+
+The [W3C Filter Effects Level 1 Working Draft](https://www.w3.org/TR/filter-effects-1/) describes
+`brightness(f)` as a linear multiplier, allows factors above 1, defines the CSS filter functions
+in sRGB, and clamps filter output to allowed color ranges. For normalized input `x` and `f > 1`,
+brightness reaches white at `x >= 1/f`; contrast maps `x` to `(x - 0.5) * f + 0.5`, so values at
+or below `0.5 - 0.5/f` clamp to black and values at or above `0.5 + 0.5/f` clamp to white. At the
+app's maximum factor of 2, with the other control neutral, those thresholds are 0.5 for
+brightness and 0.25/0.75 for contrast.
+These formulas describe the app's CSS filters, not Photoshop's curve. The current
+`e2e/levels.spec.ts` checks deterministic app output and does not compare against Photoshop
+reference pixels. A parity implementation would need a measured Photoshop curve and a per-channel
+pixel operation; a CSS filter string cannot express an arbitrary lookup table.
 
 The test harness defect the corpus also flagged **is** fixed. The `filter` data property in
 `createMockCanvasContext()` (`src/test/setup.ts`) replaces
@@ -664,13 +658,11 @@ modifier table:
 | `Cmd+Option+T` | duplicate and enter Free Transform on the duplicate |
 | `Enter`        | commit                                              |
 
-The app binds none of the three. `t` alone selects the Text tool
-(the `t` registration in `AppKeyboardShortcuts.tsx`; what an earlier version cited is inside the
-`Cmd+C` copy handler) and there is no `Cmd+T` registration
-anywhere; the tool has no accelerator at all, and no rail entry to declare one on —
-`extraTools` in `toolbar-mapping.ts` is where `color`, `levels` and `transform` are recorded as
-carrying no Tools-rail entry, and `Edit ▸ Free Transform` in the header is what reaches the id
-instead (the `Edit` menu's `Free Transform` item in `DesktopHeader.tsx`).
+The app binds `Cmd/Ctrl+T` to the `transform` command. It does not bind `Cmd+Option+T` to duplicate
+and transform, or `Enter` to commit; slider releases still commit the preview and the panel has no
+explicit Apply button. `t` alone selects the Text tool. `transform` has no Tools-rail entry —
+`extraTools` in `toolbar-mapping.ts` records that it is a command, and `Edit ▸ Free Transform` in
+the header reaches the same command.
 
 **`Enter` is now Adobe's, and it was third-party before this pass.** Adobe's Free Transform page
 does not print it, but the Feb 23 2026 reference-point page does, in the imperative: "Press **Enter
@@ -1137,14 +1129,14 @@ the durable materializer — see the `ctx.filter` section above.
    not found in any Adobe page opened in this pass. Closest URL:
    `https://community.adobe.com/questions-712/alt-drag-to-duplicate-not-working-in-photoshop-1091259`,
    which is about the Alt form and is not evidence for a Cmd form.
-10. **Photoshop's `Cmd+T`, `Cmd+L` and `Enter` bindings, from Adobe.** Adobe's
-    default-keyboard-shortcuts page describes the Keyboard Shortcuts dialog rather than listing
-    the bindings (`https://helpx.adobe.com/photoshop/using/default-keyboard-shortcuts.html`), and
-    the Free Transform page says "Choose Edit > Free Transform" without the shortcut. The
-    shortcuts in the data file come from a third-party mirror of Adobe's shipped Mac shortcut
-    sheet, plus an Adobe blog post and a Peachpit excerpt that agree with it. They are
-    version-stable in practice — the 2026 duplicate-and-transform page only makes sense if
-    `Cmd+T` still exists — but they are not read off an Adobe page in this pass.
+10. **Photoshop's transform shortcuts.** Adobe's default-keyboard-shortcuts page describes the
+    Keyboard Shortcuts dialog rather than listing bindings
+    (`https://helpx.adobe.com/photoshop/using/default-keyboard-shortcuts.html`). Adobe's
+    `https://www.adobe.com/products/photoshop/resize-image.html` page does explicitly say
+    "Ctrl + T" (Windows) / "Cmd + T" (Mac), then names Edit > Free Transform as another route; it
+    confirms the shortcut for the transform operation, not a Tools-panel tool. Adobe's
+    reference-point page also confirms Enter/Return to apply. `Cmd+L` and `Cmd+Option+T` remain
+    third-party corroboration rather than confirmed in an Adobe shortcut list.
 11. **`X` as the reset key for Black and White.** Not found, and contradicted: `X` swaps
     foreground and background colors in Photoshop's default key map, and Adobe's own route back
     from an adjustment is the Reset control

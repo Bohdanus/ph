@@ -4,6 +4,7 @@ import {
   drawLine,
   getWorkspaceCanvas,
   hasDarkPixels,
+  workspaceDocumentPixelMask,
   takeLineScreenshot,
   viewportClip,
   waitForCanvasRedraw,
@@ -33,5 +34,5 @@ test('screenshot of canvas area contains drawn black line', async ({ page }, tes
   await waitForCanvasRedraw(page, box!, { clip: lineClip });
 
   const screenshot = await takeLineScreenshot(page, box!, 'drawn-line', testInfo, lineClip);
-  await expect(hasDarkPixels(screenshot)).resolves.toBe(true);
+  await expect(hasDarkPixels(screenshot, await workspaceDocumentPixelMask(page, box!, lineClip))).resolves.toBe(true);
 });

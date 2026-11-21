@@ -4,7 +4,15 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Locator, Mouse, Page, TestInfo } from '@playwright/test';
-import { loadImageData, type CaptureRegion, type ClipOptions, type ImageDataResult } from '../canvas-helpers';
+import {
+  loadImageData,
+  WHOLE_CAPTURE,
+  type BoundingBox,
+  type CaptureRegion,
+  type ClipOptions,
+  type DocumentSize,
+  type ImageDataResult,
+} from '../canvas-helpers';
 
 export interface Color {
   red: number;
@@ -79,7 +87,7 @@ export function fillAll(image: ImageDataResult, color: Color, alpha = OPAQUE): v
  * pixel, so the capture scale every helper derives from it is exactly 1.
  */
 export function captureRegionOf(image: ImageDataResult): CaptureRegion {
-  return { width: image.width, height: image.height };
+  return { width: image.width, height: image.height, mask: WHOLE_CAPTURE };
 }
 
 /**
@@ -239,12 +247,32 @@ export function createScrollablePage(
   options: ScrollGeometry & {
     result?: Buffer;
     waitForTimeout?: Mock<(ms: number) => Promise<void>>;
+    canvasBox?: BoundingBox;
+    viewRotation?: number;
+    documentSize?: DocumentSize;
   } = {}
 ): ScrollablePage {
   const screenshot = createScreenshotSpy(options.result ?? Buffer.from('fake-png-data'));
   const waitForTimeout = options.waitForTimeout ?? vi.fn<(ms: number) => Promise<void>>().mockResolvedValue(undefined);
   const scroll = createScrollModel(options);
-  const page = createPageMock({ screenshot, waitForTimeout, evaluate: scroll.evaluate });
+  const canvasBox = options.canvasBox ?? { x: 0, y: 0, width: 800, height: 600 };
+  const canvasLocator = { boundingBox: vi.fn(async () => canvasBox) } as unknown as Locator;
+  const workspaceContainerLocator = {
+    getAttribute: vi.fn(async (name: string) => {
+      if (name === 'data-view-rotation') return String(options.viewRotation ?? 0);
+      if (name === 'data-fit-document-width') return String(options.documentSize?.width ?? 800);
+      if (name === 'data-fit-document-height') return String(options.documentSize?.height ?? 600);
+      return null;
+    }),
+  } as unknown as Locator;
+  const page = createPageMock({
+    screenshot,
+    waitForTimeout,
+    evaluate: scroll.evaluate,
+    getByTestId: vi.fn((testId: string) =>
+      testId === 'workspace-container' ? workspaceContainerLocator : canvasLocator
+    ) as unknown as Page['getByTestId'],
+  });
   return {
     page,
     screenshot,

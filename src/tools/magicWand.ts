@@ -1,4 +1,4 @@
-import type { ProcessorToolParams } from './toolProcessors.ts';
+import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
 export type MagicWandToolArgs = {
   tolerance: number;
@@ -17,6 +17,4 @@ export type MagicWandToolSettings = MagicWandToolArgs;
 
 export const magicWand =
   ({ bitmap }: ProcessorToolParams) =>
-  () => {
-    return [bitmap];
-  };
+  (): ToolResult => [bitmap];

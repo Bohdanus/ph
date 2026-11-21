@@ -202,15 +202,18 @@ describe("Photoshop's bracket tip-size keys", () => {
 });
 
 describe("Photoshop's opacity number keys", () => {
-  it('sets Opacity to 100% on `0` and to 10% on `1`', () => {
+  const opacityTools = ['eraser', 'brush', 'pencil', 'color-replacement', 'clone-stamp'] as const;
+
+  it.each(opacityTools)('sets Opacity to 100% on `0` and to 10% on `1` for %s', (toolName) => {
+    selectTool(toolName, toolName === 'clone-stamp' ? { size: 10, alpha: 0.35 } : { lineWidth: 10, alpha: 0.35 });
     renderShortcuts();
 
     press('0');
-    expect(onlyPatch()).toEqual(['eraser', { alpha: 1 }]);
+    expect(onlyPatch()).toEqual([toolName, { alpha: 1 }]);
 
     patchToolArgs.mockClear();
     press('1');
-    expect(onlyPatch()).toEqual(['eraser', { alpha: 0.1 }]);
+    expect(onlyPatch()).toEqual([toolName, { alpha: 0.1 }]);
   });
 
   it('overwrites whatever the slider was set to, because that is the point of the key', () => {
@@ -221,8 +224,32 @@ describe("Photoshop's opacity number keys", () => {
     expect(onlyPatch()).toEqual(['brush', { alpha: 1 }]);
   });
 
+  it.each(opacityTools)('leaves unsupported digits and modified opacity chords unclaimed for %s', (toolName) => {
+    selectTool(toolName, toolName === 'clone-stamp' ? { size: 10, alpha: 0.35 } : { lineWidth: 10, alpha: 0.35 });
+    renderShortcuts();
+
+    for (const key of ['2', '3', '4', '5', '6', '7', '8', '9']) {
+      expect(press(key)).toBe(false);
+    }
+    for (const key of ['0', '1']) {
+      expect(press(key, { shiftKey: true })).toBe(false);
+      expect(press(key, { altKey: true })).toBe(false);
+    }
+
+    expect(patchToolArgs).not.toHaveBeenCalled();
+  });
+
   it('does nothing on a tool whose bar has no Opacity, and leaves the key to the browser', () => {
     selectTool('reposition', { move: { x: 0, y: 0 } });
+    renderShortcuts();
+
+    expect(press('0')).toBe(false);
+    expect(press('1')).toBe(false);
+    expect(patchToolArgs).not.toHaveBeenCalled();
+  });
+
+  it.each(['dodge', 'burn'] as const)('does not apply Opacity digits to %s, which uses Exposure', (toolName) => {
+    selectTool(toolName, { size: 32, hardness: 50, exposure: 50, range: 'midtones', points: [] });
     renderShortcuts();
 
     expect(press('0')).toBe(false);

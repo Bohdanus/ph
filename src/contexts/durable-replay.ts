@@ -11,6 +11,7 @@ import {
 import type { LayerId } from './layer-types.ts';
 import type { Size } from './general-types.ts';
 import { documentAffineToLayerLocal } from './affine-transform.ts';
+import { setLayerMapEntryAfter } from './layer-utils.ts';
 
 export type DurableReplayLayer = Readonly<{
   snapshot: DurableLayerSnapshot;
@@ -74,9 +75,11 @@ export function replayDurableDocument(document: DurableDocument, targetCursor = 
     const operation = entry.operation;
     switch (operation.kind) {
       case 'create-layer':
-        layers.set(
+        setLayerMapEntryAfter(
+          layers,
           operation.layer.id,
-          Object.freeze({ snapshot: cloneLayerSnapshot(operation.layer), operations: Object.freeze([]) })
+          Object.freeze({ snapshot: cloneLayerSnapshot(operation.layer), operations: Object.freeze([]) }),
+          operation.insertAfterLayerId
         );
         activeLayerId = operation.layer.id;
         break;

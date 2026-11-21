@@ -1,5 +1,6 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import {
+  documentOnlyPixelMask,
   documentToCanvasOffset,
   drawLine,
   getStrokeAnalysis,
@@ -24,8 +25,16 @@ type PenWait = (page: Page, clip: ViewportClip) => Promise<void>;
 const waitForDarkPixels: PenWait = (page, clip) =>
   waitForCanvasPixels(page, clip, hasDarkPixels, { description: 'dark pixels' });
 
-const getSprayAnalysis = (screenshot: Buffer, clip: ViewportClip) =>
-  getStrokeAnalysis(screenshot, clip, { tool: 'spray' });
+const captureRegion = (clip: ViewportClip, mask: Awaited<ReturnType<typeof documentOnlyPixelMask>>) => ({
+  width: clip.width,
+  height: clip.height,
+  mask,
+});
+const getSprayAnalysis = (
+  screenshot: Buffer,
+  clip: ViewportClip,
+  mask: Awaited<ReturnType<typeof documentOnlyPixelMask>>
+) => getStrokeAnalysis(screenshot, captureRegion(clip, mask), { tool: 'spray' });
 
 /**
  * Spray output depends on its selected opacity and colour, so it may be mid-tone or saturated.
@@ -36,9 +45,16 @@ const getSprayAnalysis = (screenshot: Buffer, clip: ViewportClip) =>
  * analysis is over the stroke, not over the capture's resolution.
  */
 const waitForSprayPixels: PenWait = (page, clip) =>
-  waitForCanvasPixels(page, clip, async (screenshot) => (await getSprayAnalysis(screenshot, clip)) !== null, {
-    description: 'a non-null spray stroke analysis (no spray ink has been classified)',
-  });
+  waitForCanvasPixels(
+    page,
+    clip,
+    async (screenshot, mask) =>
+      (await getStrokeAnalysis(screenshot, { width: clip.width, height: clip.height, mask }, { tool: 'spray' })) !==
+      null,
+    {
+      description: 'a non-null spray stroke analysis (no spray ink has been classified)',
+    }
+  );
 
 const PEN_TYPES = [
   {
@@ -107,8 +123,11 @@ for (const { label, test: testTitle, value, name, y, expect: exp, wait } of PEN_
       await wait(page, clip);
 
       const screenshot = await captureCanvasScreenshot(page, box, testInfo, name, clip);
+      const mask = await documentOnlyPixelMask(page, clip);
       const analysis =
-        value === 'spray' ? await getSprayAnalysis(screenshot, clip) : await getStrokeAnalysis(screenshot, clip);
+        value === 'spray'
+          ? await getSprayAnalysis(screenshot, clip, mask)
+          : await getStrokeAnalysis(screenshot, captureRegion(clip, mask));
 
       expect(analysis, 'Stroke analysis should not be null').not.toBeNull();
       if ('segments' in exp) expect.soft(analysis!.segments).toBe(exp.segments);

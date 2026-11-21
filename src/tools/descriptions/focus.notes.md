@@ -117,10 +117,15 @@ Photoshop's Blur tool paints a blur under the brush: the more you paint over an 
 it becomes, and the whole stroke is one history state. It is the member of the focus trio that
 **reduces local contrast and smooths** — the direction that separates it from the Sharpen, which
 increases local contrast at edges over a wider radius with an unsharp-like falloff, and from the
-Smudge, which transports pixels rather than transforming them. The bar is one bar shared with both
-siblings: a brush preset (Size, Hardness), a Mode, Strength and Sample All Layers. Adobe's own
-product page tells you to use `[` and `]` to resize the tip and to reach for Strength when the
-effect needs to be stronger, and the `flylib` per-tool checklist is the compact form: "Double-check
+Smudge, which transports pixels rather than transforming them. The trio shares common brush
+controls for Size, Hardness, Strength and Sample All Layers, while the current Adobe pages differ on
+Mode and Protect Detail; common family membership does not establish an identical per-tool control
+list. The current Blur-specific
+Adobe page lists those controls but not Mode. Adobe's broader painting-tools page includes Mode
+among general options-bar controls while warning that options vary by tool; it does not establish
+whether Mode is on the current Blur bar. Adobe's own product page tells you to use `[` and `]` to
+resize the tip and to reach for Strength when the effect needs to be stronger, and the `flylib`
+per-tool checklist is the compact form: "Double-check
 the following: the Mode pop-up menu, Strength, and Sample All Layers checkbox. Typical Problem: The
 default 50% setting for Strength is usually too high for most situations."
 
@@ -135,7 +140,6 @@ correction itself then over-corrected in the opposite direction.
 | Control             | Photoshop behaviour                                                     | Default / range | App status            | App source |
 | ------------------- | ----------------------------------------------------------------------- | --------------- | --------------------- | ---------- |
 | Brush Preset Picker | The tip, with Size and Hardness                                         | preset library  | `missing`             | —          |
-| Mode                | Blend mode the blurred result composites with                           | Normal          | `missing`             | —          |
 | Strength            | Percent of the blurred result blended per pass                          | 50%, 1–100      | `missing`             | —          |
 | Sample All Layers   | Blur from the composite so the result can be painted onto a blank layer | off             | `missing`             | —          |
 | _Flow_              | _reported on the shared bar; see `## Unverified`_                       | _50%, 1–100_    | _omitted — unsourced_ | —          |
@@ -153,12 +157,11 @@ The 50% default is unchanged and is Adobe-attributable, and so is the 10–30% /
 range correction has one app consequence and it is recorded on the Smudge, where the bar's own
 minimum is 0.
 
-**The `Mode` row no longer claims a restricted list.** It previously said the list "is restricted to
-the modes that make sense for a blur, including Normal, Darken, Lighten, Hue, Saturation, Color and
-Luminosity". The seven names are third-party attested; the _restriction_ is not, by anything, and
-Adobe's current Blur page does not enumerate a `Mode` control at all. The data file's `detail` now
-attributes the seven to third-party walkthroughs and says plainly that no page states the list is
-restricted. See `## Unverified` 13.
+**Blur `Mode` is omitted pending a current tool-specific source.** The current Adobe Blur page
+enumerates Brush Settings for Size and Hardness, Strength, and Sample All Layers, but does not name
+Mode. Adobe's broader painting-tools page lists Mode among options that vary by tool, so it does not
+establish that this Blur bar has the control. Older secondary walkthroughs report a Mode menu and
+some list choices, but they do not establish its current availability. See `## Unverified` 13.
 
 **App verdict: not the tool.** The app's blur is a whole-layer filter panel. Its bar is a single
 `Blur Radius` slider (`src/components/ToolbarsRight/Blur/Blur.tsx` — `Blur()`'s `Blur Radius`
@@ -191,13 +194,11 @@ carries the Sharpen and the Gradient, and is now stated in each of their `appNot
 three tools inheriting one verdict is exactly where a reviewer should expect the reasoning to be
 written down.
 
-**The `Mode` row is softer than it was, because one page does claim a restriction.** An earlier
-draft said no page claims the list is restricted; one does. The University of Idaho's CS-era
-walkthrough of this very bar says of the Mode dropdown that "this tool only offers a limited number
-of blends to choose from" (<https://www.webpages.uidaho.edu/larc246/toolBarPages/blur.htm>), and
-Wikiversity says the same of "the latest edition". Neither says _to what_, so the row now reads as
-"one of them says the dropdown only offers a limited number of blends, but no page states to what
-the list is restricted". See `## Unverified` 13.
+**Older Blur `Mode` claims remain secondary evidence only.** A University of Idaho walkthrough says
+the menu offers a limited number of blends, while Wikiversity and other tutorials report lists.
+Those pages do not resolve whether the current desktop bar has Mode or give a complete current
+list. The data file therefore omits the control rather than treating those reports as current
+Photoshop behavior. See `## Unverified` 13.
 
 **The slider previews; it does not commit.** The bar routes through `tempUpdateLayer`
 (`src/components/ToolbarsRight/Blur/Blur.tsx` — `throttledOnChange()`), the only writer of
@@ -534,10 +535,10 @@ Two naming points, both of which changed my earlier draft. The brief's `Protect 
 for the current label verbatim. The recovered research's `Protect Texture` is a third spelling,
 attributed to Adobe's iPad documentation, which I could not open — see `## Unverified`.
 
-`O` selects the Dodge tool and `Shift+O` cycles the flyout, which is confirmed twice independently.
-The app binds `O` the same way — the `Dodge Tool` entry in `toolbar-mapping.ts` declares it, and the
-handler is the plain-`O` `useKeyDownShortcut` registration in
-`src/components/Common/AppKeyboardShortcuts.tsx`, whose cycle branch is `selectTonalTool()`.
+`O` selects the Dodge tool. Adobe's 2019 shortcut reference says `Shift+O` cycles the group only
+when the `Use Shift Key for Tool Switch` preference is enabled; otherwise, repeatedly pressing `O`
+cycles it. This app binds `Shift+O` unconditionally: its `selectTonalTool()` branch has no preference
+check, while the `Dodge Tool` entry in `toolbar-mapping.ts` declares the `O` binding.
 
 **Three more bindings Adobe has and the app does not: `Shift+Alt+S`, `Shift+Alt+M` and
 `Shift+Alt+H` set the tonal range while the tool is held.** They sit in Adobe's
@@ -745,6 +746,10 @@ The alternative reading is in `## Unverified` below.
 ### Sources
 
 - <https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html> — the Grayscale-mode sentence; `Mode` semantics; `Flow` as "the rate of saturation change"; `Vibrance`'s only description; `O` on the Sponge page.
+- <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/adjust-color-saturation-in-selected-image-areas.html> — the current desktop guide's Sponge Flow control; it does not state a numeric shortcut.
+- <https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf> — the 2019 default shortcut reference for shared-tool cycling preferences, Dodge/Burn tonal ranges, and generic painting/editing digit and Flow rules, including the Airbrush exception.
+- <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html> — the current Smudge guide's `R` instruction to cycle through retouching tools until Smudge appears.
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/rotate-view-tool.html> — Adobe's 2024 Rotate View guide labels Rotate View as `R`.
 - <https://helpx.adobe.com/photoshop/using/tool-techniques/sponge-tool.html> — the desktop bar enumeration including `Vibrance`; "select and hold the Dodge tool to show the other related tools".
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html> — the Dodge/Burn bar as `Range`/`Exposure`/`Airbrush`/`Protect Tones`, and the negative that `Tolerance` appears nowhere.
 - <https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html> — the per-mode grayscale contrast split.
@@ -752,7 +757,7 @@ The alternative reading is in `## Unverified` below.
 - <http://www.cheat-sheets.org/saved-copy/PSCS2_Shortcuts_Windows.pdf> — the Adobe-branded table rows "Dodge / Burn / Sponge Tool O", "Cycle Dodge / Burn / Sponge Tools Shift+O", "Desaturate (Sponge Tool) Alt+Shift+D", "Saturate (Sponge Tool) Alt+Shift+S".
 - <https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=646> — the CS3 manual's shortcut table, the same two rows.
 - <https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=217> — the CS4 bar listing, which already carries `Vibrance`.
-- <https://flylib.com/books/en/2.816.1.14/1/> — the CS2 Bible on Flow as the per-dab amount and on the digits stepping Flow.
+- <https://flylib.com/books/en/2.816.1.14/1/> — the CS2 Bible on Flow as the per-dab amount; its claim that bare digits step Flow is unverified for Sponge. Adobe's generic 2019 table assigns Flow to Shift+number in the normal mapping but does not provide Sponge-specific confirmation, and the current Sponge guide gives no numeric shortcut.
 - <https://www.glensmith.co.uk/photoshop/sponge-tool> — Flow's 50% default, and the alternative reading of `Vibrance` recorded above as rejected.
 - <https://jnack.com/blog/2008/11/02/cs4_whats_in_it_for_photographers/> — the CS4 rework of all three toning tools at once.
 - <https://github.com/simonhenke/photoshop-types/blob/main/types/Tool.d.ts> — `SaturationToolOptionsDescriptor { flow }` and the absence of `tolerance` on this tool.
@@ -1099,13 +1104,14 @@ a binding is **absent**, which is the stronger form of the same objection.
     Photoshop gradient property the app has no counterpart for; it is a Properties-panel control
     rather than an options-bar one, so it has no row, and it is noted here because the brief asked
     about the Methods and this is the other half of their behaviour.
-11. **The `R` keyboard shortcut for the Blur and the Sharpen, and only those two.** This item used
-    to ask about the whole group. **It is answered for the Smudge**: Adobe's current page for the
-    tool states "Select the Smudge tool (R) from the toolbar"
-    (<https://helpx.adobe.com/photoshop/using/tool-techniques/smudge-tool.html>), and Photoshop
+11. **The `R` shortcut is not established for the Blur or the Sharpen.** Adobe's current
+    desktop Smudge guide says `R` cycles through retouching tools until Smudge appears, while its
+    2024 Rotate View guide labels Rotate View as `R` and the 2019 Photoshop reference also lists
+    Rotate View as `R`. The Smudge entry therefore records both first-party claims and leaves the
+    default unresolved; do not infer `R` for Blur or Sharpen from their shared tool group. Photoshop
     Elements' reference prints `R` for the three-tool group
-    (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>), so
-    the row is in the Smudge's `shortcuts`. The two CS-era sources that give the group `R`
+    (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>).
+    The two CS-era sources that give the group `R`
     (`flylib`, and the CS2 keyboard sheet on
     <https://alexandru2882.wordpress.com/wp-content/uploads/2016/10/2074975-adobe-photoshop-cs2-tools-and-basics.pdf>)
     now only corroborate it. **Still open: the Blur and the Sharpen.** Adobe's current Blur page
@@ -1125,31 +1131,16 @@ a binding is **absent**, which is the stronger form of the same objection.
     teachucomp says only "check the 'Dither' checkbox". Adobe says nothing either way. One
     third-party statement of a default is not two, so the row keeps the honest phrasing and the
     citation is the third party's. `Reverse` has no statement at all in any direction.
-13. **The Blur `Mode` restriction, narrowed but not closed.** The Blur's `Mode` list is said by two
-    pages to be restricted: the University of Idaho's CS-era walkthrough says the dropdown "only
-    offers a limited number of blends to choose from"
-    (<https://www.webpages.uidaho.edu/larc246/toolBarPages/blur.htm>), and Wikiversity says "In the
-    latest edition of Adobe Photoshop there are seven blur tool modes" and enumerates them. The
-    seven modes are also attested by `expertphotography` and `dummies`. What no page says is what
-    else, if anything, the dropdown offers — so "restricted to these seven" remains unestablished
-    and the `detail` now attributes the restriction claim to the page that makes it while saying it
-    does not name the restriction's extent. The row is kept, because `Mode` itself is on the bar by
-    several independent enumerations.
-14. **The provenance of the keyboard bindings, which are reproductions rather than Adobe's page.**
-    The Smudge's `R`, the Dodge's and the Burn's `Shift+Alt+S/M/H`, the `0` for Exposure and the
-    `[`/`]` brush-size pair are all in Adobe's published default-keyboard list, and three
-    independent reproductions of it agree on the wording
-    (<https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>,
-    <https://shortcutkeys.net/adobe-photoshop-shortcut-keys/>,
-    <https://shortcuts.design/data/design/toolspage-adobephotoshop-windows>). **Adobe's own
-    default-keyboard page was not opened**, so the rows carry a third-party citation for a
-    first-party fact. The Smudge's `R` is the one that is not in this category: Adobe's current
-    tool page states it in the body text ("Select the Smudge tool (R) from the toolbar"), so that
-    row is first-party. What is still open under this item is the `R` for the **Blur** and the
-    **Sharpen**: Adobe's current Blur page names no letter, and the current Sharpen page could not
-    be opened, so neither tool's `shortcuts` array carries `R` even though they share the flyout
-    and Photoshop Elements' own reference prints `R` for all three
-    (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>).
+13. **Whether the current Blur options bar has a `Mode` control.** Adobe's current Blur-specific
+    page lists Brush Settings for Size and Hardness, Strength, and Sample All Layers, but omits
+    Mode. Its broader painting-tools page says that options vary by tool while listing Mode among
+    general controls, which does not establish that Blur has it. The University of Idaho's CS-era
+    walkthrough describes a Mode menu with a limited list; Wikiversity and other secondary
+    sources also report menus and choices, but none establish current availability or a complete
+    current list. The data file omits the row until a current tool-specific source resolves it.
+14. **The default Smudge `R` binding is unresolved across Adobe's first-party sources.** Adobe's current 2026 desktop Smudge guide says `R` cycles through retouching tools until Smudge appears. Adobe's 2024 Rotate View guide labels Rotate View as `R`, and its 2019 Photoshop reference also assigns `R` to Rotate View. Adobe's current [View keyboard shortcuts](https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html) article directs users to inspect the Keyboard Shortcuts and Menus dialog under Tools, but does not publish the binding. The data row states the conflict and points readers to the installed dialog; no current Photoshop installation was checked. Do not infer `R` for Blur or Sharpen, or `Shift+R` cycling.
+
+    The 2019 PDF also lists the Dodge/Burn range keys, Exposure digit changes, brush-size brackets, and the shared-tool cycling preference. Its generic painting/editing row says number keys set opacity, tolerance, strength, or Exposure (0 = 100%, 1 = 10%, and two quick digits set an exact percentage); when Airbrush is enabled, Shift+number sets Exposure. Adobe’s current Dodge/Burn guide documents the controls but not these digit bindings. Locally, the app’s 0/1 handlers are gated by `opacityField`, which excludes Dodge/Burn; their implemented shortcuts are O/Shift+O and Shift+Alt+S/M/H. Keep the historical Photoshop mapping distinct from current app support. The third-party shortcut reproductions in the tool source arrays are secondary corroboration and do not replace current tool-specific documentation. For Sponge, Adobe’s 2026 guide documents Flow but no numeric binding. The shortcut data records Shift+number only as the 2019 generic Flow rule; whether its Airbrush exception applies to Sponge is unresolved. Do not infer that bare digits set Sponge Flow simply because its bar has Flow and no Opacity.
 
 15. **Which `Mode` the Sponge's bar opens on. Adobe states no default, and one source is not
     enough.** `helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html` is

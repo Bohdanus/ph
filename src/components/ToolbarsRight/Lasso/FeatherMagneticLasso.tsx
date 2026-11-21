@@ -1,7 +1,12 @@
 import React, { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
-import type { FeatherMagneticLassoToolArgs } from '../../../tools/featherMagneticLasso.ts';
+import {
+  MAGNETIC_LASSO_EDGE_CONTRAST_MAX,
+  MAGNETIC_LASSO_EDGE_CONTRAST_MIN,
+  normalizeMagneticLassoEdgeContrast,
+  type FeatherMagneticLassoToolArgs,
+} from '../../../tools/featherMagneticLasso.ts';
 import {
   MAGNETIC_LASSO_FREQUENCY_MAX,
   MAGNETIC_LASSO_FREQUENCY_MIN,
@@ -158,7 +163,7 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
   };
 
   const handleEdgeContrastChange = (event: ChangeEvent<HTMLInputElement>) => {
-    patchNumber({ edgeContrast: Number(event.target.value) });
+    patchNumber({ edgeContrast: normalizeMagneticLassoEdgeContrast(Number(event.target.value)) });
   };
 
   const handleFrequencyChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -296,14 +301,17 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
         </label>
 
         <label className="flex min-w-28 flex-col text-[10px] font-medium text-gray-700 dark:text-gray-300">
-          Contrast <span className="font-bold text-gray-900 dark:text-gray-200">{args.edgeContrast}%</span>
+          Contrast{' '}
+          <span className="font-bold text-gray-900 dark:text-gray-200">
+            {normalizeMagneticLassoEdgeContrast(args.edgeContrast)}%
+          </span>
           <input
             className={SLIDER_CLASS}
-            max="100"
-            min="0"
+            max={MAGNETIC_LASSO_EDGE_CONTRAST_MAX}
+            min={MAGNETIC_LASSO_EDGE_CONTRAST_MIN}
             step="1"
             type="range"
-            value={args.edgeContrast}
+            value={normalizeMagneticLassoEdgeContrast(args.edgeContrast)}
             onChange={handleEdgeContrastChange}
           />
         </label>

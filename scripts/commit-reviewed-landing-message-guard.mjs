@@ -51,6 +51,40 @@ function hasExpectedLandingPins(env) {
   ].some((name) => env[name] !== undefined);
 }
 
+function isSha(value) {
+  return typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value);
+}
+
+function isValidLandingPins(pins) {
+  return (
+    Boolean(pins) &&
+    typeof pins === 'object' &&
+    !Array.isArray(pins) &&
+    isSha(pins.main) &&
+    isSha(pins.incoming) &&
+    isSha(pins.tree) &&
+    typeof pins.branch === 'string' &&
+    Boolean(pins.branch.trim()) &&
+    typeof pins.chat === 'string' &&
+    Boolean(pins.chat.trim())
+  );
+}
+
+function expectedLandingPinsFromEnv(env) {
+  if (!hasExpectedLandingPins(env)) return null;
+  const pins = {
+    main: env.KILO_EXPECTED_MAIN_SHA,
+    incoming: env.KILO_EXPECTED_INCOMING_SHA,
+    tree: env.KILO_EXPECTED_TREE_SHA,
+    branch: env.KILO_EXPECTED_BRANCH,
+    chat: env.KILO_EXPECTED_CHAT_ID,
+  };
+  if (!isValidLandingPins(pins)) {
+    throw new Error('expected landing pins are incomplete or invalid; refusing to record the prepared merge');
+  }
+  return pins;
+}
+
 function hasAutoMergeMarker(cwd) {
   const autoMergePath = git(['rev-parse', '--git-path', 'AUTO_MERGE'], cwd);
   return existsSync(resolve(cwd, autoMergePath));
@@ -64,9 +98,14 @@ function readPendingMergeState(cwd) {
   const path = pendingMergeStatePath(cwd);
   if (!existsSync(path)) return null;
   const state = JSON.parse(readFileSync(path, 'utf8'));
-  const isSha = (value) => typeof value === 'string' && /^[0-9a-f]{40,64}$/i.test(value);
   if (!state || !isSha(state.head) || !isSha(state.headTree) || !isSha(state.incoming) || !isSha(state.resultTree)) {
     throw new Error('prepared merge state is invalid; inspect the worktree Git directory before committing');
+  }
+  const pins = state.expectedLandingPins;
+  if (pins !== undefined && pins !== null && !isValidLandingPins(pins)) {
+    throw new Error(
+      'prepared merge state has invalid landing pins; inspect the worktree Git directory before committing'
+    );
   }
   if (state.phase !== undefined && !['prepared', 'markers-lost'].includes(state.phase)) {
     throw new Error('prepared merge state has an unknown phase; inspect the worktree Git directory before committing');
@@ -77,6 +116,40 @@ function readPendingMergeState(cwd) {
 function clearPendingMergeState(cwd) {
   const path = pendingMergeStatePath(cwd);
   if (existsSync(path)) unlinkSync(path);
+}
+
+// The pre-commit snapshot cannot predict the resulting commit ID. Its ordered parents,
+// approved tree and required trailers identify the prepared content; this runs only after
+// MERGE_HEAD and AUTO_MERGE are absent.
+function isCompletedPreparedMerge(cwd, state, env = process.env) {
+  if (readMergeHeadRefs(cwd).length !== 0 || hasAutoMergeMarker(cwd)) return false;
+
+  const [head, ...parents] = git(['rev-list', '--parents', '-n', '1', 'HEAD'], cwd).split(/\s+/);
+  const matchesPreparedMerge =
+    head === git(['rev-parse', 'HEAD^{commit}'], cwd) &&
+    parents.length === 2 &&
+    parents[0] === state.head &&
+    parents[1] === state.incoming &&
+    git(['rev-parse', 'HEAD^{tree}'], cwd) === state.resultTree;
+  if (!matchesPreparedMerge) return false;
+
+  const message = git(['show', '-s', '--format=%B', 'HEAD'], cwd);
+  if (state.expectedLandingPins) {
+    const pins = state.expectedLandingPins;
+    return (
+      pins.main === state.head &&
+      pins.incoming === state.incoming &&
+      pins.tree === state.resultTree &&
+      hasRequiredTrailers(message, {
+        cwd,
+        env,
+        expectedBranch: pins.branch,
+        expectedChat: pins.chat,
+      })
+    );
+  }
+
+  return !isProjectMainWorktree(cwd) && hasChatTrailer(message, { cwd, env });
 }
 
 function discardAbandonedPreparedMerge(cwd) {
@@ -91,8 +164,15 @@ function discardAbandonedPreparedMerge(cwd) {
   const head = git(['rev-parse', 'HEAD^{commit}'], cwd);
   const resultTree = git(['write-tree'], cwd);
   const headTree = git(['rev-parse', 'HEAD^{tree}'], cwd);
-  if (head !== state.head || resultTree !== headTree) {
-    throw new Error('reset the index to the recorded HEAD before discarding abandoned prepared merge state');
+  if (head !== state.head) {
+    throw new Error(
+      'HEAD no longer matches the recorded pre-merge commit; inspect or restore the branch before discarding abandoned prepared merge state'
+    );
+  }
+  if (resultTree !== headTree) {
+    throw new Error(
+      'reset the index to HEAD, preserving working-tree changes, before discarding abandoned prepared merge state'
+    );
   }
   clearPendingMergeState(cwd);
 }
@@ -104,7 +184,7 @@ function writePendingMergeState(cwd, state) {
   renameSync(temporaryPath, path);
 }
 
-function recordPreparedMerge(cwd, phase = 'before') {
+function recordPreparedMerge(cwd, phase = 'before', env = process.env) {
   const previousState = readPendingMergeState(cwd);
   const mergeHeads = readMergeHeadRefs(cwd);
   if (mergeHeads.length === 0) {
@@ -112,6 +192,10 @@ function recordPreparedMerge(cwd, phase = 'before') {
     if (phase === 'after') {
       writePendingMergeState(cwd, { ...previousState, phase: 'markers-lost' });
       throw new Error('prepared merge markers disappeared during pre-commit; refusing to commit');
+    }
+    if (isCompletedPreparedMerge(cwd, previousState, env)) {
+      clearPendingMergeState(cwd);
+      return;
     }
     if (previousState.phase === 'markers-lost') {
       throw new Error(
@@ -140,11 +224,13 @@ function recordPreparedMerge(cwd, phase = 'before') {
     );
   }
   const resultTree = git(['write-tree'], cwd);
+  const expectedLandingPins = expectedLandingPinsFromEnv(env) ?? previousState?.expectedLandingPins ?? null;
   writePendingMergeState(cwd, {
     head,
     headTree: git(['rev-parse', 'HEAD^{tree}'], cwd),
     incoming,
     resultTree,
+    expectedLandingPins,
     phase: 'prepared',
   });
 }
@@ -176,7 +262,7 @@ export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = 
     ) {
       if (argv.length !== 1) throw new Error('unexpected arguments for prepared merge state recording');
       const phase = argv[0] === '--record-prepared-merge-after' ? 'after' : 'before';
-      recordPreparedMerge(cwd, phase);
+      recordPreparedMerge(cwd, phase, env);
       return;
     }
     if (argv[0] === '--discard-abandoned-prepared-merge') {

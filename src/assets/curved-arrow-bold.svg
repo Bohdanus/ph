@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Fully transparent background. The white underlay makes an opaque outline. -->
+  <path d="M 24 67 C 41 22, 87 22, 104 67"
+        fill="none" stroke="#fff" stroke-width="23" stroke-linecap="round"/>
+  <path d="M 13 58 L 38 73 L 13 85 Z M 115 58 L 90 73 L 115 85 Z"
+        fill="#fff" stroke="#fff" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M 24 67 C 41 22, 87 22, 104 67"
+        fill="none" stroke="#000" stroke-width="13" stroke-linecap="round"/>
+  <path d="M 13 58 L 38 73 L 13 85 Z M 115 58 L 90 73 L 115 85 Z"
+        fill="#000" stroke="none"/>
+</svg>

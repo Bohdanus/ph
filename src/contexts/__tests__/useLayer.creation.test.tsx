@@ -160,6 +160,42 @@ describe('useLayers createBlankLayer', () => {
     expect(store.hasUnsavedChanges).toBe(true);
   });
 
+  it('creates a new layer directly above the selected layer in one history entry', async () => {
+    const layers = {
+      bottom: makeLayer('bottom', 0),
+      selected: makeLayer('selected', 1),
+      top: makeLayer('top', 2),
+    };
+    const { result } = setup({ layers, activeLayerId: 'selected' });
+
+    act(() => {
+      result.current.layers.createBlankLayer(
+        { color: '#ffffff', opacity: 0, pos: { x: 0, y: 0, width: 32, height: 16 } },
+        false,
+        'selected'
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const store = result.current.store;
+    const created = store.layers[store.activeLayerId!]!;
+    expect(created.order).toBeGreaterThan(1);
+    expect(created.order).toBeLessThan(2);
+    expect(
+      Object.values(store.layers)
+        .sort((a, b) => a.order - b.order)
+        .map((layer) => layer.id)
+    ).toEqual(['bottom', 'selected', created.id, 'top']);
+    expect(store.history).toHaveLength(1);
+    expect(store.history[0]).toMatchObject({
+      actionName: NEW_LAYER_ACTION,
+      layerId: created.id,
+      insertAfterLayerId: 'selected',
+    });
+  });
+
   it('replaces the whole document and records an unsaved change for a new blank image', async () => {
     const { result } = setup({ layers: { stale: makeLayer('stale', 0) }, activeLayerId: 'stale' });
 
@@ -168,7 +204,7 @@ describe('useLayers createBlankLayer', () => {
     });
 
     act(() => {
-      result.current.layers.createBlankLayer(blankParams, true);
+      result.current.layers.createBlankLayer(blankParams, true, 'stale');
     });
     await act(async () => {
       await Promise.resolve();
@@ -349,7 +385,7 @@ describe('useLayers createLayerFromTool geometry', () => {
     processor.mockRestore();
   });
 
-  it('keeps an explicit document position and clears the tool overlay', () => {
+  it('keeps an explicit document position and clears the full tool overlay backing store', () => {
     const raster = new OffscreenCanvas(20, 10);
     const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [raster]);
     const { result } = setup({
@@ -376,7 +412,7 @@ describe('useLayers createLayerFromTool geometry', () => {
       });
     });
 
-    expect(overlayContext.clearRect).toHaveBeenCalledWith(0, 0, 200, 100);
+    expect(overlayContext.clearRect).toHaveBeenCalledWith(0, 0, overlay.width, overlay.height);
 
     const newLayer = created as Layer | null;
     expect(newLayer).not.toBeNull();

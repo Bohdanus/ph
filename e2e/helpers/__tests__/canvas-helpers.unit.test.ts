@@ -25,6 +25,7 @@ import {
   type ClipOptions,
   type ImageDataResult,
   type ViewportClipOptions,
+  WHOLE_CAPTURE,
 } from '../canvas-helpers';
 import { imageBoundsToCss, type CssBox, type ImageSize } from '../screenshot-scale';
 import {
@@ -716,11 +717,11 @@ describe('zero-sized images', () => {
   });
 
   it('getDarkPixelBounds returns null for a 0x0 image', async () => {
-    expect(await getDarkPixelBounds(EMPTY_0x0)).toBeNull();
+    expect(await getDarkPixelBounds(EMPTY_0x0, WHOLE_CAPTURE)).toBeNull();
   });
 
   it('hasDarkPixels returns false for a 0x0 image', async () => {
-    expect(await hasDarkPixels(EMPTY_0x0)).toBe(false);
+    expect(await hasDarkPixels(EMPTY_0x0, WHOLE_CAPTURE)).toBe(false);
   });
 
   it('hasRedPixels returns false for a 0x0 image', async () => {

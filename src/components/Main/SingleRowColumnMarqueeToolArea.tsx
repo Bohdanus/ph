@@ -17,7 +17,7 @@ import {
   isPointInSelection,
 } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } from '../../contexts/document-frame.ts';
-import { resetOverlayAlpha } from '../../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../../util/canvas.ts';
 import {
   SINGLE_COLUMN_MARQUEE_SOURCE_TOOL,
   SINGLE_ROW_MARQUEE_SOURCE_TOOL,
@@ -200,7 +200,7 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
       const ctx = overlayCtxRef?.current;
       if (!ctx) return;
 
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      clearCanvasBackingStore(ctx);
       // Not optional, and not `drawMarqueePreview`'s to do: the tool overlay is one 2D context
       // for the whole session and the preview painter is `save()`/`restore()`, so it inherits
       // whatever `globalAlpha` the last painting tool left behind. Nothing else in this
@@ -449,7 +449,7 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
       // — `selection-drag-preview.ts:56`-`:64`.
       clearSelectionDragPreview();
       if (ctx) {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [overlayCtxRef, releaseDocumentClaim]);

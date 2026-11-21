@@ -2,13 +2,15 @@ import { expect, type Page, type TestInfo, test } from './fixtures/extended-test
 import { initializeCanvas, readPsd } from 'ag-psd';
 import path from 'node:path';
 import sharp from 'sharp';
-import { getWorkspaceCanvas, loadImageData } from './helpers/canvas-helpers';
+import { getWorkspaceCanvas, loadImageData, viewportClip } from './helpers/canvas-helpers';
 import type { BoundingBox } from './helpers/canvas-helpers';
+import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { canvasBands, type CanvasBand, visibleCanvasBox, waitForBands } from './helpers/history-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { documentFrameSize as getDocumentFrameSize } from '../src/contexts/document-frame.ts';
+import type { BitmapSource } from '../src/contexts/general-types.ts';
 import type { DrawToolArgs } from '../src/tools/draw.ts';
 import type { ShapeToolArgs } from '../src/tools/shape.ts';
 import type { TransformToolArgs } from '../src/tools/transform.ts';
@@ -234,9 +236,16 @@ async function readFit(page: Page): Promise<Fit> {
           width: Math.max(0, node.clientWidth + rect.width - (node.offsetWidth || Math.round(rect.width))),
           height: Math.max(0, node.clientHeight + rect.height - (node.offsetHeight || Math.round(rect.height))),
         };
+        const backingScale = Number(canvas.getAttribute('data-hidpi-ratio') ?? 1);
+        const documentWidth = Number(node.getAttribute('data-fit-document-width'));
+        const documentHeight = Number(node.getAttribute('data-fit-document-height'));
         return (
-          node.getAttribute('data-fit-document-width') === String(canvas.width) &&
-          node.getAttribute('data-fit-document-height') === String(canvas.height) &&
+          Number.isFinite(backingScale) &&
+          backingScale > 0 &&
+          Number.isFinite(documentWidth) &&
+          Number.isFinite(documentHeight) &&
+          canvas.width === Math.round(documentWidth * backingScale) &&
+          canvas.height === Math.round(documentHeight * backingScale) &&
           node.getAttribute('data-fit-rect-x') === String(clientRect.left) &&
           node.getAttribute('data-fit-rect-y') === String(clientRect.top) &&
           node.getAttribute('data-fit-outer-width') === String(clientRect.width) &&
@@ -305,11 +314,23 @@ async function openDocument(page: Page): Promise<void> {
   await expect(getWorkspaceCanvas(page), 'the app mounted a document canvas').toBeVisible();
 }
 
-/** The committed document frame, read off the canvas element's intrinsic size. */
+/** The committed document frame, recovered from the visible canvas's backing pixels. */
 async function documentSize(page: Page): Promise<DocumentSize> {
   return await getWorkspaceCanvas(page).evaluate((node) => {
     const canvas = node as HTMLCanvasElement;
-    return { width: canvas.width, height: canvas.height };
+    const ratioAttribute = canvas.getAttribute('data-hidpi-ratio');
+    const backingScale = ratioAttribute === null ? 1 : Number(ratioAttribute);
+    if (!Number.isFinite(backingScale) || backingScale <= 0) {
+      throw new Error(`the workspace canvas has an invalid backing scale: ${ratioAttribute}`);
+    }
+    const width = Math.round(canvas.width / backingScale);
+    const height = Math.round(canvas.height / backingScale);
+    if (canvas.width !== Math.round(width * backingScale) || canvas.height !== Math.round(height * backingScale)) {
+      throw new Error(
+        `workspace canvas backing size ${canvas.width}x${canvas.height} does not encode an integer document frame at ${backingScale}x`
+      );
+    }
+    return { width, height };
   });
 }
 
@@ -456,15 +477,16 @@ async function attachCropInputProbe(page: Page, testInfo: TestInfo, name: string
 }
 
 /**
- * The band a document-space HEIGHT falls in, on the canvas element.
+ * The band a document-space HEIGHT falls in, on the workspace container.
  *
- * The vertical half of `documentPoint`, then the strip index. It is a function of the CURRENT fit
- * because that is what decides it: after a crop the document is smaller, the letterbox is a
- * different height, and the same document height lands in a different strip. Calling it with a
- * fit read before the crop is therefore the bug it exists to prevent.
+ * Use the app-published fit and the complete document-to-page transform, then measure that page
+ * point against the same container box the screenshot bands cover. Crop commits can change the
+ * contain scale and its compensation; using the raw contain offset alone drops the active view
+ * zoom and can assign a visible stroke to the wrong screen band.
  */
 function bandOfDocumentY(fit: Fit, documentY: number): number {
-  const canvasY = fit.offsetY + documentY * fit.scale;
+  const pagePoint = documentPoint(fit, fit.documentWidth / 2, documentY);
+  const canvasY = pagePoint.y - fit.rectY;
   const index = Math.floor((canvasY / fit.rectHeight) * BAND_COUNT);
   return Math.min(BAND_COUNT - 1, Math.max(0, index));
 }
@@ -548,23 +570,95 @@ async function openRasterFixture(page: Page, rootDir: string): Promise<void> {
 }
 
 async function readCanvasColor(page: Page, x: number, y: number) {
-  return getWorkspaceCanvas(page).evaluate(
-    (canvas, point) => {
-      const context = (canvas as HTMLCanvasElement).getContext('2d');
-      if (!context) throw new Error('document canvas has no 2D context');
-      const pixel = context.getImageData(point.x, point.y, 1, 1).data;
-      return { red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3] };
-    },
-    { x, y }
-  );
+  const [red, green, blue, alpha] = await readCanvasRegion(page, 'workspace-canvas', x, y, 1, 1);
+  return { red, green, blue, alpha };
 }
 
 async function readCanvasRegion(page: Page, testId: string, x: number, y: number, width: number, height: number) {
   return page.getByTestId(testId).evaluate(
-    (canvas, region) => {
-      const context = (canvas as HTMLCanvasElement).getContext('2d');
+    (node, region) => {
+      const canvas = node as HTMLCanvasElement;
+      const context = canvas.getContext('2d');
       if (!context) throw new Error('Canvas has no 2D context');
-      return Array.from(context.getImageData(region.x, region.y, region.width, region.height).data);
+      const ratioAttribute = canvas.getAttribute('data-hidpi-ratio');
+      let scaleX = ratioAttribute === null ? 1 : Number(ratioAttribute);
+      let scaleY = scaleX;
+      let logicalWidth = canvas.width;
+      let logicalHeight = canvas.height;
+      if (ratioAttribute !== null) {
+        logicalWidth = Math.round(canvas.width / scaleX);
+        logicalHeight = Math.round(canvas.height / scaleY);
+        if (
+          canvas.width !== Math.round(logicalWidth * scaleX) ||
+          canvas.height !== Math.round(logicalHeight * scaleY)
+        ) {
+          throw new Error(`Canvas backing size does not match its declared ${scaleX}x scale`);
+        }
+      }
+      if (ratioAttribute === null && canvas.dataset.testid === 'crop-retained-pixels-preview') {
+        const style = getComputedStyle(canvas);
+        const previewWidth = Number.parseFloat(style.width);
+        const previewHeight = Number.parseFloat(style.height);
+        if (
+          !Number.isFinite(previewWidth) ||
+          previewWidth <= 0 ||
+          !Number.isFinite(previewHeight) ||
+          previewHeight <= 0
+        ) {
+          throw new Error(`Canvas preview has invalid logical dimensions: ${style.width}x${style.height}`);
+        }
+        logicalWidth = previewWidth;
+        logicalHeight = previewHeight;
+        scaleX = canvas.width / logicalWidth;
+        scaleY = canvas.height / logicalHeight;
+      }
+      if (!Number.isFinite(scaleX) || scaleX <= 0 || !Number.isFinite(scaleY) || scaleY <= 0) {
+        throw new Error(`Canvas has an invalid backing scale: ${scaleX}x${scaleY}`);
+      }
+      if (
+        ![region.x, region.y, region.width, region.height].every(Number.isInteger) ||
+        region.x < 0 ||
+        region.y < 0 ||
+        region.width <= 0 ||
+        region.height <= 0 ||
+        region.x + region.width > logicalWidth ||
+        region.y + region.height > logicalHeight
+      ) {
+        throw new RangeError(
+          `Canvas region ${region.x},${region.y} ${region.width}x${region.height} is outside its ${logicalWidth}x${logicalHeight} logical pixels`
+        );
+      }
+
+      const result = new Uint8ClampedArray(region.width * region.height * 4);
+      const firstX = Math.floor((region.x + 0.5) * scaleX);
+      const lastX = Math.floor((region.x + region.width - 0.5) * scaleX);
+      const firstY = Math.floor((region.y + 0.5) * scaleY);
+      const lastY = Math.floor((region.y + region.height - 0.5) * scaleY);
+      const sourceLeft = Math.max(0, firstX);
+      const sourceTop = Math.max(0, firstY);
+      const sourceRight = Math.min(canvas.width - 1, lastX);
+      const sourceBottom = Math.min(canvas.height - 1, lastY);
+      if (sourceRight < sourceLeft || sourceBottom < sourceTop) return Array.from(result);
+
+      const source = context.getImageData(
+        sourceLeft,
+        sourceTop,
+        sourceRight - sourceLeft + 1,
+        sourceBottom - sourceTop + 1
+      );
+      for (let row = 0; row < region.height; row += 1) {
+        const sourceY = Math.min(canvas.height - 1, Math.floor((region.y + row + 0.5) * scaleY));
+        for (let column = 0; column < region.width; column += 1) {
+          const sourceX = Math.min(canvas.width - 1, Math.floor((region.x + column + 0.5) * scaleX));
+          const sourceOffset = ((sourceY - sourceTop) * source.width + (sourceX - sourceLeft)) * 4;
+          const targetOffset = (row * region.width + column) * 4;
+          result[targetOffset] = source.data[sourceOffset]!;
+          result[targetOffset + 1] = source.data[sourceOffset + 1]!;
+          result[targetOffset + 2] = source.data[sourceOffset + 2]!;
+          result[targetOffset + 3] = source.data[sourceOffset + 3]!;
+        }
+      }
+      return Array.from(result);
     },
     { x, y, width, height }
   );
@@ -744,7 +838,10 @@ async function setZoomMagnification(page: Page, magnification: number): Promise<
   await page.mouse.down();
   await page.mouse.move(target.targetX, target.y, { steps: 32 });
   await page.mouse.up();
-  await expect.poll(() => readEffectiveDocumentScale(page)).toBeCloseTo(magnification, 1);
+  const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio);
+  await expect
+    .poll(async () => (await readEffectiveDocumentScale(page)) * devicePixelRatio)
+    .toBeCloseTo(magnification, 1);
 }
 
 /** Set the Type bar's own color input, then verify the browser accepted it. */
@@ -761,13 +858,47 @@ async function setTextToolColor(page: Page, hex: string): Promise<void> {
   await expect(page.locator('#text-color')).toHaveValue(hex);
 }
 
-/** Decode the document canvas without repeated Canvas2D getImageData readbacks. */
+/** Read the document canvas on its logical pixel grid, independent of its HiDPI backing size. */
 async function readWorkspaceRaster(page: Page): Promise<Awaited<ReturnType<typeof loadImageData>>> {
   const pngBase64 = await getWorkspaceCanvas(page).evaluate((node) => {
     const canvas = node as HTMLCanvasElement;
-    const png = canvas.toDataURL('image/png');
+    const ratioAttribute = canvas.getAttribute('data-hidpi-ratio');
+    const backingScale = ratioAttribute === null ? 1 : Number(ratioAttribute);
+    if (!Number.isFinite(backingScale) || backingScale <= 0) {
+      throw new Error(`the workspace canvas has an invalid backing scale: ${ratioAttribute}`);
+    }
+    const width = Math.round(canvas.width / backingScale);
+    const height = Math.round(canvas.height / backingScale);
+    if (canvas.width !== Math.round(width * backingScale) || canvas.height !== Math.round(height * backingScale)) {
+      throw new Error(
+        `workspace canvas backing size ${canvas.width}x${canvas.height} does not encode an integer document frame at ${backingScale}x`
+      );
+    }
+    const sourceContext = canvas.getContext('2d');
+    if (!sourceContext) throw new Error('document canvas has no 2D context');
+    const source = sourceContext.getImageData(0, 0, canvas.width, canvas.height);
+    const logicalCanvas = document.createElement('canvas');
+    logicalCanvas.width = width;
+    logicalCanvas.height = height;
+    const logicalContext = logicalCanvas.getContext('2d');
+    if (!logicalContext) throw new Error('logical document canvas has no 2D context');
+    const logical = logicalContext.createImageData(width, height);
+    for (let y = 0; y < height; y += 1) {
+      const sourceY = Math.min(canvas.height - 1, Math.floor((y + 0.5) * backingScale));
+      for (let x = 0; x < width; x += 1) {
+        const sourceX = Math.min(canvas.width - 1, Math.floor((x + 0.5) * backingScale));
+        const sourceOffset = (sourceY * canvas.width + sourceX) * 4;
+        const targetOffset = (y * width + x) * 4;
+        logical.data[targetOffset] = source.data[sourceOffset]!;
+        logical.data[targetOffset + 1] = source.data[sourceOffset + 1]!;
+        logical.data[targetOffset + 2] = source.data[sourceOffset + 2]!;
+        logical.data[targetOffset + 3] = source.data[sourceOffset + 3]!;
+      }
+    }
+    logicalContext.putImageData(logical, 0, 0);
+    const png = logicalCanvas.toDataURL('image/png');
     const comma = png.indexOf(',');
-    if (comma < 0) throw new Error('document canvas did not produce a PNG data URL');
+    if (comma < 0) throw new Error('logical document canvas did not produce a PNG data URL');
     return png.slice(comma + 1);
   });
   return await loadImageData(Buffer.from(pngBase64, 'base64'));
@@ -919,12 +1050,62 @@ type CropParityFixture = Readonly<{
   layerTransforms?: readonly CropParityLayerTransform[];
   materializedLayerIds?: readonly string[];
   verifyProjectedOutputs?: boolean;
+  captureRuntimePixels?: boolean;
+  verifyDownstreamInvertParity?: boolean;
+  diagnoseOpaqueBackdrop?: boolean;
   layers: readonly CropParityLayerFixture[];
 }>;
 
 type CropParityFramePixelSample = Readonly<
   PixelDifference['differingSamples'][number] & { documentX: number; documentY: number }
 >;
+
+type CropParityFrameChannel = 'r' | 'g' | 'b' | 'a';
+
+type CropParityRgba = readonly [number, number, number, number];
+
+type CropParityAlphaNeighborhood = readonly (number | null)[];
+
+type CropParityOpaqueBackdropSample = Readonly<{
+  x: number;
+  y: number;
+  documentX: number;
+  documentY: number;
+  legacyRgba: CropParityRgba;
+  durableRgba: CropParityRgba;
+  differingChannels: readonly CropParityFrameChannel[];
+}>;
+
+type CropParityOpaqueBackdropSurfaceComparison = Readonly<{
+  differingBytes: number;
+  differingPixels: number;
+  differingBytesByChannel: Readonly<Record<CropParityFrameChannel, number>>;
+  differingSamples: readonly CropParityOpaqueBackdropSample[];
+}>;
+
+type CropParityOpaqueBackdropComparison = Readonly<{
+  backdropColor: '#5070a0';
+  offscreenAvailable: boolean;
+  html: CropParityOpaqueBackdropSurfaceComparison;
+  offscreen: CropParityOpaqueBackdropSurfaceComparison | null;
+}>;
+
+type CropParityPremultipliedFramePixelSample = Readonly<{
+  x: number;
+  y: number;
+  documentX: number;
+  documentY: number;
+  legacyRgba: CropParityRgba;
+  durableRgba: CropParityRgba;
+  legacyPremultipliedRgba: CropParityRgba;
+  durablePremultipliedRgba: CropParityRgba;
+  differingChannels: readonly CropParityFrameChannel[];
+  legacyAlphaBoundary: boolean;
+  durableAlphaBoundary: boolean;
+  alphaBoundaryDifference: boolean;
+  legacyAlphaNeighborhood: CropParityAlphaNeighborhood;
+  durableAlphaNeighborhood: CropParityAlphaNeighborhood;
+}>;
 
 type CropParityTightPixelSample = Readonly<
   CropParityFramePixelSample & {
@@ -960,7 +1141,20 @@ type CropParityLayerComparison = Readonly<{
   materializedBounds: CropParityFrame;
   bitmapSize: Readonly<{ width: number; height: number }>;
   frameDifferingBytes: number;
+  framePremultipliedDifferingBytes: number;
+  framePremultipliedDifferingPixels: number;
+  framePremultipliedDifferingBytesByChannel: Readonly<Record<CropParityFrameChannel, number>>;
+  framePremultipliedAlphaBoundaryDifferingPixels: number;
+  framePremultipliedNonBoundaryDifferingPixels: number;
+  framePremultipliedDifferingSamples: readonly CropParityPremultipliedFramePixelSample[];
   offscreenFrameDifferingBytes: number;
+  offscreenFramePremultipliedDifferingBytes: number;
+  offscreenFramePremultipliedDifferingPixels: number;
+  offscreenFramePremultipliedDifferingBytesByChannel: Readonly<Record<CropParityFrameChannel, number>>;
+  offscreenFramePremultipliedAlphaBoundaryDifferingPixels: number;
+  offscreenFramePremultipliedNonBoundaryDifferingPixels: number;
+  offscreenFramePremultipliedDifferingSamples: readonly CropParityPremultipliedFramePixelSample[];
+  opaqueBackdropComparison: CropParityOpaqueBackdropComparison | null;
   frameDifferingPixels: number;
   frameNonEdgeDifferingPixels: number;
   offscreenFrameDifferingPixels: number;
@@ -972,6 +1166,10 @@ type CropParityLayerComparison = Readonly<{
   offscreenTightBitmapRawDifferingBytes: number;
   offscreenTightBitmapRawDifferingSamples: readonly CropParityFramePixelSample[];
   tightBitmapPremultipliedDifferingBytes: number;
+  downstreamInvertReadbackDifferingBytes: number | null;
+  downstreamInvertReadbackDifferingSamples: readonly CropParityFramePixelSample[];
+  offscreenDownstreamInvertReadbackDifferingBytes: number | null;
+  offscreenDownstreamInvertReadbackDifferingSamples: readonly CropParityFramePixelSample[];
   tightBitmapDifferingPixels: number;
   tightBitmapNonEdgeDifferingPixels: number;
   offscreenTightBitmapPremultipliedDifferingBytes: number;
@@ -1004,10 +1202,10 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       { durableLayerPresentationMismatch, projectDurableRender },
       { durableExportRecords, renderExportCanvas },
       { savePsd },
-      { isIdentityAffineTransform, rotationAffineAroundPoint },
+      { getLayerPresentationBounds, isIdentityAffineTransform, rotationAffineAroundPoint },
       { documentFrameSize },
       { legacyHistoryToDurable },
-      { drawLayer, drawLayersToCanvas },
+      { drawLayer, drawLayerSource, drawLayersToCanvas },
       { evaluatePresentation, retainedPresentationOperations },
       { replayHistory },
       { replayDurableAtCursor },
@@ -1048,6 +1246,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         transform,
       };
     });
+    const diagnosticBitmapSourceSurfaces = new WeakMap<object, HTMLCanvasElement>();
     const registry = new AssetRegistry();
     const layerResults = await Promise.allSettled(
       fixture.layers.map(async (layerFixture) => {
@@ -1073,6 +1272,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               sourceContext.fillRect(fill.x, fill.y, fill.width, fill.height);
             }
             const bitmap = await createImageBitmap(sourceCanvas);
+            diagnosticBitmapSourceSurfaces.set(bitmap, sourceCanvas);
             registry.registerBaseline(fixture.documentId, bitmap);
             runtimeSource = {
               bitmap,
@@ -1772,6 +1972,42 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               }
               return { differingBytes: rawBitmapDifferingBytes, differingSamples: rawBitmapDifferingSamples };
             };
+            const downstreamInvertReadbackComparisons = fixture.verifyDownstreamInvertParity
+              ? (() => {
+                  const invertProcessor = findToolProcessor('invert');
+                  if (!invertProcessor) {
+                    throw new Error('Unable to find the Invert processor for materialization parity');
+                  }
+                  const invertRaster = (bitmap: CanvasImageSource) => {
+                    const [inverted] = invertProcessor.imageProcessor({
+                      bitmap: bitmap as BitmapSource,
+                      size: { width: expectedBounds.width, height: expectedBounds.height },
+                    })({ toolName: 'invert' });
+                    if (!inverted) throw new Error('The Invert processor returned no output raster');
+                    return inverted as CanvasImageSource;
+                  };
+                  const readRaster = (bitmap: CanvasImageSource) => {
+                    const surface = document.createElement('canvas');
+                    surface.width = expectedBounds.width;
+                    surface.height = expectedBounds.height;
+                    const context = surface.getContext('2d', { willReadFrequently: true });
+                    if (!context) throw new Error('Unable to create the Invert result readback context');
+                    context.drawImage(bitmap, 0, 0, expectedBounds.width, expectedBounds.height);
+                    return context.getImageData(0, 0, expectedBounds.width, expectedBounds.height).data;
+                  };
+                  const durableInverted = invertRaster(materializedLayer.bitmap as CanvasImageSource);
+                  return {
+                    html: compareRawPixels(
+                      readRaster(invertRaster(legacyTightSurfaces.htmlContext.canvas)),
+                      readRaster(durableInverted)
+                    ),
+                    offscreen: compareRawPixels(
+                      readRaster(invertRaster(legacyTightSurfaces.offscreenContext.canvas as CanvasImageSource)),
+                      readRaster(durableInverted)
+                    ),
+                  };
+                })()
+              : null;
             const tightBitmapRawComparison = compareRawPixels(legacyHybridTightPixels, durableTightPixels);
             const offscreenTightBitmapRawComparison = compareRawPixels(
               legacyOffscreenHybridTightPixels,
@@ -1792,6 +2028,173 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             let offscreenFrameNonEdgeDifferingPixels = 0;
             let lastOffscreenFrameDifferingPixel = -1;
             const offscreenFrameDifferingSamples: CropParityFramePixelSample[] = [];
+            const frameAlphaNeighborhood = (
+              pixels: Uint8ClampedArray,
+              pixel: number,
+              width: number,
+              height: number
+            ): CropParityAlphaNeighborhood => {
+              const x = pixel % width;
+              const y = Math.floor(pixel / width);
+              const neighborhood: (number | null)[] = [];
+              for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+                for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+                  const neighborX = x + offsetX;
+                  const neighborY = y + offsetY;
+                  if (neighborX < 0 || neighborY < 0 || neighborX >= width || neighborY >= height) {
+                    neighborhood.push(null);
+                    continue;
+                  }
+                  neighborhood.push(pixels[(neighborY * width + neighborX) * 4 + 3] ?? 0);
+                }
+              }
+              return neighborhood;
+            };
+            const comparePremultipliedFramePixels = (
+              expected: Uint8ClampedArray,
+              received: Uint8ClampedArray,
+              width = frameSize.width,
+              height = frameSize.height,
+              originX = frame.x,
+              originY = frame.y
+            ) => {
+              const expectedLength = width * height * 4;
+              if (expected.length !== expectedLength || received.length !== expectedLength) {
+                throw new Error(
+                  `Premultiplied frame comparison has ${expected.length}/${received.length} bytes; expected ${expectedLength} for ${width}x${height}`
+                );
+              }
+              let premultipliedDifferingBytes = 0;
+              let premultipliedDifferingPixels = 0;
+              let alphaBoundaryDifferingPixels = 0;
+              let nonBoundaryDifferingPixels = 0;
+              const differingBytesByChannel: Record<CropParityFrameChannel, number> = { r: 0, g: 0, b: 0, a: 0 };
+              const premultipliedDifferingSamples: CropParityPremultipliedFramePixelSample[] = [];
+              const premultiply = (rgba: CropParityRgba): CropParityRgba => [
+                Math.round((rgba[0] * rgba[3]) / 255),
+                Math.round((rgba[1] * rgba[3]) / 255),
+                Math.round((rgba[2] * rgba[3]) / 255),
+                rgba[3],
+              ];
+              for (let pixel = 0; pixel < width * height; pixel += 1) {
+                const offset = pixel * 4;
+                const legacyRgba = [
+                  expected[offset]!,
+                  expected[offset + 1]!,
+                  expected[offset + 2]!,
+                  expected[offset + 3]!,
+                ] as const;
+                const durableRgba = [
+                  received[offset]!,
+                  received[offset + 1]!,
+                  received[offset + 2]!,
+                  received[offset + 3]!,
+                ] as const;
+                const legacyPremultipliedRgba = premultiply(legacyRgba);
+                const durablePremultipliedRgba = premultiply(durableRgba);
+                const differingChannels: CropParityFrameChannel[] = [];
+                for (let channelIndex = 0; channelIndex < frameChannels.length; channelIndex += 1) {
+                  const channel = frameChannels[channelIndex]!;
+                  if (legacyPremultipliedRgba[channelIndex] === durablePremultipliedRgba[channelIndex]) continue;
+                  premultipliedDifferingBytes += 1;
+                  differingBytesByChannel[channel] += 1;
+                  differingChannels.push(channel);
+                }
+                if (differingChannels.length === 0) continue;
+
+                premultipliedDifferingPixels += 1;
+                const legacyAlphaBoundary = isFrameAlphaBoundaryPixel(expected, pixel, width, height);
+                const durableAlphaBoundary = isFrameAlphaBoundaryPixel(received, pixel, width, height);
+                const alphaBoundaryDifference = legacyAlphaBoundary || durableAlphaBoundary;
+                if (alphaBoundaryDifference) alphaBoundaryDifferingPixels += 1;
+                else nonBoundaryDifferingPixels += 1;
+
+                if (premultipliedDifferingSamples.length < 8) {
+                  const x = pixel % width;
+                  const y = Math.floor(pixel / width);
+                  premultipliedDifferingSamples.push({
+                    x,
+                    y,
+                    documentX: originX + x,
+                    documentY: originY + y,
+                    legacyRgba,
+                    durableRgba,
+                    legacyPremultipliedRgba,
+                    durablePremultipliedRgba,
+                    differingChannels,
+                    legacyAlphaBoundary,
+                    durableAlphaBoundary,
+                    alphaBoundaryDifference,
+                    legacyAlphaNeighborhood: frameAlphaNeighborhood(expected, pixel, width, height),
+                    durableAlphaNeighborhood: frameAlphaNeighborhood(received, pixel, width, height),
+                  });
+                }
+              }
+
+              const result = {
+                differingBytes: premultipliedDifferingBytes,
+                differingPixels: premultipliedDifferingPixels,
+                differingBytesByChannel,
+                alphaBoundaryDifferingPixels,
+                nonBoundaryDifferingPixels,
+                differingSamples: premultipliedDifferingSamples,
+              };
+              if (
+                result.alphaBoundaryDifferingPixels + result.nonBoundaryDifferingPixels !== result.differingPixels ||
+                Object.values(result.differingBytesByChannel).reduce((total, count) => total + count, 0) !==
+                  result.differingBytes
+              ) {
+                throw new Error('Premultiplied frame comparison accounting is inconsistent');
+              }
+              return result;
+            };
+            const syntheticExpected = new Uint8ClampedArray(3 * 3 * 4);
+            const syntheticReceived = new Uint8ClampedArray(3 * 3 * 4);
+            for (let pixel = 0; pixel < 3 * 3; pixel += 1) {
+              const offset = pixel * 4;
+              syntheticExpected.set([100, 100, 100, 128], offset);
+              syntheticReceived.set([100, 100, 100, 128], offset);
+            }
+            syntheticReceived.set([101, 101, 100, 128], 0);
+            syntheticReceived.set([100, 100, 100, 255], 4);
+            syntheticExpected.set([0, 0, 0, 0], 8 * 4);
+            syntheticReceived.set([0, 0, 0, 255], 8 * 4);
+            const syntheticComparison = comparePremultipliedFramePixels(
+              syntheticExpected,
+              syntheticReceived,
+              3,
+              3,
+              40,
+              -3
+            );
+            if (
+              syntheticComparison.differingBytes !== 7 ||
+              syntheticComparison.differingPixels !== 3 ||
+              syntheticComparison.differingBytesByChannel.r !== 2 ||
+              syntheticComparison.differingBytesByChannel.g !== 2 ||
+              syntheticComparison.differingBytesByChannel.b !== 1 ||
+              syntheticComparison.differingBytesByChannel.a !== 2 ||
+              syntheticComparison.alphaBoundaryDifferingPixels !== 1 ||
+              syntheticComparison.nonBoundaryDifferingPixels !== 2 ||
+              syntheticComparison.differingSamples.length !== 3 ||
+              syntheticComparison.differingSamples[0]?.legacyAlphaBoundary !== false ||
+              syntheticComparison.differingSamples[0]?.durableAlphaBoundary !== true ||
+              syntheticComparison.differingSamples[0]?.alphaBoundaryDifference !== true ||
+              syntheticComparison.differingSamples[0]?.differingChannels.join(',') !== 'r,g' ||
+              syntheticComparison.differingSamples[0]?.legacyAlphaNeighborhood[0] !== null ||
+              syntheticComparison.differingSamples[0]?.legacyAlphaNeighborhood[5] !== 128 ||
+              syntheticComparison.differingSamples[0]?.durableAlphaNeighborhood[5] !== 255 ||
+              syntheticComparison.differingSamples[0]?.x !== 0 ||
+              syntheticComparison.differingSamples[0]?.y !== 0 ||
+              syntheticComparison.differingSamples[0]?.documentX !== 40 ||
+              syntheticComparison.differingSamples[0]?.documentY !== -3 ||
+              syntheticComparison.differingSamples[1]?.alphaBoundaryDifference !== false ||
+              syntheticComparison.differingSamples[1]?.differingChannels.join(',') !== 'r,g,b,a' ||
+              syntheticComparison.differingSamples[2]?.alphaBoundaryDifference !== false ||
+              syntheticComparison.differingSamples[2]?.differingChannels.join(',') !== 'a'
+            ) {
+              throw new Error('Premultiplied frame comparison failed its synthetic accounting check');
+            }
             for (let byte = 0; byte < legacyFramePixels.length; byte += 1) {
               const legacy = legacyFramePixels[byte] ?? null;
               const durable = durableFramePixels[byte] ?? null;
@@ -1858,6 +2261,152 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 });
               }
             }
+            const framePremultipliedComparison = comparePremultipliedFramePixels(legacyFramePixels, durableFramePixels);
+            const offscreenFramePremultipliedComparison = comparePremultipliedFramePixels(
+              legacyOffscreenPixels,
+              durableOffscreenPixels
+            );
+            const opaqueBackdropComparison = fixture.diagnoseOpaqueBackdrop
+              ? (() => {
+                  const offscreenAvailable = typeof OffscreenCanvas !== 'undefined';
+                  const createOpaqueBackdropSurfaces = (label: string) => {
+                    const surfaces = createComparisonSurfaces(label, frameSize.width, frameSize.height);
+                    const contexts = [surfaces.htmlContext];
+                    if (offscreenAvailable) contexts.push(surfaces.offscreenContext as CanvasRenderingContext2D);
+                    // Match the fixture's unchanged, fully opaque background layer under the foreground.
+                    for (const context of contexts) {
+                      context.setTransform(1, 0, 0, 1, 0, 0);
+                      context.globalAlpha = 1;
+                      context.globalCompositeOperation = 'source-over';
+                      context.imageSmoothingEnabled = false;
+                      context.clearRect(0, 0, frameSize.width, frameSize.height);
+                      context.fillStyle = '#5070a0';
+                      context.fillRect(0, 0, frameSize.width, frameSize.height);
+                    }
+                    return surfaces;
+                  };
+                  const legacyOpaqueSurfaces = createOpaqueBackdropSurfaces('legacy opaque backdrop');
+                  const durableOpaqueSurfaces = createOpaqueBackdropSurfaces('durable opaque backdrop');
+                  if (!drawLayer(legacyOpaqueSurfaces.htmlContext, legacyLayer, frame)) {
+                    throw new Error(`Legacy renderer refused ${layerId} opaque-backdrop comparison at ${stage}`);
+                  }
+                  if (
+                    offscreenAvailable &&
+                    !drawLayer(legacyOpaqueSurfaces.offscreenContext as CanvasRenderingContext2D, legacyLayer, frame)
+                  ) {
+                    throw new Error(`Legacy renderer refused ${layerId} OffscreenCanvas opaque comparison at ${stage}`);
+                  }
+                  const durableOpaqueContexts = [durableOpaqueSurfaces.htmlContext];
+                  if (offscreenAvailable) {
+                    durableOpaqueContexts.push(durableOpaqueSurfaces.offscreenContext as CanvasRenderingContext2D);
+                  }
+                  for (const context of durableOpaqueContexts) {
+                    context.globalAlpha = materializedLayer.opacity;
+                    context.globalCompositeOperation = materializedLayer.blendMode;
+                    context.drawImage(
+                      materializedLayer.bitmap as CanvasImageSource,
+                      materializedLayer.bounds.x - frame.x,
+                      materializedLayer.bounds.y - frame.y,
+                      materializedLayer.bounds.width,
+                      materializedLayer.bounds.height
+                    );
+                  }
+                  const compareOpaquePixels = (
+                    expected: Uint8ClampedArray,
+                    received: Uint8ClampedArray,
+                    originX: number,
+                    originY: number
+                  ): CropParityOpaqueBackdropSurfaceComparison => {
+                    const expectedLength = frameSize.width * frameSize.height * 4;
+                    if (expected.length !== expectedLength || received.length !== expectedLength) {
+                      throw new Error(
+                        `Opaque backdrop comparison has ${expected.length}/${received.length} bytes; expected ${expectedLength} for ${frameSize.width}x${frameSize.height}`
+                      );
+                    }
+                    let differingBytes = 0;
+                    let differingPixels = 0;
+                    const differingBytesByChannel: Record<CropParityFrameChannel, number> = {
+                      r: 0,
+                      g: 0,
+                      b: 0,
+                      a: 0,
+                    };
+                    const differingSamples: CropParityOpaqueBackdropSample[] = [];
+                    for (let pixel = 0; pixel < frameSize.width * frameSize.height; pixel += 1) {
+                      const offset = pixel * 4;
+                      const legacyRgba: CropParityRgba = [
+                        expected[offset]!,
+                        expected[offset + 1]!,
+                        expected[offset + 2]!,
+                        expected[offset + 3]!,
+                      ];
+                      const durableRgba: CropParityRgba = [
+                        received[offset]!,
+                        received[offset + 1]!,
+                        received[offset + 2]!,
+                        received[offset + 3]!,
+                      ];
+                      if (legacyRgba[3] !== 255 || durableRgba[3] !== 255) {
+                        throw new Error(`Opaque backdrop did not cover ${layerId} frame pixel ${pixel} at ${stage}`);
+                      }
+                      const differingChannels = frameChannels.filter(
+                        (_, channelIndex) => legacyRgba[channelIndex] !== durableRgba[channelIndex]
+                      );
+                      if (differingChannels.length === 0) continue;
+                      differingPixels += 1;
+                      differingBytes += differingChannels.length;
+                      for (const channel of differingChannels) differingBytesByChannel[channel] += 1;
+                      if (differingSamples.length < 8) {
+                        const x = pixel % frameSize.width;
+                        const y = Math.floor(pixel / frameSize.width);
+                        differingSamples.push({
+                          x,
+                          y,
+                          documentX: originX + x,
+                          documentY: originY + y,
+                          legacyRgba,
+                          durableRgba,
+                          differingChannels,
+                        });
+                      }
+                    }
+                    if (
+                      Object.values(differingBytesByChannel).reduce((total, count) => total + count, 0) !==
+                      differingBytes
+                    ) {
+                      throw new Error('Opaque backdrop comparison accounting is inconsistent');
+                    }
+                    return { differingBytes, differingPixels, differingBytesByChannel, differingSamples };
+                  };
+                  const htmlLegacyPixels = legacyOpaqueSurfaces.htmlContext.getImageData(
+                    0,
+                    0,
+                    frameSize.width,
+                    frameSize.height
+                  ).data;
+                  const durableHtmlPixels = durableOpaqueSurfaces.htmlContext.getImageData(
+                    0,
+                    0,
+                    frameSize.width,
+                    frameSize.height
+                  ).data;
+                  const legacyOffscreenPixels = offscreenAvailable
+                    ? legacyOpaqueSurfaces.offscreenContext.getImageData(0, 0, frameSize.width, frameSize.height).data
+                    : null;
+                  const durableOffscreenPixels = offscreenAvailable
+                    ? durableOpaqueSurfaces.offscreenContext.getImageData(0, 0, frameSize.width, frameSize.height).data
+                    : null;
+                  return {
+                    backdropColor: '#5070a0' as const,
+                    offscreenAvailable,
+                    html: compareOpaquePixels(htmlLegacyPixels, durableHtmlPixels, frame.x, frame.y),
+                    offscreen:
+                      legacyOffscreenPixels && durableOffscreenPixels
+                        ? compareOpaquePixels(legacyOffscreenPixels, durableOffscreenPixels, frame.x, frame.y)
+                        : null,
+                  };
+                })()
+              : null;
             return {
               layerId,
               stage,
@@ -1892,7 +2441,23 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 height: materializedLayer.bitmap.height,
               },
               frameDifferingBytes,
+              framePremultipliedDifferingBytes: framePremultipliedComparison.differingBytes,
+              framePremultipliedDifferingPixels: framePremultipliedComparison.differingPixels,
+              framePremultipliedDifferingBytesByChannel: framePremultipliedComparison.differingBytesByChannel,
+              framePremultipliedAlphaBoundaryDifferingPixels: framePremultipliedComparison.alphaBoundaryDifferingPixels,
+              framePremultipliedNonBoundaryDifferingPixels: framePremultipliedComparison.nonBoundaryDifferingPixels,
+              framePremultipliedDifferingSamples: framePremultipliedComparison.differingSamples,
               offscreenFrameDifferingBytes,
+              offscreenFramePremultipliedDifferingBytes: offscreenFramePremultipliedComparison.differingBytes,
+              offscreenFramePremultipliedDifferingPixels: offscreenFramePremultipliedComparison.differingPixels,
+              offscreenFramePremultipliedDifferingBytesByChannel:
+                offscreenFramePremultipliedComparison.differingBytesByChannel,
+              offscreenFramePremultipliedAlphaBoundaryDifferingPixels:
+                offscreenFramePremultipliedComparison.alphaBoundaryDifferingPixels,
+              offscreenFramePremultipliedNonBoundaryDifferingPixels:
+                offscreenFramePremultipliedComparison.nonBoundaryDifferingPixels,
+              offscreenFramePremultipliedDifferingSamples: offscreenFramePremultipliedComparison.differingSamples,
+              opaqueBackdropComparison,
               frameDifferingPixels,
               frameNonEdgeDifferingPixels,
               offscreenFrameDifferingPixels,
@@ -1901,6 +2466,13 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               offscreenFrameDifferingSamples,
               tightBitmapRawDifferingBytes: tightBitmapRawComparison.differingBytes,
               tightBitmapRawDifferingSamples: tightBitmapRawComparison.differingSamples,
+              downstreamInvertReadbackDifferingBytes: downstreamInvertReadbackComparisons?.html.differingBytes ?? null,
+              downstreamInvertReadbackDifferingSamples:
+                downstreamInvertReadbackComparisons?.html.differingSamples ?? [],
+              offscreenDownstreamInvertReadbackDifferingBytes:
+                downstreamInvertReadbackComparisons?.offscreen.differingBytes ?? null,
+              offscreenDownstreamInvertReadbackDifferingSamples:
+                downstreamInvertReadbackComparisons?.offscreen.differingSamples ?? [],
               offscreenTightBitmapRawDifferingBytes: offscreenTightBitmapRawComparison.differingBytes,
               offscreenTightBitmapRawDifferingSamples: offscreenTightBitmapRawComparison.differingSamples,
               tightBitmapPremultipliedDifferingBytes: tightBitmapComparison.differingBytes,
@@ -1931,26 +2503,111 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 const projectedPixels = Array.from(
                   projectionContext.getImageData(0, 0, projectionCanvas.width, projectionCanvas.height).data
                 ) as number[];
-                const compareBytes = (expected: number[], received: number[]) => {
+                const compareBytes = (
+                  expected: number[],
+                  received: number[],
+                  width: number,
+                  height: number,
+                  originX: number,
+                  originY: number
+                ) => {
+                  const expectedLength = width * height * 4;
+                  if (expected.length !== expectedLength || received.length !== expectedLength) {
+                    throw new Error(
+                      `Runtime/export pixel surface at ${stage} has ${expected.length}/${received.length} bytes; expected ${expectedLength} for ${width}x${height}`
+                    );
+                  }
                   let surfaceDifferingBytes = 0;
+                  let surfaceDifferingPixels = 0;
+                  let lastSurfaceDifferingPixel = -1;
+                  let surfaceMaxChannelDelta = 0;
+                  let minX = Number.POSITIVE_INFINITY;
+                  let minY = Number.POSITIVE_INFINITY;
+                  let maxX = Number.NEGATIVE_INFINITY;
+                  let maxY = Number.NEGATIVE_INFINITY;
+                  const rgbaChannels = ['r', 'g', 'b', 'a'] as const;
                   const surfaceDifferingSamples: Array<{
                     offset: number;
+                    x: number;
+                    y: number;
+                    documentX: number;
+                    documentY: number;
                     expected: number | null;
                     received: number | null;
+                    expectedRgba: readonly (number | null)[];
+                    receivedRgba: readonly (number | null)[];
+                    expectedAlpha: number | null;
+                    receivedAlpha: number | null;
+                    differingChannels: Array<(typeof rgbaChannels)[number]>;
                   }> = [];
+                  const sampleByPixel = new Map<number, (typeof surfaceDifferingSamples)[number]>();
+                  const readRgba = (pixels: number[], byteOffset: number) =>
+                    Array.from({ length: 4 }, (_, channel) => pixels[byteOffset + channel] ?? null);
                   for (let offset = 0; offset < Math.max(expected.length, received.length); offset += 1) {
                     const expectedByte = expected[offset] ?? null;
                     const receivedByte = received[offset] ?? null;
                     if (expectedByte === receivedByte) continue;
                     surfaceDifferingBytes += 1;
-                    if (surfaceDifferingSamples.length < 8) {
-                      surfaceDifferingSamples.push({ offset, expected: expectedByte, received: receivedByte });
+                    const pixel = Math.floor(offset / 4);
+                    // Pixel indices identify cell origins; preserve the frame's fractional document origin.
+                    const x = pixel % width;
+                    const y = Math.floor(pixel / width);
+                    if (pixel !== lastSurfaceDifferingPixel) {
+                      surfaceDifferingPixels += 1;
+                      lastSurfaceDifferingPixel = pixel;
+                      minX = Math.min(minX, x);
+                      minY = Math.min(minY, y);
+                      maxX = Math.max(maxX, x);
+                      maxY = Math.max(maxY, y);
+                    }
+                    surfaceMaxChannelDelta = Math.max(
+                      surfaceMaxChannelDelta,
+                      expectedByte === null || receivedByte === null ? 255 : Math.abs(expectedByte - receivedByte)
+                    );
+                    const existingSample = sampleByPixel.get(pixel);
+                    if (existingSample) {
+                      const channel = rgbaChannels[offset % 4];
+                      if (!existingSample.differingChannels.includes(channel)) {
+                        existingSample.differingChannels.push(channel);
+                      }
+                    } else if (surfaceDifferingSamples.length < 8) {
+                      const expectedRgba = readRgba(expected, pixel * 4);
+                      const receivedRgba = readRgba(received, pixel * 4);
+                      const sample = {
+                        offset,
+                        x,
+                        y,
+                        documentX: originX + x,
+                        documentY: originY + y,
+                        expected: expectedByte,
+                        received: receivedByte,
+                        expectedRgba,
+                        receivedRgba,
+                        expectedAlpha: expectedRgba[3] ?? null,
+                        receivedAlpha: receivedRgba[3] ?? null,
+                        differingChannels: [rgbaChannels[offset % 4]],
+                      };
+                      sampleByPixel.set(pixel, sample);
+                      surfaceDifferingSamples.push(sample);
                     }
                   }
                   return {
                     expectedByteLength: expected.length,
                     receivedByteLength: received.length,
                     differingBytes: surfaceDifferingBytes,
+                    differingPixels: surfaceDifferingPixels,
+                    maxChannelDelta: surfaceMaxChannelDelta,
+                    differingBounds:
+                      surfaceDifferingPixels === 0
+                        ? null
+                        : {
+                            x: minX,
+                            y: minY,
+                            documentX: originX + minX,
+                            documentY: originY + minY,
+                            width: maxX - minX + 1,
+                            height: maxY - minY + 1,
+                          },
                     differingSamples: surfaceDifferingSamples,
                   };
                 };
@@ -1986,6 +2643,22 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 const durableExportPixels = Array.from(
                   durableExportContext.getImageData(0, 0, durableExportCanvas.width, durableExportCanvas.height).data
                 ) as number[];
+                const runtimePixelComparison = compareBytes(
+                  legacyPixels,
+                  projectedPixels,
+                  frameSize.width,
+                  frameSize.height,
+                  frame.x,
+                  frame.y
+                );
+                const exportCanvasPixelComparison = compareBytes(
+                  legacyExportPixels,
+                  durableExportPixels,
+                  frameSize.width,
+                  frameSize.height,
+                  frame.x,
+                  frame.y
+                );
                 const layerIds = fixture.layers.map(({ id }) => id);
                 const projectedLayerRecords = Object.fromEntries(
                   layerIds.map((id) => {
@@ -2066,6 +2739,3253 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                     ];
                   })
                 );
+                const psdPreEncodeLayers = Object.fromEntries(
+                  await Promise.all(
+                    fixture.layers.map(async ({ id }) => {
+                      const legacyLayer = legacyReplay.layers[id];
+                      const durableLayer = exportRecords.layers[id];
+                      if (!legacyLayer || !durableLayer) {
+                        throw new Error(`Missing PSD pre-encode layer ${id} at ${stage}`);
+                      }
+                      const renderPsdLayerRaster = (layer: (typeof legacyReplay.layers)[string], label: string) => {
+                        const presentation = getLayerPresentationBounds(layer);
+                        const localX = presentation.x - frame.x;
+                        const localY = presentation.y - frame.y;
+                        const left = Math.floor(localX);
+                        const top = Math.floor(localY);
+                        const width = Math.ceil(localX + presentation.width) - left;
+                        const height = Math.ceil(localY + presentation.height) - top;
+                        const source = layer.tmpCanvas ?? layer.bitmap;
+                        const canvas = document.createElement('canvas');
+                        canvas.width = source ? width : 1;
+                        canvas.height = source ? height : 1;
+                        const context = canvas.getContext('2d');
+                        if (!context) throw new Error(`${label} PSD pre-encode raster has no 2D context at ${stage}`);
+                        // Mirror savePsd's integer-bound rasterization immediately before writePsd().
+                        if (
+                          source &&
+                          !drawLayerSource(context, layer, layer.pos, {
+                            x: frame.x + left,
+                            y: frame.y + top,
+                            width,
+                            height,
+                          })
+                        ) {
+                          throw new Error(`${label} PSD pre-encode raster refused ${id} at ${stage}`);
+                        }
+                        return {
+                          bounds: { left, top, right: left + width, bottom: top + height },
+                          rasterSize: { width: canvas.width, height: canvas.height },
+                          pixels: Array.from(context.getImageData(0, 0, canvas.width, canvas.height).data) as number[],
+                        };
+                      };
+                      const legacy = renderPsdLayerRaster(legacyLayer, 'Legacy');
+                      const durable = renderPsdLayerRaster(durableLayer, 'Durable');
+                      const frameGridPadding = 2;
+                      const paddedFrameSize = {
+                        width: frameSize.width + frameGridPadding * 2,
+                        height: frameSize.height + frameGridPadding * 2,
+                      };
+                      const renderLayerSurfacePixels = (
+                        layer: (typeof legacyReplay.layers)[string],
+                        label: string,
+                        targetFrame: typeof frame,
+                        pixelSize: typeof frameSize
+                      ) => {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = pixelSize.width;
+                        canvas.height = pixelSize.height;
+                        const context = canvas.getContext('2d');
+                        if (!context) throw new Error(`${label} PSD diagnostic has no 2D context at ${stage}`);
+                        if (!drawLayerSource(context, layer, layer.pos, targetFrame)) {
+                          throw new Error(`${label} PSD diagnostic refused ${id} at ${stage}`);
+                        }
+                        return context.getImageData(0, 0, pixelSize.width, pixelSize.height).data;
+                      };
+                      const renderFrameLayerPixels = (layer: (typeof legacyReplay.layers)[string], label: string) =>
+                        renderLayerSurfacePixels(layer, label, frame, frameSize);
+                      const originShiftedTargetFrame = {
+                        ...frame,
+                        x: frame.x - frameGridPadding,
+                        y: frame.y - frameGridPadding,
+                      };
+                      const renderOriginShiftedFrameLayerPixels = (
+                        layer: (typeof legacyReplay.layers)[string],
+                        label: string
+                      ) => renderLayerSurfacePixels(layer, label, originShiftedTargetFrame, frameSize);
+                      const renderExpandedFrameLayerPixels = (
+                        layer: (typeof legacyReplay.layers)[string],
+                        label: string
+                      ) => renderLayerSurfacePixels(layer, label, frame, paddedFrameSize);
+                      const renderPaddedFrameLayerPixels = (
+                        layer: (typeof legacyReplay.layers)[string],
+                        label: string
+                      ) => {
+                        return renderLayerSurfacePixels(layer, label, originShiftedTargetFrame, paddedFrameSize);
+                      };
+                      const readPixelRegion = (
+                        pixels: Uint8ClampedArray,
+                        sourceSize: typeof frameSize,
+                        x: number,
+                        y: number,
+                        width: number,
+                        height: number
+                      ) => {
+                        if (
+                          pixels.length !== sourceSize.width * sourceSize.height * 4 ||
+                          x < 0 ||
+                          y < 0 ||
+                          width < 0 ||
+                          height < 0 ||
+                          x + width > sourceSize.width ||
+                          y + height > sourceSize.height
+                        ) {
+                          throw new Error(
+                            `PSD diagnostic pixel region is outside its ${sourceSize.width}x${sourceSize.height} source at ${stage}`
+                          );
+                        }
+                        const region = new Uint8ClampedArray(width * height * 4);
+                        for (let row = 0; row < height; row += 1) {
+                          const sourceStart = ((y + row) * sourceSize.width + x) * 4;
+                          const regionStart = row * width * 4;
+                          region.set(pixels.slice(sourceStart, sourceStart + width * 4), regionStart);
+                        }
+                        return region;
+                      };
+                      type DiagnosticPixelSurface = {
+                        pixels: Uint8ClampedArray;
+                        pixelSize: typeof frameSize;
+                        originOffset: { x: number; y: number };
+                      };
+                      const getSharedDocumentRegion = (surfaces: readonly DiagnosticPixelSurface[]) => {
+                        const left = Math.max(...surfaces.map(({ originOffset }) => originOffset.x));
+                        const top = Math.max(...surfaces.map(({ originOffset }) => originOffset.y));
+                        const right = Math.min(
+                          ...surfaces.map(({ originOffset, pixelSize }) => originOffset.x + pixelSize.width)
+                        );
+                        const bottom = Math.min(
+                          ...surfaces.map(({ originOffset, pixelSize }) => originOffset.y + pixelSize.height)
+                        );
+                        return {
+                          x: left,
+                          y: top,
+                          width: Math.max(0, right - left),
+                          height: Math.max(0, bottom - top),
+                        };
+                      };
+                      const compareRasterOverlap = (
+                        expected: DiagnosticPixelSurface,
+                        received: DiagnosticPixelSurface
+                      ) => {
+                        const region = getSharedDocumentRegion([expected, received]);
+                        const comparedPixels = region.width * region.height;
+                        const measured = comparedPixels > 0;
+                        const expectedOffset = {
+                          x: region.x - expected.originOffset.x,
+                          y: region.y - expected.originOffset.y,
+                        };
+                        const receivedOffset = {
+                          x: region.x - received.originOffset.x,
+                          y: region.y - received.originOffset.y,
+                        };
+                        return {
+                          measurementStatus: measured ? 'measured' : 'empty-region',
+                          comparedPixels,
+                          documentRegionLocal: region,
+                          expectedPixelOffset: expectedOffset,
+                          receivedPixelOffset: receivedOffset,
+                          expectedExcludedPixels: expected.pixelSize.width * expected.pixelSize.height - comparedPixels,
+                          receivedExcludedPixels: received.pixelSize.width * received.pixelSize.height - comparedPixels,
+                          pixelComparison: measured
+                            ? compareBytes(
+                                Array.from(
+                                  readPixelRegion(
+                                    expected.pixels,
+                                    expected.pixelSize,
+                                    expectedOffset.x,
+                                    expectedOffset.y,
+                                    region.width,
+                                    region.height
+                                  )
+                                ),
+                                Array.from(
+                                  readPixelRegion(
+                                    received.pixels,
+                                    received.pixelSize,
+                                    receivedOffset.x,
+                                    receivedOffset.y,
+                                    region.width,
+                                    region.height
+                                  )
+                                ),
+                                region.width,
+                                region.height,
+                                frame.x + region.x,
+                                frame.y + region.y
+                              )
+                            : null,
+                        };
+                      };
+                      const cropDiagnosticSurface = (
+                        surface: DiagnosticPixelSurface,
+                        documentRegion: { x: number; y: number; width: number; height: number }
+                      ): DiagnosticPixelSurface => ({
+                        pixels: readPixelRegion(
+                          surface.pixels,
+                          surface.pixelSize,
+                          documentRegion.x - surface.originOffset.x,
+                          documentRegion.y - surface.originOffset.y,
+                          documentRegion.width,
+                          documentRegion.height
+                        ),
+                        pixelSize: { width: documentRegion.width, height: documentRegion.height },
+                        originOffset: { x: documentRegion.x, y: documentRegion.y },
+                      });
+                      const countNonTransparentPixelsOutsideFrame = (
+                        pixels: Uint8ClampedArray,
+                        pixelSize: typeof frameSize,
+                        originOffset: { x: number; y: number } = { x: 0, y: 0 }
+                      ) => {
+                        if (pixels.length !== pixelSize.width * pixelSize.height * 4) {
+                          throw new Error(`Expanded PSD diagnostic has an unexpected byte length at ${stage}`);
+                        }
+                        let comparedPixels = 0;
+                        let nonTransparentPixels = 0;
+                        for (let y = 0; y < pixelSize.height; y += 1) {
+                          for (let x = 0; x < pixelSize.width; x += 1) {
+                            const frameX = x + originOffset.x;
+                            const frameY = y + originOffset.y;
+                            if (frameX >= 0 && frameX < frameSize.width && frameY >= 0 && frameY < frameSize.height) {
+                              continue;
+                            }
+                            comparedPixels += 1;
+                            if (pixels[(y * pixelSize.width + x) * 4 + 3] !== 0) nonTransparentPixels += 1;
+                          }
+                        }
+                        return {
+                          measurementStatus: comparedPixels > 0 ? 'measured' : 'empty-region',
+                          comparedPixels,
+                          nonTransparentPixels,
+                        };
+                      };
+                      const compareOriginExtentInteraction = (
+                        baseline: DiagnosticPixelSurface,
+                        originOnly: DiagnosticPixelSurface,
+                        extentOnly: DiagnosticPixelSurface,
+                        combined: DiagnosticPixelSurface
+                      ) => {
+                        const region = getSharedDocumentRegion([baseline, originOnly, extentOnly, combined]);
+                        const comparedPixels = region.width * region.height;
+                        let differingBytes = 0;
+                        let differingPixels = 0;
+                        let maxAbsoluteChannelDelta = 0;
+                        const differingSamples: Array<Record<string, unknown>> = [];
+                        const pixelOffset = (surface: DiagnosticPixelSurface, x: number, y: number) =>
+                          ((y - surface.originOffset.y) * surface.pixelSize.width + x - surface.originOffset.x) * 4;
+                        for (let y = region.y; y < region.y + region.height; y += 1) {
+                          for (let x = region.x; x < region.x + region.width; x += 1) {
+                            const frameOffset = pixelOffset(baseline, x, y);
+                            const originOffset = pixelOffset(originOnly, x, y);
+                            const extentOffset = pixelOffset(extentOnly, x, y);
+                            const combinedOffset = pixelOffset(combined, x, y);
+                            const originShiftDelta = [0, 1, 2, 3].map(
+                              (channel) =>
+                                originOnly.pixels[originOffset + channel]! - baseline.pixels[frameOffset + channel]!
+                            );
+                            const expandedOriginShiftDelta = [0, 1, 2, 3].map(
+                              (channel) =>
+                                combined.pixels[combinedOffset + channel]! - extentOnly.pixels[extentOffset + channel]!
+                            );
+                            const differenceOfDifferences = originShiftDelta.map(
+                              (delta, channel) => delta - expandedOriginShiftDelta[channel]!
+                            );
+                            const changedChannels = differenceOfDifferences.filter((delta) => delta !== 0).length;
+                            if (changedChannels === 0) continue;
+                            differingBytes += changedChannels;
+                            differingPixels += 1;
+                            maxAbsoluteChannelDelta = Math.max(
+                              maxAbsoluteChannelDelta,
+                              ...differenceOfDifferences.map(Math.abs)
+                            );
+                            if (differingSamples.length < 8) {
+                              differingSamples.push({
+                                x,
+                                y,
+                                documentX: frame.x + x,
+                                documentY: frame.y + y,
+                                originShiftDelta,
+                                expandedOriginShiftDelta,
+                                differenceOfDifferences,
+                              });
+                            }
+                          }
+                        }
+                        return {
+                          measurementStatus: comparedPixels > 0 ? 'measured' : 'empty-region',
+                          comparedPixels,
+                          excludedFramePixels: frameSize.width * frameSize.height - comparedPixels,
+                          documentRegionLocal: region,
+                          differingBytes,
+                          differingPixels,
+                          maxAbsoluteChannelDelta,
+                          differingSamples,
+                        };
+                      };
+                      const compareWidthHeightExtentInteraction = (
+                        baseline: DiagnosticPixelSurface,
+                        widthOnly: DiagnosticPixelSurface,
+                        heightOnly: DiagnosticPixelSurface,
+                        bothAxes: DiagnosticPixelSurface
+                      ) => {
+                        const region = getSharedDocumentRegion([baseline, widthOnly, heightOnly, bothAxes]);
+                        const comparedPixels = region.width * region.height;
+                        let differingBytes = 0;
+                        let differingPixels = 0;
+                        let maxAbsoluteChannelDelta = 0;
+                        const differingSamples: Array<Record<string, unknown>> = [];
+                        const pixelOffset = (surface: DiagnosticPixelSurface, x: number, y: number) =>
+                          ((y - surface.originOffset.y) * surface.pixelSize.width + x - surface.originOffset.x) * 4;
+                        for (let y = region.y; y < region.y + region.height; y += 1) {
+                          for (let x = region.x; x < region.x + region.width; x += 1) {
+                            const baselineOffset = pixelOffset(baseline, x, y);
+                            const widthOnlyOffset = pixelOffset(widthOnly, x, y);
+                            const heightOnlyOffset = pixelOffset(heightOnly, x, y);
+                            const bothAxesOffset = pixelOffset(bothAxes, x, y);
+                            const widthDelta = [0, 1, 2, 3].map(
+                              (channel) =>
+                                widthOnly.pixels[widthOnlyOffset + channel]! -
+                                baseline.pixels[baselineOffset + channel]!
+                            );
+                            const heightDelta = [0, 1, 2, 3].map(
+                              (channel) =>
+                                heightOnly.pixels[heightOnlyOffset + channel]! -
+                                baseline.pixels[baselineOffset + channel]!
+                            );
+                            const bothAxesDelta = [0, 1, 2, 3].map(
+                              (channel) =>
+                                bothAxes.pixels[bothAxesOffset + channel]! - baseline.pixels[baselineOffset + channel]!
+                            );
+                            const differenceOfDifferences = bothAxesDelta.map(
+                              (delta, channel) => delta - widthDelta[channel]! - heightDelta[channel]!
+                            );
+                            const changedChannels = differenceOfDifferences.filter((delta) => delta !== 0).length;
+                            if (changedChannels === 0) continue;
+                            differingBytes += changedChannels;
+                            differingPixels += 1;
+                            maxAbsoluteChannelDelta = Math.max(
+                              maxAbsoluteChannelDelta,
+                              ...differenceOfDifferences.map(Math.abs)
+                            );
+                            if (differingSamples.length < 8) {
+                              differingSamples.push({
+                                x,
+                                y,
+                                documentX: frame.x + x,
+                                documentY: frame.y + y,
+                                widthDelta,
+                                heightDelta,
+                                bothAxesDelta,
+                                differenceOfDifferences,
+                              });
+                            }
+                          }
+                        }
+                        return {
+                          measurementStatus: comparedPixels > 0 ? 'measured' : 'empty-region',
+                          comparedPixels,
+                          excludedFramePixels: frameSize.width * frameSize.height - comparedPixels,
+                          documentRegionLocal: region,
+                          differingBytes,
+                          differingPixels,
+                          maxAbsoluteChannelDelta,
+                          differingSamples,
+                        };
+                      };
+                      const cropPaddedFrameInterior = (paddedPixels: Uint8ClampedArray) => {
+                        const expectedLength = paddedFrameSize.width * paddedFrameSize.height * 4;
+                        if (paddedPixels.length !== expectedLength) {
+                          throw new Error(
+                            `Padded-frame diagnostic has ${paddedPixels.length} bytes; expected ${expectedLength} for ${paddedFrameSize.width}x${paddedFrameSize.height}`
+                          );
+                        }
+                        const interior = new Uint8ClampedArray(frameSize.width * frameSize.height * 4);
+                        for (let y = 0; y < frameSize.height; y += 1) {
+                          const paddedStart = ((y + frameGridPadding) * paddedFrameSize.width + frameGridPadding) * 4;
+                          const interiorStart = y * frameSize.width * 4;
+                          interior.set(
+                            paddedPixels.subarray(paddedStart, paddedStart + frameSize.width * 4),
+                            interiorStart
+                          );
+                        }
+                        return interior;
+                      };
+                      const copyFrameGridToLayerRaster = (
+                        framePixels: Uint8ClampedArray,
+                        bounds: typeof legacy.bounds,
+                        rasterSize: typeof legacy.rasterSize,
+                        padding = 0
+                      ) => {
+                        const sourceWidth = frameSize.width + padding * 2;
+                        const sourceHeight = frameSize.height + padding * 2;
+                        if (framePixels.length !== sourceWidth * sourceHeight * 4) {
+                          throw new Error(
+                            `Frame-grid copy has ${framePixels.length} bytes; expected ${sourceWidth * sourceHeight * 4} for ${sourceWidth}x${sourceHeight}`
+                          );
+                        }
+                        const copied = new Uint8ClampedArray(rasterSize.width * rasterSize.height * 4);
+                        for (let y = 0; y < rasterSize.height; y += 1) {
+                          const frameY = y + bounds.top;
+                          const sourceY = frameY + padding;
+                          if (sourceY < 0 || sourceY >= sourceHeight) continue;
+                          for (let x = 0; x < rasterSize.width; x += 1) {
+                            const frameX = x + bounds.left;
+                            const sourceX = frameX + padding;
+                            if (sourceX < 0 || sourceX >= sourceWidth) continue;
+                            const frameOffset = (sourceY * sourceWidth + sourceX) * 4;
+                            const rasterOffset = (y * rasterSize.width + x) * 4;
+                            copied.set(framePixels.subarray(frameOffset, frameOffset + 4), rasterOffset);
+                          }
+                        }
+                        return copied;
+                      };
+                      const comparePsdRasterRegion = (
+                        expectedPixels: ArrayLike<number>,
+                        receivedPixels: ArrayLike<number>,
+                        bounds: typeof legacy.bounds,
+                        rasterSize: typeof legacy.rasterSize,
+                        region: 'in-frame' | 'out-of-frame' | 'padding-ring',
+                        padding = 0
+                      ) => {
+                        const expected = Array.from(expectedPixels);
+                        const received = Array.from(receivedPixels);
+                        let comparedPixels = 0;
+                        for (let y = 0; y < rasterSize.height; y += 1) {
+                          for (let x = 0; x < rasterSize.width; x += 1) {
+                            const frameX = x + bounds.left;
+                            const frameY = y + bounds.top;
+                            const inFrame =
+                              frameX >= 0 && frameX < frameSize.width && frameY >= 0 && frameY < frameSize.height;
+                            const inPaddedFrame =
+                              frameX >= -padding &&
+                              frameX < frameSize.width + padding &&
+                              frameY >= -padding &&
+                              frameY < frameSize.height + padding;
+                            const included =
+                              region === 'in-frame'
+                                ? inFrame
+                                : region === 'out-of-frame'
+                                  ? !inFrame
+                                  : inPaddedFrame && !inFrame;
+                            if (included) {
+                              comparedPixels += 1;
+                              continue;
+                            }
+                            const offset = (y * rasterSize.width + x) * 4;
+                            expected.fill(0, offset, offset + 4);
+                            received.fill(0, offset, offset + 4);
+                          }
+                        }
+                        const measured = comparedPixels > 0;
+                        return {
+                          measurementStatus: measured ? 'measured' : 'empty-region',
+                          comparedPixels,
+                          excludedPixels: rasterSize.width * rasterSize.height - comparedPixels,
+                          pixelComparison: measured
+                            ? compareBytes(
+                                expected,
+                                received,
+                                rasterSize.width,
+                                rasterSize.height,
+                                frame.x + bounds.left,
+                                frame.y + bounds.top
+                              )
+                            : null,
+                        };
+                      };
+                      const legacyFramePixels = renderFrameLayerPixels(legacyLayer, 'Legacy');
+                      const durableFramePixels = renderFrameLayerPixels(durableLayer, 'Durable');
+                      const legacyOriginShiftOnlyPixels = renderOriginShiftedFrameLayerPixels(legacyLayer, 'Legacy');
+                      const durableOriginShiftOnlyPixels = renderOriginShiftedFrameLayerPixels(durableLayer, 'Durable');
+                      const legacyExtentOnlyPixels = renderExpandedFrameLayerPixels(legacyLayer, 'Legacy');
+                      const durableExtentOnlyPixels = renderExpandedFrameLayerPixels(durableLayer, 'Durable');
+                      const legacyPaddedFramePixels = renderPaddedFrameLayerPixels(legacyLayer, 'Legacy');
+                      const durablePaddedFramePixels = renderPaddedFrameLayerPixels(durableLayer, 'Durable');
+                      const legacyPaddedFrameInterior = cropPaddedFrameInterior(legacyPaddedFramePixels);
+                      const durablePaddedFrameInterior = cropPaddedFrameInterior(durablePaddedFramePixels);
+                      const legacyFrameGridCopy = copyFrameGridToLayerRaster(
+                        legacyFramePixels,
+                        legacy.bounds,
+                        legacy.rasterSize
+                      );
+                      const durableFrameGridCopy = copyFrameGridToLayerRaster(
+                        durableFramePixels,
+                        durable.bounds,
+                        durable.rasterSize
+                      );
+                      const legacyPaddedFrameGridCopy = copyFrameGridToLayerRaster(
+                        legacyPaddedFramePixels,
+                        legacy.bounds,
+                        legacy.rasterSize,
+                        frameGridPadding
+                      );
+                      const durablePaddedFrameGridCopy = copyFrameGridToLayerRaster(
+                        durablePaddedFramePixels,
+                        durable.bounds,
+                        durable.rasterSize,
+                        frameGridPadding
+                      );
+                      const sameBounds = (['left', 'top', 'right', 'bottom'] as const).every(
+                        (key) => legacy.bounds[key] === durable.bounds[key]
+                      );
+                      const sameRasterSize =
+                        legacy.rasterSize.width === durable.rasterSize.width &&
+                        legacy.rasterSize.height === durable.rasterSize.height;
+                      const psdBoundsControl =
+                        sameBounds && sameRasterSize
+                          ? (async () => {
+                              const psdBoundsOriginOffset = { x: legacy.bounds.left, y: legacy.bounds.top };
+                              const psdBoundsTargetFrame = {
+                                ...frame,
+                                x: frame.x + psdBoundsOriginOffset.x,
+                                y: frame.y + psdBoundsOriginOffset.y,
+                              };
+                              const buildPsdBoundsControl = async (
+                                layer: (typeof legacyReplay.layers)[string],
+                                label: string,
+                                framePixels: Uint8ClampedArray,
+                                preEncodePixels: ArrayLike<number>
+                              ) => {
+                                // Keep the logical target frame fixed. Only its origin and backing size vary.
+                                const baseline: DiagnosticPixelSurface = {
+                                  pixels: framePixels,
+                                  pixelSize: frameSize,
+                                  originOffset: { x: 0, y: 0 },
+                                };
+                                const originOnly: DiagnosticPixelSurface = {
+                                  pixels: renderLayerSurfacePixels(layer, label, psdBoundsTargetFrame, frameSize),
+                                  pixelSize: frameSize,
+                                  originOffset: psdBoundsOriginOffset,
+                                };
+                                const extentOnly: DiagnosticPixelSurface = {
+                                  pixels: renderLayerSurfacePixels(layer, label, frame, legacy.rasterSize),
+                                  pixelSize: legacy.rasterSize,
+                                  originOffset: { x: 0, y: 0 },
+                                };
+                                const combined: DiagnosticPixelSurface = {
+                                  pixels: renderLayerSurfacePixels(
+                                    layer,
+                                    label,
+                                    psdBoundsTargetFrame,
+                                    legacy.rasterSize
+                                  ),
+                                  pixelSize: legacy.rasterSize,
+                                  originOffset: psdBoundsOriginOffset,
+                                };
+                                const hasExpandedPsdBounds =
+                                  legacy.rasterSize.width > frameSize.width &&
+                                  legacy.rasterSize.height > frameSize.height;
+                                const widthOnlySize = { width: legacy.rasterSize.width, height: frameSize.height };
+                                const heightOnlySize = { width: frameSize.width, height: legacy.rasterSize.height };
+                                const widthOnly: DiagnosticPixelSurface | null = hasExpandedPsdBounds
+                                  ? {
+                                      pixels: renderLayerSurfacePixels(layer, label, frame, widthOnlySize),
+                                      pixelSize: widthOnlySize,
+                                      originOffset: { x: 0, y: 0 },
+                                    }
+                                  : null;
+                                const heightOnly: DiagnosticPixelSurface | null = hasExpandedPsdBounds
+                                  ? {
+                                      pixels: renderLayerSurfacePixels(layer, label, frame, heightOnlySize),
+                                      pixelSize: heightOnlySize,
+                                      originOffset: { x: 0, y: 0 },
+                                    }
+                                  : null;
+                                const commonBackingClipControls =
+                                  widthOnly && heightOnly
+                                    ? (() => {
+                                        const renderCommonBackingClip = (
+                                          clipSize: typeof frameSize
+                                        ): DiagnosticPixelSurface => {
+                                          const canvas = document.createElement('canvas');
+                                          canvas.width = legacy.rasterSize.width;
+                                          canvas.height = legacy.rasterSize.height;
+                                          const context = canvas.getContext('2d');
+                                          if (!context) {
+                                            throw new Error(
+                                              `${label} common-backing PSD diagnostic has no 2D context at ${stage}`
+                                            );
+                                          }
+                                          context.beginPath();
+                                          context.rect(0, 0, clipSize.width, clipSize.height);
+                                          context.clip();
+                                          if (!drawLayerSource(context, layer, layer.pos, frame)) {
+                                            throw new Error(
+                                              `${label} common-backing PSD diagnostic refused ${id} at ${stage}`
+                                            );
+                                          }
+                                          return {
+                                            pixels: context.getImageData(0, 0, canvas.width, canvas.height).data,
+                                            pixelSize: { width: canvas.width, height: canvas.height },
+                                            originOffset: { x: 0, y: 0 },
+                                          };
+                                        };
+                                        const originalFrameRegion = {
+                                          x: 0,
+                                          y: 0,
+                                          width: frameSize.width,
+                                          height: frameSize.height,
+                                        };
+                                        const cropToOriginalFrame = (surface: DiagnosticPixelSurface) =>
+                                          cropDiagnosticSurface(surface, originalFrameRegion);
+                                        const commonBackingSurfaces = {
+                                          baseline: renderCommonBackingClip(frameSize),
+                                          widthOnly: renderCommonBackingClip(widthOnlySize),
+                                          heightOnly: renderCommonBackingClip(heightOnlySize),
+                                          combined: renderCommonBackingClip(legacy.rasterSize),
+                                        };
+                                        const nativeSurfaces = {
+                                          baseline,
+                                          widthOnly,
+                                          heightOnly,
+                                          combined,
+                                        };
+                                        const commonFrameSurfaces = {
+                                          baseline: cropToOriginalFrame(commonBackingSurfaces.baseline),
+                                          widthOnly: cropToOriginalFrame(commonBackingSurfaces.widthOnly),
+                                          heightOnly: cropToOriginalFrame(commonBackingSurfaces.heightOnly),
+                                          combined: cropToOriginalFrame(commonBackingSurfaces.combined),
+                                        };
+                                        return {
+                                          surfaces: commonBackingSurfaces,
+                                          report: {
+                                            backingPixelSize: { ...legacy.rasterSize },
+                                            originalFrameComparedPixels: frameSize.width * frameSize.height,
+                                            nativeSizeVsCommonBackingClip: {
+                                              baseline: compareRasterOverlap(
+                                                cropToOriginalFrame(nativeSurfaces.baseline),
+                                                commonFrameSurfaces.baseline
+                                              ),
+                                              widthOnly: compareRasterOverlap(
+                                                cropToOriginalFrame(nativeSurfaces.widthOnly),
+                                                commonFrameSurfaces.widthOnly
+                                              ),
+                                              heightOnly: compareRasterOverlap(
+                                                cropToOriginalFrame(nativeSurfaces.heightOnly),
+                                                commonFrameSurfaces.heightOnly
+                                              ),
+                                              combined: compareRasterOverlap(
+                                                cropToOriginalFrame(nativeSurfaces.combined),
+                                                commonFrameSurfaces.combined
+                                              ),
+                                            },
+                                            commonBackingClipVsBaseline: {
+                                              widthOnly: compareRasterOverlap(
+                                                commonFrameSurfaces.baseline,
+                                                commonFrameSurfaces.widthOnly
+                                              ),
+                                              heightOnly: compareRasterOverlap(
+                                                commonFrameSurfaces.baseline,
+                                                commonFrameSurfaces.heightOnly
+                                              ),
+                                              combined: compareRasterOverlap(
+                                                commonFrameSurfaces.baseline,
+                                                commonFrameSurfaces.combined
+                                              ),
+                                            },
+                                            widthHeightInteraction: compareWidthHeightExtentInteraction(
+                                              commonFrameSurfaces.baseline,
+                                              commonFrameSurfaces.widthOnly,
+                                              commonFrameSurfaces.heightOnly,
+                                              commonFrameSurfaces.combined
+                                            ),
+                                          },
+                                        };
+                                      })()
+                                    : null;
+                                const firstDifferenceTraceControls =
+                                  stage === 'frame transition 1' &&
+                                  id === 'background' &&
+                                  Math.abs(frame.x - 7.25) < 1e-9 &&
+                                  Math.abs(frame.y - 8.5) < 1e-9 &&
+                                  frameSize.width === 51 &&
+                                  frameSize.height === 46 &&
+                                  legacy.rasterSize.width === 89 &&
+                                  legacy.rasterSize.height === 89
+                                    ? (async () => {
+                                        const oneRowLargerSize = {
+                                          width: frameSize.width,
+                                          height: frameSize.height + 1,
+                                        };
+                                        const baselineFrameSurface: DiagnosticPixelSurface = {
+                                          pixels: framePixels,
+                                          pixelSize: frameSize,
+                                          originOffset: { x: 0, y: 0 },
+                                        };
+                                        const oneRowLargerFrameSurface: DiagnosticPixelSurface = {
+                                          pixels: renderLayerSurfacePixels(layer, label, frame, oneRowLargerSize),
+                                          pixelSize: oneRowLargerSize,
+                                          originOffset: { x: 0, y: 0 },
+                                        };
+                                        const firstDifferenceSelection = compareRasterOverlap(
+                                          baselineFrameSurface,
+                                          oneRowLargerFrameSurface
+                                        );
+                                        const firstDifferingPixel =
+                                          firstDifferenceSelection.pixelComparison?.differingSamples[0] ?? null;
+                                        const sampleFramePixel = firstDifferingPixel
+                                          ? { x: firstDifferingPixel.x, y: firstDifferingPixel.y }
+                                          : { x: 0, y: 0 };
+                                        const sampleBackingPoint = {
+                                          x: sampleFramePixel.x + 0.5,
+                                          y: sampleFramePixel.y + 0.5,
+                                        };
+                                        const traceSourceIds = new WeakMap<object, string>();
+                                        let nextTraceSourceId = 1;
+                                        const getTraceSourceId = (source: object) => {
+                                          let id = traceSourceIds.get(source);
+                                          if (!id) {
+                                            id = `drawImage-source-${nextTraceSourceId}`;
+                                            nextTraceSourceId += 1;
+                                            traceSourceIds.set(source, id);
+                                          }
+                                          return id;
+                                        };
+                                        const getImageSize = (source: CanvasImageSource) => {
+                                          const image = source as CanvasImageSource & {
+                                            width?: number;
+                                            height?: number;
+                                            naturalWidth?: number;
+                                            naturalHeight?: number;
+                                            videoWidth?: number;
+                                            videoHeight?: number;
+                                          };
+                                          const width = [image.naturalWidth, image.videoWidth, image.width].find(
+                                            (value) => typeof value === 'number' && value > 0
+                                          );
+                                          const height = [image.naturalHeight, image.videoHeight, image.height].find(
+                                            (value) => typeof value === 'number' && value > 0
+                                          );
+                                          return {
+                                            width: typeof width === 'number' ? width : 0,
+                                            height: typeof height === 'number' ? height : 0,
+                                          };
+                                        };
+                                        const readContextState = (
+                                          context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
+                                        ) => {
+                                          const transform = context.getTransform();
+                                          return {
+                                            transform: {
+                                              a: transform.a,
+                                              b: transform.b,
+                                              c: transform.c,
+                                              d: transform.d,
+                                              e: transform.e,
+                                              f: transform.f,
+                                            },
+                                            filter: context.filter,
+                                            imageSmoothingEnabled: context.imageSmoothingEnabled,
+                                            imageSmoothingQuality: context.imageSmoothingQuality,
+                                            globalAlpha: context.globalAlpha,
+                                            globalCompositeOperation: context.globalCompositeOperation,
+                                            shadowColor: context.shadowColor,
+                                            shadowBlur: context.shadowBlur,
+                                            shadowOffsetX: context.shadowOffsetX,
+                                            shadowOffsetY: context.shadowOffsetY,
+                                          };
+                                        };
+                                        const readSourceNeighborhood = (
+                                          source: CanvasImageSource,
+                                          sourceCoordinate: { x: number; y: number }
+                                        ) => {
+                                          const imageSize = getImageSize(source);
+                                          if (imageSize.width < 1 || imageSize.height < 1) {
+                                            return {
+                                              status: 'unavailable',
+                                              reason: 'source dimensions are unavailable',
+                                            };
+                                          }
+                                          const fixtureSourceSurface = diagnosticBitmapSourceSurfaces.get(
+                                            source as object
+                                          );
+                                          const sourceWithContext = source as CanvasImageSource & {
+                                            getContext?: (
+                                              contextId: '2d'
+                                            ) => CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+                                          };
+                                          let sampleSurface: HTMLCanvasElement | OffscreenCanvas;
+                                          let sampleMethod: string;
+                                          if (fixtureSourceSurface) {
+                                            sampleSurface = fixtureSourceSurface;
+                                            sampleMethod = 'original-fixture-source-canvas';
+                                          } else if (typeof sourceWithContext.getContext === 'function') {
+                                            sampleSurface = sourceWithContext as unknown as
+                                              HTMLCanvasElement | OffscreenCanvas;
+                                            sampleMethod = 'source-canvas-readback';
+                                          } else {
+                                            const scratch = document.createElement('canvas');
+                                            scratch.width = imageSize.width;
+                                            scratch.height = imageSize.height;
+                                            const scratchContext = scratch.getContext('2d');
+                                            if (!scratchContext) {
+                                              return {
+                                                status: 'unavailable',
+                                                reason: 'source sampling context is unavailable',
+                                              };
+                                            }
+                                            scratchContext.setTransform(1, 0, 0, 1, 0, 0);
+                                            scratchContext.imageSmoothingEnabled = false;
+                                            scratchContext.drawImage(source, 0, 0, imageSize.width, imageSize.height);
+                                            sampleSurface = scratch;
+                                            sampleMethod = 'one-to-one-source-scratch-readback';
+                                          }
+                                          const sampleContext = sampleSurface.getContext('2d') as
+                                            CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+                                          if (!sampleContext) {
+                                            return {
+                                              status: 'unavailable',
+                                              reason: 'source readback context is unavailable',
+                                            };
+                                          }
+                                          const centerX = Math.floor(sourceCoordinate.x);
+                                          const centerY = Math.floor(sourceCoordinate.y);
+                                          const left = Math.max(0, centerX - 1);
+                                          const top = Math.max(0, centerY - 1);
+                                          const right = Math.min(imageSize.width - 1, centerX + 1);
+                                          const bottom = Math.min(imageSize.height - 1, centerY + 1);
+                                          if (right < left || bottom < top) {
+                                            return {
+                                              status: 'outside-source',
+                                              sampleMethod,
+                                              imageSize,
+                                              sourceCoordinate,
+                                            };
+                                          }
+                                          const imageData = sampleContext.getImageData(
+                                            left,
+                                            top,
+                                            right - left + 1,
+                                            bottom - top + 1
+                                          );
+                                          const samples = [];
+                                          for (let y = top; y <= bottom; y += 1) {
+                                            for (let x = left; x <= right; x += 1) {
+                                              const offset = ((y - top) * imageData.width + (x - left)) * 4;
+                                              samples.push({
+                                                x,
+                                                y,
+                                                rgba: Array.from(imageData.data.slice(offset, offset + 4)),
+                                              });
+                                            }
+                                          }
+                                          return {
+                                            status: 'measured',
+                                            sampleMethod,
+                                            imageSize,
+                                            sourceCoordinate,
+                                            nearestTexel: { x: centerX, y: centerY },
+                                            neighborhood: samples,
+                                          };
+                                        };
+                                        const mapBackingPointToDrawImageSource = (
+                                          args: readonly unknown[],
+                                          state: ReturnType<typeof readContextState>
+                                        ) => {
+                                          const source = args[0] as CanvasImageSource;
+                                          const imageSize = getImageSize(source);
+                                          const numericArgs = args.slice(1).map(Number);
+                                          let sourceRect: {
+                                            x: number;
+                                            y: number;
+                                            width: number;
+                                            height: number;
+                                          } | null = null;
+                                          let destinationRect: {
+                                            x: number;
+                                            y: number;
+                                            width: number;
+                                            height: number;
+                                          } | null = null;
+                                          if (numericArgs.length === 2) {
+                                            sourceRect = { x: 0, y: 0, ...imageSize };
+                                            destinationRect = {
+                                              x: numericArgs[0] ?? 0,
+                                              y: numericArgs[1] ?? 0,
+                                              width: imageSize.width,
+                                              height: imageSize.height,
+                                            };
+                                          } else if (numericArgs.length === 4) {
+                                            sourceRect = { x: 0, y: 0, ...imageSize };
+                                            destinationRect = {
+                                              x: numericArgs[0] ?? 0,
+                                              y: numericArgs[1] ?? 0,
+                                              width: numericArgs[2] ?? 0,
+                                              height: numericArgs[3] ?? 0,
+                                            };
+                                          } else if (numericArgs.length === 8) {
+                                            sourceRect = {
+                                              x: numericArgs[0] ?? 0,
+                                              y: numericArgs[1] ?? 0,
+                                              width: numericArgs[2] ?? 0,
+                                              height: numericArgs[3] ?? 0,
+                                            };
+                                            destinationRect = {
+                                              x: numericArgs[4] ?? 0,
+                                              y: numericArgs[5] ?? 0,
+                                              width: numericArgs[6] ?? 0,
+                                              height: numericArgs[7] ?? 0,
+                                            };
+                                          }
+                                          const transform = state.transform;
+                                          const determinant = transform.a * transform.d - transform.b * transform.c;
+                                          if (!sourceRect || !destinationRect || determinant === 0) {
+                                            return {
+                                              imageSize,
+                                              numericArguments: numericArgs,
+                                              sourceRect,
+                                              destinationRect,
+                                              backingPixelCenter: sampleBackingPoint,
+                                              userSpacePoint: null,
+                                              mapsInsideDestination: false,
+                                              sourceCoordinate: null,
+                                              sourceNeighborhood: null,
+                                            };
+                                          }
+                                          const deviceX = sampleBackingPoint.x - transform.e;
+                                          const deviceY = sampleBackingPoint.y - transform.f;
+                                          const userSpacePoint = {
+                                            x: (transform.d * deviceX - transform.c * deviceY) / determinant,
+                                            y: (-transform.b * deviceX + transform.a * deviceY) / determinant,
+                                          };
+                                          const mapsInsideDestination =
+                                            userSpacePoint.x >=
+                                              Math.min(destinationRect.x, destinationRect.x + destinationRect.width) &&
+                                            userSpacePoint.x <
+                                              Math.max(destinationRect.x, destinationRect.x + destinationRect.width) &&
+                                            userSpacePoint.y >=
+                                              Math.min(destinationRect.y, destinationRect.y + destinationRect.height) &&
+                                            userSpacePoint.y <
+                                              Math.max(destinationRect.y, destinationRect.y + destinationRect.height);
+                                          const sourceCoordinate = mapsInsideDestination
+                                            ? {
+                                                x:
+                                                  sourceRect.x +
+                                                  ((userSpacePoint.x - destinationRect.x) / destinationRect.width) *
+                                                    sourceRect.width,
+                                                y:
+                                                  sourceRect.y +
+                                                  ((userSpacePoint.y - destinationRect.y) / destinationRect.height) *
+                                                    sourceRect.height,
+                                              }
+                                            : null;
+                                          return {
+                                            imageSize,
+                                            numericArguments: numericArgs,
+                                            sourceRect,
+                                            destinationRect,
+                                            backingPixelCenter: sampleBackingPoint,
+                                            userSpacePoint,
+                                            mapsInsideDestination,
+                                            sourceCoordinate,
+                                            sourceNeighborhood: sourceCoordinate
+                                              ? readSourceNeighborhood(source, sourceCoordinate)
+                                              : null,
+                                          };
+                                        };
+                                        const createTraceSurface = (
+                                          canvasType: 'HTMLCanvas' | 'OffscreenCanvas',
+                                          size: { width: number; height: number }
+                                        ) => {
+                                          const surface: HTMLCanvasElement | OffscreenCanvas =
+                                            canvasType === 'HTMLCanvas'
+                                              ? document.createElement('canvas')
+                                              : new OffscreenCanvas(size.width, size.height);
+                                          surface.width = size.width;
+                                          surface.height = size.height;
+                                          return surface;
+                                        };
+                                        const captureTraceRun = (
+                                          canvasType: 'HTMLCanvas' | 'OffscreenCanvas',
+                                          backingSize: { width: number; height: number }
+                                        ) => {
+                                          const surface = createTraceSurface(canvasType, backingSize);
+                                          const context = surface.getContext('2d') as
+                                            CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+                                          if (!context) {
+                                            throw new Error(
+                                              `${canvasType} first-difference trace has no 2D context at ${stage}`
+                                            );
+                                          }
+                                          const drawImageCalls: Array<Record<string, unknown>> = [];
+                                          const capturedDrawImageInvocations: Array<{
+                                            source: CanvasImageSource;
+                                            arguments: unknown[];
+                                            contextBeforeDraw: ReturnType<typeof readContextState>;
+                                          }> = [];
+                                          const proxy = new Proxy(context as CanvasRenderingContext2D, {
+                                            get(target, property) {
+                                              if (property === 'drawImage') {
+                                                return (...args: unknown[]) => {
+                                                  const beforeDraw = readContextState(target);
+                                                  const image = args[0] as CanvasImageSource;
+                                                  const imageObject = image as object;
+                                                  const mappedInput = mapBackingPointToDrawImageSource(
+                                                    args,
+                                                    beforeDraw
+                                                  );
+                                                  capturedDrawImageInvocations.push({
+                                                    source: image,
+                                                    arguments: args.slice(1),
+                                                    contextBeforeDraw: beforeDraw,
+                                                  });
+                                                  const drawResult = (
+                                                    target.drawImage as unknown as (...callArgs: unknown[]) => void
+                                                  ).bind(target)(...args);
+                                                  drawImageCalls.push({
+                                                    argumentCount: args.length,
+                                                    sourceIdentity: getTraceSourceId(imageObject),
+                                                    sourceMatchesLayerBitmap:
+                                                      imageObject === (layer.bitmap as object | null),
+                                                    sourceMatchesLayerTmpCanvas:
+                                                      imageObject === (layer.tmpCanvas as object | null),
+                                                    sourceConstructor:
+                                                      (imageObject as { constructor?: { name?: string } }).constructor
+                                                        ?.name ?? null,
+                                                    ...mappedInput,
+                                                    contextBeforeDraw: beforeDraw,
+                                                    contextAfterDraw: readContextState(target),
+                                                  });
+                                                  return drawResult;
+                                                };
+                                              }
+                                              const value = Reflect.get(target, property, target);
+                                              return typeof value === 'function' ? value.bind(target) : value;
+                                            },
+                                            set(target, property, value) {
+                                              return Reflect.set(target, property, value, target);
+                                            },
+                                          });
+                                          const contextBeforeDrawLayerSource = readContextState(context);
+                                          const drawLayerSourceResult = drawLayerSource(
+                                            proxy as unknown as CanvasRenderingContext2D,
+                                            layer,
+                                            layer.pos,
+                                            frame,
+                                            false
+                                          );
+                                          const contextAfterDrawLayerSource = readContextState(context);
+                                          const outputSample = Array.from(
+                                            context.getImageData(sampleFramePixel.x, sampleFramePixel.y, 1, 1).data
+                                          );
+                                          const framePixels = context.getImageData(
+                                            0,
+                                            0,
+                                            frameSize.width,
+                                            frameSize.height
+                                          ).data;
+                                          const copySurface = document.createElement('canvas');
+                                          copySurface.width = frameSize.width;
+                                          copySurface.height = oneRowLargerSize.height;
+                                          const copyContext = copySurface.getContext('2d');
+                                          if (!copyContext) {
+                                            throw new Error(`Common-size copy control has no 2D context at ${stage}`);
+                                          }
+                                          copyContext.setTransform(1, 0, 0, 1, 0, 0);
+                                          copyContext.filter = 'none';
+                                          copyContext.imageSmoothingEnabled = false;
+                                          copyContext.globalAlpha = 1;
+                                          copyContext.globalCompositeOperation = 'source-over';
+                                          copyContext.drawImage(
+                                            surface,
+                                            0,
+                                            0,
+                                            backingSize.width,
+                                            backingSize.height,
+                                            0,
+                                            0,
+                                            backingSize.width,
+                                            backingSize.height
+                                          );
+                                          const copiedFramePixels = copyContext.getImageData(
+                                            0,
+                                            0,
+                                            frameSize.width,
+                                            frameSize.height
+                                          ).data;
+                                          const copiedSample = Array.from(
+                                            copyContext.getImageData(sampleFramePixel.x, sampleFramePixel.y, 1, 1).data
+                                          );
+                                          return {
+                                            report: {
+                                              status: drawLayerSourceResult ? 'measured' : 'draw-refused',
+                                              canvasType,
+                                              canvasBackingSize: { ...backingSize },
+                                              layerInput: {
+                                                id: layer.id,
+                                                pos: layer.pos,
+                                                presentationBounds: layer.presentationBounds,
+                                                sourceKind: layer.source?.kind ?? null,
+                                                bitmapSize: layer.bitmap
+                                                  ? getImageSize(layer.bitmap as CanvasImageSource)
+                                                  : null,
+                                                tmpCanvasSize: layer.tmpCanvas
+                                                  ? getImageSize(layer.tmpCanvas as CanvasImageSource)
+                                                  : null,
+                                                operations: layer.operations.map(
+                                                  (operation: Layer['operations'][number]) => ({
+                                                    kind: operation.kind,
+                                                    enabled: operation.enabled,
+                                                    transform:
+                                                      operation.kind === 'affine-transform'
+                                                        ? operation.transform
+                                                        : undefined,
+                                                    toolName:
+                                                      operation.kind === 'filter' ? operation.args.toolName : undefined,
+                                                  })
+                                                ),
+                                              },
+                                              contextBeforeDrawLayerSource,
+                                              contextAfterDrawLayerSource,
+                                              drawImageCalls,
+                                              readbackSample: {
+                                                frameLocalPixelCell: sampleFramePixel,
+                                                documentPixelCellOrigin: {
+                                                  x: frame.x + sampleFramePixel.x,
+                                                  y: frame.y + sampleFramePixel.y,
+                                                },
+                                                documentPixelCenter: {
+                                                  x: frame.x + sampleBackingPoint.x,
+                                                  y: frame.y + sampleBackingPoint.y,
+                                                },
+                                                rgba: outputSample,
+                                              },
+                                              commonSizeCopyControl: {
+                                                destinationBackingSize: {
+                                                  width: copySurface.width,
+                                                  height: copySurface.height,
+                                                },
+                                                transform: readContextState(copyContext).transform,
+                                                sourceRect: {
+                                                  x: 0,
+                                                  y: 0,
+                                                  width: backingSize.width,
+                                                  height: backingSize.height,
+                                                },
+                                                destinationRect: {
+                                                  x: 0,
+                                                  y: 0,
+                                                  width: backingSize.width,
+                                                  height: backingSize.height,
+                                                },
+                                                readbackSample: copiedSample,
+                                                originalFrameComparison: compareBytes(
+                                                  Array.from(framePixels),
+                                                  Array.from(copiedFramePixels),
+                                                  frameSize.width,
+                                                  frameSize.height,
+                                                  frame.x,
+                                                  frame.y
+                                                ),
+                                              },
+                                            },
+                                            framePixels,
+                                            capturedDrawImageInvocations,
+                                          };
+                                        };
+                                        const replayCapturedDrawImageCalls = (
+                                          canvasType: 'HTMLCanvas' | 'OffscreenCanvas',
+                                          backingSize: { width: number; height: number },
+                                          invocations: Array<{
+                                            source: CanvasImageSource;
+                                            arguments: unknown[];
+                                            contextBeforeDraw: ReturnType<typeof readContextState>;
+                                          }>,
+                                          overrides?: readonly {
+                                            source: CanvasImageSource;
+                                            arguments: unknown[];
+                                          }[]
+                                        ) => {
+                                          const surface = createTraceSurface(canvasType, backingSize);
+                                          const context = surface.getContext('2d') as
+                                            CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+                                          if (!context) {
+                                            throw new Error(
+                                              `${canvasType} direct drawImage reproduction has no 2D context at ${stage}`
+                                            );
+                                          }
+                                          for (const [index, invocation] of invocations.entries()) {
+                                            const { transform } = invocation.contextBeforeDraw;
+                                            context.setTransform(
+                                              transform.a,
+                                              transform.b,
+                                              transform.c,
+                                              transform.d,
+                                              transform.e,
+                                              transform.f
+                                            );
+                                            context.filter = invocation.contextBeforeDraw.filter;
+                                            context.imageSmoothingEnabled =
+                                              invocation.contextBeforeDraw.imageSmoothingEnabled;
+                                            context.imageSmoothingQuality =
+                                              invocation.contextBeforeDraw.imageSmoothingQuality;
+                                            context.globalAlpha = invocation.contextBeforeDraw.globalAlpha;
+                                            context.globalCompositeOperation =
+                                              invocation.contextBeforeDraw.globalCompositeOperation;
+                                            context.shadowColor = invocation.contextBeforeDraw.shadowColor;
+                                            context.shadowBlur = invocation.contextBeforeDraw.shadowBlur;
+                                            context.shadowOffsetX = invocation.contextBeforeDraw.shadowOffsetX;
+                                            context.shadowOffsetY = invocation.contextBeforeDraw.shadowOffsetY;
+                                            const override = overrides?.[index];
+                                            (context.drawImage as unknown as (...callArgs: unknown[]) => void).apply(
+                                              context,
+                                              [
+                                                override?.source ?? invocation.source,
+                                                ...(override?.arguments ?? invocation.arguments),
+                                              ]
+                                            );
+                                          }
+                                          const framePixels = context.getImageData(
+                                            0,
+                                            0,
+                                            frameSize.width,
+                                            frameSize.height
+                                          ).data;
+                                          return {
+                                            report: {
+                                              canvasType,
+                                              canvasBackingSize: { ...backingSize },
+                                              drawImageCallCount: invocations.length,
+                                              sampleFrameLocalPixelCell: sampleFramePixel,
+                                              sampleRgba: Array.from(
+                                                context.getImageData(sampleFramePixel.x, sampleFramePixel.y, 1, 1).data
+                                              ),
+                                              frameByteLength: framePixels.length,
+                                            },
+                                            framePixels,
+                                          };
+                                        };
+                                        const readImageBitmapPixels = (
+                                          bitmap: ImageBitmap,
+                                          imageSize: { width: number; height: number },
+                                          label: string
+                                        ) => {
+                                          const surface = document.createElement('canvas');
+                                          surface.width = imageSize.width;
+                                          surface.height = imageSize.height;
+                                          const context = surface.getContext('2d', { willReadFrequently: true });
+                                          if (!context) {
+                                            throw new Error(
+                                              `${label} ImageBitmap readback has no 2D context at ${stage}`
+                                            );
+                                          }
+                                          context.setTransform(1, 0, 0, 1, 0, 0);
+                                          context.filter = 'none';
+                                          context.imageSmoothingEnabled = false;
+                                          context.globalAlpha = 1;
+                                          context.globalCompositeOperation = 'source-over';
+                                          context.shadowColor = 'rgba(0, 0, 0, 0)';
+                                          context.shadowBlur = 0;
+                                          context.shadowOffsetX = 0;
+                                          context.shadowOffsetY = 0;
+                                          context.drawImage(bitmap, 0, 0, imageSize.width, imageSize.height);
+                                          return Array.from(
+                                            context.getImageData(0, 0, imageSize.width, imageSize.height).data
+                                          );
+                                        };
+                                        const createTransparentPaddedImageBitmap = async (
+                                          source: CanvasImageSource,
+                                          padding: number
+                                        ) => {
+                                          if (!(source instanceof ImageBitmap)) {
+                                            throw new Error(
+                                              `Padding diagnostic requires the captured ImageBitmap at ${stage}`
+                                            );
+                                          }
+                                          const sourceSize = getImageSize(source);
+                                          if (sourceSize.width < 1 || sourceSize.height < 1 || padding !== 1) {
+                                            throw new Error(
+                                              `Padding diagnostic has invalid source dimensions at ${stage}`
+                                            );
+                                          }
+                                          const paddedSurface = document.createElement('canvas');
+                                          paddedSurface.width = sourceSize.width + 2 * padding;
+                                          paddedSurface.height = sourceSize.height + 2 * padding;
+                                          const paddedContext = paddedSurface.getContext('2d');
+                                          if (!paddedContext) {
+                                            throw new Error(
+                                              `Padding diagnostic has no source-copy context at ${stage}`
+                                            );
+                                          }
+                                          paddedContext.setTransform(1, 0, 0, 1, 0, 0);
+                                          paddedContext.filter = 'none';
+                                          paddedContext.imageSmoothingEnabled = false;
+                                          paddedContext.globalAlpha = 1;
+                                          paddedContext.globalCompositeOperation = 'source-over';
+                                          paddedContext.shadowColor = 'rgba(0, 0, 0, 0)';
+                                          paddedContext.shadowBlur = 0;
+                                          paddedContext.shadowOffsetX = 0;
+                                          paddedContext.shadowOffsetY = 0;
+                                          paddedContext.drawImage(
+                                            source,
+                                            padding,
+                                            padding,
+                                            sourceSize.width,
+                                            sourceSize.height
+                                          );
+                                          let paddedBitmap: ImageBitmap | null = null;
+                                          try {
+                                            paddedBitmap = await createImageBitmap(paddedSurface);
+                                            const paddedSize = getImageSize(paddedBitmap);
+                                            if (
+                                              !(paddedBitmap instanceof ImageBitmap) ||
+                                              paddedSize.width !== sourceSize.width + 2 * padding ||
+                                              paddedSize.height !== sourceSize.height + 2 * padding
+                                            ) {
+                                              throw new Error(
+                                                `Padding diagnostic produced an invalid ImageBitmap at ${stage}`
+                                              );
+                                            }
+                                            const originalPixels = readImageBitmapPixels(
+                                              source,
+                                              sourceSize,
+                                              'Original'
+                                            );
+                                            const paddedPixels = readImageBitmapPixels(
+                                              paddedBitmap,
+                                              paddedSize,
+                                              'Padded'
+                                            );
+                                            const paddedInteriorPixels: number[] = [];
+                                            let borderPixelCount = 0;
+                                            let borderNonTransparentPixelCount = 0;
+                                            for (let y = 0; y < paddedSize.height; y += 1) {
+                                              for (let x = 0; x < paddedSize.width; x += 1) {
+                                                const isOriginalInterior =
+                                                  x >= padding &&
+                                                  x < padding + sourceSize.width &&
+                                                  y >= padding &&
+                                                  y < padding + sourceSize.height;
+                                                const byteOffset = (y * paddedSize.width + x) * 4;
+                                                if (isOriginalInterior) {
+                                                  for (let channel = 0; channel < 4; channel += 1) {
+                                                    paddedInteriorPixels.push(paddedPixels[byteOffset + channel]!);
+                                                  }
+                                                } else {
+                                                  borderPixelCount += 1;
+                                                  if (paddedPixels[byteOffset + 3] !== 0) {
+                                                    borderNonTransparentPixelCount += 1;
+                                                  }
+                                                }
+                                              }
+                                            }
+                                            return {
+                                              bitmap: paddedBitmap,
+                                              report: {
+                                                originalSourceConstructor:
+                                                  (source as { constructor?: { name?: string } }).constructor?.name ??
+                                                  null,
+                                                paddedSourceConstructor:
+                                                  (paddedBitmap as { constructor?: { name?: string } }).constructor
+                                                    ?.name ?? null,
+                                                originalSourceSize: sourceSize,
+                                                paddedSourceSize: paddedSize,
+                                                padding,
+                                                interiorComparison: compareBytes(
+                                                  originalPixels,
+                                                  paddedInteriorPixels,
+                                                  sourceSize.width,
+                                                  sourceSize.height,
+                                                  0,
+                                                  0
+                                                ),
+                                                borderPixelCount,
+                                                expectedBorderPixelCount:
+                                                  paddedSize.width * paddedSize.height -
+                                                  sourceSize.width * sourceSize.height,
+                                                borderNonTransparentPixelCount,
+                                              },
+                                            };
+                                          } catch (error) {
+                                            paddedBitmap?.close();
+                                            throw error;
+                                          }
+                                        };
+                                        const createPaddedBitmapWithExtendedEdges = async (
+                                          source: CanvasImageSource,
+                                          padding: number,
+                                          extendedEdges: Array<'top' | 'right' | 'bottom' | 'left'>
+                                        ) => {
+                                          if (!(source instanceof ImageBitmap)) {
+                                            throw new Error(
+                                              `Edge-padding diagnostic requires the captured ImageBitmap at ${stage}`
+                                            );
+                                          }
+                                          const sourceSize = getImageSize(source);
+                                          if (sourceSize.width < 1 || sourceSize.height < 1 || padding !== 1) {
+                                            throw new Error(
+                                              `Edge-padding diagnostic has invalid source dimensions at ${stage}`
+                                            );
+                                          }
+                                          const originalPixels = readImageBitmapPixels(
+                                            source,
+                                            sourceSize,
+                                            'Edge-padding original'
+                                          );
+                                          const paddedSize = {
+                                            width: sourceSize.width + padding * 2,
+                                            height: sourceSize.height + padding * 2,
+                                          };
+                                          const extendedEdgeSet = new Set(extendedEdges);
+                                          const expectedPaddedPixels = new Uint8ClampedArray(
+                                            paddedSize.width * paddedSize.height * 4
+                                          );
+                                          const expectedBorderPixels: number[] = [];
+                                          let extendedBorderPixelCount = 0;
+                                          for (let y = 0; y < paddedSize.height; y += 1) {
+                                            for (let x = 0; x < paddedSize.width; x += 1) {
+                                              const paddedOffset = (y * paddedSize.width + x) * 4;
+                                              const isOriginalInterior =
+                                                x >= padding &&
+                                                x < padding + sourceSize.width &&
+                                                y >= padding &&
+                                                y < padding + sourceSize.height;
+                                              const isLeftBorder = x < padding;
+                                              const isRightBorder = x >= padding + sourceSize.width;
+                                              const isTopBorder = y < padding;
+                                              const isBottomBorder = y >= padding + sourceSize.height;
+                                              const isCorner =
+                                                (isLeftBorder || isRightBorder) && (isTopBorder || isBottomBorder);
+                                              const extendsBorder =
+                                                isOriginalInterior ||
+                                                (isCorner
+                                                  ? (isLeftBorder &&
+                                                      isTopBorder &&
+                                                      extendedEdgeSet.has('left') &&
+                                                      extendedEdgeSet.has('top')) ||
+                                                    (isRightBorder &&
+                                                      isTopBorder &&
+                                                      extendedEdgeSet.has('right') &&
+                                                      extendedEdgeSet.has('top')) ||
+                                                    (isLeftBorder &&
+                                                      isBottomBorder &&
+                                                      extendedEdgeSet.has('left') &&
+                                                      extendedEdgeSet.has('bottom')) ||
+                                                    (isRightBorder &&
+                                                      isBottomBorder &&
+                                                      extendedEdgeSet.has('right') &&
+                                                      extendedEdgeSet.has('bottom'))
+                                                  : (isLeftBorder && extendedEdgeSet.has('left')) ||
+                                                    (isRightBorder && extendedEdgeSet.has('right')) ||
+                                                    (isTopBorder && extendedEdgeSet.has('top')) ||
+                                                    (isBottomBorder && extendedEdgeSet.has('bottom')));
+                                              if (extendsBorder && !isOriginalInterior) extendedBorderPixelCount += 1;
+                                              const sourceX = Math.max(0, Math.min(sourceSize.width - 1, x - padding));
+                                              const sourceY = Math.max(0, Math.min(sourceSize.height - 1, y - padding));
+                                              const sourceOffset = (sourceY * sourceSize.width + sourceX) * 4;
+                                              for (let channel = 0; channel < 4; channel += 1) {
+                                                const channelValue = extendsBorder
+                                                  ? originalPixels[sourceOffset + channel]!
+                                                  : 0;
+                                                expectedPaddedPixels[paddedOffset + channel] = channelValue;
+                                                if (!isOriginalInterior) expectedBorderPixels.push(channelValue);
+                                              }
+                                            }
+                                          }
+                                          const paddedSurface = document.createElement('canvas');
+                                          paddedSurface.width = paddedSize.width;
+                                          paddedSurface.height = paddedSize.height;
+                                          const paddedContext = paddedSurface.getContext('2d', {
+                                            willReadFrequently: true,
+                                          });
+                                          if (!paddedContext) {
+                                            throw new Error(
+                                              `Edge-padding diagnostic has no padded-surface context at ${stage}`
+                                            );
+                                          }
+                                          paddedContext.setTransform(1, 0, 0, 1, 0, 0);
+                                          paddedContext.filter = 'none';
+                                          paddedContext.imageSmoothingEnabled = false;
+                                          paddedContext.globalAlpha = 1;
+                                          paddedContext.globalCompositeOperation = 'source-over';
+                                          paddedContext.shadowColor = 'rgba(0, 0, 0, 0)';
+                                          paddedContext.shadowBlur = 0;
+                                          paddedContext.shadowOffsetX = 0;
+                                          paddedContext.shadowOffsetY = 0;
+                                          paddedContext.drawImage(
+                                            source,
+                                            padding,
+                                            padding,
+                                            sourceSize.width,
+                                            sourceSize.height
+                                          );
+                                          if (extendedEdgeSet.has('top')) {
+                                            paddedContext.drawImage(
+                                              source,
+                                              0,
+                                              0,
+                                              sourceSize.width,
+                                              1,
+                                              padding,
+                                              0,
+                                              sourceSize.width,
+                                              1
+                                            );
+                                          }
+                                          if (extendedEdgeSet.has('bottom')) {
+                                            paddedContext.drawImage(
+                                              source,
+                                              0,
+                                              sourceSize.height - 1,
+                                              sourceSize.width,
+                                              1,
+                                              padding,
+                                              padding + sourceSize.height,
+                                              sourceSize.width,
+                                              1
+                                            );
+                                          }
+                                          if (extendedEdgeSet.has('left')) {
+                                            paddedContext.drawImage(
+                                              source,
+                                              0,
+                                              0,
+                                              1,
+                                              sourceSize.height,
+                                              0,
+                                              padding,
+                                              1,
+                                              sourceSize.height
+                                            );
+                                          }
+                                          if (extendedEdgeSet.has('right')) {
+                                            paddedContext.drawImage(
+                                              source,
+                                              sourceSize.width - 1,
+                                              0,
+                                              1,
+                                              sourceSize.height,
+                                              padding + sourceSize.width,
+                                              padding,
+                                              1,
+                                              sourceSize.height
+                                            );
+                                          }
+                                          if (extendedEdgeSet.has('top') && extendedEdgeSet.has('left')) {
+                                            paddedContext.drawImage(source, 0, 0, 1, 1, 0, 0, 1, 1);
+                                          }
+                                          if (extendedEdgeSet.has('top') && extendedEdgeSet.has('right')) {
+                                            paddedContext.drawImage(
+                                              source,
+                                              sourceSize.width - 1,
+                                              0,
+                                              1,
+                                              1,
+                                              padding + sourceSize.width,
+                                              0,
+                                              1,
+                                              1
+                                            );
+                                          }
+                                          if (extendedEdgeSet.has('bottom') && extendedEdgeSet.has('left')) {
+                                            paddedContext.drawImage(
+                                              source,
+                                              0,
+                                              sourceSize.height - 1,
+                                              1,
+                                              1,
+                                              0,
+                                              padding + sourceSize.height,
+                                              1,
+                                              1
+                                            );
+                                          }
+                                          if (extendedEdgeSet.has('bottom') && extendedEdgeSet.has('right')) {
+                                            paddedContext.drawImage(
+                                              source,
+                                              sourceSize.width - 1,
+                                              sourceSize.height - 1,
+                                              1,
+                                              1,
+                                              padding + sourceSize.width,
+                                              padding + sourceSize.height,
+                                              1,
+                                              1
+                                            );
+                                          }
+                                          let paddedBitmap: ImageBitmap | null = null;
+                                          try {
+                                            paddedBitmap = await createImageBitmap(paddedSurface);
+                                            const actualPaddedSize = getImageSize(paddedBitmap);
+                                            if (
+                                              !(paddedBitmap instanceof ImageBitmap) ||
+                                              actualPaddedSize.width !== paddedSize.width ||
+                                              actualPaddedSize.height !== paddedSize.height
+                                            ) {
+                                              throw new Error(
+                                                `Edge-padding diagnostic produced an invalid ImageBitmap at ${stage}`
+                                              );
+                                            }
+                                            const actualPaddedPixels = readImageBitmapPixels(
+                                              paddedBitmap,
+                                              actualPaddedSize,
+                                              'Edge-padding padded'
+                                            );
+                                            const actualInteriorPixels: number[] = [];
+                                            const actualBorderPixels: number[] = [];
+                                            for (let y = 0; y < actualPaddedSize.height; y += 1) {
+                                              for (let x = 0; x < actualPaddedSize.width; x += 1) {
+                                                const byteOffset = (y * actualPaddedSize.width + x) * 4;
+                                                const isOriginalInterior =
+                                                  x >= padding &&
+                                                  x < padding + sourceSize.width &&
+                                                  y >= padding &&
+                                                  y < padding + sourceSize.height;
+                                                for (let channel = 0; channel < 4; channel += 1) {
+                                                  const channelValue = actualPaddedPixels[byteOffset + channel]!;
+                                                  if (isOriginalInterior) actualInteriorPixels.push(channelValue);
+                                                  else actualBorderPixels.push(channelValue);
+                                                }
+                                              }
+                                            }
+                                            const borderPixelCount =
+                                              paddedSize.width * paddedSize.height -
+                                              sourceSize.width * sourceSize.height;
+                                            return {
+                                              bitmap: paddedBitmap,
+                                              report: {
+                                                originalSourceConstructor:
+                                                  (source as { constructor?: { name?: string } }).constructor?.name ??
+                                                  null,
+                                                paddedSourceConstructor:
+                                                  (paddedBitmap as { constructor?: { name?: string } }).constructor
+                                                    ?.name ?? null,
+                                                originalSourceSize: sourceSize,
+                                                paddedSourceSize: actualPaddedSize,
+                                                padding,
+                                                extendedEdges,
+                                                interiorComparison: compareBytes(
+                                                  originalPixels,
+                                                  actualInteriorPixels,
+                                                  sourceSize.width,
+                                                  sourceSize.height,
+                                                  0,
+                                                  0
+                                                ),
+                                                borderPixelCount,
+                                                expectedBorderPixelCount: borderPixelCount,
+                                                extendedBorderPixelCount,
+                                                transparentBorderPixelCount:
+                                                  borderPixelCount - extendedBorderPixelCount,
+                                                borderComparison: compareBytes(
+                                                  expectedBorderPixels,
+                                                  actualBorderPixels,
+                                                  borderPixelCount,
+                                                  1,
+                                                  0,
+                                                  0
+                                                ),
+                                                paddedSurfaceComparison: compareBytes(
+                                                  Array.from(expectedPaddedPixels),
+                                                  actualPaddedPixels,
+                                                  paddedSize.width,
+                                                  paddedSize.height,
+                                                  0,
+                                                  0
+                                                ),
+                                              },
+                                            };
+                                          } catch (error) {
+                                            paddedBitmap?.close();
+                                            throw error;
+                                          }
+                                        };
+                                        const canvasTypes: Array<'HTMLCanvas' | 'OffscreenCanvas'> = ['HTMLCanvas'];
+                                        const offscreenCanvasAvailable = typeof OffscreenCanvas !== 'undefined';
+                                        if (offscreenCanvasAvailable) canvasTypes.push('OffscreenCanvas');
+                                        const traceRuns = canvasTypes.flatMap((canvasType) =>
+                                          [frameSize, oneRowLargerSize].map((backingSize) =>
+                                            captureTraceRun(canvasType, backingSize)
+                                          )
+                                        );
+                                        const buildTraceReportForCanvasType = async (
+                                          canvasType: 'HTMLCanvas' | 'OffscreenCanvas'
+                                        ) => {
+                                          const baseline = traceRuns.find(
+                                            ({ report }) =>
+                                              report.canvasType === canvasType &&
+                                              report.canvasBackingSize.width === frameSize.width &&
+                                              report.canvasBackingSize.height === frameSize.height
+                                          );
+                                          const oneRowLarger = traceRuns.find(
+                                            ({ report }) =>
+                                              report.canvasType === canvasType &&
+                                              report.canvasBackingSize.width === oneRowLargerSize.width &&
+                                              report.canvasBackingSize.height === oneRowLargerSize.height
+                                          );
+                                          if (!baseline || !oneRowLarger) {
+                                            throw new Error(
+                                              `${canvasType} first-difference trace pair is incomplete at ${stage}`
+                                            );
+                                          }
+                                          const directBaseline = replayCapturedDrawImageCalls(
+                                            canvasType,
+                                            frameSize,
+                                            baseline.capturedDrawImageInvocations
+                                          );
+                                          const directOneRowLarger = replayCapturedDrawImageCalls(
+                                            canvasType,
+                                            oneRowLargerSize,
+                                            baseline.capturedDrawImageInvocations
+                                          );
+                                          if (baseline.capturedDrawImageInvocations.length !== 1) {
+                                            throw new Error(
+                                              `${canvasType} padding control expected one captured drawImage call at ${stage}`
+                                            );
+                                          }
+                                          const capturedInvocation = baseline.capturedDrawImageInvocations[0]!;
+                                          if (capturedInvocation.arguments.length !== 4) {
+                                            throw new Error(
+                                              `${canvasType} padding control requires the captured five-argument drawImage overload at ${stage}`
+                                            );
+                                          }
+                                          if (
+                                            capturedInvocation.arguments.some(
+                                              (argument) => typeof argument !== 'number'
+                                            )
+                                          ) {
+                                            throw new Error(
+                                              `${canvasType} padding control requires numeric drawImage arguments at ${stage}`
+                                            );
+                                          }
+                                          const originalArguments = capturedInvocation.arguments as number[];
+                                          if (!originalArguments.every(Number.isFinite)) {
+                                            throw new Error(
+                                              `${canvasType} padding control has non-finite drawImage arguments at ${stage}`
+                                            );
+                                          }
+                                          const sourceSize = getImageSize(capturedInvocation.source);
+                                          const [dx, dy, dw, dh] = originalArguments;
+                                          if (
+                                            dx === undefined ||
+                                            dy === undefined ||
+                                            dw === undefined ||
+                                            dh === undefined
+                                          ) {
+                                            throw new Error(
+                                              `${canvasType} padding control has incomplete destination geometry at ${stage}`
+                                            );
+                                          }
+                                          if (dw <= 0 || dh <= 0 || sourceSize.width < 1 || sourceSize.height < 1) {
+                                            throw new Error(
+                                              `${canvasType} padding control has invalid destination geometry at ${stage}`
+                                            );
+                                          }
+                                          const originalSourceFullRectangleArguments = [
+                                            0,
+                                            0,
+                                            sourceSize.width,
+                                            sourceSize.height,
+                                            ...originalArguments,
+                                          ];
+                                          const originalSourceFullRectangleOverride = [
+                                            {
+                                              source: capturedInvocation.source,
+                                              arguments: originalSourceFullRectangleArguments,
+                                            },
+                                          ];
+                                          const originalSourceNineArgumentBaseline = replayCapturedDrawImageCalls(
+                                            canvasType,
+                                            frameSize,
+                                            baseline.capturedDrawImageInvocations,
+                                            originalSourceFullRectangleOverride
+                                          );
+                                          const originalSourceNineArgumentOneRowLarger = replayCapturedDrawImageCalls(
+                                            canvasType,
+                                            oneRowLargerSize,
+                                            baseline.capturedDrawImageInvocations,
+                                            originalSourceFullRectangleOverride
+                                          );
+                                          const originalSourceNineArgumentControl = {
+                                            call: {
+                                              argumentCount: originalSourceFullRectangleArguments.length + 1,
+                                              numericArguments: originalSourceFullRectangleArguments,
+                                              sourceRectangle: {
+                                                x: 0,
+                                                y: 0,
+                                                width: sourceSize.width,
+                                                height: sourceSize.height,
+                                              },
+                                              destinationRectangle: { x: dx, y: dy, width: dw, height: dh },
+                                            },
+                                            baseline: {
+                                              ...originalSourceNineArgumentBaseline.report,
+                                              comparisonToUnpaddedFiveArgument: compareBytes(
+                                                Array.from(directBaseline.framePixels),
+                                                Array.from(originalSourceNineArgumentBaseline.framePixels),
+                                                frameSize.width,
+                                                frameSize.height,
+                                                frame.x,
+                                                frame.y
+                                              ),
+                                            },
+                                            oneRowLarger: {
+                                              ...originalSourceNineArgumentOneRowLarger.report,
+                                              comparisonToUnpaddedFiveArgument: compareBytes(
+                                                Array.from(directOneRowLarger.framePixels),
+                                                Array.from(originalSourceNineArgumentOneRowLarger.framePixels),
+                                                frameSize.width,
+                                                frameSize.height,
+                                                frame.x,
+                                                frame.y
+                                              ),
+                                            },
+                                            backingHeightComparison: compareBytes(
+                                              Array.from(originalSourceNineArgumentBaseline.framePixels),
+                                              Array.from(originalSourceNineArgumentOneRowLarger.framePixels),
+                                              frameSize.width,
+                                              frameSize.height,
+                                              frame.x,
+                                              frame.y
+                                            ),
+                                          };
+                                          const padding = 1;
+                                          const scaleX = dw / sourceSize.width;
+                                          const scaleY = dh / sourceSize.height;
+                                          const paddedArguments = [
+                                            dx - padding * scaleX,
+                                            dy - padding * scaleY,
+                                            dw + 2 * padding * scaleX,
+                                            dh + 2 * padding * scaleY,
+                                          ];
+                                          const paddedInteriorArguments = [
+                                            padding,
+                                            padding,
+                                            sourceSize.width,
+                                            sourceSize.height,
+                                            dx,
+                                            dy,
+                                            dw,
+                                            dh,
+                                          ];
+                                          const paddedFullSourceArguments = [
+                                            0,
+                                            0,
+                                            sourceSize.width + 2 * padding,
+                                            sourceSize.height + 2 * padding,
+                                            dx,
+                                            dy,
+                                            dw,
+                                            dh,
+                                          ];
+                                          const paddedFullSourceMatchedGeometryArguments = [
+                                            0,
+                                            0,
+                                            sourceSize.width + 2 * padding,
+                                            sourceSize.height + 2 * padding,
+                                            ...paddedArguments,
+                                          ];
+                                          const mappedOriginalInterior = {
+                                            x: paddedArguments[0]! + padding * scaleX,
+                                            y: paddedArguments[1]! + padding * scaleY,
+                                            width: paddedArguments[2]! - 2 * padding * scaleX,
+                                            height: paddedArguments[3]! - 2 * padding * scaleY,
+                                          };
+                                          const visibleMappingPreserved =
+                                            Math.abs(mappedOriginalInterior.x - dx) < 1e-9 &&
+                                            Math.abs(mappedOriginalInterior.y - dy) < 1e-9 &&
+                                            Math.abs(mappedOriginalInterior.width - dw) < 1e-9 &&
+                                            Math.abs(mappedOriginalInterior.height - dh) < 1e-9;
+                                          const paddedSource = await createTransparentPaddedImageBitmap(
+                                            capturedInvocation.source,
+                                            padding
+                                          );
+                                          let edgeExtendedPaddedSource: Awaited<
+                                            ReturnType<typeof createPaddedBitmapWithExtendedEdges>
+                                          > | null = null;
+                                          let rightEdgeOnlyPaddedSource: Awaited<
+                                            ReturnType<typeof createPaddedBitmapWithExtendedEdges>
+                                          > | null = null;
+                                          let transparentPaddingControl;
+                                          try {
+                                            const edgeExtendedSource = await createPaddedBitmapWithExtendedEdges(
+                                              capturedInvocation.source,
+                                              padding,
+                                              ['top', 'right', 'bottom', 'left']
+                                            );
+                                            edgeExtendedPaddedSource = edgeExtendedSource;
+                                            const rightEdgeOnlySource = await createPaddedBitmapWithExtendedEdges(
+                                              capturedInvocation.source,
+                                              padding,
+                                              ['right']
+                                            );
+                                            rightEdgeOnlyPaddedSource = rightEdgeOnlySource;
+                                            const paddingOverride = [
+                                              { source: paddedSource.bitmap, arguments: paddedArguments },
+                                            ];
+                                            const paddedBaseline = replayCapturedDrawImageCalls(
+                                              canvasType,
+                                              frameSize,
+                                              baseline.capturedDrawImageInvocations,
+                                              paddingOverride
+                                            );
+                                            const paddedOneRowLarger = replayCapturedDrawImageCalls(
+                                              canvasType,
+                                              oneRowLargerSize,
+                                              baseline.capturedDrawImageInvocations,
+                                              paddingOverride
+                                            );
+                                            const paddedInteriorOverride = [
+                                              { source: paddedSource.bitmap, arguments: paddedInteriorArguments },
+                                            ];
+                                            const paddedInteriorBaseline = replayCapturedDrawImageCalls(
+                                              canvasType,
+                                              frameSize,
+                                              baseline.capturedDrawImageInvocations,
+                                              paddedInteriorOverride
+                                            );
+                                            const paddedInteriorOneRowLarger = replayCapturedDrawImageCalls(
+                                              canvasType,
+                                              oneRowLargerSize,
+                                              baseline.capturedDrawImageInvocations,
+                                              paddedInteriorOverride
+                                            );
+                                            const edgeExtendedInteriorOverride = [
+                                              { source: edgeExtendedSource.bitmap, arguments: paddedInteriorArguments },
+                                            ];
+                                            const edgeExtendedInteriorBaseline = replayCapturedDrawImageCalls(
+                                              canvasType,
+                                              frameSize,
+                                              baseline.capturedDrawImageInvocations,
+                                              edgeExtendedInteriorOverride
+                                            );
+                                            const edgeExtendedInteriorOneRowLarger = replayCapturedDrawImageCalls(
+                                              canvasType,
+                                              oneRowLargerSize,
+                                              baseline.capturedDrawImageInvocations,
+                                              edgeExtendedInteriorOverride
+                                            );
+                                            const rightEdgeOnlyOverride = [
+                                              {
+                                                source: rightEdgeOnlySource.bitmap,
+                                                arguments: paddedInteriorArguments,
+                                              },
+                                            ];
+                                            const rightEdgeOnlyBaseline = replayCapturedDrawImageCalls(
+                                              canvasType,
+                                              frameSize,
+                                              baseline.capturedDrawImageInvocations,
+                                              rightEdgeOnlyOverride
+                                            );
+                                            const rightEdgeOnlyOneRowLarger = replayCapturedDrawImageCalls(
+                                              canvasType,
+                                              oneRowLargerSize,
+                                              baseline.capturedDrawImageInvocations,
+                                              rightEdgeOnlyOverride
+                                            );
+                                            const paddedFullSourceOverride = [
+                                              { source: paddedSource.bitmap, arguments: paddedFullSourceArguments },
+                                            ];
+                                            const paddedFullSourceBaseline = replayCapturedDrawImageCalls(
+                                              canvasType,
+                                              frameSize,
+                                              baseline.capturedDrawImageInvocations,
+                                              paddedFullSourceOverride
+                                            );
+                                            const paddedFullSourceOneRowLarger = replayCapturedDrawImageCalls(
+                                              canvasType,
+                                              oneRowLargerSize,
+                                              baseline.capturedDrawImageInvocations,
+                                              paddedFullSourceOverride
+                                            );
+                                            const paddedFullSourceMatchedGeometryOverride = [
+                                              {
+                                                source: paddedSource.bitmap,
+                                                arguments: paddedFullSourceMatchedGeometryArguments,
+                                              },
+                                            ];
+                                            const paddedFullSourceMatchedGeometryBaseline =
+                                              replayCapturedDrawImageCalls(
+                                                canvasType,
+                                                frameSize,
+                                                baseline.capturedDrawImageInvocations,
+                                                paddedFullSourceMatchedGeometryOverride
+                                              );
+                                            const paddedFullSourceMatchedGeometryOneRowLarger =
+                                              replayCapturedDrawImageCalls(
+                                                canvasType,
+                                                oneRowLargerSize,
+                                                baseline.capturedDrawImageInvocations,
+                                                paddedFullSourceMatchedGeometryOverride
+                                              );
+                                            transparentPaddingControl = {
+                                              source: paddedSource.report,
+                                              originalSourceNineArgumentControl,
+                                              mapping: {
+                                                originalArguments,
+                                                sourceSize,
+                                                scaleX,
+                                                scaleY,
+                                                padding,
+                                                paddedArguments,
+                                                mappedOriginalInterior,
+                                                visibleMappingPreserved,
+                                              },
+                                              baseline: {
+                                                ...paddedBaseline.report,
+                                                comparisonToUnpadded: compareBytes(
+                                                  Array.from(directBaseline.framePixels),
+                                                  Array.from(paddedBaseline.framePixels),
+                                                  frameSize.width,
+                                                  frameSize.height,
+                                                  frame.x,
+                                                  frame.y
+                                                ),
+                                              },
+                                              oneRowLarger: {
+                                                ...paddedOneRowLarger.report,
+                                                comparisonToUnpadded: compareBytes(
+                                                  Array.from(directOneRowLarger.framePixels),
+                                                  Array.from(paddedOneRowLarger.framePixels),
+                                                  frameSize.width,
+                                                  frameSize.height,
+                                                  frame.x,
+                                                  frame.y
+                                                ),
+                                              },
+                                              paddedHeightComparison: compareBytes(
+                                                Array.from(paddedBaseline.framePixels),
+                                                Array.from(paddedOneRowLarger.framePixels),
+                                                frameSize.width,
+                                                frameSize.height,
+                                                frame.x,
+                                                frame.y
+                                              ),
+                                              paddedInteriorNineArgumentControl: {
+                                                call: {
+                                                  argumentCount: paddedInteriorArguments.length + 1,
+                                                  numericArguments: paddedInteriorArguments,
+                                                  sourceRectangle: {
+                                                    x: padding,
+                                                    y: padding,
+                                                    width: sourceSize.width,
+                                                    height: sourceSize.height,
+                                                  },
+                                                  destinationRectangle: { x: dx, y: dy, width: dw, height: dh },
+                                                },
+                                                baseline: {
+                                                  ...paddedInteriorBaseline.report,
+                                                  comparisonToUnpadded: compareBytes(
+                                                    Array.from(directBaseline.framePixels),
+                                                    Array.from(paddedInteriorBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToOriginalSourceNineArgument: compareBytes(
+                                                    Array.from(originalSourceNineArgumentBaseline.framePixels),
+                                                    Array.from(paddedInteriorBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToFullPaddedFiveArgument: compareBytes(
+                                                    Array.from(paddedBaseline.framePixels),
+                                                    Array.from(paddedInteriorBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                },
+                                                oneRowLarger: {
+                                                  ...paddedInteriorOneRowLarger.report,
+                                                  comparisonToUnpadded: compareBytes(
+                                                    Array.from(directOneRowLarger.framePixels),
+                                                    Array.from(paddedInteriorOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToOriginalSourceNineArgument: compareBytes(
+                                                    Array.from(originalSourceNineArgumentOneRowLarger.framePixels),
+                                                    Array.from(paddedInteriorOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToFullPaddedFiveArgument: compareBytes(
+                                                    Array.from(paddedOneRowLarger.framePixels),
+                                                    Array.from(paddedInteriorOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                },
+                                                paddedHeightComparison: compareBytes(
+                                                  Array.from(paddedInteriorBaseline.framePixels),
+                                                  Array.from(paddedInteriorOneRowLarger.framePixels),
+                                                  frameSize.width,
+                                                  frameSize.height,
+                                                  frame.x,
+                                                  frame.y
+                                                ),
+                                              },
+                                              edgeExtendedBorderControl: {
+                                                source: edgeExtendedSource.report,
+                                                call: {
+                                                  argumentCount: paddedInteriorArguments.length + 1,
+                                                  numericArguments: paddedInteriorArguments,
+                                                  sourceRectangle: {
+                                                    x: padding,
+                                                    y: padding,
+                                                    width: sourceSize.width,
+                                                    height: sourceSize.height,
+                                                  },
+                                                  destinationRectangle: { x: dx, y: dy, width: dw, height: dh },
+                                                },
+                                                baseline: {
+                                                  ...edgeExtendedInteriorBaseline.report,
+                                                  comparisonToTransparentBorder: compareBytes(
+                                                    Array.from(paddedInteriorBaseline.framePixels),
+                                                    Array.from(edgeExtendedInteriorBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToOriginalSourceNineArgument: compareBytes(
+                                                    Array.from(originalSourceNineArgumentBaseline.framePixels),
+                                                    Array.from(edgeExtendedInteriorBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                },
+                                                oneRowLarger: {
+                                                  ...edgeExtendedInteriorOneRowLarger.report,
+                                                  comparisonToTransparentBorder: compareBytes(
+                                                    Array.from(paddedInteriorOneRowLarger.framePixels),
+                                                    Array.from(edgeExtendedInteriorOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToOriginalSourceNineArgument: compareBytes(
+                                                    Array.from(originalSourceNineArgumentOneRowLarger.framePixels),
+                                                    Array.from(edgeExtendedInteriorOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                },
+                                                backingHeightComparison: compareBytes(
+                                                  Array.from(edgeExtendedInteriorBaseline.framePixels),
+                                                  Array.from(edgeExtendedInteriorOneRowLarger.framePixels),
+                                                  frameSize.width,
+                                                  frameSize.height,
+                                                  frame.x,
+                                                  frame.y
+                                                ),
+                                              },
+                                              rightEdgeOnlyControl: {
+                                                source: rightEdgeOnlySource.report,
+                                                call: {
+                                                  argumentCount: paddedInteriorArguments.length + 1,
+                                                  numericArguments: paddedInteriorArguments,
+                                                  sourceRectangle: {
+                                                    x: padding,
+                                                    y: padding,
+                                                    width: sourceSize.width,
+                                                    height: sourceSize.height,
+                                                  },
+                                                  destinationRectangle: { x: dx, y: dy, width: dw, height: dh },
+                                                },
+                                                baseline: {
+                                                  ...rightEdgeOnlyBaseline.report,
+                                                  comparisonToTransparentBorder: compareBytes(
+                                                    Array.from(paddedInteriorBaseline.framePixels),
+                                                    Array.from(rightEdgeOnlyBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToOriginalSourceNineArgument: compareBytes(
+                                                    Array.from(originalSourceNineArgumentBaseline.framePixels),
+                                                    Array.from(rightEdgeOnlyBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToFullEdgeExtension: compareBytes(
+                                                    Array.from(edgeExtendedInteriorBaseline.framePixels),
+                                                    Array.from(rightEdgeOnlyBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                },
+                                                oneRowLarger: {
+                                                  ...rightEdgeOnlyOneRowLarger.report,
+                                                  comparisonToTransparentBorder: compareBytes(
+                                                    Array.from(paddedInteriorOneRowLarger.framePixels),
+                                                    Array.from(rightEdgeOnlyOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToOriginalSourceNineArgument: compareBytes(
+                                                    Array.from(originalSourceNineArgumentOneRowLarger.framePixels),
+                                                    Array.from(rightEdgeOnlyOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToFullEdgeExtension: compareBytes(
+                                                    Array.from(edgeExtendedInteriorOneRowLarger.framePixels),
+                                                    Array.from(rightEdgeOnlyOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                },
+                                                backingHeightComparison: compareBytes(
+                                                  Array.from(rightEdgeOnlyBaseline.framePixels),
+                                                  Array.from(rightEdgeOnlyOneRowLarger.framePixels),
+                                                  frameSize.width,
+                                                  frameSize.height,
+                                                  frame.x,
+                                                  frame.y
+                                                ),
+                                              },
+                                              paddedFullSourceNineArgumentControl: {
+                                                call: {
+                                                  argumentCount: paddedFullSourceArguments.length + 1,
+                                                  numericArguments: paddedFullSourceArguments,
+                                                  sourceRectangle: {
+                                                    x: 0,
+                                                    y: 0,
+                                                    width: sourceSize.width + 2 * padding,
+                                                    height: sourceSize.height + 2 * padding,
+                                                  },
+                                                  destinationRectangle: { x: dx, y: dy, width: dw, height: dh },
+                                                },
+                                                baseline: {
+                                                  ...paddedFullSourceBaseline.report,
+                                                  comparisonToUnpadded: compareBytes(
+                                                    Array.from(directBaseline.framePixels),
+                                                    Array.from(paddedFullSourceBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToInteriorNineArgument: compareBytes(
+                                                    Array.from(paddedInteriorBaseline.framePixels),
+                                                    Array.from(paddedFullSourceBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToFullPaddedFiveArgument: compareBytes(
+                                                    Array.from(paddedBaseline.framePixels),
+                                                    Array.from(paddedFullSourceBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                },
+                                                oneRowLarger: {
+                                                  ...paddedFullSourceOneRowLarger.report,
+                                                  comparisonToUnpadded: compareBytes(
+                                                    Array.from(directOneRowLarger.framePixels),
+                                                    Array.from(paddedFullSourceOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToInteriorNineArgument: compareBytes(
+                                                    Array.from(paddedInteriorOneRowLarger.framePixels),
+                                                    Array.from(paddedFullSourceOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                  comparisonToFullPaddedFiveArgument: compareBytes(
+                                                    Array.from(paddedOneRowLarger.framePixels),
+                                                    Array.from(paddedFullSourceOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                },
+                                                paddedHeightComparison: compareBytes(
+                                                  Array.from(paddedFullSourceBaseline.framePixels),
+                                                  Array.from(paddedFullSourceOneRowLarger.framePixels),
+                                                  frameSize.width,
+                                                  frameSize.height,
+                                                  frame.x,
+                                                  frame.y
+                                                ),
+                                              },
+                                              paddedFullSourceMatchedGeometryNineArgumentControl: {
+                                                call: {
+                                                  argumentCount: paddedFullSourceMatchedGeometryArguments.length + 1,
+                                                  numericArguments: paddedFullSourceMatchedGeometryArguments,
+                                                  sourceRectangle: {
+                                                    x: 0,
+                                                    y: 0,
+                                                    width: sourceSize.width + 2 * padding,
+                                                    height: sourceSize.height + 2 * padding,
+                                                  },
+                                                  destinationRectangle: {
+                                                    x: paddedArguments[0],
+                                                    y: paddedArguments[1],
+                                                    width: paddedArguments[2],
+                                                    height: paddedArguments[3],
+                                                  },
+                                                },
+                                                baseline: {
+                                                  ...paddedFullSourceMatchedGeometryBaseline.report,
+                                                  comparisonToFullPaddedFiveArgument: compareBytes(
+                                                    Array.from(paddedBaseline.framePixels),
+                                                    Array.from(paddedFullSourceMatchedGeometryBaseline.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                },
+                                                oneRowLarger: {
+                                                  ...paddedFullSourceMatchedGeometryOneRowLarger.report,
+                                                  comparisonToFullPaddedFiveArgument: compareBytes(
+                                                    Array.from(paddedOneRowLarger.framePixels),
+                                                    Array.from(paddedFullSourceMatchedGeometryOneRowLarger.framePixels),
+                                                    frameSize.width,
+                                                    frameSize.height,
+                                                    frame.x,
+                                                    frame.y
+                                                  ),
+                                                },
+                                                paddedHeightComparison: compareBytes(
+                                                  Array.from(paddedFullSourceMatchedGeometryBaseline.framePixels),
+                                                  Array.from(paddedFullSourceMatchedGeometryOneRowLarger.framePixels),
+                                                  frameSize.width,
+                                                  frameSize.height,
+                                                  frame.x,
+                                                  frame.y
+                                                ),
+                                              },
+                                            };
+                                          } finally {
+                                            rightEdgeOnlyPaddedSource?.bitmap.close();
+                                            edgeExtendedPaddedSource?.bitmap.close();
+                                            paddedSource.bitmap.close();
+                                          }
+                                          const callSignature = (calls: Array<Record<string, unknown>>) =>
+                                            calls.map((call) => ({
+                                              sourceIdentity: call.sourceIdentity,
+                                              numericArguments: call.numericArguments,
+                                              sourceRect: call.sourceRect,
+                                              destinationRect: call.destinationRect,
+                                              contextBeforeDraw: call.contextBeforeDraw,
+                                            }));
+                                          const baselineCalls = baseline.report.drawImageCalls as Array<
+                                            Record<string, unknown>
+                                          >;
+                                          const oneRowLargerCalls = oneRowLarger.report.drawImageCalls as Array<
+                                            Record<string, unknown>
+                                          >;
+                                          const originalFrameComparison = compareBytes(
+                                            Array.from(baseline.framePixels),
+                                            Array.from(oneRowLarger.framePixels),
+                                            frameSize.width,
+                                            frameSize.height,
+                                            frame.x,
+                                            frame.y
+                                          );
+                                          return {
+                                            canvasType,
+                                            inputSourceIdentityStable:
+                                              JSON.stringify(
+                                                baselineCalls.map(({ sourceIdentity }) => sourceIdentity)
+                                              ) ===
+                                              JSON.stringify(
+                                                oneRowLargerCalls.map(({ sourceIdentity }) => sourceIdentity)
+                                              ),
+                                            drawImageCallSignatureStable:
+                                              JSON.stringify(callSignature(baselineCalls)) ===
+                                              JSON.stringify(callSignature(oneRowLargerCalls)),
+                                            samplePixelComparison: compareBytes(
+                                              Array.from(baseline.report.readbackSample.rgba as number[]),
+                                              Array.from(oneRowLarger.report.readbackSample.rgba as number[]),
+                                              1,
+                                              1,
+                                              frame.x + sampleFramePixel.x,
+                                              frame.y + sampleFramePixel.y
+                                            ),
+                                            originalFrameComparison,
+                                            directDrawImageReproduction: {
+                                              baseline: {
+                                                ...directBaseline.report,
+                                                comparisonToDrawLayerSource: compareBytes(
+                                                  Array.from(baseline.framePixels),
+                                                  Array.from(directBaseline.framePixels),
+                                                  frameSize.width,
+                                                  frameSize.height,
+                                                  frame.x,
+                                                  frame.y
+                                                ),
+                                              },
+                                              oneRowLarger: {
+                                                ...directOneRowLarger.report,
+                                                comparisonToDrawLayerSource: compareBytes(
+                                                  Array.from(oneRowLarger.framePixels),
+                                                  Array.from(directOneRowLarger.framePixels),
+                                                  frameSize.width,
+                                                  frameSize.height,
+                                                  frame.x,
+                                                  frame.y
+                                                ),
+                                              },
+                                              originalFrameComparison: compareBytes(
+                                                Array.from(directBaseline.framePixels),
+                                                Array.from(directOneRowLarger.framePixels),
+                                                frameSize.width,
+                                                frameSize.height,
+                                                frame.x,
+                                                frame.y
+                                              ),
+                                            },
+                                            transparentPaddingControl,
+                                            baseline: baseline.report,
+                                            oneRowLarger: oneRowLarger.report,
+                                          };
+                                        };
+                                        const traceReportByCanvasType: Array<
+                                          Awaited<ReturnType<typeof buildTraceReportForCanvasType>>
+                                        > = [];
+                                        for (const canvasType of canvasTypes) {
+                                          traceReportByCanvasType.push(await buildTraceReportForCanvasType(canvasType));
+                                        }
+                                        const htmlOffscreenComparisons = offscreenCanvasAvailable
+                                          ? [frameSize, oneRowLargerSize].map((backingSize) => {
+                                              const html = traceRuns.find(
+                                                ({ report }) =>
+                                                  report.canvasType === 'HTMLCanvas' &&
+                                                  report.canvasBackingSize.width === backingSize.width &&
+                                                  report.canvasBackingSize.height === backingSize.height
+                                              );
+                                              const offscreen = traceRuns.find(
+                                                ({ report }) =>
+                                                  report.canvasType === 'OffscreenCanvas' &&
+                                                  report.canvasBackingSize.width === backingSize.width &&
+                                                  report.canvasBackingSize.height === backingSize.height
+                                              );
+                                              if (!html || !offscreen) {
+                                                throw new Error(`Canvas-type comparison is incomplete at ${stage}`);
+                                              }
+                                              return {
+                                                backingSize,
+                                                outputSampleComparison: compareBytes(
+                                                  Array.from(html.report.readbackSample.rgba as number[]),
+                                                  Array.from(offscreen.report.readbackSample.rgba as number[]),
+                                                  1,
+                                                  1,
+                                                  frame.x + sampleFramePixel.x,
+                                                  frame.y + sampleFramePixel.y
+                                                ),
+                                                originalFrameComparison: compareBytes(
+                                                  Array.from(html.framePixels),
+                                                  Array.from(offscreen.framePixels),
+                                                  frameSize.width,
+                                                  frameSize.height,
+                                                  frame.x,
+                                                  frame.y
+                                                ),
+                                              };
+                                            })
+                                          : [];
+                                        return {
+                                          report: {
+                                            target: {
+                                              firstDifferenceSelection: {
+                                                measurementStatus: firstDifferenceSelection.measurementStatus,
+                                                comparedPixels: firstDifferenceSelection.comparedPixels,
+                                                differingBytes:
+                                                  firstDifferenceSelection.pixelComparison?.differingBytes ?? 0,
+                                                status: firstDifferingPixel ? 'found' : 'none',
+                                                firstDifferingFrameLocalPixelCell: firstDifferingPixel
+                                                  ? { x: firstDifferingPixel.x, y: firstDifferingPixel.y }
+                                                  : null,
+                                                firstDifferingDocumentPixelCell: firstDifferingPixel
+                                                  ? {
+                                                      x: firstDifferingPixel.documentX,
+                                                      y: firstDifferingPixel.documentY,
+                                                    }
+                                                  : null,
+                                              },
+                                              sampleFrameLocalPixelCell: sampleFramePixel,
+                                              frameLocalBackingPixelCenter: sampleBackingPoint,
+                                              documentPixelCellOrigin: {
+                                                x: frame.x + sampleFramePixel.x,
+                                                y: frame.y + sampleFramePixel.y,
+                                              },
+                                              documentPixelCenter: {
+                                                x: frame.x + sampleBackingPoint.x,
+                                                y: frame.y + sampleBackingPoint.y,
+                                              },
+                                              baselineBackingSize: frameSize,
+                                              oneRowLargerBackingSize: oneRowLargerSize,
+                                            },
+                                            offscreenCanvasAvailable,
+                                            canvasTypeComparisons: traceReportByCanvasType,
+                                            htmlOffscreenComparisons,
+                                          },
+                                        };
+                                      })()
+                                    : null;
+                                const firstDifferenceTraceReport = firstDifferenceTraceControls
+                                  ? (await firstDifferenceTraceControls).report
+                                  : null;
+                                const physicalBackingSizeMatrixControls =
+                                  widthOnly && heightOnly
+                                    ? (() => {
+                                        const heights = Array.from(
+                                          new Set([
+                                            frameSize.height,
+                                            Math.min(legacy.rasterSize.height, frameSize.height + 1),
+                                            Math.min(legacy.rasterSize.height, frameSize.height + 5),
+                                            legacy.rasterSize.height,
+                                          ])
+                                        );
+                                        const widths = [frameSize.width, legacy.rasterSize.width];
+                                        const surfaceBySize = new Map<string, DiagnosticPixelSurface>();
+                                        const sizeKey = (width: number, height: number) => `${width}x${height}`;
+                                        for (const width of widths) {
+                                          for (const height of heights) {
+                                            let surface: DiagnosticPixelSurface;
+                                            if (width === frameSize.width && height === frameSize.height) {
+                                              surface = baseline;
+                                            } else if (
+                                              width === widthOnlySize.width &&
+                                              height === widthOnlySize.height
+                                            ) {
+                                              surface = widthOnly;
+                                            } else if (
+                                              width === heightOnlySize.width &&
+                                              height === heightOnlySize.height
+                                            ) {
+                                              surface = heightOnly;
+                                            } else if (
+                                              width === legacy.rasterSize.width &&
+                                              height === legacy.rasterSize.height
+                                            ) {
+                                              surface = extentOnly;
+                                            } else {
+                                              surface = {
+                                                pixels: renderLayerSurfacePixels(layer, label, frame, {
+                                                  width,
+                                                  height,
+                                                }),
+                                                pixelSize: { width, height },
+                                                originOffset: { x: 0, y: 0 },
+                                              };
+                                            }
+                                            surfaceBySize.set(sizeKey(width, height), surface);
+                                          }
+                                        }
+                                        const originalFrameRegion = {
+                                          x: 0,
+                                          y: 0,
+                                          width: frameSize.width,
+                                          height: frameSize.height,
+                                        };
+                                        const cropToOriginalFrame = (surface: DiagnosticPixelSurface) =>
+                                          cropDiagnosticSurface(surface, originalFrameRegion);
+                                        const surfaceAt = (width: number, height: number) => {
+                                          const surface = surfaceBySize.get(sizeKey(width, height));
+                                          if (!surface) {
+                                            throw new Error(
+                                              `${label} physical-backing matrix is missing ${width}x${height} at ${stage}`
+                                            );
+                                          }
+                                          return cropToOriginalFrame(surface);
+                                        };
+                                        const premultiplyFrameSurface = (surface: DiagnosticPixelSurface) => {
+                                          const pixels = new Uint8ClampedArray(surface.pixels.length);
+                                          for (let offset = 0; offset < surface.pixels.length; offset += 4) {
+                                            const alpha = surface.pixels[offset + 3] ?? 0;
+                                            pixels[offset] = Math.round(((surface.pixels[offset] ?? 0) * alpha) / 255);
+                                            pixels[offset + 1] = Math.round(
+                                              ((surface.pixels[offset + 1] ?? 0) * alpha) / 255
+                                            );
+                                            pixels[offset + 2] = Math.round(
+                                              ((surface.pixels[offset + 2] ?? 0) * alpha) / 255
+                                            );
+                                            pixels[offset + 3] = alpha;
+                                          }
+                                          return { ...surface, pixels };
+                                        };
+                                        const compareFrameSurfaces = (
+                                          expected: DiagnosticPixelSurface,
+                                          received: DiagnosticPixelSurface
+                                        ) => ({
+                                          raw: compareRasterOverlap(expected, received),
+                                          premultiplied: compareRasterOverlap(
+                                            premultiplyFrameSurface(expected),
+                                            premultiplyFrameSurface(received)
+                                          ),
+                                        });
+                                        const baselineFrame = surfaceAt(frameSize.width, frameSize.height);
+                                        return {
+                                          report: {
+                                            originalFrameComparedPixels: frameSize.width * frameSize.height,
+                                            physicalBackingSizes: heights.flatMap((height) =>
+                                              widths.map((width) => ({
+                                                backingPixelSize: { width, height },
+                                                frameRegionVsBaseline: compareFrameSurfaces(
+                                                  baselineFrame,
+                                                  surfaceAt(width, height)
+                                                ),
+                                              }))
+                                            ),
+                                            widthExtensionAtEachHeight: heights.map((height) => ({
+                                              backingHeight: height,
+                                              width51VsWidth89: compareFrameSurfaces(
+                                                surfaceAt(frameSize.width, height),
+                                                surfaceAt(legacy.rasterSize.width, height)
+                                              ),
+                                            })),
+                                            widthHeightInteractionAtEachExpandedHeight: heights
+                                              .filter((height) => height > frameSize.height)
+                                              .map((height) => ({
+                                                backingHeight: height,
+                                                interaction: compareWidthHeightExtentInteraction(
+                                                  baselineFrame,
+                                                  surfaceAt(legacy.rasterSize.width, frameSize.height),
+                                                  surfaceAt(frameSize.width, height),
+                                                  surfaceAt(legacy.rasterSize.width, height)
+                                                ),
+                                              })),
+                                            firstDifferenceTraceControls: firstDifferenceTraceReport,
+                                          },
+                                        };
+                                      })()
+                                    : null;
+                                const getPairedAddedStripRegion = (
+                                  axisOnly: DiagnosticPixelSurface,
+                                  axis: 'width' | 'height'
+                                ) => {
+                                  const sharedRegion = getSharedDocumentRegion([axisOnly, combined]);
+                                  const frameEdge = axis === 'width' ? frameSize.width : frameSize.height;
+                                  if (axis === 'width') {
+                                    const x = Math.max(sharedRegion.x, axisOnly.originOffset.x + frameEdge);
+                                    return {
+                                      x,
+                                      y: sharedRegion.y,
+                                      width: Math.max(0, sharedRegion.x + sharedRegion.width - x),
+                                      height: sharedRegion.height,
+                                    };
+                                  }
+                                  const y = Math.max(sharedRegion.y, axisOnly.originOffset.y + frameEdge);
+                                  return {
+                                    x: sharedRegion.x,
+                                    y,
+                                    width: sharedRegion.width,
+                                    height: Math.max(0, sharedRegion.y + sharedRegion.height - y),
+                                  };
+                                };
+                                const buildAxisExtentControl = (
+                                  axisOnly: DiagnosticPixelSurface,
+                                  axisOnlySize: typeof frameSize,
+                                  axis: 'width' | 'height'
+                                ) => {
+                                  const outsideFrameAlphaPixels = countNonTransparentPixelsOutsideFrame(
+                                    axisOnly.pixels,
+                                    axisOnly.pixelSize,
+                                    axisOnly.originOffset
+                                  );
+                                  const pairedAddedStripRegion = getPairedAddedStripRegion(axisOnly, axis);
+                                  const pairedAddedStripPixels =
+                                    pairedAddedStripRegion.width * pairedAddedStripRegion.height;
+                                  const addedStripVsPsdBoundsCombined =
+                                    pairedAddedStripPixels > 0
+                                      ? compareRasterOverlap(
+                                          cropDiagnosticSurface(axisOnly, pairedAddedStripRegion),
+                                          cropDiagnosticSurface(combined, pairedAddedStripRegion)
+                                        )
+                                      : {
+                                          measurementStatus: 'empty-region',
+                                          comparedPixels: 0,
+                                          documentRegionLocal: pairedAddedStripRegion,
+                                          expectedExcludedPixels: axisOnlySize.width * axisOnlySize.height,
+                                          receivedExcludedPixels: legacy.rasterSize.width * legacy.rasterSize.height,
+                                          pixelComparison: null,
+                                        };
+                                  return {
+                                    targetOriginDocument: { x: frame.x, y: frame.y },
+                                    targetLogicalFrameSize: { width: frame.width, height: frame.height },
+                                    pixelSize: axisOnlySize,
+                                    addedBackingPixels:
+                                      axisOnlySize.width * axisOnlySize.height - frameSize.width * frameSize.height,
+                                    outsideFrameAlphaPixels,
+                                    frameRegionVsBaseline: compareRasterOverlap(baseline, axisOnly),
+                                    sharedDocumentRegionVsPsdBoundsCombined: compareRasterOverlap(axisOnly, combined),
+                                    pairedAddedStripRegion,
+                                    pairedAddedStripPixels,
+                                    unpairedAddedStripPixels:
+                                      outsideFrameAlphaPixels.comparedPixels - pairedAddedStripPixels,
+                                    pairedAddedStripVsPsdBoundsCombined: addedStripVsPsdBoundsCombined,
+                                  };
+                                };
+                                const combinedVsPreEncode = compareBytes(
+                                  Array.from(combined.pixels),
+                                  Array.from(preEncodePixels),
+                                  legacy.rasterSize.width,
+                                  legacy.rasterSize.height,
+                                  psdBoundsTargetFrame.x,
+                                  psdBoundsTargetFrame.y
+                                );
+                                if (combinedVsPreEncode.differingBytes !== 0) {
+                                  throw new Error(
+                                    `${label} PSD-bounds combined control did not reproduce its pre-encode raster at ${stage}`
+                                  );
+                                }
+                                return {
+                                  surfaces: {
+                                    baseline,
+                                    originOnly,
+                                    extentOnly,
+                                    combined,
+                                    widthOnly,
+                                    heightOnly,
+                                    commonBackingClip: commonBackingClipControls?.surfaces ?? null,
+                                  },
+                                  report: {
+                                    originOnlyControl: {
+                                      targetOriginDocument: {
+                                        x: psdBoundsTargetFrame.x,
+                                        y: psdBoundsTargetFrame.y,
+                                      },
+                                      targetLogicalFrameSize: { width: frame.width, height: frame.height },
+                                      pixelSize: frameSize,
+                                      frameRegionVsBaseline: compareRasterOverlap(baseline, originOnly),
+                                    },
+                                    extentOnlyControl: {
+                                      targetOriginDocument: { x: frame.x, y: frame.y },
+                                      targetLogicalFrameSize: { width: frame.width, height: frame.height },
+                                      pixelSize: legacy.rasterSize,
+                                      backingPixelDeltaFromFrame:
+                                        legacy.rasterSize.width * legacy.rasterSize.height -
+                                        frameSize.width * frameSize.height,
+                                      outsideFrameAlphaPixels: countNonTransparentPixelsOutsideFrame(
+                                        extentOnly.pixels,
+                                        extentOnly.pixelSize,
+                                        extentOnly.originOffset
+                                      ),
+                                      frameRegionVsBaseline: compareRasterOverlap(baseline, extentOnly),
+                                    },
+                                    combinedControl: {
+                                      targetOriginDocument: {
+                                        x: psdBoundsTargetFrame.x,
+                                        y: psdBoundsTargetFrame.y,
+                                      },
+                                      targetLogicalFrameSize: { width: frame.width, height: frame.height },
+                                      pixelSize: legacy.rasterSize,
+                                      outsideFrameAlphaPixels: countNonTransparentPixelsOutsideFrame(
+                                        combined.pixels,
+                                        combined.pixelSize,
+                                        combined.originOffset
+                                      ),
+                                      frameRegionVsBaseline: compareRasterOverlap(baseline, combined),
+                                      originOnlyVsCombinedAtSameOrigin: compareRasterOverlap(originOnly, combined),
+                                      extentOnlyVsCombinedAtSharedDocumentCells: compareRasterOverlap(
+                                        extentOnly,
+                                        combined
+                                      ),
+                                      exactPreEncodeReproduction: combinedVsPreEncode,
+                                    },
+                                    originExtentInteraction: compareOriginExtentInteraction(
+                                      baseline,
+                                      originOnly,
+                                      extentOnly,
+                                      combined
+                                    ),
+                                    axisExtentControls:
+                                      widthOnly && heightOnly
+                                        ? {
+                                            widthOnly: buildAxisExtentControl(widthOnly, widthOnlySize, 'width'),
+                                            heightOnly: buildAxisExtentControl(heightOnly, heightOnlySize, 'height'),
+                                            widthHeightInteraction: compareWidthHeightExtentInteraction(
+                                              baseline,
+                                              widthOnly,
+                                              heightOnly,
+                                              combined
+                                            ),
+                                          }
+                                        : null,
+                                    commonBackingClipControls: commonBackingClipControls?.report ?? null,
+                                    physicalBackingSizeMatrixControls:
+                                      physicalBackingSizeMatrixControls?.report ?? null,
+                                  },
+                                };
+                              };
+                              const legacyControl = await buildPsdBoundsControl(
+                                legacyLayer,
+                                'Legacy',
+                                legacyFramePixels,
+                                legacy.pixels
+                              );
+                              const durableControl = await buildPsdBoundsControl(
+                                durableLayer,
+                                'Durable',
+                                durableFramePixels,
+                                durable.pixels
+                              );
+                              const axisExtentControlsAvailable =
+                                legacyControl.surfaces.widthOnly !== null && legacyControl.surfaces.heightOnly !== null;
+                              return {
+                                boundsLocalToFrame: legacy.bounds,
+                                targetOriginDocument: {
+                                  x: psdBoundsTargetFrame.x,
+                                  y: psdBoundsTargetFrame.y,
+                                },
+                                targetLogicalFrameSize: { width: frame.width, height: frame.height },
+                                pixelSize: legacy.rasterSize,
+                                legacy: legacyControl.report,
+                                durable: durableControl.report,
+                                legacyVsDurable: {
+                                  originOnly: compareBytes(
+                                    Array.from(legacyControl.surfaces.originOnly.pixels),
+                                    Array.from(durableControl.surfaces.originOnly.pixels),
+                                    frameSize.width,
+                                    frameSize.height,
+                                    psdBoundsTargetFrame.x,
+                                    psdBoundsTargetFrame.y
+                                  ),
+                                  extentOnly: compareBytes(
+                                    Array.from(legacyControl.surfaces.extentOnly.pixels),
+                                    Array.from(durableControl.surfaces.extentOnly.pixels),
+                                    legacy.rasterSize.width,
+                                    legacy.rasterSize.height,
+                                    frame.x,
+                                    frame.y
+                                  ),
+                                  combined: compareBytes(
+                                    Array.from(legacyControl.surfaces.combined.pixels),
+                                    Array.from(durableControl.surfaces.combined.pixels),
+                                    legacy.rasterSize.width,
+                                    legacy.rasterSize.height,
+                                    psdBoundsTargetFrame.x,
+                                    psdBoundsTargetFrame.y
+                                  ),
+                                  widthOnly: axisExtentControlsAvailable
+                                    ? compareBytes(
+                                        Array.from(legacyControl.surfaces.widthOnly!.pixels),
+                                        Array.from(durableControl.surfaces.widthOnly!.pixels),
+                                        legacyControl.surfaces.widthOnly!.pixelSize.width,
+                                        legacyControl.surfaces.widthOnly!.pixelSize.height,
+                                        frame.x,
+                                        frame.y
+                                      )
+                                    : null,
+                                  heightOnly: axisExtentControlsAvailable
+                                    ? compareBytes(
+                                        Array.from(legacyControl.surfaces.heightOnly!.pixels),
+                                        Array.from(durableControl.surfaces.heightOnly!.pixels),
+                                        legacyControl.surfaces.heightOnly!.pixelSize.width,
+                                        legacyControl.surfaces.heightOnly!.pixelSize.height,
+                                        frame.x,
+                                        frame.y
+                                      )
+                                    : null,
+                                },
+                              };
+                            })()
+                          : null;
+                      return [
+                        id,
+                        {
+                          legacyBounds: legacy.bounds,
+                          durableBounds: durable.bounds,
+                          legacyRasterSize: legacy.rasterSize,
+                          durableRasterSize: durable.rasterSize,
+                          sameBounds,
+                          sameRasterSize,
+                          psdBoundsControl: await psdBoundsControl,
+                          frameSurfaceComparison: compareBytes(
+                            Array.from(legacyFramePixels),
+                            Array.from(durableFramePixels),
+                            frameSize.width,
+                            frameSize.height,
+                            frame.x,
+                            frame.y
+                          ),
+                          originShiftOnlyControl: {
+                            targetOriginDocument: {
+                              x: originShiftedTargetFrame.x,
+                              y: originShiftedTargetFrame.y,
+                            },
+                            targetLogicalFrameSize: { width: frame.width, height: frame.height },
+                            pixelSize: frameSize,
+                            legacyVsDurable: compareBytes(
+                              Array.from(legacyOriginShiftOnlyPixels),
+                              Array.from(durableOriginShiftOnlyPixels),
+                              frameSize.width,
+                              frameSize.height,
+                              originShiftedTargetFrame.x,
+                              originShiftedTargetFrame.y
+                            ),
+                            originalFrameRegionVsFrameSurface: {
+                              legacy: compareRasterOverlap(
+                                { pixels: legacyFramePixels, pixelSize: frameSize, originOffset: { x: 0, y: 0 } },
+                                {
+                                  pixels: legacyOriginShiftOnlyPixels,
+                                  pixelSize: frameSize,
+                                  originOffset: { x: -frameGridPadding, y: -frameGridPadding },
+                                }
+                              ),
+                              durable: compareRasterOverlap(
+                                { pixels: durableFramePixels, pixelSize: frameSize, originOffset: { x: 0, y: 0 } },
+                                {
+                                  pixels: durableOriginShiftOnlyPixels,
+                                  pixelSize: frameSize,
+                                  originOffset: { x: -frameGridPadding, y: -frameGridPadding },
+                                }
+                              ),
+                            },
+                          },
+                          extentOnlyControl: {
+                            targetOriginDocument: { x: frame.x, y: frame.y },
+                            targetLogicalFrameSize: { width: frame.width, height: frame.height },
+                            pixelSize: paddedFrameSize,
+                            addedBackingPixels:
+                              paddedFrameSize.width * paddedFrameSize.height - frameSize.width * frameSize.height,
+                            addedAreaAlphaPixels: {
+                              legacy: countNonTransparentPixelsOutsideFrame(legacyExtentOnlyPixels, paddedFrameSize),
+                              durable: countNonTransparentPixelsOutsideFrame(durableExtentOnlyPixels, paddedFrameSize),
+                            },
+                            legacyVsDurable: compareBytes(
+                              Array.from(legacyExtentOnlyPixels),
+                              Array.from(durableExtentOnlyPixels),
+                              paddedFrameSize.width,
+                              paddedFrameSize.height,
+                              frame.x,
+                              frame.y
+                            ),
+                            originalFrameRegionVsFrameSurface: {
+                              legacy: compareRasterOverlap(
+                                { pixels: legacyFramePixels, pixelSize: frameSize, originOffset: { x: 0, y: 0 } },
+                                {
+                                  pixels: legacyExtentOnlyPixels,
+                                  pixelSize: paddedFrameSize,
+                                  originOffset: { x: 0, y: 0 },
+                                }
+                              ),
+                              durable: compareRasterOverlap(
+                                { pixels: durableFramePixels, pixelSize: frameSize, originOffset: { x: 0, y: 0 } },
+                                {
+                                  pixels: durableExtentOnlyPixels,
+                                  pixelSize: paddedFrameSize,
+                                  originOffset: { x: 0, y: 0 },
+                                }
+                              ),
+                            },
+                          },
+                          paddedFrameControl: {
+                            paddingPixels: frameGridPadding,
+                            targetOriginDocument: {
+                              x: frame.x - frameGridPadding,
+                              y: frame.y - frameGridPadding,
+                            },
+                            targetLogicalFrameSize: { width: frame.width, height: frame.height },
+                            pixelSize: paddedFrameSize,
+                            legacyVsDurable: compareBytes(
+                              Array.from(legacyPaddedFramePixels),
+                              Array.from(durablePaddedFramePixels),
+                              paddedFrameSize.width,
+                              paddedFrameSize.height,
+                              frame.x - frameGridPadding,
+                              frame.y - frameGridPadding
+                            ),
+                            originalInteriorVsFrameSurface: {
+                              legacy: compareBytes(
+                                Array.from(legacyFramePixels),
+                                Array.from(legacyPaddedFrameInterior),
+                                frameSize.width,
+                                frameSize.height,
+                                frame.x,
+                                frame.y
+                              ),
+                              durable: compareBytes(
+                                Array.from(durableFramePixels),
+                                Array.from(durablePaddedFrameInterior),
+                                frameSize.width,
+                                frameSize.height,
+                                frame.x,
+                                frame.y
+                              ),
+                            },
+                            originExtentInteraction: {
+                              channelOrder: ['r', 'g', 'b', 'a'],
+                              legacy: compareOriginExtentInteraction(
+                                { pixels: legacyFramePixels, pixelSize: frameSize, originOffset: { x: 0, y: 0 } },
+                                {
+                                  pixels: legacyOriginShiftOnlyPixels,
+                                  pixelSize: frameSize,
+                                  originOffset: { x: -frameGridPadding, y: -frameGridPadding },
+                                },
+                                {
+                                  pixels: legacyExtentOnlyPixels,
+                                  pixelSize: paddedFrameSize,
+                                  originOffset: { x: 0, y: 0 },
+                                },
+                                {
+                                  pixels: legacyPaddedFramePixels,
+                                  pixelSize: paddedFrameSize,
+                                  originOffset: { x: -frameGridPadding, y: -frameGridPadding },
+                                }
+                              ),
+                              durable: compareOriginExtentInteraction(
+                                { pixels: durableFramePixels, pixelSize: frameSize, originOffset: { x: 0, y: 0 } },
+                                {
+                                  pixels: durableOriginShiftOnlyPixels,
+                                  pixelSize: frameSize,
+                                  originOffset: { x: -frameGridPadding, y: -frameGridPadding },
+                                },
+                                {
+                                  pixels: durableExtentOnlyPixels,
+                                  pixelSize: paddedFrameSize,
+                                  originOffset: { x: 0, y: 0 },
+                                },
+                                {
+                                  pixels: durablePaddedFramePixels,
+                                  pixelSize: paddedFrameSize,
+                                  originOffset: { x: -frameGridPadding, y: -frameGridPadding },
+                                }
+                              ),
+                            },
+                            frameGridCopyAgainstPreEncode:
+                              sameBounds && sameRasterSize
+                                ? {
+                                    legacy: {
+                                      inFrame: comparePsdRasterRegion(
+                                        legacyPaddedFrameGridCopy,
+                                        legacy.pixels,
+                                        legacy.bounds,
+                                        legacy.rasterSize,
+                                        'in-frame'
+                                      ),
+                                      paddingRing: comparePsdRasterRegion(
+                                        legacyPaddedFrameGridCopy,
+                                        legacy.pixels,
+                                        legacy.bounds,
+                                        legacy.rasterSize,
+                                        'padding-ring',
+                                        frameGridPadding
+                                      ),
+                                    },
+                                    durable: {
+                                      inFrame: comparePsdRasterRegion(
+                                        durablePaddedFrameGridCopy,
+                                        durable.pixels,
+                                        durable.bounds,
+                                        durable.rasterSize,
+                                        'in-frame'
+                                      ),
+                                      paddingRing: comparePsdRasterRegion(
+                                        durablePaddedFrameGridCopy,
+                                        durable.pixels,
+                                        durable.bounds,
+                                        durable.rasterSize,
+                                        'padding-ring',
+                                        frameGridPadding
+                                      ),
+                                    },
+                                  }
+                                : null,
+                          },
+                          preEncodeDifferenceByFrameRegion:
+                            sameBounds && sameRasterSize
+                              ? {
+                                  inFrame: comparePsdRasterRegion(
+                                    legacy.pixels,
+                                    durable.pixels,
+                                    legacy.bounds,
+                                    legacy.rasterSize,
+                                    'in-frame'
+                                  ),
+                                  outOfFrame: comparePsdRasterRegion(
+                                    legacy.pixels,
+                                    durable.pixels,
+                                    legacy.bounds,
+                                    legacy.rasterSize,
+                                    'out-of-frame'
+                                  ),
+                                }
+                              : null,
+                          frameGridCopyAgainstPreEncode:
+                            sameBounds && sameRasterSize
+                              ? {
+                                  legacy: comparePsdRasterRegion(
+                                    legacyFrameGridCopy,
+                                    legacy.pixels,
+                                    legacy.bounds,
+                                    legacy.rasterSize,
+                                    'in-frame'
+                                  ),
+                                  durable: comparePsdRasterRegion(
+                                    durableFrameGridCopy,
+                                    durable.pixels,
+                                    durable.bounds,
+                                    durable.rasterSize,
+                                    'in-frame'
+                                  ),
+                                }
+                              : null,
+                          pixelComparison:
+                            sameBounds && sameRasterSize
+                              ? compareBytes(
+                                  legacy.pixels,
+                                  durable.pixels,
+                                  legacy.rasterSize.width,
+                                  legacy.rasterSize.height,
+                                  frame.x + legacy.bounds.left,
+                                  frame.y + legacy.bounds.top
+                                )
+                              : null,
+                        },
+                      ] as const;
+                    })
+                  )
+                );
+                const diagnosticLayerIds = projectedLayers
+                  .filter((layer) => layer.opacity !== 1 || layer.blendMode !== 'source-over')
+                  .map((layer) => layer.id);
+                if (diagnosticLayerIds.length > 1) {
+                  throw new Error(
+                    `Expected at most one non-default compositing layer for source/backdrop diagnostics at ${stage}, got ${diagnosticLayerIds.length}: ${diagnosticLayerIds.join(', ')}`
+                  );
+                }
+                const diagnosticLayerId = diagnosticLayerIds[0];
+                const sourceBackdropSamples = (() => {
+                  if (!diagnosticLayerId) return null;
+                  const legacyLayer = legacyReplay.layers[diagnosticLayerId];
+                  const materializedLayer = composite.layers[diagnosticLayerId];
+                  const projectedLayer = projection.layers[diagnosticLayerId];
+                  if (!legacyLayer || !materializedLayer || !projectedLayer) {
+                    throw new Error(`Missing diagnostic source or backdrop layer ${diagnosticLayerId} at ${stage}`);
+                  }
+                  const createSampleSurface = (label: string) => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = frameSize.width;
+                    canvas.height = frameSize.height;
+                    const context = canvas.getContext('2d');
+                    if (!context) throw new Error(`${label} has no 2D context at ${stage}`);
+                    context.setTransform(1, 0, 0, 1, 0, 0);
+                    context.globalAlpha = 1;
+                    context.globalCompositeOperation = 'source-over';
+                    context.imageSmoothingEnabled = false;
+                    context.clearRect(0, 0, frameSize.width, frameSize.height);
+                    return { canvas, context };
+                  };
+                  const legacySource = createSampleSurface('Legacy diagnostic source');
+                  if (
+                    !drawLayer(legacySource.context, { ...legacyLayer, opacity: 1, blendMode: 'source-over' }, frame)
+                  ) {
+                    throw new Error(`Legacy diagnostic source refused ${diagnosticLayerId} at ${stage}`);
+                  }
+                  const durableSource = createSampleSurface('Durable diagnostic source');
+                  durableSource.context.drawImage(
+                    materializedLayer.bitmap as CanvasImageSource,
+                    materializedLayer.bounds.x - frame.x,
+                    materializedLayer.bounds.y - frame.y,
+                    materializedLayer.bounds.width,
+                    materializedLayer.bounds.height
+                  );
+                  const legacyBackdrop = createSampleSurface('Legacy diagnostic backdrop');
+                  const legacyBackdropLayers = legacyLayers
+                    .filter((layer) => layer.order < legacyLayer.order)
+                    .sort((left, right) => left.order - right.order);
+                  if (
+                    legacyBackdropLayers.length > 0 &&
+                    !drawLayersToCanvas(legacyBackdrop.canvas, legacyBackdropLayers, frame)
+                  ) {
+                    throw new Error(`Legacy diagnostic backdrop refused ${diagnosticLayerId} at ${stage}`);
+                  }
+                  const durableBackdrop = createSampleSurface('Durable diagnostic backdrop');
+                  const durableBackdropLayers = projectedLayers
+                    .filter((layer) => layer.order < projectedLayer.order)
+                    .sort((left, right) => left.order - right.order);
+                  if (
+                    durableBackdropLayers.length > 0 &&
+                    !drawLayersToCanvas(durableBackdrop.canvas, durableBackdropLayers, frame)
+                  ) {
+                    throw new Error(`Durable diagnostic backdrop refused ${diagnosticLayerId} at ${stage}`);
+                  }
+                  const readPixels = (canvas: HTMLCanvasElement) => {
+                    const context = canvas.getContext('2d');
+                    if (!context) throw new Error(`A diagnostic surface lost its 2D context at ${stage}`);
+                    return context.getImageData(0, 0, frameSize.width, frameSize.height).data;
+                  };
+                  const rgbaAt = (pixels: ArrayLike<number>, x: number, y: number) => {
+                    const offset = (y * frameSize.width + x) * 4;
+                    return Array.from({ length: 4 }, (_, channel) => pixels[offset + channel] ?? null);
+                  };
+                  const legacySourcePixels = readPixels(legacySource.canvas);
+                  const durableSourcePixels = readPixels(durableSource.canvas);
+                  const legacyBackdropPixels = readPixels(legacyBackdrop.canvas);
+                  const durableBackdropPixels = readPixels(durableBackdrop.canvas);
+                  const enrichSamples = (samples: ReturnType<typeof compareBytes>['differingSamples']) =>
+                    samples.map((sample) => ({
+                      ...sample,
+                      rawSource: {
+                        legacyRgba: rgbaAt(legacySourcePixels, sample.x, sample.y),
+                        durableRgba: rgbaAt(durableSourcePixels, sample.x, sample.y),
+                      },
+                      backdropComposite: {
+                        legacyRgba: rgbaAt(legacyBackdropPixels, sample.x, sample.y),
+                        durableRgba: rgbaAt(durableBackdropPixels, sample.x, sample.y),
+                      },
+                    }));
+                  const expectedBounds = materializedLayerComparisons.find(
+                    (comparison) => comparison.layerId === diagnosticLayerId
+                  )?.expectedBounds;
+                  if (!expectedBounds) {
+                    throw new Error(`Missing expected bounds for diagnostic layer ${diagnosticLayerId} at ${stage}`);
+                  }
+                  return {
+                    layerId: diagnosticLayerId,
+                    frameDocumentBounds: frame,
+                    framePixelBounds: { x: 0, y: 0, width: frameSize.width, height: frameSize.height },
+                    sourceLayerBounds: {
+                      legacy: expectedBounds,
+                      durable: materializedLayer.bounds,
+                    },
+                    backdropSurfaceBounds: frame,
+                    runtime: enrichSamples(runtimePixelComparison.differingSamples),
+                    exportCanvas: enrichSamples(exportCanvasPixelComparison.differingSamples),
+                  };
+                })();
                 const legacyPsdBase64 = encodeBase64(
                   new Uint8Array(await savePsd(legacyReplay.layers, { width: 64, height: 64 }, frame))
                 );
@@ -2081,7 +6001,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                     legacyHeight: legacySurface.height,
                     durableWidth: projectionCanvas.width,
                     durableHeight: projectionCanvas.height,
-                    pixelComparison: compareBytes(legacyPixels, projectedPixels),
+                    pixelComparison: runtimePixelComparison,
                     layerRecords: projectedLayerRecords,
                   },
                   admission: {
@@ -2093,7 +6013,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                     legacyHeight: legacyExportCanvas.height,
                     durableWidth: durableExportCanvas.width,
                     durableHeight: durableExportCanvas.height,
-                    pixelComparison: compareBytes(legacyExportPixels, durableExportPixels),
+                    pixelComparison: exportCanvasPixelComparison,
                     layerRecords: exportLayerRecords,
                   },
                   png: {
@@ -2104,13 +6024,47 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                     legacyBase64: legacyPsdBase64,
                     durableBase64: durablePsdBase64,
                     expectedLayerBounds: expectedPsdLayerBounds,
+                    preEncodeLayers: psdPreEncodeLayers,
                   },
+                  surfaceBounds: {
+                    frameDocument: frame,
+                    framePixels: { x: 0, y: 0, width: frameSize.width, height: frameSize.height },
+                    runtime: {
+                      document: frame,
+                      pixels: { x: 0, y: 0, width: projectionCanvas.width, height: projectionCanvas.height },
+                    },
+                    exportCanvas: {
+                      document: frame,
+                      pixels: {
+                        x: 0,
+                        y: 0,
+                        width: durableExportCanvas.width,
+                        height: durableExportCanvas.height,
+                      },
+                    },
+                    png: {
+                      document: frame,
+                      pixels: {
+                        x: 0,
+                        y: 0,
+                        width: durableExportCanvas.width,
+                        height: durableExportCanvas.height,
+                      },
+                    },
+                    psdComposite: {
+                      document: frame,
+                      pixels: { x: 0, y: 0, width: frameSize.width, height: frameSize.height },
+                    },
+                    psdLayers: expectedPsdLayerBounds,
+                  },
+                  sourceBackdropSamples,
                 };
               })()
             : null;
           return {
             frame,
             durableFrame: composite.frame,
+            expectedSize: { width: frameSize.width, height: frameSize.height },
             legacyPixels,
             durablePixels,
             legacyDiffersFromUntransformed: differsFromUntransformed(legacyPixels),
@@ -2145,11 +6099,16 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           layerId: layerTransform.layerId,
           frame: result.frame,
           durableFrame: result.durableFrame,
+          expectedSize: result.expectedSize,
           differingBytes: result.differingBytes,
           legacyDiffersFromUntransformed: result.legacyDiffersFromUntransformed,
           durableDiffersFromUntransformed: result.durableDiffersFromUntransformed,
           legacyDiffersFromPrevious: differsFromPrevious(result.legacyPixels, previousLegacyTransformPixels),
           durableDiffersFromPrevious: differsFromPrevious(result.durablePixels, previousDurableTransformPixels),
+          legacyPixels:
+            fixture.verifyProjectedOutputs || fixture.captureRuntimePixels ? result.legacyPixels : undefined,
+          durablePixels:
+            fixture.verifyProjectedOutputs || fixture.captureRuntimePixels ? result.durablePixels : undefined,
           materializedLayerComparisons: result.materializedLayerComparisons,
           projectedOutputParity: result.projectedOutputParity,
         });
@@ -2178,6 +6137,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           angleDegrees: transition.angleDegrees,
           frame: result.frame,
           durableFrame: result.durableFrame,
+          expectedSize: result.expectedSize,
           legacyByteLength: result.legacyByteLength,
           durableByteLength: result.durableByteLength,
           differingBytes: result.differingBytes,
@@ -2289,6 +6249,47 @@ test.describe('Crop history', () => {
   // gives for its own viewport, for a different reason.
   test.use({ viewport: { width: 1600, height: 1200 } });
 
+  test('crop horizontal selection edges do not continue outside the crop', async ({ page }) => {
+    await openDocument(page);
+    const fit = await openCropTool(page);
+    await dragOnCanvas(page, fit, { x: 100, y: 100 }, { x: 700, y: 500 });
+    await dragOnCanvas(page, fit, { x: 400, y: 300 }, { x: 430, y: 330 });
+
+    const workspace = page.getByTestId('workspace-container');
+    const workspaceBox = await workspace.boundingBox();
+    const cropBox = await page.getByTestId('crop-selection-outline').boundingBox();
+    expect(workspaceBox).not.toBeNull();
+    expect(cropBox).not.toBeNull();
+    const screenshot = await workspace.screenshot();
+    const { data, info } = await sharp(screenshot).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const scaleX = info.width / workspaceBox!.width;
+    const scaleY = info.height / workspaceBox!.height;
+    const left = Math.max(2, Math.floor((cropBox!.x - workspaceBox!.x - 5) * scaleX));
+    const right = Math.min(info.width - 2, Math.ceil((cropBox!.x + cropBox!.width - workspaceBox!.x + 5) * scaleX));
+    const top = Math.round((cropBox!.y - workspaceBox!.y) * scaleY);
+    const bottom = Math.round((cropBox!.y + cropBox!.height - workspaceBox!.y) * scaleY);
+    const luminance = (x: number, y: number) => {
+      const offset = (y * info.width + x) * info.channels;
+      return 0.2126 * data[offset]! + 0.7152 * data[offset + 1]! + 0.0722 * data[offset + 2]!;
+    };
+    const edgeContrast = (edgeY: number) => {
+      let pixels = 0;
+      for (const y of [edgeY - 1, edgeY, edgeY + 1]) {
+        for (let x = 2; x < info.width - 2; x++) {
+          if (x >= left && x < right) continue;
+          const center = luminance(x, y);
+          if (Math.abs(center - luminance(x, y - 3)) > 18 && Math.abs(center - luminance(x, y + 3)) > 18) {
+            pixels++;
+          }
+        }
+      }
+      return pixels;
+    };
+
+    expect(edgeContrast(top), 'top crop edge pixels outside selection').toBeLessThan(10);
+    expect(edgeContrast(bottom), 'bottom crop edge pixels outside selection').toBeLessThan(10);
+  });
+
   test('the crop overlay selector exposes six guides and O cycles the active guide', async ({ page }) => {
     await openDocument(page);
     await openCropTool(page);
@@ -2363,6 +6364,19 @@ test.describe('Crop history', () => {
       { width: croppedFit.documentWidth, height: croppedFit.documentHeight },
       'contain fit follows the new frame dimensions while fit-scale compensation preserves screen-space pixel scale'
     ).toEqual(cropped);
+
+    const croppedCanvasBox = await getWorkspaceCanvas(page).boundingBox();
+    if (!croppedCanvasBox) throw new Error('the cropped canvas has no measurable bounds');
+    const croppedCapture = viewportClip(croppedCanvasBox);
+    const observedMasks: Array<{ capture: typeof croppedCapture; document: typeof croppedCapture }> = [];
+    await waitForCanvasPixels(page, croppedCapture, async (_screenshot, mask) => {
+      observedMasks.push(mask);
+      return true;
+    });
+    const croppedDocumentRect = observedMasks[0]?.document;
+    expect(croppedDocumentRect).toBeDefined();
+    expect(croppedDocumentRect!.width / croppedDocumentRect!.height).toBeCloseTo(cropped.width / cropped.height, 10);
+
     const keptOnCropped = bandOfDocumentY(croppedFit, BAR_KEPT_Y - CROP_TOP_Y);
     await waitForInk(page, croppedFit, inkIn(keptOnCropped));
 
@@ -2374,6 +6388,9 @@ test.describe('Crop history', () => {
     await expect
       .poll(() => readEffectiveScaleErrorForFrame(page, opening, openingEffectiveScale))
       .toBeLessThan(0.000001);
+    // Undo restores the crop selection guides over the document. Hide that overlay before the
+    // screenshot band assertion so guide lines cannot be mistaken for document ink.
+    await clickToolButton(page, 'draw');
     const restoredFit = await readFit(page);
     expect(
       { width: restoredFit.documentWidth, height: restoredFit.documentHeight },
@@ -3923,6 +7940,74 @@ test.describe('Crop history', () => {
       expect(result.transitionResults).toHaveLength(1);
     });
 
+    test('a 23-degree fractional crop matches legacy pixels for two positioned raster layers', async ({ page }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: '23-degree fractional two-layer crop',
+        documentId: 'arbitrary-multilayer-fractional-crop-parity-23',
+        materializedLayerIds: ['background', 'center-patch'],
+        transitions: [{ angleDegrees: 23, nextFrame: { x: 8.25, y: 9.5, width: 47.75, height: 43.25 } }],
+        layers: [
+          {
+            kind: 'raster',
+            id: 'background',
+            order: 0,
+            pos: { x: 0, y: 0, width: 64, height: 64 },
+            fills: [
+              { x: 0, y: 0, width: 32, height: 64, color: '#ff0000' },
+              { x: 32, y: 0, width: 32, height: 64, color: '#0000ff' },
+            ],
+          },
+          {
+            kind: 'raster',
+            id: 'center-patch',
+            order: 1,
+            pos: { x: 24, y: 24, width: 16, height: 16 },
+            fills: [
+              { x: 0, y: 0, width: 8, height: 16, color: '#ffff00' },
+              { x: 8, y: 0, width: 8, height: 16, color: '#00ff00' },
+            ],
+          },
+        ],
+      });
+
+      for (const [color, presence] of Object.entries(result.colorPresence)) {
+        expect(presence.legacy, `legacy crop should contain ${color}`).toBe(true);
+        expect(presence.durable, `durable crop should contain ${color}`).toBe(true);
+      }
+      expect(result.transitionResults).toHaveLength(1);
+      expect(result.transitionResults[0]?.frame).toEqual({
+        x: 8.25,
+        y: 9.5,
+        width: 47.75,
+        height: 43.25,
+      });
+      expect(result.transitionResults[0]?.durableFrame).toEqual(result.transitionResults[0]?.frame);
+      const layerComparisons = result.transitionResults[0]?.materializedLayerComparisons ?? [];
+      expect(layerComparisons).toHaveLength(2);
+      expect(layerComparisons.map(({ layerId }) => layerId).sort()).toEqual(['background', 'center-patch']);
+      for (const comparison of layerComparisons) {
+        expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
+        expect(comparison.bitmapSize).toEqual({
+          width: comparison.expectedBounds.width,
+          height: comparison.expectedBounds.height,
+        });
+        expect(comparison.frameDifferingPixels, `${comparison.layerId} HTML frame materialization`).toBe(0);
+        expect(comparison.offscreenFrameDifferingPixels, `${comparison.layerId} Offscreen frame materialization`).toBe(
+          0
+        );
+        expect(comparison.tightBitmapDifferingPixels, `${comparison.layerId} tight bitmap`).toBe(0);
+        expect(comparison.offscreenTightBitmapDifferingPixels, `${comparison.layerId} Offscreen tight bitmap`).toBe(0);
+      }
+      expect(
+        result.differingBytes,
+        `23-degree fractional multi-layer rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'center-patch']);
+    });
+
     test('a retained layer transform matches legacy before and after a later frame transform', async ({ page }) => {
       await openDocument(page);
 
@@ -4157,6 +8242,8 @@ test.describe('Crop history', () => {
           },
         ],
         transitions: [{ angleDegrees: 31, nextFrame: { x: 7.25, y: 8.5, width: 50.75, height: 45.25 } }],
+        verifyDownstreamInvertParity: true,
+        diagnoseOpaqueBackdrop: true,
         layers: [
           {
             kind: 'raster',
@@ -4180,15 +8267,270 @@ test.describe('Crop history', () => {
         ],
       };
       const result = await compareCropRenderers(page, fixture);
+      // Keep the comparison evidence before a strict parity assertion can abort this test.
+      const summarizeMaterialization = (comparisons: readonly CropParityLayerComparison[], fixtureStage: string) =>
+        comparisons.map((comparison) => ({
+          fixtureStage,
+          layerId: comparison.layerId,
+          stage: comparison.stage,
+          positions: comparison.positions,
+          compositing: comparison.compositing,
+          affineTransforms: comparison.affineTransforms,
+          expectedBounds: comparison.expectedBounds,
+          materializedBounds: comparison.materializedBounds,
+          bitmapSize: comparison.bitmapSize,
+          frameDifferingBytes: comparison.frameDifferingBytes,
+          framePremultipliedDifferingBytes: comparison.framePremultipliedDifferingBytes,
+          framePremultipliedDifferingPixels: comparison.framePremultipliedDifferingPixels,
+          framePremultipliedDifferingBytesByChannel: comparison.framePremultipliedDifferingBytesByChannel,
+          framePremultipliedAlphaBoundaryDifferingPixels: comparison.framePremultipliedAlphaBoundaryDifferingPixels,
+          framePremultipliedNonBoundaryDifferingPixels: comparison.framePremultipliedNonBoundaryDifferingPixels,
+          framePremultipliedDifferingSamples: comparison.framePremultipliedDifferingSamples,
+          frameDifferingPixels: comparison.frameDifferingPixels,
+          frameNonEdgeDifferingPixels: comparison.frameNonEdgeDifferingPixels,
+          frameDifferingSamples: comparison.frameDifferingSamples,
+          offscreenFrameDifferingBytes: comparison.offscreenFrameDifferingBytes,
+          offscreenFramePremultipliedDifferingBytes: comparison.offscreenFramePremultipliedDifferingBytes,
+          offscreenFramePremultipliedDifferingPixels: comparison.offscreenFramePremultipliedDifferingPixels,
+          offscreenFramePremultipliedDifferingBytesByChannel:
+            comparison.offscreenFramePremultipliedDifferingBytesByChannel,
+          offscreenFramePremultipliedAlphaBoundaryDifferingPixels:
+            comparison.offscreenFramePremultipliedAlphaBoundaryDifferingPixels,
+          offscreenFramePremultipliedNonBoundaryDifferingPixels:
+            comparison.offscreenFramePremultipliedNonBoundaryDifferingPixels,
+          offscreenFramePremultipliedDifferingSamples: comparison.offscreenFramePremultipliedDifferingSamples,
+          opaqueBackdropComparison: comparison.opaqueBackdropComparison,
+          offscreenFrameDifferingPixels: comparison.offscreenFrameDifferingPixels,
+          offscreenFrameNonEdgeDifferingPixels: comparison.offscreenFrameNonEdgeDifferingPixels,
+          offscreenFrameDifferingSamples: comparison.offscreenFrameDifferingSamples,
+          tightBitmapRawDifferingBytes: comparison.tightBitmapRawDifferingBytes,
+          tightBitmapRawDifferingSamples: comparison.tightBitmapRawDifferingSamples,
+          tightBitmapPremultipliedDifferingBytes: comparison.tightBitmapPremultipliedDifferingBytes,
+          downstreamInvertReadbackDifferingBytes: comparison.downstreamInvertReadbackDifferingBytes,
+          downstreamInvertReadbackDifferingSamples: comparison.downstreamInvertReadbackDifferingSamples,
+          offscreenDownstreamInvertReadbackDifferingBytes: comparison.offscreenDownstreamInvertReadbackDifferingBytes,
+          offscreenDownstreamInvertReadbackDifferingSamples:
+            comparison.offscreenDownstreamInvertReadbackDifferingSamples,
+          tightBitmapDifferingPixels: comparison.tightBitmapDifferingPixels,
+          tightBitmapNonEdgeDifferingPixels: comparison.tightBitmapNonEdgeDifferingPixels,
+          tightBitmapDifferingSamples: comparison.tightBitmapDifferingSamples,
+          offscreenTightBitmapRawDifferingBytes: comparison.offscreenTightBitmapRawDifferingBytes,
+          offscreenTightBitmapRawDifferingSamples: comparison.offscreenTightBitmapRawDifferingSamples,
+          offscreenTightBitmapPremultipliedDifferingBytes: comparison.offscreenTightBitmapPremultipliedDifferingBytes,
+          offscreenTightBitmapDifferingPixels: comparison.offscreenTightBitmapDifferingPixels,
+          offscreenTightBitmapNonEdgeDifferingPixels: comparison.offscreenTightBitmapNonEdgeDifferingPixels,
+          offscreenTightBitmapDifferingSamples: comparison.offscreenTightBitmapDifferingSamples,
+        }));
+      const materializationDiagnostics = [
+        ...result.layerTransformResults.flatMap((transform, index) =>
+          summarizeMaterialization(transform.materializedLayerComparisons, `affine cursor ${index + 1}`)
+        ),
+        ...result.transitionResults.flatMap((transition, index) =>
+          summarizeMaterialization(transition.materializedLayerComparisons, `frame transition ${index + 1}`)
+        ),
+      ];
+      await testInfo.attach('affine-raster-materialization-diagnostics.json', {
+        body: JSON.stringify(materializationDiagnostics, null, 2),
+        contentType: 'application/json',
+      });
       const adapterDiagnostics = [];
-      const normalComposite = await compareCropRenderers(page, {
+      const withCompositing = (
+        caseName: string,
+        documentId: string,
+        opacity: number,
+        blendMode: GlobalCompositeOperation
+      ) => ({
         ...fixture,
-        caseName: 'normal composite control for affine raster opacity and blend',
-        documentId: 'affine-raster-opacity-multiply-control',
+        caseName,
+        documentId,
+        verifyProjectedOutputs: false,
+        captureRuntimePixels: true,
+        verifyDownstreamInvertParity: false,
+        diagnoseOpaqueBackdrop: false,
+        materializedLayerIds: [],
         layers: fixture.layers.map((layer) =>
-          layer.id === 'foreground' ? { ...layer, layerOpacity: 1, blendMode: 'source-over' } : layer
+          layer.id === 'foreground' ? { ...layer, layerOpacity: opacity, blendMode } : layer
         ),
       });
+      const normalComposite = await compareCropRenderers(
+        page,
+        withCompositing(
+          'normal composite control for affine raster opacity and blend',
+          'affine-raster-normal',
+          1,
+          'source-over'
+        )
+      );
+      const opacityOnly = await compareCropRenderers(
+        page,
+        withCompositing(
+          'opacity-only control for affine raster blend',
+          'affine-raster-opacity-only',
+          0.58,
+          'source-over'
+        )
+      );
+      const blendOnly = await compareCropRenderers(
+        page,
+        withCompositing('blend-only control for affine raster opacity', 'affine-raster-blend-only', 1, 'multiply')
+      );
+
+      const comparePixelSurfaces = (
+        expected: readonly number[],
+        received: readonly number[],
+        width: number,
+        height: number,
+        originX: number,
+        originY: number
+      ) => {
+        const expectedLength = width * height * 4;
+        if (expected.length !== expectedLength || received.length !== expectedLength) {
+          throw new Error(
+            `Control comparison has ${expected.length}/${received.length} bytes; expected ${expectedLength} for ${width}x${height}`
+          );
+        }
+        let differingBytes = 0;
+        let differingPixels = 0;
+        let lastPixel = -1;
+        const samples: Array<{
+          x: number;
+          y: number;
+          documentX: number;
+          documentY: number;
+          expectedRgba: readonly number[];
+          receivedRgba: readonly number[];
+          differingChannels: Array<'r' | 'g' | 'b' | 'a'>;
+        }> = [];
+        const sampleByPixel = new Map<number, (typeof samples)[number]>();
+        const channels = ['r', 'g', 'b', 'a'] as const;
+        for (let offset = 0; offset < expectedLength; offset += 1) {
+          if (expected[offset] === received[offset]) continue;
+          differingBytes += 1;
+          const pixel = Math.floor(offset / 4);
+          const x = pixel % width;
+          const y = Math.floor(pixel / width);
+          if (pixel !== lastPixel) {
+            differingPixels += 1;
+            lastPixel = pixel;
+          }
+          const existing = sampleByPixel.get(pixel);
+          if (existing) {
+            const channel = channels[offset % 4];
+            if (!existing.differingChannels.includes(channel)) existing.differingChannels.push(channel);
+          } else if (samples.length < 8) {
+            const sample = {
+              x,
+              y,
+              documentX: originX + x,
+              documentY: originY + y,
+              expectedRgba: Array.from({ length: 4 }, (_, channel) => expected[pixel * 4 + channel] ?? 0),
+              receivedRgba: Array.from({ length: 4 }, (_, channel) => received[pixel * 4 + channel] ?? 0),
+              differingChannels: [channels[offset % 4]],
+            };
+            samples.push(sample);
+            sampleByPixel.set(pixel, sample);
+          }
+        }
+        return { differingBytes, differingPixels, samples };
+      };
+      const compareControlAtCursor = (
+        reference: {
+          frame: CropParityFrame;
+          expectedSize: Readonly<{ width: number; height: number }>;
+          legacyPixels?: readonly number[];
+          durablePixels?: readonly number[];
+        },
+        control: {
+          frame: CropParityFrame;
+          expectedSize: Readonly<{ width: number; height: number }>;
+          legacyPixels?: readonly number[];
+          durablePixels?: readonly number[];
+        },
+        label: string
+      ) => {
+        expect(control.frame, `${label} frame`).toEqual(reference.frame);
+        if (!reference.legacyPixels || !reference.durablePixels || !control.legacyPixels || !control.durablePixels) {
+          throw new Error(`${label} did not return runtime pixels for both renderers`);
+        }
+        expect(control.expectedSize, `${label} pixel dimensions`).toEqual(reference.expectedSize);
+        const { width, height } = reference.expectedSize;
+        return {
+          frame: reference.frame,
+          legacy: comparePixelSurfaces(
+            reference.legacyPixels,
+            control.legacyPixels,
+            width,
+            height,
+            reference.frame.x,
+            reference.frame.y
+          ),
+          durable: comparePixelSurfaces(
+            reference.durablePixels,
+            control.durablePixels,
+            width,
+            height,
+            reference.frame.x,
+            reference.frame.y
+          ),
+        };
+      };
+      const transformedControl = (input: typeof result) => {
+        const value = input.layerTransformResults[0];
+        if (!value) throw new Error(`${input.caseName} has no affine-cursor output`);
+        if (!value.expectedSize) throw new Error(`${input.caseName} has no affine-cursor output dimensions`);
+        return value;
+      };
+      const transitionedControl = (input: typeof result) => {
+        const value = input.transitionResults[0];
+        if (!value) throw new Error(`${input.caseName} has no fractional-frame output`);
+        if (!value.expectedSize) throw new Error(`${input.caseName} has no fractional-frame output dimensions`);
+        return value;
+      };
+      const affineControlComparisons = {
+        opacityOnlyVsNormal: compareControlAtCursor(
+          transformedControl(normalComposite),
+          transformedControl(opacityOnly),
+          'affine opacity-only versus normal control'
+        ),
+        blendOnlyVsNormal: compareControlAtCursor(
+          transformedControl(normalComposite),
+          transformedControl(blendOnly),
+          'affine blend-only versus normal control'
+        ),
+      };
+      const fractionalControlComparisons = {
+        opacityOnlyVsNormal: compareControlAtCursor(
+          transitionedControl(normalComposite),
+          transitionedControl(opacityOnly),
+          'fractional-frame opacity-only versus normal control'
+        ),
+        blendOnlyVsNormal: compareControlAtCursor(
+          transitionedControl(normalComposite),
+          transitionedControl(blendOnly),
+          'fractional-frame blend-only versus normal control'
+        ),
+      };
+      for (const [stage, comparisons] of Object.entries({
+        affine: affineControlComparisons,
+        fractionalFrame: fractionalControlComparisons,
+      })) {
+        expect(
+          comparisons.opacityOnlyVsNormal.legacy.differingBytes,
+          `${stage} opacity changes legacy output`
+        ).toBeGreaterThan(0);
+        expect(
+          comparisons.opacityOnlyVsNormal.durable.differingBytes,
+          `${stage} opacity changes durable output`
+        ).toBeGreaterThan(0);
+        expect(
+          comparisons.blendOnlyVsNormal.legacy.differingBytes,
+          `${stage} multiply changes legacy output`
+        ).toBeGreaterThan(0);
+        expect(
+          comparisons.blendOnlyVsNormal.durable.differingBytes,
+          `${stage} multiply changes durable output`
+        ).toBeGreaterThan(0);
+      }
 
       expect(result.layerTransformResults).toHaveLength(1);
       const transformed = result.layerTransformResults[0];
@@ -4208,17 +8550,31 @@ test.describe('Crop history', () => {
           legacyBlendMode: 'multiply',
           durableBlendMode: 'multiply',
         });
+        // Canvas ImageData exposes unpremultiplied color. At low alpha, different readback RGB bytes
+        // can encode the same rendered pixel. Require exact equality in premultiplied space and
+        // after the production Invert processor's returned raster is drawn into a fresh readback
+        // canvas. This pins the downstream draw/read boundary; it does not claim raw OffscreenCanvas
+        // backing-store identity.
         expect(
-          comparison.tightBitmapRawDifferingBytes,
+          comparison.downstreamInvertReadbackDifferingBytes,
           stage +
-            ' isolated tight bitmap raw bytes differ at ' +
-            JSON.stringify(comparison.tightBitmapRawDifferingSamples)
+            ' Invert readback differs between legacy and durable bitmaps; raw samples ' +
+            JSON.stringify({
+              htmlRaw: comparison.tightBitmapRawDifferingSamples,
+              premultipliedBytes: comparison.tightBitmapPremultipliedDifferingBytes,
+              premultiplied: comparison.tightBitmapDifferingSamples,
+            })
         ).toBe(0);
         expect(
-          comparison.offscreenTightBitmapRawDifferingBytes,
+          comparison.offscreenDownstreamInvertReadbackDifferingBytes,
           stage +
-            ' OffscreenCanvas tight bitmap raw bytes differ at ' +
-            JSON.stringify(comparison.offscreenTightBitmapRawDifferingSamples)
+            ' OffscreenCanvas Invert readback differs between legacy and durable bitmaps; raw samples ' +
+            JSON.stringify({
+              offscreenRawBytes: comparison.offscreenTightBitmapRawDifferingBytes,
+              offscreenRaw: comparison.offscreenTightBitmapRawDifferingSamples,
+              premultipliedBytes: comparison.offscreenTightBitmapPremultipliedDifferingBytes,
+              premultiplied: comparison.offscreenTightBitmapDifferingSamples,
+            })
         ).toBe(0);
         expect(
           comparison.tightBitmapPremultipliedDifferingBytes,
@@ -4236,6 +8592,64 @@ test.describe('Crop history', () => {
         stage: string
       ) => {
         const expectedSize = output.expectedSize;
+        const frameBounds = output.surfaceBounds.frameDocument;
+        const expectedSurfaceBounds = {
+          document: frameBounds,
+          pixels: { x: 0, y: 0, width: expectedSize.width, height: expectedSize.height },
+        };
+        expect(output.surfaceBounds.framePixels, `${stage} frame pixel bounds`).toEqual(expectedSurfaceBounds.pixels);
+        expect(output.surfaceBounds.runtime, `${stage} runtime surface bounds`).toEqual(expectedSurfaceBounds);
+        expect(output.surfaceBounds.exportCanvas, `${stage} export canvas bounds`).toEqual(expectedSurfaceBounds);
+        expect(output.surfaceBounds.png, `${stage} PNG bounds`).toEqual(expectedSurfaceBounds);
+        expect(output.surfaceBounds.psdComposite, `${stage} PSD composite bounds`).toEqual(expectedSurfaceBounds);
+        expect(output.surfaceBounds.psdLayers, `${stage} PSD layer bounds`).toEqual(output.psd.expectedLayerBounds);
+        const assertPixelEvidence = (
+          comparison: {
+            differingBytes: number;
+            differingPixels: number;
+            differingBounds: null | {
+              x: number;
+              y: number;
+              documentX: number;
+              documentY: number;
+              width: number;
+              height: number;
+            };
+            differingSamples: readonly {
+              x: number;
+              y: number;
+              documentX: number;
+              documentY: number;
+              expectedRgba: readonly (number | null)[];
+              receivedRgba: readonly (number | null)[];
+              expectedAlpha: number | null;
+              receivedAlpha: number | null;
+              differingChannels: readonly string[];
+            }[];
+          },
+          label: string,
+          origin = { x: frameBounds.x, y: frameBounds.y }
+        ) => {
+          expect(comparison.differingPixels, `${label} differing pixels`).toBeLessThanOrEqual(
+            comparison.differingBytes
+          );
+          if (comparison.differingPixels === 0) {
+            expect(comparison.differingBounds, `${label} has no differing bounds`).toBeNull();
+          } else {
+            expect(comparison.differingBounds, `${label} has differing bounds`).not.toBeNull();
+            expect(comparison.differingBounds?.documentX).toBe(origin.x + comparison.differingBounds!.x);
+            expect(comparison.differingBounds?.documentY).toBe(origin.y + comparison.differingBounds!.y);
+          }
+          for (const sample of comparison.differingSamples) {
+            expect(sample.documentX, `${label} sample document x`).toBe(origin.x + sample.x);
+            expect(sample.documentY, `${label} sample document y`).toBe(origin.y + sample.y);
+            expect(sample.expectedRgba).toHaveLength(4);
+            expect(sample.receivedRgba).toHaveLength(4);
+            expect(sample.expectedAlpha).toBe(sample.expectedRgba[3] ?? null);
+            expect(sample.receivedAlpha).toBe(sample.receivedRgba[3] ?? null);
+            expect(sample.differingChannels.length).toBeGreaterThan(0);
+          }
+        };
         expect(
           { width: output.runtime.legacyWidth, height: output.runtime.legacyHeight },
           `${stage} legacy runtime dimensions`
@@ -4246,6 +8660,7 @@ test.describe('Crop history', () => {
         ).toEqual(expectedSize);
         expect(output.runtime.pixelComparison.expectedByteLength).toBe(expectedSize.width * expectedSize.height * 4);
         expect(output.runtime.pixelComparison.receivedByteLength).toBe(expectedSize.width * expectedSize.height * 4);
+        assertPixelEvidence(output.runtime.pixelComparison, `${stage} runtime`);
         expect(Object.keys(output.runtime.layerRecords).sort()).toEqual(['background', 'foreground']);
         for (const id of ['background', 'foreground'] as const) {
           const layer = output.runtime.layerRecords[id];
@@ -4282,6 +8697,7 @@ test.describe('Crop history', () => {
         expect(output.exportCanvas.pixelComparison.receivedByteLength).toBe(
           expectedSize.width * expectedSize.height * 4
         );
+        assertPixelEvidence(output.exportCanvas.pixelComparison, `${stage} export canvas`);
         expect(Object.keys(output.exportCanvas.layerRecords).sort()).toEqual(['background', 'foreground']);
         for (const id of ['background', 'foreground'] as const) {
           const layer = output.exportCanvas.layerRecords[id];
@@ -4314,21 +8730,113 @@ test.describe('Crop history', () => {
             data: decoded.data,
           };
         };
-        const compareByteSequences = (expected: ArrayLike<number>, received: ArrayLike<number>) => {
+        const compareByteSequences = (
+          expected: ArrayLike<number>,
+          received: ArrayLike<number>,
+          width: number,
+          height: number,
+          originX: number,
+          originY: number
+        ) => {
+          const expectedLength = width * height * 4;
+          if (expected.length !== expectedLength || received.length !== expectedLength) {
+            throw new Error(
+              `${stage} pixel comparison has ${expected.length}/${received.length} bytes; expected ${expectedLength} for ${width}x${height}`
+            );
+          }
           let differingBytes = 0;
-          const differingSamples: Array<{ offset: number; expected: number | null; received: number | null }> = [];
+          let differingPixels = 0;
+          let lastDifferingPixel = -1;
+          let maxChannelDelta = 0;
+          let minX = Number.POSITIVE_INFINITY;
+          let minY = Number.POSITIVE_INFINITY;
+          let maxX = Number.NEGATIVE_INFINITY;
+          let maxY = Number.NEGATIVE_INFINITY;
+          const differingSamples: Array<{
+            offset: number;
+            x: number;
+            y: number;
+            documentX: number;
+            documentY: number;
+            expected: number | null;
+            received: number | null;
+            expectedRgba: readonly (number | null)[];
+            receivedRgba: readonly (number | null)[];
+            expectedAlpha: number | null;
+            receivedAlpha: number | null;
+            differingChannels: Array<'r' | 'g' | 'b' | 'a'>;
+          }> = [];
+          const sampleByPixel = new Map<number, (typeof differingSamples)[number]>();
+          const channels = ['r', 'g', 'b', 'a'] as const;
+          const readRgba = (pixels: ArrayLike<number>, byteOffset: number) =>
+            Array.from({ length: 4 }, (_, channel) => pixels[byteOffset + channel] ?? null);
           for (let offset = 0; offset < Math.max(expected.length, received.length); offset += 1) {
             const expectedByte = expected[offset] ?? null;
             const receivedByte = received[offset] ?? null;
             if (expectedByte === receivedByte) continue;
             differingBytes += 1;
-            if (differingSamples.length < 8)
-              differingSamples.push({ offset, expected: expectedByte, received: receivedByte });
+            const pixel = Math.floor(offset / 4);
+            // Pixel indices identify cell origins; preserve the frame's fractional document origin.
+            const x = pixel % width;
+            const y = Math.floor(pixel / width);
+            if (pixel !== lastDifferingPixel) {
+              differingPixels += 1;
+              lastDifferingPixel = pixel;
+              minX = Math.min(minX, x);
+              minY = Math.min(minY, y);
+              maxX = Math.max(maxX, x);
+              maxY = Math.max(maxY, y);
+            }
+            maxChannelDelta = Math.max(
+              maxChannelDelta,
+              expectedByte === null || receivedByte === null ? 255 : Math.abs(expectedByte - receivedByte)
+            );
+            const existingSample = sampleByPixel.get(pixel);
+            if (existingSample) {
+              const channel = channels[offset % 4];
+              if (!existingSample.differingChannels.includes(channel)) {
+                existingSample.differingChannels.push(channel);
+              }
+            } else if (differingSamples.length < 8) {
+              const sampleX = pixel % width;
+              const sampleY = Math.floor(pixel / width);
+              const expectedRgba = readRgba(expected, pixel * 4);
+              const receivedRgba = readRgba(received, pixel * 4);
+              const sample = {
+                offset,
+                x: sampleX,
+                y: sampleY,
+                documentX: originX + sampleX,
+                documentY: originY + sampleY,
+                expected: expectedByte,
+                received: receivedByte,
+                expectedRgba,
+                receivedRgba,
+                expectedAlpha: expectedRgba[3] ?? null,
+                receivedAlpha: receivedRgba[3] ?? null,
+                differingChannels: [channels[offset % 4]],
+              };
+              sampleByPixel.set(pixel, sample);
+              differingSamples.push(sample);
+            }
           }
           return {
             expectedByteLength: expected.length,
             receivedByteLength: received.length,
             differingBytes,
+            differingPixels,
+            maxChannelDelta,
+            differingBounds:
+              differingPixels === 0
+                ? null
+                : {
+                    x: minX,
+                    y: minY,
+                    documentX: originX + minX,
+                    documentY: originY + minY,
+                    width: maxX - minX + 1,
+                    height: maxY - minY + 1,
+                  },
             differingSamples,
           };
         };
@@ -4342,7 +8850,15 @@ test.describe('Crop history', () => {
           { width: durablePng.width, height: durablePng.height, channels: durablePng.channels },
           `${stage} decoded durable PNG dimensions`
         ).toEqual({ width: expectedSize.width, height: expectedSize.height, channels: 4 });
-        const pngPixelComparison = compareByteSequences(legacyPng.data, durablePng.data);
+        const pngPixelComparison = compareByteSequences(
+          legacyPng.data,
+          durablePng.data,
+          expectedSize.width,
+          expectedSize.height,
+          frameBounds.x,
+          frameBounds.y
+        );
+        assertPixelEvidence(pngPixelComparison, `${stage} PNG`);
 
         const legacyPsd = decodePsdCapture(output.psd.legacyBase64);
         const durablePsd = decodePsdCapture(output.psd.durableBase64);
@@ -4355,7 +8871,15 @@ test.describe('Crop history', () => {
         if (!legacyPsd.imageData || !durablePsd.imageData) {
           throw new Error(`${stage} PSD decode returned no composite pixels`);
         }
-        const psdCompositePixelComparison = compareByteSequences(legacyPsd.imageData.data, durablePsd.imageData.data);
+        const psdCompositePixelComparison = compareByteSequences(
+          legacyPsd.imageData.data,
+          durablePsd.imageData.data,
+          expectedSize.width,
+          expectedSize.height,
+          frameBounds.x,
+          frameBounds.y
+        );
+        assertPixelEvidence(psdCompositePixelComparison, `${stage} PSD composite`);
         expect(
           legacyPsd.children?.map((layer) => layer.name),
           `${stage} legacy PSD layer order`
@@ -4368,19 +8892,36 @@ test.describe('Crop history', () => {
           'background' | 'foreground',
           ReturnType<typeof compareByteSequences>
         >;
+        const psdLayerSurfaceBounds = {} as Record<
+          'background' | 'foreground',
+          Readonly<{
+            expected: (typeof output.psd.expectedLayerBounds)['background'];
+            legacy: Readonly<{ left: number; top: number; right: number; bottom: number }>;
+            durable: Readonly<{ left: number; top: number; right: number; bottom: number }>;
+          }>
+        >;
         for (const id of ['background', 'foreground'] as const) {
           const legacyLayer = legacyPsd.children?.find((layer) => layer.name === id);
           const durableLayer = durablePsd.children?.find((layer) => layer.name === id);
           if (!legacyLayer || !durableLayer) throw new Error(`${stage} PSD is missing ${id}`);
           const expectedBounds = output.psd.expectedLayerBounds[id];
-          expect(
-            { left: legacyLayer.left, top: legacyLayer.top, right: legacyLayer.right, bottom: legacyLayer.bottom },
-            `${stage} legacy PSD ${id} bounds`
-          ).toEqual(expectedBounds);
-          expect(
-            { left: durableLayer.left, top: durableLayer.top, right: durableLayer.right, bottom: durableLayer.bottom },
-            `${stage} durable PSD ${id} bounds`
-          ).toEqual(expectedBounds);
+          const readBounds = (layer: typeof legacyLayer, label: string) => {
+            const { left, top, right, bottom } = layer;
+            if (
+              typeof left !== 'number' ||
+              typeof top !== 'number' ||
+              typeof right !== 'number' ||
+              typeof bottom !== 'number'
+            ) {
+              throw new Error(`${stage} PSD ${label} has incomplete bounds`);
+            }
+            return { left, top, right, bottom };
+          };
+          const legacyBounds = readBounds(legacyLayer, `legacy ${id}`);
+          const durableBounds = readBounds(durableLayer, `durable ${id}`);
+          psdLayerSurfaceBounds[id] = { expected: expectedBounds, legacy: legacyBounds, durable: durableBounds };
+          expect(legacyBounds, `${stage} legacy PSD ${id} bounds`).toEqual(expectedBounds);
+          expect(durableBounds, `${stage} durable PSD ${id} bounds`).toEqual(expectedBounds);
           const opacity = id === 'foreground' ? Math.round(0.58 * 255) / 255 : 1;
           const blendMode = id === 'foreground' ? 'multiply' : 'normal';
           expect(
@@ -4408,7 +8949,583 @@ test.describe('Crop history', () => {
             width: expectedBounds.right - expectedBounds.left,
             height: expectedBounds.bottom - expectedBounds.top,
           });
-          psdLayerPixelComparisons[id] = compareByteSequences(legacyLayer.imageData.data, durableLayer.imageData.data);
+          psdLayerPixelComparisons[id] = compareByteSequences(
+            legacyLayer.imageData.data,
+            durableLayer.imageData.data,
+            expectedBounds.right - expectedBounds.left,
+            expectedBounds.bottom - expectedBounds.top,
+            frameBounds.x + expectedBounds.left,
+            frameBounds.y + expectedBounds.top
+          );
+          assertPixelEvidence(psdLayerPixelComparisons[id], `${stage} PSD ${id}`, {
+            x: frameBounds.x + expectedBounds.left,
+            y: frameBounds.y + expectedBounds.top,
+          });
+        }
+        const psdPreEncodeLayerPixelComparisons = {} as Record<
+          'background' | 'foreground',
+          ReturnType<typeof compareByteSequences>
+        >;
+        for (const id of ['background', 'foreground'] as const) {
+          const preEncode = output.psd.preEncodeLayers[id];
+          if (!preEncode?.pixelComparison) {
+            throw new Error(`${stage} PSD ${id} did not produce matching pre-encode layer bounds`);
+          }
+          const expectedBounds = output.psd.expectedLayerBounds[id];
+          expect(preEncode.legacyBounds, `${stage} legacy pre-encode PSD ${id} bounds`).toEqual(expectedBounds);
+          expect(preEncode.durableBounds, `${stage} durable pre-encode PSD ${id} bounds`).toEqual(expectedBounds);
+          const expectedRasterSize = {
+            width: expectedBounds.right - expectedBounds.left,
+            height: expectedBounds.bottom - expectedBounds.top,
+          };
+          expect(preEncode.legacyRasterSize, `${stage} legacy pre-encode PSD ${id} size`).toEqual(expectedRasterSize);
+          expect(preEncode.durableRasterSize, `${stage} durable pre-encode PSD ${id} size`).toEqual(expectedRasterSize);
+          psdPreEncodeLayerPixelComparisons[id] = preEncode.pixelComparison;
+        }
+        if (stage === 'fractional frame cursor') {
+          const backgroundBoundsControl = output.psd.preEncodeLayers.background.psdBoundsControl;
+          if (!backgroundBoundsControl) {
+            throw new Error(`${stage} background did not produce PSD-bounds diagnostic controls`);
+          }
+          const comparedFramePixels = expectedSize.width * expectedSize.height;
+          // These synthetic common-backing clips can rasterize differently across platforms.
+          // Keep their deltas diagnostic; actual composite and eligible output parity stays exact below.
+          for (const source of ['legacy', 'durable'] as const) {
+            const commonBacking = backgroundBoundsControl[source].commonBackingClipControls;
+            const physicalBacking = backgroundBoundsControl[source].physicalBackingSizeMatrixControls;
+            if (!commonBacking || !physicalBacking) {
+              throw new Error(`${stage} ${source} background did not produce backing-size diagnostics`);
+            }
+            expect(commonBacking.originalFrameComparedPixels, `${source} clip diagnostic frame coverage`).toBe(
+              comparedFramePixels
+            );
+            expect(Object.keys(commonBacking.commonBackingClipVsBaseline).sort()).toEqual([
+              'combined',
+              'heightOnly',
+              'widthOnly',
+            ]);
+            for (const [clipName, comparison] of Object.entries(commonBacking.commonBackingClipVsBaseline)) {
+              expect(comparison.measurementStatus, `${source} ${clipName} clip measurement`).toBe('measured');
+              expect(comparison.comparedPixels, `${source} ${clipName} clip coverage`).toBe(comparedFramePixels);
+              const pixelComparison = comparison.pixelComparison;
+              expect(pixelComparison?.expectedByteLength, `${source} ${clipName} clip expected-byte coverage`).toBe(
+                comparedFramePixels * 4
+              );
+              expect(pixelComparison?.receivedByteLength, `${source} ${clipName} clip received-byte coverage`).toBe(
+                comparedFramePixels * 4
+              );
+              expect(Number.isSafeInteger(pixelComparison?.differingBytes)).toBe(true);
+              expect(
+                pixelComparison?.differingBytes,
+                `${source} ${clipName} clip differing-byte lower bound`
+              ).toBeGreaterThanOrEqual(0);
+              expect(
+                pixelComparison?.differingBytes,
+                `${source} ${clipName} clip differing-byte upper bound`
+              ).toBeLessThanOrEqual(comparedFramePixels * 4);
+            }
+            expect(
+              commonBacking.widthHeightInteraction.measurementStatus,
+              `${source} clip interaction measurement`
+            ).toBe('measured');
+            expect(commonBacking.widthHeightInteraction.comparedPixels, `${source} clip interaction coverage`).toBe(
+              comparedFramePixels
+            );
+            expect(Number.isSafeInteger(commonBacking.widthHeightInteraction.differingBytes)).toBe(true);
+            expect(commonBacking.widthHeightInteraction.differingBytes).toBeGreaterThanOrEqual(0);
+            expect(commonBacking.widthHeightInteraction.differingBytes).toBeLessThanOrEqual(comparedFramePixels * 4);
+            expect(physicalBacking.originalFrameComparedPixels, `${source} physical-size frame coverage`).toBe(
+              comparedFramePixels
+            );
+            expect(physicalBacking.physicalBackingSizes).toHaveLength(8);
+            expect(
+              physicalBacking.physicalBackingSizes.map(({ backingPixelSize }) => backingPixelSize),
+              `${source} physical-size matrix`
+            ).toEqual([46, 47, 51, 89].flatMap((height) => [51, 89].map((width) => ({ width, height }))));
+            for (const measurement of physicalBacking.physicalBackingSizes) {
+              for (const representation of ['raw', 'premultiplied'] as const) {
+                const comparison = measurement.frameRegionVsBaseline[representation];
+                const label = `${source} ${measurement.backingPixelSize.width}x${measurement.backingPixelSize.height} ${representation}`;
+                expect(comparison.measurementStatus, `${label} measurement`).toBe('measured');
+                expect(comparison.comparedPixels, `${label} coverage`).toBe(comparedFramePixels);
+              }
+            }
+            expect(
+              physicalBacking.widthExtensionAtEachHeight.map(({ backingHeight }) => backingHeight),
+              `${source} width comparisons by height`
+            ).toEqual([46, 47, 51, 89]);
+            for (const measurement of physicalBacking.widthExtensionAtEachHeight) {
+              for (const representation of ['raw', 'premultiplied'] as const) {
+                const comparison = measurement.width51VsWidth89[representation];
+                const label = `${source} width comparison at height ${measurement.backingHeight} ${representation}`;
+                expect(comparison.measurementStatus, `${label} measurement`).toBe('measured');
+                expect(comparison.comparedPixels, `${label} coverage`).toBe(comparedFramePixels);
+              }
+            }
+            expect(
+              physicalBacking.widthHeightInteractionAtEachExpandedHeight.map(({ backingHeight }) => backingHeight),
+              `${source} width-height interactions`
+            ).toEqual([47, 51, 89]);
+            for (const measurement of physicalBacking.widthHeightInteractionAtEachExpandedHeight) {
+              expect(
+                measurement.interaction.measurementStatus,
+                `${source} interaction at ${measurement.backingHeight}`
+              ).toBe('measured');
+              expect(
+                measurement.interaction.comparedPixels,
+                `${source} interaction coverage at ${measurement.backingHeight}`
+              ).toBe(comparedFramePixels);
+            }
+            const firstDifferenceTrace = physicalBacking.firstDifferenceTraceControls;
+            if (!firstDifferenceTrace) {
+              throw new Error(`${stage} ${source} background did not produce first-difference call traces`);
+            }
+            expect(firstDifferenceTrace.target.firstDifferenceSelection.measurementStatus).toBe('measured');
+            expect(firstDifferenceTrace.target.firstDifferenceSelection.comparedPixels).toBe(comparedFramePixels);
+            expect(firstDifferenceTrace.target.baselineBackingSize).toEqual({ width: 51, height: 46 });
+            expect(firstDifferenceTrace.target.oneRowLargerBackingSize).toEqual({ width: 51, height: 47 });
+            const selectedFirstDifference =
+              firstDifferenceTrace.target.firstDifferenceSelection.firstDifferingFrameLocalPixelCell;
+            expect(firstDifferenceTrace.target.firstDifferenceSelection.differingBytes > 0).toBe(
+              firstDifferenceTrace.target.firstDifferenceSelection.status === 'found'
+            );
+            expect(firstDifferenceTrace.target.firstDifferenceSelection.status).toBe(
+              selectedFirstDifference ? 'found' : 'none'
+            );
+            expect(firstDifferenceTrace.target.sampleFrameLocalPixelCell).toEqual(
+              selectedFirstDifference ?? { x: 0, y: 0 }
+            );
+            expect(firstDifferenceTrace.canvasTypeComparisons.map(({ canvasType }) => canvasType)).toEqual(
+              firstDifferenceTrace.offscreenCanvasAvailable ? ['HTMLCanvas', 'OffscreenCanvas'] : ['HTMLCanvas']
+            );
+            for (const comparison of firstDifferenceTrace.canvasTypeComparisons) {
+              expect(comparison.inputSourceIdentityStable, `${source} ${comparison.canvasType} source identity`).toBe(
+                true
+              );
+              expect(comparison.drawImageCallSignatureStable, `${source} ${comparison.canvasType} draw inputs`).toBe(
+                true
+              );
+              const isFiniteNumber = (value: unknown): value is number =>
+                typeof value === 'number' && Number.isFinite(value);
+              const isRecord = (value: unknown): value is Record<string, unknown> =>
+                typeof value === 'object' && value !== null;
+              const originalCapturedCall = comparison.baseline.drawImageCalls[0];
+              if (!originalCapturedCall) {
+                throw new Error(`${source} ${comparison.canvasType} trace has no captured original call`);
+              }
+              const originalNumericArguments = originalCapturedCall.numericArguments;
+              if (!Array.isArray(originalNumericArguments) || !originalNumericArguments.every(isFiniteNumber)) {
+                throw new Error(`${source} ${comparison.canvasType} trace has invalid drawImage arguments`);
+              }
+              const originalImageSizeCandidate = originalCapturedCall.imageSize;
+              if (
+                !isRecord(originalImageSizeCandidate) ||
+                !isFiniteNumber(originalImageSizeCandidate.width) ||
+                !isFiniteNumber(originalImageSizeCandidate.height)
+              ) {
+                throw new Error(`${source} ${comparison.canvasType} trace has invalid source dimensions`);
+              }
+              const originalSourceSize = {
+                width: originalImageSizeCandidate.width,
+                height: originalImageSizeCandidate.height,
+              };
+              for (const run of [comparison.baseline, comparison.oneRowLarger]) {
+                expect(run.drawImageCalls, `${source} ${comparison.canvasType} captured calls`).toHaveLength(1);
+                expect(run.drawImageCalls[0].argumentCount).toBe(5);
+                expect(run.drawImageCalls[0].sourceConstructor).toBe(originalCapturedCall.sourceConstructor);
+                expect(run.drawImageCalls[0].imageSize).toEqual(originalCapturedCall.imageSize);
+                expect(run.drawImageCalls[0].numericArguments).toEqual(originalCapturedCall.numericArguments);
+              }
+              expect(originalCapturedCall.sourceConstructor).toBe('ImageBitmap');
+              expect(originalNumericArguments).toHaveLength(4);
+              expect(originalNumericArguments.every(Number.isFinite)).toBe(true);
+              for (const run of [comparison.baseline, comparison.oneRowLarger]) {
+                expect(
+                  run.status,
+                  `${source} ${run.canvasType} ${run.canvasBackingSize.width}x${run.canvasBackingSize.height}`
+                ).toBe('measured');
+                expect(run.drawImageCalls.length, `${source} ${run.canvasType} drawImage trace`).toBeGreaterThan(0);
+                expect(run.readbackSample.rgba, `${source} ${run.canvasType} readback sample`).toHaveLength(4);
+                expect(run.commonSizeCopyControl.originalFrameComparison.expectedByteLength).toBe(
+                  comparedFramePixels * 4
+                );
+                expect(run.commonSizeCopyControl.originalFrameComparison.receivedByteLength).toBe(
+                  comparedFramePixels * 4
+                );
+              }
+              if (comparison.canvasType === 'HTMLCanvas') {
+                const firstObservedDifference = comparison.originalFrameComparison.differingSamples[0];
+                expect(
+                  firstObservedDifference ? { x: firstObservedDifference.x, y: firstObservedDifference.y } : null,
+                  `${source} first differing frame cell`
+                ).toEqual(selectedFirstDifference);
+              }
+              const directReproduction = comparison.directDrawImageReproduction;
+              for (const run of [directReproduction.baseline, directReproduction.oneRowLarger]) {
+                expect(run.drawImageCallCount, `${source} direct call count`).toBeGreaterThan(0);
+                expect(run.frameByteLength, `${source} direct frame byte coverage`).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToDrawLayerSource.expectedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToDrawLayerSource.receivedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToDrawLayerSource.differingBytes, `${source} direct replay fidelity`).toBe(0);
+              }
+              expect(directReproduction.originalFrameComparison.expectedByteLength).toBe(comparedFramePixels * 4);
+              expect(directReproduction.originalFrameComparison.receivedByteLength).toBe(comparedFramePixels * 4);
+              expect(directReproduction.originalFrameComparison).toEqual(comparison.originalFrameComparison);
+              const transparentPadding = comparison.transparentPaddingControl;
+              expect(transparentPadding.source.originalSourceConstructor).toBe('ImageBitmap');
+              expect(transparentPadding.source.paddedSourceConstructor).toBe('ImageBitmap');
+              const [dx, dy, dw, dh] = originalNumericArguments;
+              if (dx === undefined || dy === undefined || dw === undefined || dh === undefined) {
+                throw new Error(`${source} ${comparison.canvasType} original draw geometry is incomplete`);
+              }
+              const paddedDestinationArguments = transparentPadding.mapping.paddedArguments;
+              if (!Array.isArray(paddedDestinationArguments) || !paddedDestinationArguments.every(isFiniteNumber)) {
+                throw new Error(`${source} ${comparison.canvasType} padded draw geometry is incomplete`);
+              }
+              const scaleX = dw / originalSourceSize.width;
+              const scaleY = dh / originalSourceSize.height;
+              expect(transparentPadding.source.originalSourceSize).toEqual(originalSourceSize);
+              expect(transparentPadding.source.paddedSourceSize).toEqual({
+                width: originalSourceSize.width + 2,
+                height: originalSourceSize.height + 2,
+              });
+              expect(transparentPadding.source.interiorComparison.expectedByteLength).toBe(
+                originalSourceSize.width * originalSourceSize.height * 4
+              );
+              expect(transparentPadding.source.interiorComparison.receivedByteLength).toBe(
+                originalSourceSize.width * originalSourceSize.height * 4
+              );
+              expect(transparentPadding.source.interiorComparison.differingBytes).toBe(0);
+              const expectedBorderPixels =
+                (originalSourceSize.width + 2) * (originalSourceSize.height + 2) -
+                originalSourceSize.width * originalSourceSize.height;
+              expect(transparentPadding.source.borderPixelCount).toBe(expectedBorderPixels);
+              expect(transparentPadding.source.expectedBorderPixelCount).toBe(expectedBorderPixels);
+              expect(transparentPadding.source.borderNonTransparentPixelCount).toBe(0);
+              expect(transparentPadding.mapping.originalArguments).toEqual(
+                comparison.baseline.drawImageCalls[0].numericArguments
+              );
+              expect(transparentPadding.mapping.paddedArguments).toEqual([
+                dx - scaleX,
+                dy - scaleY,
+                dw + 2 * scaleX,
+                dh + 2 * scaleY,
+              ]);
+              expect(transparentPadding.mapping.visibleMappingPreserved).toBe(true);
+              expect(transparentPadding.mapping.mappedOriginalInterior).toEqual({
+                x: dx,
+                y: dy,
+                width: dw,
+                height: dh,
+              });
+              for (const run of [transparentPadding.baseline, transparentPadding.oneRowLarger]) {
+                expect(run.drawImageCallCount).toBe(1);
+                expect(run.frameByteLength).toBe(comparedFramePixels * 4);
+                expect(run.sampleRgba).toHaveLength(4);
+                expect(run.comparisonToUnpadded.expectedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToUnpadded.receivedByteLength).toBe(comparedFramePixels * 4);
+              }
+              expect(transparentPadding.paddedHeightComparison.expectedByteLength).toBe(comparedFramePixels * 4);
+              expect(transparentPadding.paddedHeightComparison.receivedByteLength).toBe(comparedFramePixels * 4);
+              const originalSourceNineArgument = transparentPadding.originalSourceNineArgumentControl;
+              expect(originalSourceNineArgument.call.argumentCount).toBe(9);
+              expect(originalSourceNineArgument.call.sourceRectangle).toEqual({
+                x: 0,
+                y: 0,
+                width: originalSourceSize.width,
+                height: originalSourceSize.height,
+              });
+              expect(originalSourceNineArgument.call.destinationRectangle).toEqual({
+                x: dx,
+                y: dy,
+                width: dw,
+                height: dh,
+              });
+              expect(originalSourceNineArgument.call.numericArguments).toEqual([
+                0,
+                0,
+                originalSourceSize.width,
+                originalSourceSize.height,
+                dx,
+                dy,
+                dw,
+                dh,
+              ]);
+              for (const run of [originalSourceNineArgument.baseline, originalSourceNineArgument.oneRowLarger]) {
+                expect(run.drawImageCallCount).toBe(1);
+                expect(run.frameByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToUnpaddedFiveArgument.expectedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToUnpaddedFiveArgument.receivedByteLength).toBe(comparedFramePixels * 4);
+              }
+              expect(originalSourceNineArgument.backingHeightComparison.expectedByteLength).toBe(
+                comparedFramePixels * 4
+              );
+              expect(originalSourceNineArgument.backingHeightComparison.receivedByteLength).toBe(
+                comparedFramePixels * 4
+              );
+              const paddedInteriorNineArgument = transparentPadding.paddedInteriorNineArgumentControl;
+              expect(paddedInteriorNineArgument.call.argumentCount).toBe(9);
+              expect(paddedInteriorNineArgument.call.sourceRectangle).toEqual({
+                x: 1,
+                y: 1,
+                width: originalSourceSize.width,
+                height: originalSourceSize.height,
+              });
+              expect(paddedInteriorNineArgument.call.destinationRectangle).toEqual({
+                x: dx,
+                y: dy,
+                width: dw,
+                height: dh,
+              });
+              expect(paddedInteriorNineArgument.call.numericArguments).toEqual([
+                1,
+                1,
+                originalSourceSize.width,
+                originalSourceSize.height,
+                dx,
+                dy,
+                dw,
+                dh,
+              ]);
+              for (const run of [paddedInteriorNineArgument.baseline, paddedInteriorNineArgument.oneRowLarger]) {
+                expect(run.drawImageCallCount).toBe(1);
+                expect(run.frameByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToUnpadded.expectedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToUnpadded.receivedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToOriginalSourceNineArgument.expectedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToOriginalSourceNineArgument.receivedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToFullPaddedFiveArgument.expectedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToFullPaddedFiveArgument.receivedByteLength).toBe(comparedFramePixels * 4);
+              }
+              expect(paddedInteriorNineArgument.paddedHeightComparison.expectedByteLength).toBe(
+                comparedFramePixels * 4
+              );
+              expect(paddedInteriorNineArgument.paddedHeightComparison.receivedByteLength).toBe(
+                comparedFramePixels * 4
+              );
+              const edgeExtendedBorderControl = transparentPadding.edgeExtendedBorderControl;
+              expect(edgeExtendedBorderControl.source.originalSourceConstructor).toBe('ImageBitmap');
+              expect(edgeExtendedBorderControl.source.paddedSourceConstructor).toBe('ImageBitmap');
+              expect(edgeExtendedBorderControl.source.originalSourceSize).toEqual(originalSourceSize);
+              expect(edgeExtendedBorderControl.source.paddedSourceSize).toEqual({
+                width: originalSourceSize.width + 2,
+                height: originalSourceSize.height + 2,
+              });
+              expect(edgeExtendedBorderControl.source.interiorComparison.expectedByteLength).toBe(
+                originalSourceSize.width * originalSourceSize.height * 4
+              );
+              expect(edgeExtendedBorderControl.source.interiorComparison.receivedByteLength).toBe(
+                originalSourceSize.width * originalSourceSize.height * 4
+              );
+              expect(edgeExtendedBorderControl.source.interiorComparison.differingBytes).toBe(0);
+              expect(edgeExtendedBorderControl.source.borderPixelCount).toBe(expectedBorderPixels);
+              expect(edgeExtendedBorderControl.source.expectedBorderPixelCount).toBe(expectedBorderPixels);
+              expect(edgeExtendedBorderControl.source.extendedEdges).toEqual(['top', 'right', 'bottom', 'left']);
+              expect(edgeExtendedBorderControl.source.extendedBorderPixelCount).toBe(expectedBorderPixels);
+              expect(edgeExtendedBorderControl.source.transparentBorderPixelCount).toBe(0);
+              expect(edgeExtendedBorderControl.source.borderComparison.expectedByteLength).toBe(
+                expectedBorderPixels * 4
+              );
+              expect(edgeExtendedBorderControl.source.borderComparison.receivedByteLength).toBe(
+                expectedBorderPixels * 4
+              );
+              expect(edgeExtendedBorderControl.source.borderComparison.differingBytes).toBe(0);
+              expect(edgeExtendedBorderControl.source.paddedSurfaceComparison.expectedByteLength).toBe(
+                (originalSourceSize.width + 2) * (originalSourceSize.height + 2) * 4
+              );
+              expect(edgeExtendedBorderControl.source.paddedSurfaceComparison.receivedByteLength).toBe(
+                (originalSourceSize.width + 2) * (originalSourceSize.height + 2) * 4
+              );
+              expect(edgeExtendedBorderControl.source.paddedSurfaceComparison.differingBytes).toBe(0);
+              expect(edgeExtendedBorderControl.call.argumentCount).toBe(9);
+              expect(edgeExtendedBorderControl.call.sourceRectangle).toEqual(
+                paddedInteriorNineArgument.call.sourceRectangle
+              );
+              expect(edgeExtendedBorderControl.call.destinationRectangle).toEqual(
+                paddedInteriorNineArgument.call.destinationRectangle
+              );
+              expect(edgeExtendedBorderControl.call.numericArguments).toEqual(
+                paddedInteriorNineArgument.call.numericArguments
+              );
+              for (const run of [edgeExtendedBorderControl.baseline, edgeExtendedBorderControl.oneRowLarger]) {
+                expect(run.drawImageCallCount).toBe(1);
+                expect(run.frameByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToTransparentBorder.expectedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToTransparentBorder.receivedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToOriginalSourceNineArgument.expectedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToOriginalSourceNineArgument.receivedByteLength).toBe(comparedFramePixels * 4);
+              }
+              expect(edgeExtendedBorderControl.backingHeightComparison.expectedByteLength).toBe(
+                comparedFramePixels * 4
+              );
+              expect(edgeExtendedBorderControl.backingHeightComparison.receivedByteLength).toBe(
+                comparedFramePixels * 4
+              );
+              const rightEdgeOnlyControl = transparentPadding.rightEdgeOnlyControl;
+              expect(rightEdgeOnlyControl.source.originalSourceConstructor).toBe('ImageBitmap');
+              expect(rightEdgeOnlyControl.source.paddedSourceConstructor).toBe('ImageBitmap');
+              expect(rightEdgeOnlyControl.source.originalSourceSize).toEqual(originalSourceSize);
+              expect(rightEdgeOnlyControl.source.paddedSourceSize).toEqual({
+                width: originalSourceSize.width + 2,
+                height: originalSourceSize.height + 2,
+              });
+              expect(rightEdgeOnlyControl.source.interiorComparison.expectedByteLength).toBe(
+                originalSourceSize.width * originalSourceSize.height * 4
+              );
+              expect(rightEdgeOnlyControl.source.interiorComparison.receivedByteLength).toBe(
+                originalSourceSize.width * originalSourceSize.height * 4
+              );
+              expect(rightEdgeOnlyControl.source.interiorComparison.differingBytes).toBe(0);
+              expect(rightEdgeOnlyControl.source.extendedEdges).toEqual(['right']);
+              expect(rightEdgeOnlyControl.source.borderPixelCount).toBe(expectedBorderPixels);
+              expect(rightEdgeOnlyControl.source.expectedBorderPixelCount).toBe(expectedBorderPixels);
+              expect(rightEdgeOnlyControl.source.extendedBorderPixelCount).toBe(originalSourceSize.height);
+              expect(rightEdgeOnlyControl.source.transparentBorderPixelCount).toBe(
+                expectedBorderPixels - originalSourceSize.height
+              );
+              expect(rightEdgeOnlyControl.source.borderComparison.expectedByteLength).toBe(expectedBorderPixels * 4);
+              expect(rightEdgeOnlyControl.source.borderComparison.receivedByteLength).toBe(expectedBorderPixels * 4);
+              expect(rightEdgeOnlyControl.source.borderComparison.differingBytes).toBe(0);
+              expect(rightEdgeOnlyControl.source.paddedSurfaceComparison.expectedByteLength).toBe(
+                (originalSourceSize.width + 2) * (originalSourceSize.height + 2) * 4
+              );
+              expect(rightEdgeOnlyControl.source.paddedSurfaceComparison.receivedByteLength).toBe(
+                (originalSourceSize.width + 2) * (originalSourceSize.height + 2) * 4
+              );
+              expect(rightEdgeOnlyControl.source.paddedSurfaceComparison.differingBytes).toBe(0);
+              expect(rightEdgeOnlyControl.call.argumentCount).toBe(9);
+              expect(rightEdgeOnlyControl.call.sourceRectangle).toEqual(
+                paddedInteriorNineArgument.call.sourceRectangle
+              );
+              expect(rightEdgeOnlyControl.call.destinationRectangle).toEqual(
+                paddedInteriorNineArgument.call.destinationRectangle
+              );
+              expect(rightEdgeOnlyControl.call.numericArguments).toEqual(
+                paddedInteriorNineArgument.call.numericArguments
+              );
+              for (const run of [rightEdgeOnlyControl.baseline, rightEdgeOnlyControl.oneRowLarger]) {
+                expect(run.drawImageCallCount).toBe(1);
+                expect(run.frameByteLength).toBe(comparedFramePixels * 4);
+                for (const comparison of [
+                  run.comparisonToTransparentBorder,
+                  run.comparisonToOriginalSourceNineArgument,
+                  run.comparisonToFullEdgeExtension,
+                ]) {
+                  expect(comparison.expectedByteLength).toBe(comparedFramePixels * 4);
+                  expect(comparison.receivedByteLength).toBe(comparedFramePixels * 4);
+                }
+              }
+              expect(rightEdgeOnlyControl.backingHeightComparison.expectedByteLength).toBe(comparedFramePixels * 4);
+              expect(rightEdgeOnlyControl.backingHeightComparison.receivedByteLength).toBe(comparedFramePixels * 4);
+              const paddedFullSourceNineArgument = transparentPadding.paddedFullSourceNineArgumentControl;
+              expect(paddedFullSourceNineArgument.call.argumentCount).toBe(9);
+              expect(paddedFullSourceNineArgument.call.sourceRectangle).toEqual({
+                x: 0,
+                y: 0,
+                width: originalSourceSize.width + 2,
+                height: originalSourceSize.height + 2,
+              });
+              expect(paddedFullSourceNineArgument.call.destinationRectangle).toEqual({
+                x: dx,
+                y: dy,
+                width: dw,
+                height: dh,
+              });
+              expect(paddedFullSourceNineArgument.call.numericArguments).toEqual([
+                0,
+                0,
+                originalSourceSize.width + 2,
+                originalSourceSize.height + 2,
+                dx,
+                dy,
+                dw,
+                dh,
+              ]);
+              for (const run of [paddedFullSourceNineArgument.baseline, paddedFullSourceNineArgument.oneRowLarger]) {
+                expect(run.drawImageCallCount).toBe(1);
+                expect(run.frameByteLength).toBe(comparedFramePixels * 4);
+                for (const comparison of [
+                  run.comparisonToUnpadded,
+                  run.comparisonToInteriorNineArgument,
+                  run.comparisonToFullPaddedFiveArgument,
+                ]) {
+                  expect(comparison.expectedByteLength).toBe(comparedFramePixels * 4);
+                  expect(comparison.receivedByteLength).toBe(comparedFramePixels * 4);
+                }
+              }
+              expect(paddedFullSourceNineArgument.paddedHeightComparison.expectedByteLength).toBe(
+                comparedFramePixels * 4
+              );
+              expect(paddedFullSourceNineArgument.paddedHeightComparison.receivedByteLength).toBe(
+                comparedFramePixels * 4
+              );
+              const paddedFullSourceMatchedGeometry =
+                transparentPadding.paddedFullSourceMatchedGeometryNineArgumentControl;
+              expect(paddedFullSourceMatchedGeometry.call.argumentCount).toBe(9);
+              expect(paddedFullSourceMatchedGeometry.call.sourceRectangle).toEqual({
+                x: 0,
+                y: 0,
+                width: originalSourceSize.width + 2,
+                height: originalSourceSize.height + 2,
+              });
+              expect(paddedFullSourceMatchedGeometry.call.destinationRectangle).toEqual({
+                x: paddedDestinationArguments[0],
+                y: paddedDestinationArguments[1],
+                width: paddedDestinationArguments[2],
+                height: paddedDestinationArguments[3],
+              });
+              expect(paddedFullSourceMatchedGeometry.call.numericArguments).toEqual([
+                0,
+                0,
+                originalSourceSize.width + 2,
+                originalSourceSize.height + 2,
+                ...paddedDestinationArguments,
+              ]);
+              for (const run of [
+                paddedFullSourceMatchedGeometry.baseline,
+                paddedFullSourceMatchedGeometry.oneRowLarger,
+              ]) {
+                expect(run.drawImageCallCount).toBe(1);
+                expect(run.frameByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToFullPaddedFiveArgument.expectedByteLength).toBe(comparedFramePixels * 4);
+                expect(run.comparisonToFullPaddedFiveArgument.receivedByteLength).toBe(comparedFramePixels * 4);
+              }
+              expect(paddedFullSourceMatchedGeometry.paddedHeightComparison.expectedByteLength).toBe(
+                comparedFramePixels * 4
+              );
+              expect(paddedFullSourceMatchedGeometry.paddedHeightComparison.receivedByteLength).toBe(
+                comparedFramePixels * 4
+              );
+            }
+            expect(firstDifferenceTrace.htmlOffscreenComparisons).toHaveLength(
+              firstDifferenceTrace.offscreenCanvasAvailable ? 2 : 0
+            );
+          }
+        }
+        const sourceBackdropSamples = output.sourceBackdropSamples;
+        if (!sourceBackdropSamples) throw new Error(`${stage} has no source/backdrop samples`);
+        expect(sourceBackdropSamples.layerId).toBe('foreground');
+        expect(sourceBackdropSamples.frameDocumentBounds).toEqual(frameBounds);
+        expect(sourceBackdropSamples.framePixelBounds).toEqual(expectedSurfaceBounds.pixels);
+        expect(sourceBackdropSamples.sourceLayerBounds.legacy).toEqual(
+          output.runtime.layerRecords.foreground.expectedPresentationBounds
+        );
+        expect(sourceBackdropSamples.sourceLayerBounds.durable).toEqual(
+          output.runtime.layerRecords.foreground.presentationBounds
+        );
+        expect(sourceBackdropSamples.backdropSurfaceBounds).toEqual(frameBounds);
+        for (const surface of ['runtime', 'exportCanvas'] as const) {
+          const comparison = output[surface].pixelComparison;
+          const samples = sourceBackdropSamples[surface];
+          expect(samples.map(({ x, y }) => [x, y])).toEqual(comparison.differingSamples.map(({ x, y }) => [x, y]));
+          for (const sample of samples) {
+            expect(sample.documentX).toBe(frameBounds.x + sample.x);
+            expect(sample.documentY).toBe(frameBounds.y + sample.y);
+            expect(sample.rawSource.legacyRgba).toHaveLength(4);
+            expect(sample.rawSource.durableRgba).toHaveLength(4);
+            expect(sample.backdropComposite.legacyRgba).toHaveLength(4);
+            expect(sample.backdropComposite.durableRgba).toHaveLength(4);
+          }
         }
         const pixelParity = {
           runtime: output.runtime.pixelComparison,
@@ -4416,6 +9533,13 @@ test.describe('Crop history', () => {
           png: pngPixelComparison,
           psdComposite: psdCompositePixelComparison,
           psdLayers: psdLayerPixelComparisons,
+          psdPreEncodeLayers: psdPreEncodeLayerPixelComparisons,
+        };
+        const diagnostics = {
+          psdLayerSurfaceBounds,
+          psdPreEncodeLayers: output.psd.preEncodeLayers,
+          surfaces: output.surfaceBounds,
+          sourceBackdropSamples,
         };
         if (output.admission.eligible) {
           expect(pixelParity, `${stage} eligible durable output pixels`).toEqual({
@@ -4427,11 +9551,15 @@ test.describe('Crop history', () => {
               background: expect.objectContaining({ differingBytes: 0 }),
               foreground: expect.objectContaining({ differingBytes: 0 }),
             },
+            psdPreEncodeLayers: {
+              background: expect.objectContaining({ differingBytes: 0 }),
+              foreground: expect.objectContaining({ differingBytes: 0 }),
+            },
           });
         } else {
           expect(output.admission.reasons.foreground).toContain('not pixel-parity approved');
         }
-        return { stage, admission: output.admission, pixelParity };
+        return { stage, admission: output.admission, pixelParity, diagnostics };
       };
       expect(transformed?.differingBytes, 'affine composite must preserve opacity and blend byte-for-byte').toBe(0);
       if (transformed) {
@@ -4459,11 +9587,43 @@ test.describe('Crop history', () => {
       expect(result.transitionResults[0]?.durablePixels).not.toEqual(
         normalComposite.transitionResults[0]?.durablePixels
       );
-      await testInfo.attach('affine-raster-opacity-blend-adapter-diagnostics.json', {
-        body: JSON.stringify(adapterDiagnostics, null, 2),
+      const summarizeOpaqueBackdrop = (comparisonRun: typeof result, fixtureName: string) => {
+        const stages = [
+          ...comparisonRun.layerTransformResults.map((output, index) => ({
+            stage: `affine cursor ${index + 1}`,
+            comparisons: output.materializedLayerComparisons,
+          })),
+          ...comparisonRun.transitionResults.map((output, index) => ({
+            stage: `frame transition ${index + 1}`,
+            comparisons: output.materializedLayerComparisons,
+          })),
+        ];
+        return stages.flatMap(({ stage, comparisons }) =>
+          comparisons.flatMap(({ layerId, opaqueBackdropComparison }) =>
+            opaqueBackdropComparison ? [{ fixtureName, layerId, stage, comparison: opaqueBackdropComparison }] : []
+          )
+        );
+      };
+      const opaqueBackdropDiagnostics = [
+        ...summarizeOpaqueBackdrop(result, 'opacity plus multiply'),
+        ...summarizeOpaqueBackdrop(normalComposite, 'normal composite'),
+        ...summarizeOpaqueBackdrop(opacityOnly, 'opacity only'),
+        ...summarizeOpaqueBackdrop(blendOnly, 'multiply only'),
+      ];
+      await testInfo.attach('affine-raster-opaque-backdrop-diagnostics.json', {
+        body: JSON.stringify(opaqueBackdropDiagnostics, null, 2),
         contentType: 'application/json',
       });
-      console.info(`[crop-history] affine opacity/blend adapter diagnostics: ${JSON.stringify(adapterDiagnostics)}`);
+      console.info(
+        `[crop-history] affine opacity/blend backdrop diagnostics: ${JSON.stringify(opaqueBackdropDiagnostics)}`
+      );
+      await testInfo.attach('affine-raster-opacity-blend-adapter-diagnostics.json', {
+        body: JSON.stringify({ adapterDiagnostics, affineControlComparisons, fractionalControlComparisons }, null, 2),
+        contentType: 'application/json',
+      });
+      console.info(
+        `[crop-history] affine opacity/blend adapter diagnostics: ${JSON.stringify({ adapterDiagnostics, affineControlComparisons, fractionalControlComparisons })}`
+      );
     });
 
     test('a retained styled text transform matches through a sequence of frame transforms', async ({ page }) => {

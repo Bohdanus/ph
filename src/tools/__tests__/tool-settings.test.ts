@@ -254,7 +254,7 @@ describe('saveLastSettings tool-name coverage', () => {
     saveLastSettings({ ...defaultSettings.smudge, strength: 80, points: stroke });
     saveLastSettings({ ...defaultSettings.dodge, exposure: 20, points: stroke });
     saveLastSettings({ ...defaultSettings.burn, exposure: 30, points: stroke });
-    saveLastSettings({ ...defaultSettings['clone-stamp'], alpha: 0.5, points: stroke });
+    saveLastSettings({ ...defaultSettings['clone-stamp'], alpha: 0.5, flow: 37, points: stroke });
 
     expect(lastSavedSettings.smudge).toMatchObject({ strength: 80, points: [], toolName: 'smudge' });
     expect(lastSavedSettings.dodge).toMatchObject({ exposure: 20, points: [], toolName: 'dodge' });
@@ -262,6 +262,7 @@ describe('saveLastSettings tool-name coverage', () => {
     // A clone-stamp source point is a setting, not geometry, so it is persisted.
     expect(lastSavedSettings['clone-stamp']).toMatchObject({
       alpha: 0.5,
+      flow: 37,
       points: [],
       source: null,
       toolName: 'clone-stamp',

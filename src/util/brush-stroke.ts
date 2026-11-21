@@ -31,6 +31,7 @@ export type StrokeBuffer = {
 };
 
 const toUnit = (value: number): number => clamp(value, 0, 255) / 255;
+const clampFiniteUnit = (value: number): number => (Number.isFinite(value) ? clamp(value, 0, 1) : 0);
 
 export const createStrokeBuffer = (rect: Rect, color: Rgb = BLACK): StrokeBuffer => {
   const originX = Math.floor(rect.x);
@@ -52,11 +53,11 @@ export const createStrokeBuffer = (rect: Rect, color: Rgb = BLACK): StrokeBuffer
     blend: Blend = normalBlend,
     options?: DabOptions
   ): void => {
-    const f = clamp(flow, 0, 1);
+    const f = clampFiniteUnit(flow);
     if (f <= 0 || width === 0 || height === 0) return;
 
     const sampler = typeof coverage === 'function' ? coverage : null;
-    const uniform = sampler ? 0 : clamp(coverage as number, 0, 1);
+    const uniform = sampler ? 0 : clampFiniteUnit(coverage as number);
     if (!sampler && uniform <= 0) return;
 
     const dab = options?.color ?? color;
@@ -82,7 +83,7 @@ export const createStrokeBuffer = (rect: Rect, color: Rgb = BLACK): StrokeBuffer
     for (let py = by0; py <= by1; py++) {
       const row = py * width;
       for (let px = bx0; px <= bx1; px++) {
-        const c = sampler ? clamp(sampler(originX + px - x, originY + py - y), 0, 1) : uniform;
+        const c = sampler ? clampFiniteUnit(sampler(originX + px - x, originY + py - y)) : uniform;
         const as = f * c;
         if (as <= 0) continue;
         changed = true;
@@ -121,7 +122,7 @@ export const createStrokeBuffer = (rect: Rect, color: Rgb = BLACK): StrokeBuffer
   ): FlushResult | null => {
     if (maxX < 0) return null;
 
-    const o = clamp(opacity, 0, 1);
+    const o = clampFiniteUnit(opacity);
     const mix = resolveBlend(blend);
     const rw = maxX - minX + 1;
     const rh = maxY - minY + 1;

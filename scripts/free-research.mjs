@@ -6,6 +6,7 @@ import { isIP } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { completeWithFreeModel } from './free-model-pool.mjs';
 import { toUnicode as punycodeToUnicode } from 'node:punycode';
 import { sanitizeErrorMessage, sanitizeForLogging } from './lib/secrets.mjs';
@@ -22,7 +23,7 @@ const MAX_RESPONSE_BYTES = 512 * 1024;
 const MAX_URL_CHARS = 512;
 const MAX_QUESTION_CHARS = 2000;
 const MAX_TOKENS = 1200;
-const MAX_ALLOWED_TOKENS = 4000;
+const MAX_ALLOWED_TOKENS = 65536;
 const MAX_REDIRECTS = 5;
 const MAX_PROMPT_FILE_BYTES = 8 * 1024;
 const MAX_URL_LIST_FILE_BYTES = 12 * 1024;
@@ -981,7 +982,7 @@ export async function main(
   return degraded ? 5 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .then((code) => {
       process.exitCode = code;

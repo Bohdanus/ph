@@ -159,7 +159,8 @@ npm run swarm -- note "<branch>: hard merge, resolving <n> conflicts"   # before
 npm run swarm -- check <paths>                                         # exits 1 and names the holder
 ```
 
-`.skills/worktree-merge-harvest.md` §Step 4 is the one home for the board protocol.
+`docs/ORCHESTRATION.md` §The swarm board is the authoritative protocol; `.skills/worktree-merge-harvest.md`
+§Step 4 shows its reviewer-coordination application.
 
 **Two traps that belong to the landing rather than to the resolution.** Never `git add -A` in a
 worktree whose root checkout is dirty: the root is a different checkout of a different `HEAD`, so
@@ -1432,8 +1433,8 @@ the guard self-served. `HANDOFF.md` §225 is the entry.
 
 ```bash
 node scripts/worktree-inventory.mjs          # a fresh verdict: disposal reads it
-npm run dispose -- <name> --dry-run          # names the signal that refuses, if any
-npm run dispose -- <name>
+npm run dispose -- <name> --codex-owner-audit-complete --dry-run # after the fresh Codex audit
+npm run dispose -- <name> --codex-owner-audit-complete
 ```
 
 There is no other sanctioned removal path, and reaching for one is what destroyed a live chat's

@@ -8,6 +8,7 @@ import {
 } from './helpers/canvas-helpers';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
+import { PAINT_TOOLS_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 type Point = { x: number; y: number };
 type Pixel = { x: number; y: number; red: number; green: number; blue: number; alpha: number };
@@ -68,7 +69,33 @@ function compositedLuma(pixel: Pixel): number {
   return (0.299 * pixel.red + 0.587 * pixel.green + 0.114 * pixel.blue) * alpha + 255 * (1 - alpha);
 }
 
+function describeLumaGrid(pixels: Pixel[]): string {
+  const rows = [...new Set(pixels.map((pixel) => pixel.y))].sort((a, b) => a - b);
+  return rows
+    .map((y) => {
+      const row = pixels
+        .filter((pixel) => pixel.y === y)
+        .map((pixel) => `${pixel.x}:${compositedLuma(pixel).toFixed(1)}`)
+        .join(' ');
+      return `${y}: ${row}`;
+    })
+    .join('\n');
+}
+
+/** Preserve sampled RGBA and composited luma in passing reports for cross-platform oracle review. */
+function lumaGridMeasurements(pixels: readonly Pixel[]) {
+  return pixels.map(({ x, y, red, green, blue, alpha }) => ({
+    x,
+    y,
+    rgba: [red, green, blue, alpha],
+    compositedLuma: compositedLuma({ x, y, red, green, blue, alpha }),
+  }));
+}
+
 const hasInk = (pixel: Pixel): boolean => compositedLuma(pixel) < 245;
+// The recorded path samples were luma 140; leave 40 levels for rasterization variance without treating near-white as ink.
+const DIAGONAL_PATH_LUMA_LIMIT = 180;
+const hasDiagonalPathInk = (pixel: Pixel): boolean => compositedLuma(pixel) < DIAGONAL_PATH_LUMA_LIMIT;
 const hasPartialCoverage = (pixel: Pixel): boolean => {
   const luma = compositedLuma(pixel);
   return luma > 20 && luma < 245;
@@ -107,6 +134,7 @@ function expectIntegerCoverage(pixels: Pixel[], y: number, label: string): void 
   const outsideRows = pixels.filter((pixel) => pixel.y !== y - 1 && pixel.y !== y);
   expect(pathRows.some(hasInk), `${label} covers a path row`).toBe(true);
   expect(pathRows.some(hasPartialCoverage), `${label} records partial coverage at an integer coordinate`).toBe(true);
+  expect(pathRows.every(hasPartialCoverage), `${label} partially covers both rows at an integer coordinate`).toBe(true);
   expect(outsideRows.every(isWhite), `${label} leaves rows outside the centered 1px stroke white`).toBe(true);
 }
 
@@ -121,16 +149,64 @@ function expectHalfIntegerCoverage(pixels: Pixel[], y: number, label: string): v
     outsidePixels.every((pixel) => compositedLuma(pixel) > 200),
     `${label} leaves neighboring rows near-white outside its covered core`
   ).toBe(true);
+  expect(outsidePixels.every(isWhite), `${label} leaves pixels outside its fully covered core row white`).toBe(true);
 }
 
 function expectDiagonalCoverage(pixels: Pixel[], center: Point, label: string): void {
   // The outer ring is sampling margin; assert ink only near the known path center.
+  // Track the diagonal's footprint and nearby clear cells without pinning platform-dependent
+  // antialiasing intensity to one absolute luma value.
+  const lumaGrid = describeLumaGrid(pixels);
   const atPathCenter = pixels.filter((pixel) => Math.abs(pixel.x - center.x) <= 1 && Math.abs(pixel.y - center.y) <= 1);
-  expect(atPathCenter.some(hasInk), `${label} leaves ink near the diagonal's center point`).toBe(true);
-  expect(atPathCenter.some(hasPartialCoverage), `${label} has antialiased edge coverage near its center`).toBe(true);
+  expect(
+    atPathCenter.some(hasDiagonalPathInk),
+    `${label} leaves visible ink near the diagonal's center point\n${lumaGrid}`
+  ).toBe(true);
+  expect(
+    atPathCenter.some(hasPartialCoverage),
+    `${label} has antialiased edge coverage near its center\n${lumaGrid}`
+  ).toBe(true);
+
+  const pixelAt = (x: number, y: number): Pixel | undefined => pixels.find((pixel) => pixel.x === x && pixel.y === y);
+  const upperLeft = pixelAt(center.x - 2, center.y - 1);
+  const lowerRight = pixelAt(center.x + 2, center.y + 1);
+  const upperRight = pixelAt(center.x + 2, center.y - 1);
+  const lowerLeft = pixelAt(center.x - 2, center.y + 1);
+  const upperLeftOutside = pixelAt(center.x - 2, center.y);
+  const lowerRightOutside = pixelAt(center.x + 2, center.y + 2);
+
+  expect(upperLeft, `${label} samples the upper-left side of the diagonal\n${lumaGrid}`).toBeDefined();
+  expect(
+    hasDiagonalPathInk(upperLeft!),
+    `${label} has visible coverage on its upper-left path sample\n${lumaGrid}`
+  ).toBe(true);
+  expect(lowerRight, `${label} samples the lower-right side of the diagonal\n${lumaGrid}`).toBeDefined();
+  expect(
+    hasDiagonalPathInk(lowerRight!),
+    `${label} has visible coverage on its lower-right path sample\n${lumaGrid}`
+  ).toBe(true);
+  expect(upperRight, `${label} samples the mirrored upper-right pixel\n${lumaGrid}`).toBeDefined();
+  expect(upperRight && isWhite(upperRight), `${label} leaves the mirrored upper-right pixel clear\n${lumaGrid}`).toBe(
+    true
+  );
+  expect(lowerLeft, `${label} samples the mirrored lower-left pixel\n${lumaGrid}`).toBeDefined();
+  expect(lowerLeft && isWhite(lowerLeft), `${label} leaves the mirrored lower-left pixel clear\n${lumaGrid}`).toBe(
+    true
+  );
+  expect(upperLeftOutside, `${label} samples beside the upper-left path pixel\n${lumaGrid}`).toBeDefined();
+  expect(
+    upperLeftOutside && isWhite(upperLeftOutside),
+    `${label} keeps the adjacent pixel outside the upper-left path clear\n${lumaGrid}`
+  ).toBe(true);
+  expect(lowerRightOutside, `${label} samples beside the lower-right path pixel\n${lumaGrid}`).toBeDefined();
+  expect(
+    lowerRightOutside && isWhite(lowerRightOutside),
+    `${label} keeps the adjacent pixel outside the lower-right path clear\n${lumaGrid}`
+  ).toBe(true);
 }
 
 test.describe('1px stroke pixel coverage', () => {
+  test.describe.configure({ timeout: PAINT_TOOLS_TEST_TIMEOUT_MS });
   test.use({ deviceScaleFactor: 1 });
 
   test.beforeEach(async ({ page }) => {
@@ -143,7 +219,7 @@ test.describe('1px stroke pixel coverage', () => {
     expect(size).toEqual(DEFAULT_DOCUMENT_SIZE);
   });
 
-  test('Draw Pen records integer, half-integer, and diagonal coverage', async ({ page }) => {
+  test('Draw Pen records integer, half-integer, and diagonal coverage', async ({ page }, testInfo) => {
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, BLACK, true);
     const size = page.locator('#size-slider');
@@ -171,9 +247,23 @@ test.describe('1px stroke pixel coverage', () => {
       diagonalCenter
     );
     expectDiagonalCoverage(diagonalPixels, diagonalCenter, 'diagonal Draw Pen');
+    await testInfo.attach('diagonal-luma-grid.json', {
+      body: JSON.stringify(
+        {
+          platform: process.platform,
+          project: testInfo.project.name,
+          browserVersion: page.context().browser()?.version() ?? 'unknown',
+          center: diagonalCenter,
+          pixels: lumaGridMeasurements(diagonalPixels),
+        },
+        null,
+        2
+      ),
+      contentType: 'application/json',
+    });
   });
 
-  test('Shape Line records integer, half-integer, and diagonal coverage', async ({ page }) => {
+  test('Shape Line records integer, half-integer, and diagonal coverage', async ({ page }, testInfo) => {
     await openToolFlyout(page, 'shape');
     await selectFromFlyout(page, { toolName: 'shape', label: 'Line Tool' });
     await setForegroundColor(page, BLACK, true);
@@ -201,10 +291,22 @@ test.describe('1px stroke pixel coverage', () => {
 
     const diagonalFrom = { x: 150, y: 440 };
     const diagonalTo = { x: 350, y: 540 };
-    const diagonalPixels = await drawAndRead(page, diagonalFrom, diagonalTo, 'diagonal Shape Line', {
-      x: 250,
-      y: 490,
+    const diagonalCenter = { x: 250, y: 490 };
+    const diagonalPixels = await drawAndRead(page, diagonalFrom, diagonalTo, 'diagonal Shape Line', diagonalCenter);
+    expectDiagonalCoverage(diagonalPixels, diagonalCenter, 'diagonal Shape Line');
+    await testInfo.attach('diagonal-luma-grid.json', {
+      body: JSON.stringify(
+        {
+          platform: process.platform,
+          project: testInfo.project.name,
+          browserVersion: page.context().browser()?.version() ?? 'unknown',
+          center: diagonalCenter,
+          pixels: lumaGridMeasurements(diagonalPixels),
+        },
+        null,
+        2
+      ),
+      contentType: 'application/json',
     });
-    expectDiagonalCoverage(diagonalPixels, { x: 250, y: 490 }, 'diagonal Shape Line');
   });
 });

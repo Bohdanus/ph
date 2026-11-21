@@ -705,6 +705,19 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
     expect(observeHeld(boardDir.env).status, 'taking no queue is not the same as taking a bad one').toBe(0);
   });
 
+  it('does not add a CLI global timeout that overrides the Playwright config', async () => {
+    const suite = fakeSuite();
+    const options = {
+      env: { ...boardDir.env, CI: '1' },
+      log: recorder().log,
+      runPlaywright: suite,
+    };
+    await run([], options);
+    await run(['--workers=1'], options);
+
+    expect(suite.calls.map(({ args }) => args)).toEqual([['test'], ['test', '--workers=1']]);
+  });
+
   it('renews the lease while the suite runs, and says so if a renewal fails', async () => {
     // The board renews this run's own lock too (`renewOwnLocks`, while the
     // worktree is on disk), so this timer is belt and braces rather than the only
@@ -796,6 +809,8 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
     // `fix/1234`, or anyone
     // who passed `--agent 2026`, has an identity whose last segment parses as a pid.
     // An earlier version of `isHolderAlive` probed it, found nothing, and stole it.
+    // This subprocess-heavy case hit the 30s file budget once in a full 449-file run;
+    // it passed alone in 7.45s, so give only this case 60s for loaded Windows runners.
     for (const identity of ['fix/1234', '2026', 'somebody-else', 'e2e-run/branch/1234abc']) {
       const boardDir = tempBoard();
       try {
@@ -814,7 +829,7 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
         boardDir.cleanup();
       }
     }
-  });
+  }, 60_000);
 
   it('never creates the sentinel on disk', async () => {
     // A virtual path is the whole reason the board can hold a lock on something that

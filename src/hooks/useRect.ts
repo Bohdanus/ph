@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
 import type { Point, Pos, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
 import { clearSelectionDragPreview, publishSelectionDragPreview } from './selection-drag-preview.ts';
@@ -12,13 +12,14 @@ import {
   trimRect,
 } from '../util/rect.ts';
 import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
-import { resetOverlayAlpha } from '../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../util/canvas.ts';
 import { refitRectWidthToAspect } from '../util/rect-aspect.ts';
 import { isEqual } from 'lodash-es';
 import { isTemporaryHandActive } from './temporary-hand.ts';
 import type { Layer } from '../contexts/layer-types.ts';
 import type { CropOverlayOrientation, CropOverlayType, CropOverlayVisibility } from '../tools/crop.ts';
 import { viewStateRef } from '../contexts/view-state.ts';
+import rotationCursorSvgSource from '../assets/curved-arrow-bold.svg?raw';
 
 export type UseRectProps = {
   aspectRatio?: number | null;
@@ -107,6 +108,8 @@ export type UseRectProps = {
   rotationEnabled?: boolean;
   rotation?: number;
   onRotationChange?: (degrees: number) => void;
+  /** Reset the selection's angle when a press starts a fresh rectangle outside the current one. */
+  resetRotationOnNewRect?: boolean;
   /** Optional composition guide for the crop consumer. Other rectangle tools leave this absent. */
   overlayType?: CropOverlayType;
   overlayOrientation?: CropOverlayOrientation;
@@ -144,23 +147,17 @@ const ROTATE_OUTER_HOTZONE = 90;
 export const ROTATE_HANDLE_OFFSET = 36;
 const ROTATION_SNAP_INCREMENT = 15;
 
-const ROTATION_CURSOR_PATHS =
-  '<path d="M24 16a8 8 0 1 1-1.7-5.9"/><path d="M8 16a8 8 0 1 0 1.7 5.9"/><path d="M24 8l4-4-4-4"/><path d="M8 24l-4 4 4 4"/>';
-const ROTATION_CURSOR_FALLBACKS = [
-  'ew-resize',
-  'nwse-resize',
-  'ns-resize',
-  'nesw-resize',
-  'ew-resize',
-  'nwse-resize',
-  'ns-resize',
-  'nesw-resize',
-] as const;
-const ROTATION_CURSORS = ROTATION_CURSOR_FALLBACKS.map((fallback, index) => {
-  const angle = index * 45;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><g transform="translate(12 12) scale(.75)"><g transform="rotate(${angle} 16 16)"><g fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">${ROTATION_CURSOR_PATHS}</g><g fill="none" stroke="#111" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${ROTATION_CURSOR_PATHS}</g></g></g></svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 24 24, ${fallback}`;
-});
+const ROTATION_CURSOR_BODY = rotationCursorSvgSource
+  .replace(/^\s*<svg\b[^>]*>/, '')
+  .replace(/<\/svg>\s*$/, '')
+  .trim();
+const ROTATION_CURSOR_FALLBACKS = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'] as const;
+// The visible 128px artwork spans about 102px, so 0.2 renders it at about 20px.
+const ROTATION_CURSOR_ICON_SCALE = 0.2;
+const ROTATION_CURSOR_ANGLE_PRECISION = 10;
+const ROTATION_CURSOR_ANGLE_BUCKETS = 360 * ROTATION_CURSOR_ANGLE_PRECISION;
+const ROTATION_CURSOR_CACHE_LIMIT = 512;
+const ROTATION_CURSOR_CACHE = new Map<string, string>();
 
 function shortestAngleDelta(degrees: number): number {
   return ((((degrees + 180) % 360) + 360) % 360) - 180;
@@ -169,8 +166,30 @@ function shortestAngleDelta(degrees: number): number {
 function rotationCursorForPoint(point: Point, rect: RectXYSorted): string {
   const viewRotation = Number.isFinite(viewStateRef.current.rotation) ? viewStateRef.current.rotation : 0;
   const tangentAngle = angleFromCenter(rectCenter(rect), point) + viewRotation + 90;
-  const direction = ((Math.round(tangentAngle / 45) % 8) + 8) % 8;
-  return ROTATION_CURSORS[direction] ?? 'ew-resize';
+  if (!Number.isFinite(tangentAngle)) return 'ew-resize';
+
+  const normalizedAngle = ((tangentAngle % 360) + 360) % 360;
+  const angle = (
+    (Math.round(normalizedAngle * ROTATION_CURSOR_ANGLE_PRECISION) % ROTATION_CURSOR_ANGLE_BUCKETS) /
+    ROTATION_CURSOR_ANGLE_PRECISION
+  ).toFixed(1);
+  const cachedCursor = ROTATION_CURSOR_CACHE.get(angle);
+  if (cachedCursor) {
+    ROTATION_CURSOR_CACHE.delete(angle);
+    ROTATION_CURSOR_CACHE.set(angle, cachedCursor);
+    return cachedCursor;
+  }
+
+  const fallbackIndex = ((Math.round(Number(angle) / 45) % 4) + 4) % 4;
+  const fallback = ROTATION_CURSOR_FALLBACKS[fallbackIndex] ?? 'ew-resize';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><g transform="translate(32 32) rotate(${angle}) scale(${ROTATION_CURSOR_ICON_SCALE}) translate(-64 -64)">${ROTATION_CURSOR_BODY}</g></svg>`;
+  const cursor = `url("data:image/svg+xml,${encodeURIComponent(svg)}") 32 32, ${fallback}`;
+  if (ROTATION_CURSOR_CACHE.size >= ROTATION_CURSOR_CACHE_LIMIT) {
+    const oldestAngle = ROTATION_CURSOR_CACHE.keys().next().value;
+    if (oldestAngle !== undefined) ROTATION_CURSOR_CACHE.delete(oldestAngle);
+  }
+  ROTATION_CURSOR_CACHE.set(angle, cursor);
+  return cursor;
 }
 
 /**
@@ -345,7 +364,7 @@ export function drawCropOverlay(
  * (`canvasRectToDocumentFrame()`), and making it is the consumer's job.
  */
 export function useRect({
-  aspectRatio = null,
+  aspectRatio: requestedAspectRatio = null,
   fixedSize = null,
   imageSize,
   initialRect,
@@ -366,6 +385,7 @@ export function useRect({
   rotationEnabled = false,
   rotation = 0,
   onRotationChange,
+  resetRotationOnNewRect = false,
   overlayType,
   overlayOrientation = 'normal',
   overlayVisibility = 'always',
@@ -382,11 +402,12 @@ export function useRect({
   onChange,
   onChangeEnd,
 }: UseRectProps) {
+  const effectiveAspectRatio =
+    requestedAspectRatio !== null && Number.isFinite(requestedAspectRatio) && requestedAspectRatio > 0
+      ? requestedAspectRatio
+      : null;
+
   const startRectRef = useRef<RectXYSorted | null>(null);
-  const latestImageSizeRef = useRef(imageSize);
-  useLayoutEffect(() => {
-    latestImageSizeRef.current = imageSize;
-  }, [imageSize]);
   const rectUnsortedRef = useRef<RectXY | null>(null); // might become unsorted while dragging
 
   const startPointRef = useRef<Point | null>(null);
@@ -483,8 +504,8 @@ export function useRect({
   });
 
   useEffect(() => {
-    if (aspectRatio && initialRect) {
-      const patch = refitRectWidthToAspect(initialRect, aspectRatio);
+    if (effectiveAspectRatio && initialRect) {
+      const patch = refitRectWidthToAspect(initialRect, effectiveAspectRatio);
       startRectRef.current = { ...initialRect, ...patch };
     } else {
       startRectRef.current = initialRect ? { ...initialRect } : null;
@@ -494,7 +515,7 @@ export function useRect({
       rectUnsortedRef.current = startRectRef.current ? { ...startRectRef.current } : null;
       drawMaskRef.current?.();
     }
-  }, [aspectRatio, initialRect]);
+  }, [effectiveAspectRatio, initialRect]);
 
   useEffect(() => {
     rotationRef.current = rotation;
@@ -573,11 +594,7 @@ export function useRect({
       endGesture();
 
       if (ctx) {
-        // The overlay context is scaled by DPR (via resizeCanvas in Main.tsx), so clearRect
-        // coordinates are in logical/frame pixels. Use imageSize (logical frame bounds) rather
-        // than ctx.canvas.width/height (backing-store device pixels) to avoid over-clearing.
-        const latestImageSize = latestImageSizeRef.current;
-        ctx.clearRect(0, 0, latestImageSize.width, latestImageSize.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [endGesture, overlayRef]);
@@ -738,9 +755,12 @@ export function useRect({
     const edge = edgeAtPoint(point);
 
     // Detect modifier keys to lock aspect ratio, if not set already
-    if (edge && !aspectRatio && event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
+    if (edge && !effectiveAspectRatio && event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
       const { x1, y1, x2, y2 } = startRectRef.current!;
-      customAspectRatioRef.current = (x2 - x1) / (y2 - y1);
+      const width = Math.abs(x2 - x1);
+      const height = Math.abs(y2 - y1);
+      const ratio = height > 0 ? width / height : null;
+      customAspectRatioRef.current = ratio !== null && Number.isFinite(ratio) && ratio > 0 ? ratio : null;
     }
 
     return edge;
@@ -793,7 +813,9 @@ export function useRect({
     // rotated canvas overlay left by the previous mode.
     if (externalOverlay) {
       if (overlayPaintModeRef.current !== 'external') {
-        if (overlayPaintModeRef.current !== null) ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+        // The canvas is shared across tool mounts, so this instance can start with null mode while
+        // still inheriting pixels painted by the previous tool. Always clear on entry.
+        clearCanvasBackingStore(ctx);
         overlayPaintModeRef.current = 'external';
       }
       lastIncrementalRectRef.current = null;
@@ -812,7 +834,7 @@ export function useRect({
     // both covered. The dash this function owns is written after, deliberately.
     resetOverlayAlpha(ctx);
     if (!rect) {
-      ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+      clearCanvasBackingStore(ctx);
       overlayPaintModeRef.current = null;
       lastIncrementalRectRef.current = null;
       return;
@@ -835,12 +857,18 @@ export function useRect({
 
     if (incrementalOverlay) {
       const canvasSize = incrementalCanvasSizeRef.current;
+      const previous = lastIncrementalRectRef.current;
       const needsBasePaint =
         overlayPaintModeRef.current !== 'incremental' ||
         canvasSize.width !== ctx.canvas.width ||
-        canvasSize.height !== ctx.canvas.height;
+        canvasSize.height !== ctx.canvas.height ||
+        // Rotation changes the crop's rasterized footprint, and the first incremental paint has no
+        // prior bounds to restore. Repaint the backing store in either case so no stale pixels can
+        // survive outside the current crop.
+        previous === null ||
+        previous.angle !== angle;
       if (needsBasePaint) {
-        ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+        clearCanvasBackingStore(ctx);
         if (!hideBlend) {
           ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
           ctx.fillRect(0, 0, imageSize.width, imageSize.height);
@@ -849,7 +877,6 @@ export function useRect({
         canvasSize.height = ctx.canvas.height;
         overlayPaintModeRef.current = 'incremental';
       } else {
-        const previous = lastIncrementalRectRef.current;
         if (previous) {
           const dirty = getCropPaintBounds(previous, previous.angle, previous.scale);
           ctx.clearRect(dirty.x, dirty.y, dirty.width, dirty.height);
@@ -860,7 +887,7 @@ export function useRect({
         }
       }
     } else {
-      ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+      clearCanvasBackingStore(ctx);
       overlayPaintModeRef.current = 'full';
       lastIncrementalRectRef.current = null;
     }
@@ -1100,7 +1127,7 @@ export function useRect({
     const startPoint = startPointRef.current!;
     const edge = currentEdgeRef.current;
 
-    const _aspectRatio = customAspectRatioRef.current ?? aspectRatio;
+    const _aspectRatio = customAspectRatioRef.current ?? effectiveAspectRatio;
     const localPoint =
       _initialRect && rotationEnabled
         ? rotatePointAround(point, rectCenter(_initialRect), -rotationRef.current)
@@ -1221,6 +1248,12 @@ export function useRect({
     if (selectionRect) {
       const edge = getEdgeAtPoint(point, event);
       currentEdgeRef.current = edge;
+
+      if (!edge && resetRotationOnNewRect && rotationRef.current !== 0) {
+        rotationRef.current = 0;
+        startRotationRef.current = 0;
+        onRotationChange?.(0);
+      }
 
       isHandleClicked = !!edge;
 

@@ -20,10 +20,10 @@ import type { CssBounds, CssBox } from './screenshot-scale';
  * (`src/util/selection.ts:198`), so a freehand selection is only ever observable here.
  *
  * The read is `getImageData` on the canvas's own context rather than a screenshot, for the same
- * reason `e2e/selection-marching-ants.spec.ts` does it that way: this canvas's backing store is
- * already in document pixels, so a screenshot would need a page-coordinate clip and a
- * device-pixel-ratio correction to describe the same pixels, and it would composite whatever the
- * document painted underneath.
+ * reason `e2e/selection-marching-ants.spec.ts` does it that way: this reads the ants without a
+ * page-coordinate clip and without compositing the document underneath. The backing store can be
+ * scaled by the device-pixel ratio, so the bounds below map those backing pixels back to CSS page
+ * space using the canvas element's own dimensions.
  *
  * The element's own bounding rect is what maps the two spaces, and it is read here rather than
  * derived from `workspaceBox()`: the element is the thing being measured, so the mapping cannot
@@ -155,15 +155,18 @@ export type AntRun = readonly [number, number];
  * `CssBox` is the canonical declaration of this shape (`screenshot-scale.ts` — `CssBox`,
  * enforced unique by `screenshot-scale.unit.test.ts`), so it is that type and not a local copy —
  * but read the space note there: `CssBox` names CSS page pixels, and here the same four numbers
- * are DOCUMENT pixels, because the window indexes the ants canvas's backing store and that store
- * is sized to the document. Same shape, different space, stated at the call site — the same
+ * are DOCUMENT pixels. `readAntRuns` uses the workspace's published document extent and maps them
+ * through the canvas's `data-hidpi-ratio` before reading its backing store, then returns
+ * document-pixel coordinates. Same shape, different space, stated at the call site — the same
  * asymmetry `cdp-helpers.ts` documents for `ClipOptions`, and the reason a local alias here would
  * have been a second declaration the uniqueness guard exists to forbid.
  */
 export type AntWindow = CssBox;
 
 /**
- * The painted ant runs along each scan line of a window, in DOCUMENT pixels.
+ * The painted ant runs along each scan line of a window, in DOCUMENT pixels. A HiDPI backing
+ * pixel is folded into each document pixel it overlaps, so callers get the same coordinate space
+ * at every device-pixel ratio.
  *
  * `axis: 'row'` walks the window's rows and reports each row's runs along x; `'column'` walks its
  * columns and reports each column's runs along y. A row band is a single row with one long run and
@@ -189,47 +192,139 @@ export const readAntRuns = async (page: Page, window: AntWindow, axis: 'row' | '
       const ctx = element.getContext('2d');
       if (!ctx) throw new Error('the selection ants canvas has no 2d context');
 
-      // Clamped to the backing store rather than trusted: a window that runs off the canvas would
-      // otherwise read `getImageData`'s IndexSizeError, which names neither the window nor the
-      // canvas and reads like a product bug.
-      const x0 = Math.max(0, Math.floor(w.x));
-      const y0 = Math.max(0, Math.floor(w.y));
-      const x1 = Math.min(element.width, Math.ceil(w.x + w.width));
-      const y1 = Math.min(element.height, Math.ceil(w.y + w.height));
-      const readWidth = x1 - x0;
-      const readHeight = y1 - y0;
-      const { data } = ctx.getImageData(x0, y0, readWidth, readHeight);
+      const scale = Number(element.getAttribute('data-hidpi-ratio') ?? 1);
+      if (!Number.isFinite(scale) || scale <= 0) {
+        throw new Error(
+          `readAntRuns: invalid data-hidpi-ratio ${JSON.stringify(element.getAttribute('data-hidpi-ratio'))}`
+        );
+      }
+
+      // Use the ratio's shortest decimal form as a rational. Float division can put an exact
+      // backing-pixel boundary just past a document boundary (21 / 1.4 is 15.000000000000002),
+      // which would incorrectly mark the next document row or column as painted.
+      const ratioParts = scale.toString().toLowerCase().split('e');
+      const coefficient = ratioParts[0] ?? '1';
+      const exponent = Number(ratioParts[1] ?? '0');
+      const coefficientParts = coefficient.split('.');
+      const fractionalDigits = coefficientParts[1] ?? '';
+      let ratioNumerator = BigInt(`${coefficientParts[0] ?? '1'}${fractionalDigits}`);
+      let ratioDenominator = 10n ** BigInt(fractionalDigits.length);
+      if (exponent > 0) ratioNumerator *= 10n ** BigInt(exponent);
+      if (exponent < 0) ratioDenominator *= 10n ** BigInt(-exponent);
+      let divisorLeft = ratioNumerator;
+      let divisorRight = ratioDenominator;
+      while (divisorRight !== 0n) {
+        const remainder = divisorLeft % divisorRight;
+        divisorLeft = divisorRight;
+        divisorRight = remainder;
+      }
+      ratioNumerator /= divisorLeft;
+      ratioDenominator /= divisorLeft;
+
+      const floorDocumentBoundary = (backing: number) => Number((BigInt(backing) * ratioDenominator) / ratioNumerator);
+      const ceilDocumentBoundary = (backing: number) => {
+        const scaledBacking = BigInt(backing) * ratioDenominator;
+        return Number((scaledBacking + ratioNumerator - 1n) / ratioNumerator);
+      };
+      const floorBackingBoundary = (document: number) => Number((BigInt(document) * ratioNumerator) / ratioDenominator);
+      const ceilBackingBoundary = (document: number) => {
+        const scaledDocument = BigInt(document) * ratioNumerator;
+        return Number((scaledDocument + ratioDenominator - 1n) / ratioDenominator);
+      };
+
+      // The backing dimensions are rounded after scaling, so they cannot always identify the
+      // original document extent (for example 3 pixels at 0.5x becomes 2 backing pixels). Read
+      // the exact logical size published by the same workspace fit used by the pointer tools.
+      const workspace = document.querySelector<HTMLElement>('[data-testid="workspace-container"]');
+      if (!workspace) throw new Error('readAntRuns: no [data-testid="workspace-container"] on the page');
+      const documentWidthAttribute = workspace.getAttribute('data-fit-document-width');
+      const documentHeightAttribute = workspace.getAttribute('data-fit-document-height');
+      const documentWidth = Number(documentWidthAttribute);
+      const documentHeight = Number(documentHeightAttribute);
+      if (
+        documentWidthAttribute === null ||
+        documentHeightAttribute === null ||
+        !Number.isFinite(documentWidth) ||
+        !Number.isFinite(documentHeight) ||
+        documentWidth < 0 ||
+        documentHeight < 0
+      ) {
+        throw new Error('readAntRuns: workspace has invalid document dimensions');
+      }
+      const x0 = Math.min(Math.max(Math.floor(w.x), 0), documentWidth);
+      const y0 = Math.min(Math.max(Math.floor(w.y), 0), documentHeight);
+      const x1 = Math.min(Math.max(Math.ceil(w.x + w.width), x0), documentWidth);
+      const y1 = Math.min(Math.max(Math.ceil(w.y + w.height), y0), documentHeight);
+      const backingX0 = Math.min(element.width, floorBackingBoundary(x0));
+      const backingY0 = Math.min(element.height, floorBackingBoundary(y0));
+      const backingX1 = Math.max(backingX0, Math.min(element.width, ceilBackingBoundary(x1)));
+      const backingY1 = Math.max(backingY0, Math.min(element.height, ceilBackingBoundary(y1)));
+      const readWidth = backingX1 - backingX0;
+      const readHeight = backingY1 - backingY0;
+      if (readWidth <= 0 || readHeight <= 0) return [];
+      const { data } = ctx.getImageData(backingX0, backingY0, readWidth, readHeight);
 
       const isAnt = (index: number) =>
         data[index + 3] !== 0 &&
         ((data[index] < 64 && data[index + 1] < 64 && data[index + 2] < 64) ||
           (data[index] > 192 && data[index + 1] > 192 && data[index + 2] > 192));
 
-      const lineCount = scanAxis === 'row' ? readHeight : readWidth;
-      // `'row'` scans x along each y of the window; `'column'` scans y along each x.
-      const runLength = scanAxis === 'row' ? readWidth : readHeight;
-      const origin = scanAxis === 'row' ? x0 : y0;
-      const runs: [number, number][][] = [];
+      const documentXStarts = new Uint32Array(readWidth);
+      const documentXEnds = new Uint32Array(readWidth);
+      for (let offset = 0; offset < readWidth; offset += 1) {
+        const backingX = backingX0 + offset;
+        documentXStarts[offset] = Math.max(x0, floorDocumentBoundary(backingX));
+        documentXEnds[offset] = Math.min(x1, ceilDocumentBoundary(backingX + 1));
+      }
+      const documentYStarts = new Uint32Array(readHeight);
+      const documentYEnds = new Uint32Array(readHeight);
+      for (let offset = 0; offset < readHeight; offset += 1) {
+        const backingY = backingY0 + offset;
+        documentYStarts[offset] = Math.max(y0, floorDocumentBoundary(backingY));
+        documentYEnds[offset] = Math.min(y1, ceilDocumentBoundary(backingY + 1));
+      }
 
-      for (let line = 0; line < lineCount; line += 1) {
+      const lineCount = scanAxis === 'row' ? y1 - y0 : x1 - x0;
+      // `'row'` scans x along each document y; `'column'` scans y along each document x.
+      const runLength = scanAxis === 'row' ? x1 - x0 : y1 - y0;
+      const origin = scanAxis === 'row' ? x0 : y0;
+      const paintedLines = Array.from({ length: lineCount }, () => new Uint8Array(runLength));
+
+      // A backing pixel represents the document-space rectangle its pixel covers. Mark every
+      // document pixel overlapped by ant paint, then form runs in that logical grid. This also
+      // handles fractional ratios where a backing pixel can straddle a document-pixel boundary.
+      for (let backingY = backingY0; backingY < backingY1; backingY += 1) {
+        const documentY0 = documentYStarts[backingY - backingY0]!;
+        const documentY1 = documentYEnds[backingY - backingY0]!;
+        for (let backingX = backingX0; backingX < backingX1; backingX += 1) {
+          const index = ((backingY - backingY0) * readWidth + backingX - backingX0) * 4;
+          if (!isAnt(index)) continue;
+          const documentX0 = documentXStarts[backingX - backingX0]!;
+          const documentX1 = documentXEnds[backingX - backingX0]!;
+          for (let documentY = documentY0; documentY < documentY1; documentY += 1) {
+            for (let documentX = documentX0; documentX < documentX1; documentX += 1) {
+              const line = scanAxis === 'row' ? documentY - y0 : documentX - x0;
+              const at = scanAxis === 'row' ? documentX - x0 : documentY - y0;
+              paintedLines[line]![at] = 1;
+            }
+          }
+        }
+      }
+
+      const runs: [number, number][][] = paintedLines.map((painted) => {
         const lineRuns: [number, number][] = [];
         let runStart = -1;
-
         for (let at = 0; at < runLength; at += 1) {
-          const index = scanAxis === 'row' ? (line * readWidth + at) * 4 : (at * readWidth + line) * 4;
-          if (isAnt(index)) {
+          if (painted[at] === 1) {
             if (runStart === -1) runStart = at;
           } else if (runStart !== -1) {
-            lineRuns.push([runStart, at - 1]);
+            lineRuns.push([origin + runStart, origin + at - 1]);
             runStart = -1;
           }
         }
-        if (runStart !== -1) lineRuns.push([runStart, runLength - 1]);
-
-        // Document pixels, not offsets into the read: a caller comparing a run against
-        // `singleRowMarqueeRect`'s output is working in the document's space.
-        runs.push(lineRuns.map(([a, b]) => [origin + a, origin + b]));
-      }
+        if (runStart !== -1) lineRuns.push([origin + runStart, origin + runLength - 1]);
+        return lineRuns;
+      });
 
       return runs;
     },

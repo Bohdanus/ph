@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { loadCatalogs, normalizeGroqKeys, probeOpenRouterQuota } from './free-model-pool.mjs';
+import { loadCatalogs, normalizeGroqKeys, orderFreeModelRoutes, probeOpenRouterQuota } from './free-model-pool.mjs';
 import { DEFAULT_QUARANTINE_FILE } from './lib/free-model-quarantine.mjs';
+import { isDisabledFreeModel } from './lib/free-model-policy.mjs';
 
 const MAX_SUBAGENTS = 15;
 const ALLOWED_PROVIDERS = new Set(['openrouter', 'kilo', 'groq', 'opencode']);
@@ -57,6 +58,12 @@ export async function validateSubagentConfigs(
   }
 
   const normalized = configs.map(normalizeConfig);
+  const disabled = normalized.find(({ model }) => isDisabledFreeModel(model));
+  if (disabled) {
+    throw new Error(
+      `Nemotron model/provider pair is not approved by free-model policy: ${disabled.model} via ${disabled.provider}`
+    );
+  }
   const needsOpenRouter = normalized.some(({ provider }) => provider === 'openrouter');
   const openRouterTaskCount = normalized.filter(({ provider }) => provider === 'openrouter').length;
   const needsGroq = normalized.some(({ provider }) => provider === 'groq');
@@ -183,7 +190,7 @@ export async function getFreeModelOptions({
     quarantineFile,
     initializeLegacyQuarantine: false,
   });
-  return catalog
+  return orderFreeModelRoutes(catalog)
     .filter((candidate) => ALLOWED_PROVIDERS.has(candidate.source))
     .map(({ model, source: provider, name }) => ({ model, provider, name }));
 }

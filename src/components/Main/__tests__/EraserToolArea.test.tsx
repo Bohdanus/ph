@@ -173,7 +173,7 @@ describe('EraserToolArea', () => {
     // so a commit that named no layer at all is still unambiguously an ACTIVE-LAYER edit.
     const [params] = updateLayerByToolMock.mock.calls[0] as [{ id?: unknown; toolArgs: Record<string, unknown> }];
     expect(params.id).toBeUndefined();
-    expect(params.toolArgs).toMatchObject({ toolName: 'eraser', mode: 'pencil', lineWidth: 10 });
+    expect(params.toolArgs).toMatchObject({ toolName: 'eraser', mode: 'pencil', lineWidth: 10, flow: 100 });
   });
 
   it('records one commit per gesture rather than one per pointer event', () => {

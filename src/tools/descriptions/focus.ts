@@ -8,18 +8,12 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     summary:
       'Paints blur under the brush, softening hard edges and reducing detail wherever you drag; the effect builds up pass by pass.',
     purpose:
-      "The Blur tool reduces local contrast and smooths detail in the areas you paint it over, so one pass is subtle and repeated passes are not. It shares a Tools-panel slot, a single options bar, and a tip with the Sharpen and Smudge tools: the bar carries a brush preset with its Size and Hardness, a Mode, a Strength percentage that seeds at 50% and which Adobe's own guidance says to keep low, and Sample All Layers, which is what makes the effect paintable onto a blank layer above the stack for non-destructive work. It is a different thing from Filter > Blur and from the Blur Gallery, which run a Gaussian, Box, Lens, Motion, Radial, Smart, Surface or Tilt-Shift, Iris or Field blur over a whole selection or layer in one command with no brush and no per-stroke build-up.",
+      'The Blur tool reduces local contrast and smooths detail in the areas you paint it over, so one pass is subtle and repeated passes are not. It shares a Tools-panel slot, options bar and tip with Sharpen and Smudge: Adobe documents a brush preset with Size/Hardness, Strength and Sample All Layers. Blur-specific control remains unconfirmed for a separate Mode field, so this description does not infer one from global blend-mode lists. It is a different thing from Filter > Blur and from the Blur Gallery, which run a Gaussian, Box, Lens, Motion, Radial, Smart, Surface or Tilt-Shift, Iris or Field blur over a whole selection or layer in one command with no brush and no per-stroke build-up.',
     options: [
       {
         control: 'Brush Preset Picker',
         detail:
           "The tip the blur is painted with, carrying its Size and Hardness. Photoshop exposes the whole preset library here; Size and Hardness are the preset's two live parameters, and a soft tip is what lets a stroke blend into its surroundings instead of standing out against them.",
-        status: 'missing',
-      },
-      {
-        control: 'Mode',
-        detail:
-          "The blend mode the blurred result is composited with, rather than drawn at Normal, and a mode that shifts hue or saturation blurs the colour differently from one that does not. Third-party walkthroughs name Normal, Darken, Lighten, Hue, Saturation, Color and Luminosity as the choices, and one of them says the dropdown 'only offers a limited number of blends' - but no page states to what the list is restricted, and Adobe's current Blur page does not enumerate a Mode control at all.",
         status: 'missing',
       },
       {
@@ -36,7 +30,13 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       },
     ],
     modifiers: [],
-    shortcuts: [],
+    shortcuts: [
+      {
+        keys: 'R',
+        action:
+          'Photoshop assigns R to the Blur/Sharpen/Smudge family. THIS APP DIVERGES: R selects Rotate View; it has no Shift+R cycle for this family.',
+      },
+    ],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/blur.ts:11',
@@ -44,7 +44,6 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       'src/components/ToolbarsRight/Blur/Blur.tsx:101',
       'src/components/ToolbarsRight/Blur/Blur.tsx:121',
       'src/components/Main/Main.tsx:360',
-      'src/components/Main/SharpenToolArea.tsx:33',
       'src/tools/toolProcessors.ts:160',
     ],
     appNotes:
@@ -82,7 +81,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       {
         control: 'Mode',
         detail:
-          'The blend mode the sharpened result is composited with as you brush. On a dark edge Luminosity or Color keeps the sharpening from dragging the hue with it, which is why the mode is worth setting per area rather than once.',
+          'The blend mode the sharpened result is composited with as you brush. Adobe’s October 2026 desktop guide lists this control, but neither page enumerates Sharpen’s tool-specific blend-mode set. Adobe’s blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts. The HDR page includes Sharpen among supported tools.',
         status: 'missing',
       },
       {
@@ -105,7 +104,13 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       },
     ],
     modifiers: [],
-    shortcuts: [],
+    shortcuts: [
+      {
+        keys: 'R',
+        action:
+          'Photoshop assigns R to the Blur/Sharpen/Smudge family. THIS APP DIVERGES: R selects Rotate View; it has no Shift+R cycle for this family.',
+      },
+    ],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/sharpen.ts:243',
@@ -120,6 +125,9 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       "What the app ships under this name is the Filter > Sharpen > Unsharp Mask filter, not the tool. The options bar is Amount (0-500%, 50% by default) and Radius (0-100 px, 1 px by default) - the Unsharp Mask's own control names, not the tool's - and there is no brush, no Strength, no Mode, no Sample All Layers and no Protect Detail. The Radius is the sharper divergence of the two, because Photoshop's tool has no radius control at all: the bar Adobe enumerates runs brush Size and Hardness, Strength, Protect Detail, Sample All Layers, and a write-up on the CS5 rebuild is explicit that 'the tool has no radius control, so it's really just for screen sharpening'. A slider the tool does not have is a control rendered in a place Photoshop has nothing, which is the same defect the Gradient's Opacity slider is filed under. There is no gesture either: the Sharpen's canvas area renders display:none by design, so nothing can be brushed. The layer is previewed when a slider moves rather than committed by it: the bar routes through `tempUpdateLayer`, which publishes a preview layer and no history entry, and the entry is written later by the dirty-tool commit on tool switch, on export or in `mergeAllLayers`. As on the Blur, the verdict is `partial` and not `placeholder` because the tool does reach the document: it commits a real convolved raster with a real history entry, and `placeholder` is defined as committing nothing. The kernel is a two-pass separable BOX blur subtracted from the source, which is an unsharp mask over a box kernel rather than over Photoshop's Gaussian; the file says so. That matters more for this tool than for the filter, because the addendum's own account of the three focus tools is that they are distinguished precisely by kernel behaviour - the Blur smooths, the Sharpen uses a wider radius with unsharp-like falloff rather than a box blur. The kernel class is not the gap here, because the app does have the box kernel and says so in caps. What is missing is Photoshop's Gaussian: a real unsharp mask subtracts a Gaussian-blurred copy, whose response decays smoothly away from an edge, while a box window responds flatly across its whole width and stops dead at the edge. At small radii the two are nearly interchangeable; at a wide one the app's Sharpen hardens a band of the full window width with a step at its boundary, where Photoshop tapers. So the Blur and the Sharpen here differ in radius and in magnitude, not in the shape of the kernel's response - which is exactly the distinction the addendum says separates them, and the app does not reproduce it. The one genuine strength here is over the pixels underneath: the blur runs on premultiplied colour with alpha unsharp-masked on its own scale, so a transparent hole does not bleed a ring into the opaque side - a halo Photoshop's own USM does not go out of its way to avoid either.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/effects-filters/smart-filters/sharpen-a-selection.html',
+      'https://helpx.adobe.com/photoshop/desktop/effects-filters/blur-sharpen-filters/increase-sharpness-in-selected-image-areas.html',
+      'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html',
       'https://helpx.adobe.com/photoshop/desktop/whats-new/photoshop-on-desktop-release-notes.html',
       'https://www.deke.com/content/advanced-sharpening-techniques-or-close-to-the-edge-part-deux',
       'https://insider.kelbyone.com/living-on-the-edge-an-exploration-of-the-sharpening-tools-in-photoshop-by-scott-valentine/',
@@ -171,18 +179,12 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
         status: 'missing',
       },
     ],
-    modifiers: [
-      {
-        keys: 'Alt',
-        action:
-          'Reverses the Finger Painting setting for the length of the drag: if the box is off, Alt-dragging dips the tool into the foreground colour; if Finger Painting is on, Alt-dragging smudges normally.',
-      },
-    ],
+    modifiers: [],
     shortcuts: [
       {
         keys: 'R',
         action:
-          'Selects the Smudge tool, which is the tool that owns the R slot in the Focus flyout; Shift+R cycles to the Blur and the Sharpen.',
+          "Adobe's current desktop Smudge guide says R cycles through retouching tools until Smudge appears. Adobe's 2024 Rotate View guide labels Rotate View as R, and its 2019 shortcut reference also assigns R to Rotate View. Because these first-party references conflict, the default binding is unresolved; check Photoshop's Keyboard Shortcuts and Menus dialog. This app assigns R to Rotate View and does not cycle the family with Shift+R.",
       },
       {
         keys: '[',
@@ -199,7 +201,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       'src/tools/smudge.ts:123',
       'src/tools/settings.ts:255',
       'src/components/ToolbarsRight/Smudge/Smudge.tsx:138',
-      'src/components/ToolbarsRight/Smudge/Smudge.tsx:153',
+      'src/components/ToolbarsRight/Smudge/Smudge.tsx:168',
       'src/components/Main/SmudgeToolArea.tsx:62',
       'src/components/Common/AppKeyboardShortcuts.tsx:69',
       'src/components/Common/AppKeyboardShortcuts.tsx:539',
@@ -209,6 +211,10 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       "This is the closest match in the family. The processor reads each covered pixel from the untouched source raster at the texel one dab-behind along the drag, never from the buffer it is writing, so colour travels exactly one segment per dab instead of compounding into a single streak; the falloff is the shared brush engine's tipAlphaAt, so the smudge's soft edge is the same edge the Brush, Eraser, Dodge, Burn and Clone Stamp stamp. Strength is a real per-dab coverage seeded at 50% as in Photoshop, and it is `partial` rather than `present` for one narrow reason: the bar lets the slider reach 0, where `SMUDGE_STRENGTH_MIN` is 0 and the module says so in caps, while every source that states a floor for this Strength puts it at 1%. The transport semantics are right, and the app matches Photoshop's layering rule without being told to: the stroke edits the active layer, which is exactly what Sample All Layers does not change. Three controls are missing rather than wrong. Mode has nowhere to live because no control anywhere in the app edits a layer's blend mode: `Layer.blendMode` is a data field the paint tool's own Mode select writes and the PSD importer sets, and a grep for `blendMode` across `src/components/` finds only that select - the Layers panel has no blend-mode control at all. Finger Painting needs an args field of its own before it can be a control, and it is a per-dab source selection rather than a setting on the same axis as the other three. Sample All Layers would need the composite, and the processor is handed one layer's bitmap. The Brush Preset Picker is partial rather than absent because this editor has one tip shape and no presets, though Size and Hardness - the preset's two live parameters - are both there. Alt is not bound to Finger Painting. There is no build-up while the button is held: the shared stroke hook appends a point to the drag on a pointer move and there is no timer and no dwell accumulation anywhere in it, so holding the brush still deposits nothing, and one stroke is one undo entry. That is the same absence this file calls the tool's defining interaction on the Dodge and the Burn, and it is why this tool is filed `partial` on the same bar rather than `implemented` - not because the drag misbehaves, which it does not, but because the interaction the tool exists for is not there.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/smudge-tool.html',
+      'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html',
+      'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
+      'https://helpx.adobe.com/photoshop/using/tool-techniques/rotate-view-tool.html',
+      'https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html',
       'https://www.adobe.com/products/photoshop/blend-colors.html',
       'https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf',
       'https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/',
@@ -269,25 +275,12 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       {
         keys: 'Shift+O',
         action:
-          'Cycles through the tools that share the O shortcut, which reaches the Burn tool without leaving the canvas.',
+          'Adobe’s 2019 shortcut reference says Shift+O cycles the Dodge, Burn and Sponge tools when Use Shift Key for Tool Switch is enabled; with that preference disabled, press O repeatedly to cycle.',
       },
       {
-        keys: 'Shift+Alt+S',
+        keys: '0–9',
         action:
-          'Sets the stroke to the Shadows range while the Dodge tool is active, the same key the Sponge uses to desaturate. Photoshop prints it Shift+Option+S on macOS.',
-      },
-      {
-        keys: 'Shift+Alt+M',
-        action: 'Sets the stroke to the Midtones range. Photoshop prints it Shift+Option+M on macOS.',
-      },
-      {
-        keys: 'Shift+Alt+H',
-        action: 'Sets the stroke to the Highlights range. Photoshop prints it Shift+Option+H on macOS.',
-      },
-      {
-        keys: '0',
-        action:
-          'Sets Exposure to 100% while the Dodge tool is active, on the rule that any painting or editing tool takes a bare number for opacity, tolerance, strength or exposure.',
+          'Adobe’s 2019 shortcut reference says number keys 0–9 set Exposure: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. With Airbrush enabled, Shift+number adjusts Exposure. This app does not implement Dodge Exposure digit shortcuts.',
       },
       {
         keys: '[',
@@ -317,6 +310,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html',
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
+      'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       'https://www.peachpit.com/articles/article.aspx?p=3104540',
       'https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/',
       'https://fstoptraining.com/dodge-burn-tools/',
@@ -371,22 +365,14 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     modifiers: [],
     shortcuts: [
       {
+        keys: '0–9',
+        action:
+          'Adobe’s 2019 shortcut reference says number keys 0–9 set Exposure: 0 = 100%, 1 = 10%, and two quick digits set an exact percentage. With Airbrush enabled, Shift+number adjusts Exposure. This app does not implement Burn Exposure digit shortcuts.',
+      },
+      {
         keys: 'Shift+O',
         action:
-          'Cycles from the Dodge tool to the Burn tool, which share the O shortcut; press it again to reach the Sponge tool.',
-      },
-      {
-        keys: 'Shift+Alt+S',
-        action:
-          'Sets the stroke to the Shadows range while the Burn tool is active. Photoshop prints it Shift+Option+S on macOS.',
-      },
-      {
-        keys: 'Shift+Alt+M',
-        action: 'Sets the stroke to the Midtones range. Photoshop prints it Shift+Option+M on macOS.',
-      },
-      {
-        keys: 'Shift+Alt+H',
-        action: 'Sets the stroke to the Highlights range. Photoshop prints it Shift+Option+H on macOS.',
+          'Adobe’s 2019 shortcut reference says Shift+O cycles the Dodge, Burn and Sponge tools when Use Shift Key for Tool Switch is enabled; with that preference disabled, press O repeatedly to cycle.',
       },
       {
         keys: '[',
@@ -415,6 +401,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html',
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
+      'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       'https://www.peachpit.com/articles/article.aspx?p=3104540',
       'https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/',
       'https://fstoptraining.com/dodge-burn-tools/',
@@ -430,7 +417,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     summary:
       'Raises or lowers the colour saturation under the brush, so a flat area gains colour or a loud one loses it, and the lightness underneath is untouched.',
     purpose:
-      "The Sponge tool subtly changes the colour saturation of an area. Saturate intensifies the colour's saturation and Desaturate dilutes it, and the tool reaches no further than that: it is the one brush in the toning flyout that acts on chroma rather than on tone, which is what separates it from the Dodge and the Burn beside it, and neither a Range nor an Exposure appears on its bar because neither means anything to a chroma operation. Flow is the bar's only intensity control, and where the Dodge and the Burn have neither Opacity nor Flow the Sponge has Flow and no Opacity, so the bare digit keys step Flow rather than Opacity. Dragging compounds: the effect builds up pass by pass and keeps building for as long as the button is held, which is why retouching with it is done at a low Flow with repeated passes. Adobe documents one more thing about it that belongs here rather than in the option table, because it is a rule rather than a control: when an image is in Grayscale mode the tool increases or decreases contrast by moving grey levels away from or toward the middle grey. Vibrance, the checkbox that sits beside Flow, is what keeps the Saturate direction from pushing an already-bright colour off the end of its range; it arrived with the CS4 rework of all three toning tools, which is the same release that gave the Dodge and the Burn Protect Tones.",
+      "The Sponge tool subtly changes the colour saturation of an area. Saturate intensifies the colour's saturation and Desaturate dilutes it, and the tool reaches no further than that: it is the one brush in the toning flyout that acts on chroma rather than on tone, which is what separates it from the Dodge and the Burn beside it, and neither a Range nor an Exposure appears on its bar because neither means anything to a chroma operation. Flow is the bar's only intensity control, and where the Dodge and the Burn have neither Opacity nor Flow the Sponge has Flow and no Opacity. A generic Photoshop shortcut reference assigns Shift+number to Flow, but the current Sponge-specific guide does not confirm a numeric binding; treat that generic evidence cautiously, especially for Airbrush. Dragging compounds: the effect builds up pass by pass and keeps building for as long as the button is held, which is why retouching with it is done at a low Flow with repeated passes. Adobe documents one more thing about it that belongs here rather than in the option table, because it is a rule rather than a control: when an image is in Grayscale mode the tool increases or decreases contrast by moving grey levels away from or toward the middle grey. Vibrance, the checkbox that sits beside Flow, is what keeps the Saturate direction from pushing an already-bright colour off the end of its range; it arrived with the CS4 rework of all three toning tools, which is the same release that gave the Dodge and the Burn Protect Tones.",
     options: [
       {
         control: 'Brush Preset Picker',
@@ -476,13 +463,19 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     modifiers: [],
     shortcuts: [
       {
+        keys: 'Shift+0–9',
+        action:
+          'The 2019 generic painting/editing shortcut reference says Shift+number sets Flow. This is historical generic evidence rather than a current Sponge-specific confirmation; for Airbrush, it does not establish whether that exception applies to the Sponge.',
+      },
+      {
         keys: 'O',
         action:
           'Selects the Dodge tool. Adobe lists the Dodge, the Burn and the Sponge as three rows with the same letter rather than one row, which puts the Dodge first; the Sponge is reached by cycling.',
       },
       {
         keys: 'Shift+O',
-        action: 'Cycles from the Dodge tool to the Burn tool and on to the Sponge, which share the O shortcut.',
+        action:
+          'Adobe’s 2019 shortcut reference says Shift+O cycles the Dodge, Burn and Sponge tools when Use Shift Key for Tool Switch is enabled; with that preference disabled, press O repeatedly to cycle.',
       },
       {
         keys: 'Shift+Alt+D',
@@ -523,6 +516,8 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     sources: [
       'https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/sponge-tool.html',
+      'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/adjust-color-saturation-in-selected-image-areas.html',
+      'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html',
       'https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html',
       'http://www.cheat-sheets.org/saved-copy/PSCS2_Shortcuts_Windows.pdf',
@@ -612,7 +607,8 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     modifiers: [
       {
         keys: 'Shift',
-        action: 'Constrains the drag to multiples of 45 degrees, so a linear gradient lands on a square angle.',
+        action:
+          'Constrains the drag to multiples of 45 degrees, so a linear gradient lands on a square angle. NOT IMPLEMENTED in this app — gradient.ts and GradientToolArea.tsx have no Shift handling for angle constraint.',
       },
     ],
     shortcuts: [
@@ -623,7 +619,8 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       },
       {
         keys: 'Delete',
-        action: 'Removes the stop under the pointer from the on-canvas gradient line.',
+        action:
+          'In Photoshop, removes the stop under the pointer from the on-canvas gradient line. The app has no editable on-canvas gradient handles or stops, so this binding is not implemented here.',
       },
     ],
     implementation: 'partial',
@@ -657,3 +654,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     ],
   },
 };
+
+focusDescriptions.dodge.appNotes = `${focusDescriptions.dodge.appNotes ?? ''} This app does not implement Exposure digit shortcuts for Dodge or Burn.`;
+focusDescriptions.burn.appNotes = `${focusDescriptions.burn.appNotes ?? ''} This app does not implement Exposure digit shortcuts for Dodge or Burn.`;
+focusDescriptions.sponge.appNotes = `${focusDescriptions.sponge.appNotes ?? ''} The 2026 Sponge guide documents Flow but no numeric binding; a 2019 generic painting/editing reference assigns Flow to Shift+number. No Shift+number handler sets Flow in this app.`;

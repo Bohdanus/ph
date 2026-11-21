@@ -17,7 +17,7 @@ routine agent entry points.
 - If Git metadata or the worktree registry appears damaged, follow [Recovering Git metadata](docs/ORCHESTRATION.md#recovering-git-metadata). Do not hand-edit `.git`, `gitdir`, or `commondir`, and do not prune, remove, or move worktrees during recovery.
 - Before every Git mutation, verify `pwd`, `git -C <absolute-worktree> rev-parse --show-toplevel`, and `git -C <absolute-worktree> rev-parse --git-dir --git-common-dir`; stop if the checkout mapping is unexpected.
 - Commits require a `Chat: <native-session-id>` trailer; merges into `main` require `Branch: <source-branch>`. Resolve the chat ID using the instructions for the current host in [`docs/CHAT-ID.md`](docs/CHAT-ID.md); use `session:id` only for Kilo sessions, and never guess when the match is ambiguous.
-- Main landing occupancy: check `npm run main:landing -- status` and land only through the owner-tracked wrapper. If it is occupied for 15 minutes, report the holder in your own current chat and continue unrelated work; do not wait or touch `main`. At four hours, an agent that sees the alert must use structured host session/process liveness, without reading transcripts; if the owner chat is dead and its process tree stopped, launch the required Luna 6 (`gpt-6-luna`, `xhigh`) recovery subagent and follow [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md#main-landing-ownership-and-deadlock-recovery). This is the only user-authorized paid recovery exception.
+- Main landing occupancy: check `npm run main:landing -- status` and land only through the owner-tracked wrapper. If it is occupied for 15 minutes, report the holder in your own current chat and continue unrelated work; do not wait or touch `main`. A landing blocked by the exact orphan `AUTO_MERGE` state automatically retries its reviewed pins from a new main worktree after 30 continuous minutes; exit 75 means pending, not landed, and the old checkout is left untouched for later sweep. For every other four-hour alert, use structured host session/process liveness without reading transcripts; if the owner chat is dead and its full process tree stopped, launch the required Luna 6 (`gpt-6-luna`, `xhigh`) recovery subagent and follow [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md#main-landing-ownership-and-deadlock-recovery). This is the only user-authorized paid recovery exception.
 - Follow [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) for landing, recovery, and disposal.
 
 ## Product Boundary
@@ -44,10 +44,15 @@ Keep pixel-substitution tools such as Color Replacement on their own args, proce
 
 ## Coordination And Cleanup
 
-- Before takeover, harvest, or cleanup, verify the worktree, run `npm run repo:state`, inspect status, and read the relevant handoff. Cleanup also requires `node scripts/worktree-inventory.mjs` and `npm run branches:orphan`.
+- Before takeover, harvest, or cleanup, verify the worktree, run `npm run repo:state`, inspect
+  status, and read the relevant handoff. The default report is repository-wide; before a main
+  landing, do not treat its exit status as a landing gate: use
+  `npm run repo:state -- --for-landing <source-branch>` as the operation-scope check instead.
+  A nonzero scoped result is a hold. Cleanup also requires `node scripts/worktree-inventory.mjs`
+  and `npm run branches:orphan`.
 - Never run `node scripts/worktree-inventory.mjs -- --quiet`; use documented inventory commands and check their exit status. Use `npm run swarm` for repository ownership, not session-only board tools.
 - `board_post` caps the FORMATTED message at **4096 bytes**, not the body at 4096 characters: the budget is **3800 ASCII characters**, or 1200 if any may be non-ASCII. Put longer evidence in a file and reference it from the board. Details live in [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md).
-- Never merge into dirty `main`, stage another agent's paths, or use `git stash`. Dispose only with `npm run dispose -- <name>` after proving ownership, confirming descendant agents are dead, checking the live overlay, and previewing `npm run swarm -- doctor --dry-run`.
+- Never merge into dirty `main`, stage another agent's paths, or use `git stash`. Dispose only with `npm run dispose -- <name> --codex-owner-audit-complete` after proving ownership, confirming descendant agents are dead, searching the live overlay and root/subagent transcripts, and previewing both `npm run dispose -- <name> --codex-owner-audit-complete --dry-run` and `npm run swarm -- doctor --dry-run`.
 - A task is complete only when reviewed work is landed/released or a durable handoff marks it `blocked`, `unproven`, or `obsolete`.
 
 ## Gates And Documentation

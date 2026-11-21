@@ -1,7 +1,7 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
-  DEFAULT_LINE_CLIP,
+  documentToCanvasOffset,
   drawLine,
   getColorAtPoint,
   getDarkPixelBounds,
@@ -12,80 +12,49 @@ import {
   isBuffer,
   type ImageDataResult,
   loadImageData,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
   measureInk,
   takeLineScreenshot,
+  WHOLE_CAPTURE,
 } from './helpers/canvas-helpers';
 import { canvasRedrawClip, type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
-import { cssPointToImage } from './helpers/screenshot-scale';
+import { cssPointToImage, viewportClip, type ViewportClipOptions } from './helpers/screenshot-scale';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
 /**
- * Pixel coordinates inside the image `takeLineScreenshot` returns, which crops the
- * canvas to `DEFAULT_LINE_CLIP` (120,120,260,80) measured from the canvas box. The
- * standard test line runs from (150,150) to (350,150) in box coordinates, so in that
- * image it spans x 30..230 on row 30.
- *
- * Three samples along the stroke rather than one: an adjustment that erased the
- * layer, or one that only reached part of it, would pass a single mid-stroke read.
- *
- * Every read below passes `ignoreNearWhite`. That is what makes a `null` result a
- * survival failure rather than a tautology: the document behind the layer is white, so
- * a point where the stroke has been erased samples nothing at all, while a point the
- * stroke still covers samples its pixels.
+ * Document-space coordinates for the standard test line.
+ * Mirrors the box-relative LINE_* constants (150,150 to 350,150) but expressed in
+ * the 800x600 document space so they are layout-independent.
  */
-const STROKE_SAMPLES = [
-  { name: 'start', x: 30, y: 30 },
-  { name: 'middle', x: 130, y: 30 },
-  { name: 'end', x: 225, y: 30 },
-] as const;
-
-const STROKE_MIDDLE = STROKE_SAMPLES[1];
+const DOC_LINE_START = { x: 150, y: 150 } as const;
+const DOC_LINE_END = { x: 350, y: 150 } as const;
 
 /**
- * The CSS-pixel region every `takeLineScreenshot` below is captured over.
- *
- * `takeLineScreenshot` falls back to `DEFAULT_LINE_CLIP`, so the capture is a faithful
- * image of exactly that rect — and `getStrokeAnalysis` needs the rect to derive the
- * capture's scale from the decoded width. The thresholds it compares are authored in
- * CSS pixels; without this the same stroke measured at 2x carries twice the vertical
- * spread and reads as a spray where it is solid.
+ * Document-space sample positions along the stroke.
+ * These correspond to the original STROKE_SAMPLES which were at clip-relative
+ * (30,30), (130,30), (225,30) in the old DEFAULT_LINE_CLIP (120,120,260,80).
+ * The old clip placed the line at clip-relative (30,30) to (230,30), so:
+ * - start  (30,30)  -> document (150,150)
+ * - middle (130,30) -> document (250,150)
+ * - end    (225,30) -> document (345,150)
  */
-const LINE_CAPTURE_REGION = { width: DEFAULT_LINE_CLIP.width, height: DEFAULT_LINE_CLIP.height };
+const DOC_STROKE_SAMPLES = [
+  { name: 'start', x: 150, y: 150 },
+  { name: 'middle', x: 250, y: 150 },
+  { name: 'end', x: 345, y: 150 },
+] as const;
+
+const DOC_STROKE_MIDDLE = DOC_STROKE_SAMPLES[1];
 
 /**
  * How far the stroke's ink BOUNDS may move across an adjustment, in capture pixels.
- *
- * One, and the natural value is zero: both captures are `takeLineScreenshot` over the same
- * `DEFAULT_LINE_CLIP` of the same document, so the stroke lands on the same image pixels
- * before and after. Measured on `grayscale(100%)` over a `#cc0000` stroke: left/top/right/
- * bottom all drift by 0, while the ink MASS rises 9.7% — the CSS `grayscale()` matrix is not
- * the 0.299/0.587/0.114 one `measureInk` weights by, so the same mark carries more measured
- * ink after. That is why the invariant is the bounds and not `ink`.
+ * Unchanged from the original constant.
  */
 const INK_BOUNDS_TOLERANCE_PX = 1;
 
 /**
  * The four inclusive edges of a capture's ink, or a thrown error when it carries none.
- *
- * `measureInk` is the instrument here rather than `getStrokeAnalysis`, and the reason is
- * measured. A `#cc0000` stroke composites to RGB (210,26,26) over the white document, and
- * `getStrokeAnalysis` classifies a pixel as dark only when all three channels are under 50
- * and as spray only when luminance is over 200 AND saturation under 30. The core satisfies
- * neither, so on this fixture the analyser reports `darkCount: 0` and `pixelCount: 225`
- * against a core of 1643 — it is classifying the pale anti-aliased FRINGE and nothing else,
- * and its `verticalSpread` of 12 is the fringe's row span. That is fine for the Blur tests,
- * which stroke in `#000000` and want a dark core; it is the wrong instrument for a test whose
- * subject is a red stroke's geometry.
- *
- * `measureInk` weights by luma alone against a white page, so it sees the core. All three of
- * the geometry mutations that a surviving layer is supposed to exclude move its bounds:
- * scaling about the middle pushes the far edges out, a translation moves all four, and
- * thinning pulls the top and bottom in.
+ * Unchanged from the original function.
  */
 async function inkBounds(screenshot: Buffer | ImageDataResult) {
   const profile = await measureInk(screenshot);
@@ -105,53 +74,45 @@ function inkDrift(before: { left: number; top: number; right: number; bottom: nu
 }
 
 /**
- * Samples a point given in CSS pixels within the line capture.
+ * Samples a point given in DOCUMENT space by converting to the capture's CSS pixels.
  *
- * `STROKE_SAMPLES` is authored in CSS pixels — it is derived from where the line is
- * drawn, and `DEFAULT_LINE_CLIP` is a CSS-pixel rect — while `getColorAtPoint` takes
- * IMAGE pixels. At the suite's default 1x the two are the same number and the mismatch
- * is invisible. At `deviceScaleFactor: 2` `page.screenshot` returns a 520x160 image of
- * a 260x80 clip, so image row 30 is CSS row 15, which is above the stroke entirely:
- * every sample lands on white, `ignoreNearWhite` discards them all, and the helper
- * returns `null`. The result is four tests failing on a suite that is correct — and it
- * is the same class of defect `getStrokeAnalysis` was given a required `region` to
- * fix, in the same file, one commit apart.
+ * The capture is taken over a dynamically computed clip (20px padding around the line
+ * in box space). This function converts the document point to box space via
+ * `documentToCanvasOffset`, then to clip-relative CSS coordinates, then to image pixels.
  *
- * The conversion is the inverse of the mapping the capture performed, so it is derived
- * from the DECODED image rather than from the emulated ratio: CDP and
- * `page.screenshot` disagree about what ratio means, and the image is the only thing
- * both of them are describing.
+ * `region` is the CSS size of the capture (clip.width x clip.height), required because
+ * the clip size varies with the canvas box (contain fit scale).
  */
-async function sampleCssPoint(
+async function sampleDocPoint(
   screenshot: Buffer | ImageDataResult,
-  cssX: number,
-  cssY: number,
+  box: BoundingBox,
+  clip: ViewportClipOptions,
+  docX: number,
+  docY: number,
   radius: number,
   options?: Parameters<typeof getColorAtPoint>[4]
 ) {
+  // Convert document point to box-relative coordinates
+  const boxPos = documentToCanvasOffset(box, docX, docY);
+
+  // Convert box-relative to clip-relative CSS coordinates
+  // clip.x/y are viewport-relative; box.x/y are viewport-relative
+  const clipRelativeX = boxPos.x - (clip.x! - box.x);
+  const clipRelativeY = boxPos.y - (clip.y! - box.y);
+
   const image = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const point = cssPointToImage(
     { width: image.width, height: image.height },
-    { x: 0, y: 0, ...LINE_CAPTURE_REGION },
-    { x: cssX, y: cssY }
+    { x: 0, y: 0, width: clip.width!, height: clip.height! },
+    { x: clipRelativeX, y: clipRelativeY }
   );
-  // `getColorAtPoint` rejects a non-integer coordinate outright, and `cssPointToImage`
-  // returns a float by construction. Rounding is right here and truncation would be
-  // wrong: the point is a location, not a pixel index, so a fractional answer is
-  // expected and nearest is the honest mapping.
   return getColorAtPoint(image, Math.round(point.x), Math.round(point.y), radius, options);
 }
 
-/** `#cc0000`, the colour the two Colors tests stroke with: saturated, so a greyscale
- *  or a desaturation of it is a visible change rather than a rounding difference. */
+/** `#cc0000`, the colour the two Colors tests stroke with. */
 const RED_STROKE = '#cc0000';
 
-/**
- * Black, for the blur test only. The blur is asserted as ink dispersing outwards, and
- * a black stroke is what gives `getDarkPixelBounds` a fully dark core to lose; a
- * saturated red never reads as dark at all once it is composited over the white
- * document.
- */
+/** Black, for the blur test only. */
 const BLACK_STROKE = '#000000';
 
 const WHITE = 255;
@@ -165,54 +126,59 @@ async function visibleCanvasBox(page: Page): Promise<BoundingBox> {
 }
 
 /**
- * Draws the standard line on a fresh page and returns the canvas box.
- *
- * The colour is set AFTER the tool is activated: the draw tool only strokes with the
- * active foreground colour once it is the active tool, and `verifySwatch` proves the
- * store it reads actually holds the value.
+ * Computes the line's box-relative endpoints and the viewport clip for a given box.
+ * Mirrors the pattern in `color.spec.ts`: 20px padding around the line in box space.
  */
-async function drawStroke(page: Page, hex: string): Promise<BoundingBox> {
-  const box = await visibleCanvasBox(page);
-  await clickToolButton(page, 'draw');
-  await setForegroundColor(page, hex, true);
-  await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-  return box;
+function computeLineGeometry(box: BoundingBox) {
+  const start = documentToCanvasOffset(box, DOC_LINE_START.x, DOC_LINE_START.y);
+  const end = documentToCanvasOffset(box, DOC_LINE_END.x, DOC_LINE_END.y);
+  const clip = viewportClip({
+    x: box.x + Math.min(start.x, end.x) - 20,
+    y: box.y + Math.min(start.y, end.y) - 20,
+    width: Math.abs(end.x - start.x) + 40,
+    height: Math.abs(end.y - start.y) + 40,
+  } as const);
+  return { start, end, clip };
 }
 
 /**
- * Re-measures the canvas box.
- *
- * Opening an adjustment panel reflows the workspace canvas, so a box measured before
- * the panel opened can crop empty canvas and every pixel read below it lands on the
- * white page background.
+ * Draws the standard line on a fresh page and returns the canvas box and clip.
+ * The colour is set AFTER the tool is activated.
  */
-async function remeasureCanvasBox(page: Page): Promise<BoundingBox> {
+async function drawStroke(page: Page, hex: string): Promise<{ box: BoundingBox; clip: ViewportClipOptions }> {
+  const box = await visibleCanvasBox(page);
+  const { start, end, clip } = computeLineGeometry(box);
+  await clickToolButton(page, 'draw');
+  await setForegroundColor(page, hex, true);
+  await drawLine(page, box, start.x, start.y, end.x, end.y);
+  return { box, clip };
+}
+
+/**
+ * Re-measures the canvas box and recomputes the clip for the new layout.
+ * Opening an adjustment panel reflows the workspace canvas.
+ */
+async function remeasureCanvasBox(page: Page): Promise<{ box: BoundingBox; clip: ViewportClipOptions }> {
   const box = await getWorkspaceCanvas(page).boundingBox();
   expect(box, 'Canvas should have visible coordinates after opening the panel').not.toBeNull();
-  return box!;
+  const { clip } = computeLineGeometry(box!);
+  return { box: box!, clip };
 }
 
 /** The polarity `waitForCanvasPixels` polls on, as a named predicate. */
 const isNot =
   (predicate: CanvasPixelPredicate): CanvasPixelPredicate =>
-  async (png) =>
-    !(await predicate(png));
+  async (png, mask) =>
+    !(await predicate(png, mask));
+
+/** Wrapper for `hasRedPixels` to accept the mask parameter from `waitForCanvasPixels`. */
+const hasRedPixelsWithMask: CanvasPixelPredicate = async (screenshot, _mask) => hasRedPixels(screenshot);
+
+/** Wrapper for `hasDarkPixels` to accept the mask parameter from `waitForCanvasPixels`. */
+const hasDarkPixelsWithMask: CanvasPixelPredicate = async (screenshot, mask) => hasDarkPixels(screenshot, mask);
 
 /**
  * Selects the Colors panel through `Image ▸ Adjustments ▸ Desaturate`.
- *
- * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
- * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
- * is clicked. `color` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile
- * and no `tools-menu-color-button`, and the `[Colors, Levels, Transform]` flyout that used to
- * hold it is gone from `toolbarMap`. `Desaturate` is the enabled item that selects it, and
- * the slug is `slugifyToolLabel('Desaturate')` (`toolbar-mapping.ts`). It used to be
- * `Photo Filter`, which named a command whose bar this is not: Adobe's Photo Filter is a
- * lens filter with Density and Preserve Luminosity, and the app computes
- * `grayscale(%) sepia(%) saturate(%)`.
- *
- * The other twenty items in that submenu render `disabled`, so this is the one path in and a
- * spec cannot reach the panel any other way.
  */
 async function openColorsPanel(page: Page): Promise<void> {
   await page.getByTestId('header-image-menu-button').click();
@@ -226,16 +192,14 @@ test.describe('Colors adjustment', () => {
   });
 
   test('grayscale at 100 turns the red stroke neutral without destroying it', async ({ page }, testInfo) => {
-    const box = await drawStroke(page, RED_STROKE);
-    const before = await takeLineScreenshot(page, box, 'colors-before', testInfo);
+    const { box, clip } = await drawStroke(page, RED_STROKE);
+    const before = await takeLineScreenshot(page, box, 'colors-before', testInfo, clip);
     expect(await hasRedPixels(before), 'The stroke should be red before the adjustment').toBe(true);
     const beforeBounds = await inkBounds(before);
 
     await openColorsPanel(page);
-    const panelBox = await remeasureCanvasBox(page);
+    const { box: panelBox, clip: panelClip } = await remeasureCanvasBox(page);
 
-    // The panel's discard can only remove a live preview, so it is disabled until one
-    // exists. That makes it a readout of the preview lifecycle, not just a button.
     const reset = page.getByTestId('undo-button-reset');
     await expect(reset, 'Reset is gated on a live preview, and there is none yet').toBeDisabled();
 
@@ -245,13 +209,11 @@ test.describe('Colors adjustment', () => {
     await expect(grayscale).toHaveValue('100');
     await expect(reset, 'Moving the slider creates the live preview Reset is gated on').toBeEnabled();
 
-    // The pre-state has red pixels and the post-state cannot, so this poll is a real
-    // wait for the repaint rather than a sleep.
-    await waitForCanvasPixels(page, canvasRedrawClip(panelBox), isNot(hasRedPixels), {
+    await waitForCanvasPixels(page, canvasRedrawClip(panelBox), isNot(hasRedPixelsWithMask), {
       description: 'the stroke to stop being red',
     });
 
-    const after = await takeLineScreenshot(page, panelBox, 'colors-grayscale-100', testInfo);
+    const after = await takeLineScreenshot(page, panelBox, 'colors-grayscale-100', testInfo, panelClip);
     expect(await hasRedPixels(after), 'grayscale(100%) must leave no red pixel in the stroke').toBe(false);
 
     // EXACT AND CALIBRATION-FREE. `grayscale(100%)` replaces every channel with the
@@ -267,8 +229,8 @@ test.describe('Colors adjustment', () => {
     // colour if the layer was scaled about its middle, shifted, or thinned — so the four ink
     // edges are compared below.
     const samples = await Promise.all(
-      STROKE_SAMPLES.map(async ({ name, x, y }) => {
-        const sampled = await sampleCssPoint(after, x, y, 5, { ignoreNearWhite: true });
+      DOC_STROKE_SAMPLES.map(async ({ name, x, y }) => {
+        const sampled = await sampleDocPoint(after, panelBox, panelClip, x, y, 5, { ignoreNearWhite: true });
         expect(sampled, `grayscale(100%) left no ink at the ${name} of the stroke`).not.toBeNull();
         return { name, ...sampled! };
       })
@@ -305,32 +267,32 @@ test.describe('Colors adjustment', () => {
   });
 
   test('saturation at -100 desaturates the red stroke without destroying it', async ({ page }, testInfo) => {
-    const box = await drawStroke(page, RED_STROKE);
-    const before = await takeLineScreenshot(page, box, 'colors-before-saturation', testInfo);
+    const { box, clip } = await drawStroke(page, RED_STROKE);
+    const before = await takeLineScreenshot(page, box, 'colors-before-saturation', testInfo, clip);
     expect(await hasRedPixels(before), 'The stroke should be red before the adjustment').toBe(true);
     const beforeBounds = await inkBounds(before);
 
     await openColorsPanel(page);
-    const panelBox = await remeasureCanvasBox(page);
+    const { box: panelBox, clip: panelClip } = await remeasureCanvasBox(page);
 
     const saturation = page.getByRole('slider', { name: /Saturation/ });
     await expect(saturation).toBeVisible();
     await saturation.fill('-100');
     await expect(saturation).toHaveValue('-100');
 
-    await waitForCanvasPixels(page, canvasRedrawClip(panelBox), isNot(hasRedPixels), {
+    await waitForCanvasPixels(page, canvasRedrawClip(panelBox), isNot(hasRedPixelsWithMask), {
       description: 'the stroke to be desaturated',
     });
 
-    const after = await takeLineScreenshot(page, panelBox, 'colors-saturation-minus-100', testInfo);
+    const after = await takeLineScreenshot(page, panelBox, 'colors-saturation-minus-100', testInfo, panelClip);
     expect(await hasRedPixels(after), 'saturate(0%) must leave no red pixel in the stroke').toBe(false);
 
     // EXACT AND CALIBRATION-FREE, for the same reason as grayscale above: zero
     // saturation is a mix with the pixel's own luminance, so all three channels have to
     // come out equal. The non-null read of each sample is the survival check, and it is
     // the same one the grayscale test makes for the reason given there.
-    for (const { name, x, y } of STROKE_SAMPLES) {
-      const sampled = await sampleCssPoint(after, x, y, 5, { ignoreNearWhite: true });
+    for (const { name, x, y } of DOC_STROKE_SAMPLES) {
+      const sampled = await sampleDocPoint(after, panelBox, panelClip, x, y, 5, { ignoreNearWhite: true });
       expect(sampled, `saturate(0%) left no ink at the ${name} of the stroke`).not.toBeNull();
       expect(sampled!.red, `saturate(0%) must neutralise the ${name} of the stroke`).toBe(sampled!.green);
       expect(sampled!.blue, `saturate(0%) must neutralise the ${name} of the stroke`).toBe(sampled!.red);
@@ -356,15 +318,15 @@ test.describe('Blur adjustment', () => {
   });
 
   test('a non-zero radius disperses the stroke off its hard edge', async ({ page }, testInfo) => {
-    const box = await drawStroke(page, BLACK_STROKE);
-    const before = await takeLineScreenshot(page, box, 'blur-before', testInfo);
-    const beforeBounds = await getDarkPixelBounds(before);
+    const { box, clip } = await drawStroke(page, BLACK_STROKE);
+    const before = await takeLineScreenshot(page, box, 'blur-before', testInfo, clip);
+    const beforeBounds = await getDarkPixelBounds(before, WHOLE_CAPTURE);
     expect(beforeBounds, 'The black stroke should have a fully dark core before the adjustment').not.toBeNull();
     expect(beforeBounds!.height, 'The unblurred stroke should have a hard, finite edge').toBeGreaterThan(0);
-    const beforeAnalysis = await getStrokeAnalysis(before, LINE_CAPTURE_REGION);
+    const beforeAnalysis = await getStrokeAnalysis(before, { width: clip.width!, height: clip.height! });
     expect(beforeAnalysis, 'The stroke should be visible to stroke analysis').not.toBeNull();
     expect(beforeAnalysis!.type, 'The unblurred stroke should read as solid').toBe('solid');
-    const beforeMiddle = await sampleCssPoint(before, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 5, {
+    const beforeMiddle = await sampleDocPoint(before, box, clip, DOC_STROKE_MIDDLE.x, DOC_STROKE_MIDDLE.y, 5, {
       ignoreNearWhite: true,
     });
     expect(beforeMiddle, 'The stroke should be inked at its middle before the adjustment').not.toBeNull();
@@ -372,7 +334,7 @@ test.describe('Blur adjustment', () => {
     // `blur` is a singleton toolbar button, not a flyout group, so it is clicked
     // directly rather than reached through a long-press flyout.
     await clickToolButton(page, 'blur');
-    const panelBox = await remeasureCanvasBox(page);
+    const { box: panelBox, clip: panelClip } = await remeasureCanvasBox(page);
 
     const reset = page.getByTestId('undo-button-reset');
     await expect(reset, 'Reset is gated on a live preview, and there is none yet').toBeDisabled();
@@ -385,11 +347,11 @@ test.describe('Blur adjustment', () => {
 
     // The pre-state has a fully dark core and the blurred state has none, so this poll
     // is a real wait for the repaint rather than a sleep.
-    await waitForCanvasPixels(page, canvasRedrawClip(panelBox), isNot(hasDarkPixels), {
+    await waitForCanvasPixels(page, canvasRedrawClip(panelBox), isNot(hasDarkPixelsWithMask), {
       description: 'the stroke to lose its fully dark core',
     });
 
-    const after = await takeLineScreenshot(page, panelBox, 'blur-radius-10', testInfo);
+    const after = await takeLineScreenshot(page, panelBox, 'blur-radius-10', testInfo, panelClip);
 
     // DIRECTIONAL, NOT A MAGIC NUMBER. The exact spread of a CSS `blur()` is
     // implementation defined, so nothing here pins one. What is asserted is the
@@ -397,11 +359,11 @@ test.describe('Blur adjustment', () => {
     // the core that was dark enough to have bounds is gone, the soft edge covers more
     // rows, and the stroke's own value is lifted towards the white document behind it.
     expect(
-      await getDarkPixelBounds(after),
+      await getDarkPixelBounds(after, WHOLE_CAPTURE),
       `The fully dark core the unblurred stroke had (${beforeBounds!.height}px tall) is dispersed by the blur`
     ).toBeNull();
 
-    const afterAnalysis = await getStrokeAnalysis(after, LINE_CAPTURE_REGION);
+    const afterAnalysis = await getStrokeAnalysis(after, { width: panelClip.width!, height: panelClip.height! });
     expect(afterAnalysis, 'The blurred stroke should still be visible to stroke analysis').not.toBeNull();
     expect(
       afterAnalysis!.verticalSpread,
@@ -412,12 +374,14 @@ test.describe('Blur adjustment', () => {
     // ...and the artwork survived: the ink is still there, just spread out and lighter.
     // A blur cannot add ink, so the stroke's value rises towards - never above - the
     // white of the document behind it.
-    for (const { name, x, y } of STROKE_SAMPLES) {
-      const sampled = await sampleCssPoint(after, x, y, 5, { ignoreNearWhite: true });
+    for (const { name, x, y } of DOC_STROKE_SAMPLES) {
+      const sampled = await sampleDocPoint(after, panelBox, panelClip, x, y, 5, { ignoreNearWhite: true });
       expect(sampled, `The blur erased the stroke at the ${name} of it`).not.toBeNull();
       expect(sampled!.red, `A blur lifts the stroke's value towards the background, not above it`).toBeLessThan(WHITE);
     }
-    const afterMiddle = await sampleCssPoint(after, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 5, { ignoreNearWhite: true });
+    const afterMiddle = await sampleDocPoint(after, panelBox, panelClip, DOC_STROKE_MIDDLE.x, DOC_STROKE_MIDDLE.y, 5, {
+      ignoreNearWhite: true,
+    });
     expect(
       afterMiddle!.red,
       `The middle of the stroke read ${beforeMiddle!.red} before the blur, and a blur can only disperse its ink outwards`

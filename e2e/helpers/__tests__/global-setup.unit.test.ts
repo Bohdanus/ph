@@ -1,4 +1,7 @@
 import type { FullConfig } from '@playwright/test';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import * as ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import globalSetup, {
@@ -15,6 +18,8 @@ import globalSetup, {
   WARMUP_INTERVAL_MS,
   WARMUP_TIMEOUT_MS,
 } from '../../global-setup';
+import { normalizeOwnServerBaseUrl } from '../../global-setup/foreign-origin';
+import { playwrightWorkerCount } from '../../global-setup/worker-policy';
 
 /**
  * This file tests `e2e/global-setup.ts`, which is NOT a helper module, and it lives
@@ -40,6 +45,144 @@ import globalSetup, {
  */
 
 const HTML = '<html><body><script type="module" src="/src/main.tsx"></script></body></html>';
+const E2E_ROOT = join(import.meta.dirname, '../..');
+
+function listPlaywrightSpecs(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return listPlaywrightSpecs(path);
+    return entry.isFile() && entry.name.endsWith('.spec.ts') ? [path] : [];
+  });
+}
+
+function findPerSpecHeadedOverrides(source: string, fileName: string): string[] {
+  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const testNames = new Set<string>();
+
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const moduleName = statement.moduleSpecifier.text;
+    if (moduleName !== '@playwright/test' && !/\/fixtures\/extended-test(?:\.ts)?$/.test(moduleName)) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if ((element.propertyName?.text ?? element.name.text) === 'test') testNames.add(element.name.text);
+    }
+  }
+
+  const violations: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'use' &&
+      ts.isIdentifier(node.expression.expression) &&
+      testNames.has(node.expression.expression.text)
+    ) {
+      const options = node.arguments[0];
+      if (options && ts.isObjectLiteralExpression(options)) {
+        for (const property of options.properties) {
+          if (
+            ts.isPropertyAssignment(property) &&
+            ((ts.isIdentifier(property.name) && property.name.text === 'headless') ||
+              (ts.isStringLiteral(property.name) && property.name.text === 'headless')) &&
+            property.initializer.kind === ts.SyntaxKind.FalseKeyword
+          ) {
+            const { line } = sourceFile.getLineAndCharacterOfPosition(property.getStart(sourceFile));
+            violations.push(`${fileName}:${line + 1}`);
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return violations;
+}
+
+describe('Playwright spec browser-mode policy', () => {
+  it('detects a headed per-spec override through the imported test API alias', () => {
+    const source = [
+      "import { test as pwTest } from './fixtures/extended-test.ts';",
+      'pwTest.use({ viewport: { width: 1024, height: 768 },',
+      '  headless: false });',
+    ].join('\n');
+
+    expect(findPerSpecHeadedOverrides(source, 'sample.spec.ts')).toEqual(['sample.spec.ts:3']);
+  });
+
+  it('recognizes the shared test API from nested specs and direct Playwright imports', () => {
+    for (const moduleName of ['../fixtures/extended-test', '@playwright/test']) {
+      const source = [`import { test } from '${moduleName}';`, 'test.use({ headless: false });'].join('\n');
+      expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual(['nested/sample.spec.ts:2']);
+    }
+  });
+
+  it('derives all Playwright specs and rejects per-spec headed overrides', () => {
+    const violations = listPlaywrightSpecs(E2E_ROOT).flatMap((file) =>
+      findPerSpecHeadedOverrides(readFileSync(file, 'utf8'), relative(E2E_ROOT, file))
+    );
+
+    expect(violations, 'per-spec headless:false overrides bypass globalSetup and can open a visible browser').toEqual(
+      []
+    );
+  });
+});
+
+describe('normalizeOwnServerBaseUrl', () => {
+  it('uses the own server URL when no base URL override is configured', () => {
+    expect(normalizeOwnServerBaseUrl(undefined, 'http://127.0.0.1:5173')).toBe('http://127.0.0.1:5173');
+  });
+
+  it.each([
+    ['default HTTP port', 'http://localhost:80/app', 'http://127.0.0.1:80', 'http://127.0.0.1/app'],
+    ['implicit default HTTP port', 'http://localhost/app', 'http://127.0.0.1:80', 'http://127.0.0.1/app'],
+    ['non-default HTTP port', 'http://localhost:5413/app', 'http://127.0.0.1:5413', 'http://127.0.0.1:5413/app'],
+  ])('rewrites localhost to the own server for the same %s', (_label, configured, server, expected) => {
+    const baseUrl = normalizeOwnServerBaseUrl(configured, server);
+
+    expect(baseUrl).toBe(expected);
+    expect(checkOwnServer({ baseUrl, webServerUrl: server, allowRemote: undefined }).permitted).toBe(true);
+  });
+
+  it('preserves localhost when the configured port belongs to a different server', () => {
+    const server = 'http://127.0.0.1:80';
+    const baseUrl = normalizeOwnServerBaseUrl('http://localhost:5413/app', server);
+
+    expect(baseUrl).toBe('http://localhost:5413/app');
+    expect(checkOwnServer({ baseUrl, webServerUrl: server, allowRemote: undefined }).permitted).toBe(false);
+  });
+
+  it('preserves malformed and remote URLs for the existing origin guard', () => {
+    const remoteUrl = 'http://staging.example.test:5173';
+    const serverUrl = 'http://127.0.0.1:5173';
+    const remoteBaseUrl = normalizeOwnServerBaseUrl(remoteUrl, serverUrl);
+
+    expect(remoteBaseUrl).toBe(remoteUrl);
+    expect(checkOwnServer({ baseUrl: remoteBaseUrl, webServerUrl: serverUrl, allowRemote: undefined }).permitted).toBe(
+      false
+    );
+    expect(normalizeOwnServerBaseUrl('not a url', 'http://127.0.0.1:5173')).toBe('not a url');
+    expect(normalizeOwnServerBaseUrl('https://example.test', 'http://127.0.0.1:5173')).toBe('https://example.test');
+  });
+});
+
+describe('playwrightWorkerCount', () => {
+  it('serializes Windows CI after runner connection exhaustion', () => {
+    expect(playwrightWorkerCount(true, 'win32')).toBe(1);
+  });
+
+  it('keeps native CI parallelism on Linux and macOS', () => {
+    expect(playwrightWorkerCount(true, 'linux')).toBeUndefined();
+    expect(playwrightWorkerCount(true, 'darwin')).toBeUndefined();
+  });
+
+  it('keeps local E2E runs serial on every platform', () => {
+    expect(playwrightWorkerCount(false, 'win32')).toBe(1);
+    expect(playwrightWorkerCount(false, 'linux')).toBe(1);
+    expect(playwrightWorkerCount(false, 'darwin')).toBe(1);
+  });
+});
 
 type WarmupDeps = Parameters<typeof runWarmup>[1];
 type FetchResponse = Awaited<ReturnType<WarmupDeps['fetch']>>;

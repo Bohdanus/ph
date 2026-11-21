@@ -233,6 +233,11 @@ export class PixelContext {
   private host: { width: number; height: number } | null = null;
   private matrix: PixelMatrix = IDENTITY_MATRIX;
 
+  get canvas(): { width: number; height: number } {
+    this.syncToHost();
+    return this.host ?? this;
+  }
+
   /** Every string assigned to `filter`, in order. Never applied — see the module comment. */
   readonly filterAssignments: string[] = [];
   /** Every glyph and path call, in order. Never rasterised — see the module comment. */

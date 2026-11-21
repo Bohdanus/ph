@@ -14,7 +14,7 @@ import {
   moveSelectionByDelta,
 } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
-import { resetOverlayAlpha } from '../../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../../util/canvas.ts';
 import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
 import { isTemporaryHandActive } from '../../hooks/temporary-hand.ts';
 import {
@@ -110,7 +110,7 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
       const ctx = overlayCtxRef.current;
       if (!ctx) return;
 
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      clearCanvasBackingStore(ctx);
       // Not optional, and not `drawMarqueePreview`'s to do: the tool overlay is one 2D context
       // for the whole session and the preview painter is `save()`/`restore()`, so it inherits
       // whatever `globalAlpha` the last painting tool left behind. Nothing else in this
@@ -319,7 +319,7 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
       // — `selection-drag-preview.ts:56`-`:64`.
       clearSelectionDragPreview();
       if (ctx) {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [overlayCtxRef]);

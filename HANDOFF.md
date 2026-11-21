@@ -114,12 +114,13 @@ The three-transition mixed-source fixture pins composite pixels byte-for-byte af
 transition. Do not infer exact per-layer or export parity from that gate. A separate transformed
 raster with layer opacity 0.58 and `multiply` blend mode has exact raw materialization and direct
 composite parity. Its normal admission check refuses retained operations, so the product continues
-to use legacy rendering and export. A local Chrome diagnostic that manually invokes the refused
-runtime/export adapters records 42 differing channel bytes at the affine cursor and 46 after the
-fractional frame in runtime, export-canvas, and decoded PNG pixels. PSD has zero composite/layer
-differences at the affine cursor; after the fractional frame, the composite differs by 8 bytes, the
-background layer by 7, and the foreground layer by zero. These refused-adapter results are not proof
-of a current product-output defect; their cause remains unknown. The earlier 146-byte isolated-layer
+to use legacy rendering and export. An earlier local Chrome run that manually invokes the refused
+runtime/export adapters records 42 channel bytes at the affine cursor and 46 after the fractional
+frame in runtime, export-canvas, and decoded PNG pixels. The latest run-specific values and the
+first-difference trace are recorded in `docs/HISTORY-MIGRATION-NEXT.md`: runtime/export/PNG report
+42 bytes at both cursors; fractional-frame PSD reports 13 composite bytes and 11 background-layer
+bytes across 4 pixels. These refused-adapter results are not proof of a current product-output
+defect; their cause remains unknown. The earlier 146-byte isolated-layer
 comparison over transparency is not a valid blend-mode oracle. Keep retained-operation admission
 closed and follow the isolation steps in `docs/HISTORY-MIGRATION-NEXT.md` before changing the gate.
 Do not add `SET_DOCUMENT_FRAME_ACTION` to background
@@ -154,25 +155,45 @@ and pixels after two sequential affines on an opaque blank, one affine on a 45%-
 each on vector, paint, and point text, at all six affine cursors and after each frame transition. A
 separate raster differential pins exact raw materialization and direct composite output at opacity
 0.58 with `multiply`; refused-adapter runtime/export/PNG and fractional-frame PSD differences remain
-diagnostic-only while legacy fallback is active. Next expand the frame matrix across open angles,
-other affine combinations, other blank opacity values, and other text styling/rotation before
-claiming broader exact fractional bounds. Establish
-source-backed import/replacement ownership as a separate gate. The frame matrix and ownership gate
-are unordered and may proceed independently. Keep both surfaces legacy-gated until their parity and
-failure-containment evidence is explicit. See `docs/HISTORY-MIGRATION-NEXT.md` for the migration
-sequence.
+diagnostic-only while legacy fallback is active. Keep the broader frame matrix open across open
+angles, other affine combinations, other blank opacity values, and other text styling/rotation. It
+is independent of the next ownership slice and remains gated.
+
+**Next after the current `ph-71` diagnostic claim is reviewed and landed:** create or claim a separate
+source-ownership task for one product-reachable in-place text edit. Trace `commitDirtyTool` in
+`useLayer.ts` through `replaceLayerSource` to the typed `REPLACE_LAYER_SOURCE_ACTION`. Refresh the
+producer owner and handoff first. The current `StoreContext.tsx` gate returns
+`ownership-unproven` for this action, but existing StoreContext coverage uses a generic replacement
+history item; it does not prove the fallback for a valid typed text edit. Add StoreContext integration
+coverage that feeds the valid typed action through append, asserts no durable compose and the legacy
+selector/current legacy pixels, then invokes navigation and asserts the returned/published
+`legacy-fallback` with `ownership-unproven` for undo/redo and disabled-entry navigation. Append
+presentation remains `EMPTY_DURABLE_PRESENTATION` (`status: 'unpublished', cursor: null, reason: null`);
+do not require the navigation outcome at append time. Add a
+product E2E for the reachable text edit and exact legacy canvas plus production PNG/PSD output.
+
+Prove old/new runtime `bitmap` and `tmpCanvas` identity/generation and any disposable durable
+materialization lease across append, navigation, disabled rows, redo-branch truncation, and document
+close. Assert no early release and exactly-once cleanup after the last reachable owner is removed;
+derive lease events from the actual implementation. The immutable text action does not register a
+raster asset. Give stale/refused work, failed final drawing, and preview interleaving explicit
+pass/fail assertions. Compare production canvas, PNG, and PSD layer/composite pixels byte-for-byte.
+Keep whole-document replacement on its own teardown contract. This slice ends with the gate closed;
+any eligibility change needs a separate reviewed change with full parity and failure-containment
+proofs. See
+`docs/HISTORY-MIGRATION-NEXT.md` for the full matrix and current-ref reconciliation.
 
 A bounded source-backed create exception allows an image or blank `NEW_LAYER_ACTION` to
 request background composition only when the active cursor prefix before that create passes the
 ownership and frame gates. The create's own undo/redo cursor still takes the legacy fallback, and
 later edits cannot use this exception to skip that gate. The default app starts with a blank
-`NEW_LAYER_ACTION`, which is already ownership-gated, and imported raster baselines are gated too;
-the tested paste and Background flows therefore remain on the legacy presentation. The browser
-spec verifies their exact undo/redo pixels and PNG/PSD exports, not durable presentation.
-The eligible gate-free prefix is covered by a focused unit test but has no proven normal UI entry
-point yet. A source-derived candidate is disabling the default blank history row through the
-History panel; validate it with the next-run E2E in `docs/HISTORY-MIGRATION-NEXT.md` before calling
-the exception product-reachable. Logical replay remains legacy-owned.
+`NEW_LAYER_ACTION`, which is already ownership-gated, and imported raster baselines are gated too.
+The disabled-default-row route is now proven in `e2e/source-backed-history.spec.ts`: raster paste
+and tablet blank-layer creation reach the bounded append exception after the user disables the
+opening blank History row. Their exact canvas, PNG, and PSD pixels pass; undo is exact and redo
+returns to the full legacy fallback with `ownership-unproven`. This proves only that narrow,
+user-disabled-root prefix. The default active root, imported-raster starts, later source-backed
+edits, and frame-changing commits remain gated. Logical replay remains legacy-owned.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,
@@ -1907,45 +1928,31 @@ silently destroy the stack.
 `src/contexts/useLayer.ts` — `mergeAllLayers()`; `src/contexts/history-model.ts` —
 `DurableOperation`; `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`.
 
-## 201. Brightness/Contrast is proportionate but LINEAR, where Adobe's normal mode is nonlinear
+## 201. Brightness/Contrast pixel parity with Photoshop is unverified
 
-**Problem.** `buildLevelsFilter()` (`src/tools/functions.ts`) now drives Adobe's Brightness and Contrast
-proportionately over Adobe's own travels — Brightness ‑150..+150, Contrast ‑50..+100 — and that fixed the
-clipping the old exponential curve caused. It is still not Adobe's curve. Adobe pairs the two words
-itself: "In normal mode, Brightness/Contrast applies proportionate (nonlinear) adjustments to the image
-layer, as with Levels and Curves adjustments." The **nonlinear** half is absent, and no formula for it is
-published by Adobe or by any reverse-engineering source found. What is measurable is that it is not any
-affine map: a `+20` brightness reads `10→11`, `128→145`, `250→253`, and those three deltas are
-mutually inconsistent with any constant scale and with any constant offset.
+**Problem.** `buildLevelsFilter()` (`src/tools/functions.ts`) maps the app's Brightness and Contrast
+sliders to CSS `brightness()` and `contrast()` factors. [Adobe's current desktop Help page](https://helpx.adobe.com/photoshop/desktop/adjust-color/color-corrections/apply-brightness-and-contrast-adjustment.html)
+documents slider ranges and qualitative effects but no default-mode transfer formula. [An older
+Adobe Help page](https://helpx.adobe.com/photoshop/using/apply-brightness-contrast-adjustment.html)
+describes normal mode as a proportionate nonlinear adjustment, without publishing the curve. The app's
+CSS factors therefore do not establish Photoshop pixel parity.
 
-Two consequences, both in the positive half of both controls, because the negative half is exact. A CSS
-`brightness(f)` is a clamped pure multiply, so it can never CREATE a white that was not already white, and
-`contrast(f)` clamps, so every `f > 1` clips every input past `0.5 + 0.5/f`. At `Contrast +50` the knee
-is 212.5 and a channel above it loses its tonal separation for good. The app's `e2e/levels.spec.ts` pins
-`244` there specifically because it is a NON-clipped reading; raising the contrast factor turns that pin
-into a saturated `255` that proves only that the channel saturated.
+The CSS behavior is defined separately by the [W3C Filter Effects Level 1 Working Draft](https://www.w3.org/TR/filter-effects-1/):
+for normalized input `x`, `brightness(f)` multiplies by `f`, while `contrast(f)` maps `x` to
+`(x - 0.5) * f + 0.5`; filter outputs clamp to the allowed color range. At the app's maximum
+factor of 2, with the other control neutral, brightness reaches white for inputs at or above
+0.5; contrast clamps to black at or below 0.25 and white at or above 0.75. The existing
+`e2e/levels.spec.ts` verifies deterministic app output but has no Photoshop reference pixels.
+The source-backed description must keep the CSS mapping separate from Photoshop behavior until
+that comparison exists.
 
-The W3C Filter Effects Level 1 definition confirms CSS `brightness()` is a linear multiplier and
-defines `contrast()` as a constrained transfer function; neither expresses an arbitrary channel LUT
-(<https://www.w3.org/TR/filter-effects-1/#brightnessEquivalent>,
-<https://www.w3.org/TR/filter-effects-1/#contrastEquivalent>). This is a CSS capability boundary,
-not evidence for Adobe's exact curve.
+**Affected.** `buildLevelsFilter()` and `proportionateFactor()` in `src/tools/functions.ts`, the Levels
+description in `src/tools/descriptions/transform.ts`, and the Brightness/Contrast research notes in
+`src/tools/descriptions/transform.notes.md`.
 
-**Affected.** `src/tools/functions.ts` — `buildLevelsFilter()` and `proportionateFactor()`; the boundary
-is stated on `buildLevelsFilter()`'s doc comment and in `src/tools/descriptions/transform.notes.md`, which
-`npm run docs:tools` carries into `docs/TOOLS.md`.
-
-**What would close it.** A per-channel lookup table applied per pixel, which is the same mechanism
-`docs/TOOLS-TOO-HARD.md` records as absent for Adobe's real Levels — a CSS filter string cannot express an
-arbitrary LUT. This is a new durable operation, not an edit to `ctx.filter`: preview rendering,
-materialization, replay, and the `apply-filter`/`apply-raster-processor` history distinction must all
-agree on the LUT representation. `pixels.ts` helpers used by raster processors do not supply that
-operation contract. Whoever takes it should re-derive the curve from Photoshop measurements rather than
-from this entry, because the entry's contribution is the boundary and not the shape.
-
-**Provenance.** Fixed 2026-10-04 on `fix/levels-proportionate-curve`: the proportionate curve, Adobe's
-travels, the non-clipping negative half and the exact-black `brightness(0%)` endpoint all landed there.
-This entry is only the part that did not.
+**What would close it.** Establish a measured Photoshop transfer curve for a defined color mode and
+bit depth, then implement and test the corresponding per-channel pixel operation across preview,
+commit, replay, and export. A CSS filter string cannot express an arbitrary lookup table.
 
 ## 216. Board claims have owner release, but active liveness still blocks full disposal
 

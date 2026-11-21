@@ -1,6 +1,104 @@
 # Continue durable history from current main
 
-## Latest checkpoint — 2026-10-29 (History-panel raster and blank-source proof)
+## Live status — refreshed 2026-11-14 18:03 UTC
+
+This block and [`docs/HISTORY-MIGRATION-NEXT.md`](../../docs/HISTORY-MIGRATION-NEXT.md) are the
+current restart contract. Dated checkpoints and ownership snapshots below are historical; recheck
+live refs, owners, and handoffs before acting on old branch or issue instructions.
+
+- The designated local `main` worktree at
+  `.kilo/worktrees/landing-main-recovered-20261112` is clean at
+  `326d517478baeba0c4a28cccea2262a7e3e61bbc`. This task was synced to that pin in
+  `53cecaa5fe7faa5fe29234f3829bb707000e333f`, whose first parent is
+  `f49813c1f7e2b190990dc99649cdd9d737b496a2`, second parent is
+  `326d517478baeba0c4a28cccea2262a7e3e61bbc`, and tree is
+  `fa454a0ee5c3edf32d4b60a3704ca2a330957554`. Re-pin the exact branch tip and tree after the
+  remaining documentation update and immediately before landing. The `422f28a..326d517` main delta
+  changes 55 files; its only history-specific change is test coverage in
+  `src/contexts/__tests__/durable-export-adapter-parity.test.tsx`. That test now proves an unmatched
+  durable layer stays on the legacy serializer, durable composition is not called, and the unused
+  composite is not released. No history production source or `e2e/crop-history.spec.ts` changed.
+  Local remote heads are `origin/main=d0aa7bbf4037c2c98ebea80c9eef3aebb75b38e2` and
+  `mirror/main=108cc5d6477487ece41d89f9d85b5650d2144c6b`; local `main...origin/main` is `9 2`, and
+  `main...mirror/main` is `37 0`. The two origin-only commits change worktree/process tooling, not
+  migration code or tests. Do not push or merge the divergent remote history as part of this task.
+- `HistoryItem[]` and `replayHistory()` remain logical undo/redo authority. Durable state remains a
+  gated presentation projection with legacy fallback. No production rendering or admission change is
+  part of this diagnostic continuation.
+- The disabled-opening-row route is proven by raster-paste and tablet blank-layer E2Es. The default
+  active root, imported-raster starts, later source-backed edits, and frame-changing commits remain
+  gated. `ph-12` is resolved by `task/history-disabled-blank-root-e2e-20261029`.
+- `ph-71` remains claimed by `task/history-migration-continuation-20261114` for diagnostic parity
+  work. The backing-size matrix, first-difference trace, exact-input `drawImage` replay,
+  transparent/source-bound controls, overload control, and all-edge/right-edge-only border controls
+  are complete. Chrome run `2026-11-14T15-01-54-291Z-63465` captured both HTMLCanvas and
+  OffscreenCanvas comparisons over all 2,346 frame pixels: right-only extension matched all-edge and
+  original-source replay for the 64×64 source and differed from transparent padding by 8 bytes/2
+  pixels at both backing heights; the 89×89 source control was exact. Run-specific measurements and
+  limits are in `docs/HISTORY-MIGRATION-NEXT.md` §2. After removing the temporary edge log, focused
+  E2E `2026-11-14T15-25-40-663Z-92127` passed one test and `npm run tsc` passed. Output counts remain
+  diagnostics, not platform-specific expectations. A separate test adds one 23-degree,
+  fractional-frame, two-positioned-raster matrix point. Its initial Chrome run
+  `2026-11-14T16-23-44-434Z-51411` preceded a title clarification; final run
+  `2026-11-14T16-43-18-983Z-99538` passed `e2e/crop-history.spec.ts` test
+  “a 23-degree fractional crop matches legacy pixels for two positioned raster layers” with exact
+  composite, bounds, and materialized-layer pixels. The 16:23 and 16:43 runs are two runs of that
+  same fixture, not separate matrix points; it closes only those inputs and does not establish
+  export parity. After the latest main sync, the durable-export adapter test passed all 15 cases and
+  focused `e2e/crop-history.spec.ts` run `2026-11-14T17-48-15-161Z-42927` exited 0. The sync commit
+  hook also passed `lint-staged`, `npm run tsc`, and `npm run build`.
+- `ph-71` does not own the follow-on text-source work. After the diagnostic claim is reviewed and
+  landed, open or claim a separate text-source lifecycle slice for the product-reachable in-place edit
+  through `commitDirtyTool` (`useLayer.ts`) → `replaceLayerSource` → typed
+  `REPLACE_LAYER_SOURCE_ACTION`. The current StoreContext gate rejects that action as
+  `ownership-unproven`; existing StoreContext coverage does not yet prove a valid typed edit's
+  append/navigation fallback. Refresh the producer's owner/handoff first. For append, the integration
+  test must assert no durable compose, the legacy selector, and exact current legacy pixels; append
+  presentation remains `EMPTY_DURABLE_PRESENTATION` (`status: 'unpublished', cursor: null,
+  reason: null`), not a navigation fallback. Then test navigation, undo/redo,
+  and disabled-entry navigation for returned/published `legacy-fallback` with
+  `ownership-unproven` and exact legacy pixels. Add a product E2E for the reachable edit and export.
+  Prove runtime old/new `bitmap`/`tmpCanvas` identities and actual lease acquisition/reachability/
+  release across append, navigation, disabled rows, redo-branch truncation, and close, with no early
+  release and exactly-once cleanup. The immutable text action itself does not register a raster
+  asset. Give stale/refused work, final-draw failure, and preview interleaving explicit pass/fail
+  assertions; pin exact production canvas/PNG/PSD layer and composite bytes. Keep whole-document
+  replacement on its separate teardown contract and the wider fractional-frame matrix independent.
+  This slice ends with the gate closed; any eligibility change requires its own reviewed proof.
+- The latest full `repo:state --json` scan returned exit 1 with `ok: true` and three foreign
+  in-progress `AUTO_MERGE` markers in `codex-owner-liveness-20261114`,
+  `dirty-landing-cross-validated-20261113`, and `unit-test-hardening-20261113`; it reported no
+  destructive `MERGE_HEAD`. Preserve those worktrees. Use the scoped
+  `npm run repo:state -- --for-landing task/history-migration-continuation-20261114` gate and
+  `npm run main:landing -- status` before landing; the full audit alone is not the landing decision.
+  The current scoped landing check is clear for this branch with four unrelated in-progress
+  `AUTO_MERGE` findings preserved. `main:landing -- status` reports no owner or Git operation on
+  main, and `swarm -- doctor --dry-run` reports no stale claims or locks.
+- Local Kilo, Codex, and Copilot history-search bounds and results are recorded in the continuation
+  reconciliation in `docs/HISTORY-MIGRATION-NEXT.md`. Those scans found no newer independent
+  migration implementation or authority decision; remote/synced Codex history and remote or
+  inaccessible Copilot chats were not searched. Luna read-only reviews and free-model search results
+  were treated as leads and checked against local source, Git refs, chat metadata, and captured tests.
+  No model output substitutes for test evidence.
+  A bounded local refresh found no independent migration implementation or authority change in the
+  searched records. In the fixed 17:33–17:53 UTC window, Kilo had five `/ph` sessions; the only
+  non-synthetic, non-ignored text match was this coordinator's free-completion review prompt
+  (`ses_e24df45f3ffevrLKjjMWfvDh17`). The broader query since 16:43 had counted 26 sessions and
+  seven distinct session IDs with matching text, using `history migration`, `durable history`,
+  `crop-history`, `HistoryItem[]`, `replayHistory`, `retained operation`, and
+  `REPLACE_LAYER_SOURCE_ACTION`; those results were candidate reviews or unrelated crop-history
+  references. Two later Kilo sessions, “Parallel e2e test hardening cron” and “Explore: PSD/TIFF
+  baseline gaps in visual-regression.spec.ts,” contained no matching terms. Codex's fixed-window
+  state query found two `/ph` thread rows; the candidate-review child and a CI-review child had no
+  history terms in their user/assistant rollout text. The active root updated at 17:56:40 UTC,
+  outside that window, and is this conversation. The later metadata query showed no separate
+  migration root; it did not scan every rollout. Copilot Chronicle had zero `/ph` sessions in the
+  fixed window. One free Kilo Nemotron response was non-empty and reported $0, but the local record
+  did not expose its finish reason; it was treated as a lead, not complete review evidence. These
+  store-specific searches do not cover remote/synced Codex history or remote/inaccessible Copilot
+  sessions.
+
+## Historical checkpoint — 2026-10-29 (History-panel raster and blank-source proof)
 
 - Slice 1 landed on the actual local `main` as `f723394b47872bc579913af763d1ea32a56f1d1b`.
   Its first parent is the reviewed main pin `84c1c9200f7a8c14f88fca1b4b465d0fa9430785`, its
@@ -168,7 +266,10 @@ This is the durable handoff if the coordinating session loses quota. Resume in t
 absolute task worktree below, never in the root `main-sync` checkout. Do not recreate
 the changes or harvest the separate active frame task.
 
-## Next-run execution plan — prepared 2026-10-28
+## Historical next-run execution plan — prepared 2026-10-28
+
+This section records the plan at that date and is superseded by **Live status — 2026-11-14** above
+and the current sequence in `docs/HISTORY-MIGRATION-NEXT.md`.
 
 The committed data is sufficient to resume this branch without reconstructing the design, but it
 is not sufficient to claim the history migration is finished. `HistoryItem[]` and
@@ -272,9 +373,11 @@ are proven together.
   on the exact candidate. Follow `docs/E2E-MIRROR.md` for a broad mirrored E2E run; never open a
   browser window.
 - Migration/persistence/cross-module behavior needs two independent read-only reviews after the
-  implementation is final. The operator's current instruction is Luna or stronger only; do not
-  use free-model routes. Read `MODELS.md` before any model/provider selection, and honor its
-  subtask and cost rules for Sol/Terra. Reviewers report; the coordinator verifies findings.
+  implementation is final. The 2026-10-29 Luna-or-stronger-only instruction in this historical
+  plan has been superseded. For the current continuation, use only verified exact-zero free routes
+  and explicitly authorized Luna read-only reviews, as directed by the current user. Read
+  `MODELS.md` before selecting a provider; if no free route is available, do not switch to another
+  paid model. Reviewers report; the coordinator verifies findings.
 - Do not call the migration complete until Slice 2A and every needed Slice 2B source family have
   explicit parity/ownership gates; Slice 3 performs atomic durable-first navigation with exact
   labels and tool hydration; and Slice 4 measures replay cost, cancellation and safe baseline
@@ -291,9 +394,11 @@ Implemented files:
   compose in the background, and only if the preceding active cursor prefix passes main's
   existing ownership and frame gates. The new entry keeps legacy navigation fallback.
   The actual app boot path starts with a blank `NEW_LAYER_ACTION`, which main's gate marks
-  `ownership-unproven`; imported raster baselines are gated too. The History-tab disable route is
-  a source-derived candidate, not yet E2E-proven. Do not relax the cursor gate to make it reachable.
-  Transaction ordering, freshness, renderer compatibility and whole-document coverage
+  `ownership-unproven`; imported raster baselines are gated too. A later headless UI proof
+  established the narrow disabled-opening-row route for raster paste and tablet blank-layer
+  creation; see `e2e/source-backed-history.spec.ts` and the live status above. That proof does not
+  admit the default active root, imported-raster starts, later edits, or frame commits. Do not relax
+  the cursor gate. Transaction ordering, freshness, renderer compatibility and whole-document coverage
   gates remain intact. Tool-source creates, later source-backed edits, merge, replacement
   and frame commits stay gated.
 - `src/contexts/__tests__/StoreContext.source-backed-presentation.test.tsx`: eight
@@ -345,7 +450,7 @@ Verified evidence so far:
   These were completion reviews of the old candidate, not tool-using agents; fresh review
   of the current-main composition is still required.
 
-Current reachability finding — 2026-10-28: `App.tsx` creates the default blank document via
+Historical reachability finding — 2026-10-28: `App.tsx` creates the default blank document via
 `setBlankImage()`, and `useLayer.ts` records that document's initial baseline as a
 `NEW_LAYER_ACTION` with a blank source. Main's `durablePresentationGateReason()` treats every
 active `NEW_LAYER_ACTION` as `ownership-unproven`. Consequently both actual paste and
@@ -396,12 +501,11 @@ additions across the four files changed on both sides (`HANDOFF.md`, both histor
 and `StoreContext.tsx`); citation tests pass 24 checks; and semantic re-anchoring confirms the
 source gate, append caller, startup producer, navigation behavior, and fallback E2E expectations.
 
-Current next steps:
+Historical next steps at that checkpoint:
 
-Use the **Next-run execution plan** above as the live handoff. It supersedes the earlier inventory
-command list: the last inventory is stale against the now-45-worktree registry, and the next run
-must first prove or reject the History-tab disabled-root path. Do not widen the gate or begin
-Slice 3/4 before those dependencies are resolved.
+The instruction to prove the History-tab disabled-root path and the associated worktree inventory
+are superseded. The current reachability result and active work are recorded in **Live status —
+2026-11-14** above and `docs/HISTORY-MIGRATION-NEXT.md`.
 
 For subsequent edits, stage only owned paths. This ignored plan needs `git add -f`.
 Commits require `Chat: 01a17f24-9224-7aa0-a412-3afafa09f797` and normal
@@ -409,18 +513,14 @@ lint-staged/type/build gates. Run focused tests after fixes; a new composition n
 its own applicable gates. Never run inventory concurrently with full unit worktree
 integration tests or with commits that change the roster's recorded HEADs.
 
-Coordination: swarm issue **`ph-12`**, owned by this task branch, holds the production
-StoreContext path, new tests, lifecycle test and migration docs. Refresh/check live
-claims before continuing. Its earlier automatic "merged into main" release happened
-before the first task commit and was not landing evidence; the claim was reacquired.
-The frame task owns `materialization.ts` and its affine
-E2E file; this slice does not edit them or `e2e/OPEN_PROBLEMS.md`.
+Historical coordination: swarm issue **`ph-12`** was owned by that task branch at the time; it is
+now resolved by `task/history-disabled-blank-root-e2e-20261029`. The frame-parity ownership note
+from that checkpoint is not current; check the live board before selecting any new source family.
 
-Provider state refreshed 2026-10-28: two required current-candidate reviews resolved to
-the then-preferred verified-free Kilo route, each with zero reported cost; the last live OpenRouter
-snapshot was `817/1000` used with `183` remaining at 18:16:48Z, and no OpenRouter call was made.
-No Groq key or Free-plan opt-in is present. The operator has since instructed: do not use free
-models for further reviews; use Luna or stronger. The completed free calls predate that instruction.
+Historical provider snapshot from 2026-10-28: two reviews used the then-verified-free Kilo route and
+the OpenRouter quota snapshot was `817/1000`. This provider and quota information is stale. Use
+`MODELS.md` and the current user instruction above for route eligibility; never treat this snapshot
+as current capacity or authorization.
 
 ## Goal and baseline
 
@@ -599,12 +699,3 @@ Land each slice through the pinned merge procedure after syncing current main in
 task branch. Recheck `repo:state`, checkout mappings, both parents, tree and chat trailer;
 never merge into dirty main. If a gate fails, keep the affected surface on its complete
 legacy path and record an explicit blocked/unproven handoff with the next action.
-
-## Remaining status
-
-Broader migration: **unproven**. Slices 2A through 4 require the evidence above. Slice 1
-passed validation and two independent reviews on the pre-sync candidate, but its commits
-are not ancestors of current main. The current-main merge composition needs fresh tests and
-two fresh independent reviews before its sync commit. Swarm issue `ph-12` is open and claimed
-by this branch; no landing or release is recorded. Keep Slices 2A through 4 unproven until
-their listed evidence is complete.

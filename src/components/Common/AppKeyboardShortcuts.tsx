@@ -834,6 +834,16 @@ export const AppKeyboardShortcuts = () => {
   });
 
   useKeyDownShortcut({
+    key: 't',
+    mod: true,
+    shift: false,
+    alt: false,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => goToTool('transform'),
+  });
+
+  useKeyDownShortcut({
     key: 'l',
     mod: false,
     enabled: hasImage,
@@ -985,6 +995,8 @@ export const AppKeyboardShortcuts = () => {
   useKeyDownShortcut({
     key: '0',
     mod: false,
+    shift: false,
+    alt: false,
     preventDefault: true,
     enabled: hasImage && opacityTool(toolName) !== null,
     onKeyDown: () => setOpacity(OPACITY_FULL),
@@ -993,6 +1005,8 @@ export const AppKeyboardShortcuts = () => {
   useKeyDownShortcut({
     key: '1',
     mod: false,
+    shift: false,
+    alt: false,
     preventDefault: true,
     enabled: hasImage && opacityTool(toolName) !== null,
     onKeyDown: () => setOpacity(OPACITY_TEN_PERCENT),

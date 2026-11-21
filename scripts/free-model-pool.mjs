@@ -5,19 +5,38 @@ import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { COMPLETION_TIMEOUT_MS, resolveKiloCli, runKiloCompletion } from './lib/free-model-kilo.mjs';
+import { resolveKiloCli, runKiloCompletion } from './lib/free-model-kilo.mjs';
+import {
+  freeModelProfile,
+  isDisabledFreeModel,
+  MAX_FREE_COMPLETION_MAX_TOKENS as MAX_COMPLETION_TOKENS,
+  MAX_FREE_COMPLETION_TIMEOUT_MS,
+  modelStrengthRank,
+  NEMOTRON_3_ULTRA_FREE_MODEL,
+} from './lib/free-model-policy.mjs';
 import { resolveCommandShim } from './lib/windows-command-shim.mjs';
+import { terminateWindowsProcessTree } from './lib/windows-process-tree.mjs';
 import { sanitizeForLogging, sanitizeErrorMessage, sanitizeErrorStack } from './lib/secrets.mjs';
 import {
   activeQuarantineKeys,
   DEFAULT_QUARANTINE_FILE,
+  isOperatorOnlyQuarantine,
   loadQuarantineState,
+  loadQuarantineStateLocked,
   MAX_QUARANTINE_HOURS,
   quarantineKey,
   readQuarantineState,
   upsertQuarantine,
   withQuarantineWriteLock,
 } from './lib/free-model-quarantine.mjs';
+import {
+  DEFAULT_POOL_STATE_FILE,
+  getKiloCooldownUntil,
+  isOpenRouterQuotaExhaustedToday,
+  markKiloRateLimited,
+  markOpenRouterQuotaExhausted,
+  recordModelFailure,
+} from './lib/free-model-pool-state.mjs';
 
 const KILO_MODELS = 'https://api.kilo.ai/api/gateway/models';
 const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
@@ -28,15 +47,16 @@ const GROQ_MODELS = 'https://api.groq.com/openai/v1/models';
 const GROQ_CHAT = 'https://api.groq.com/openai/v1/chat/completions';
 export const CONTROL_PLANE_TIMEOUT_MS = 15_000;
 const MAX_ATTEMPTS_PER_SOURCE = 3;
+const MAX_OPENROUTER_RETRIES = 3;
 const MAX_OPENROUTER_RETRY_AFTER_MS = 60_000;
+const MAX_OPENCODE_RETRY_AFTER_MS = 60_000;
+const NEMOTRON_TOKEN_RETRY_MULTIPLIER = 1.5;
 const MAX_PROMPT_CHARS = 120_000;
 const MAX_PROMPT_FILE_BYTES = 480 * 1024;
 const MAX_OPENCODE_OUTPUT_BYTES = 1024 * 1024;
-const MAX_OPENCODE_TIMEOUT_MS = COMPLETION_TIMEOUT_MS;
+const MAX_OPENCODE_TIMEOUT_MS = MAX_FREE_COMPLETION_TIMEOUT_MS;
 export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
-const NEMOTRON_3_ULTRA_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
-const XINGCHEN_XING4_MODEL = 'xingchen-agi/xing4.0-29b-a4b:free';
 const HTTP_DATE_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const HTTP_SHORT_DAY_PATTERN = 'Mon|Tue|Wed|Thu|Fri|Sat|Sun';
 const HTTP_LONG_DAY_PATTERN = 'Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday';
@@ -64,81 +84,9 @@ const ASCTIME_DATE_PATTERN = new RegExp(
     ') (?:([0-9]{2})| ([0-9])) (\\d{2}):(\\d{2}):(\\d{2}) (\\d{4})$'
 );
 const DISABLED_MODEL_PREFIXES = ['poolside/laguna'];
-const MIN_REASONING_COMPLETION_TOKENS = 1024;
-const PREFERRED_KILO_MODELS = [NEMOTRON_3_ULTRA_MODEL, XINGCHEN_XING4_MODEL];
-const PREFERRED_OPENROUTER_MODELS = [NEMOTRON_3_ULTRA_MODEL, XINGCHEN_XING4_MODEL];
 const GROQ_FREE_MODEL = 'openai/gpt-oss-120b';
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
-
-function runWindowsCommand(command, args, timeoutMs = 7_000) {
-  return new Promise((resolve) => {
-    let child;
-    let timer;
-    let settled = false;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-    try {
-      child = spawn(command, args, { stdio: 'ignore', windowsHide: true });
-    } catch (error) {
-      finish({ error });
-      return;
-    }
-    child.once('error', (error) => finish({ error }));
-    child.once('close', (code, signal) => finish({ code, signal }));
-    timer = setTimeout(() => {
-      try {
-        child.kill();
-      } catch {}
-      finish({ error: new Error(`${command} timed out after ${timeoutMs}ms`) });
-    }, timeoutMs);
-  });
-}
-
-async function terminateWindowsProcessTree(pid) {
-  const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
-  const taskkill = await runWindowsCommand(join(systemRoot, 'System32', 'taskkill.exe'), [
-    '/PID',
-    String(pid),
-    '/T',
-    '/F',
-  ]);
-  if (taskkill.code === 0) return;
-
-  const script = [
-    '$ErrorActionPreference = "Stop"',
-    `$rootPid = ${pid}`,
-    '$knownIds = @($rootPid)',
-    '$deadline = [DateTime]::UtcNow.AddSeconds(5)',
-    'do {',
-    '  $processes = @(Get-CimInstance Win32_Process)',
-    '  do {',
-    '    $previousCount = $knownIds.Count',
-    '    foreach ($process in $processes) {',
-    '      if (($knownIds -contains [int]$process.ParentProcessId) -and ($knownIds -notcontains [int]$process.ProcessId)) { $knownIds += [int]$process.ProcessId }',
-    '    }',
-    '  } while ($knownIds.Count -gt $previousCount)',
-    '  for ($index = $knownIds.Count - 1; $index -ge 0; $index--) { Stop-Process -Id $knownIds[$index] -Force -ErrorAction SilentlyContinue }',
-    '  Start-Sleep -Milliseconds 100',
-    '  $current = @(Get-CimInstance Win32_Process)',
-    '  $remaining = @($current | Where-Object { $knownIds -contains [int]$_.ProcessId -or $knownIds -contains [int]$_.ParentProcessId })',
-    '} while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)',
-    'if ($remaining.Count -gt 0) { exit 1 }',
-  ].join('\n');
-  const powerShell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const fallback = await runWindowsCommand(powerShell, ['-NoProfile', '-NonInteractive', '-Command', script]);
-  if (fallback.code === 0) return;
-
-  const describeFailure = (name, result) =>
-    `${name}: ${result.error?.message ?? `exited ${result.code ?? result.signal}`}`;
-  throw new Error(
-    `Windows process-tree termination failed (${describeFailure('taskkill', taskkill)}; ${describeFailure('PowerShell fallback', fallback)})`
-  );
-}
 
 // Reject unknown override conditions instead of guessing whether a paid price applies.
 const PRICING_OVERRIDE_CONDITIONS = new Set(['min_prompt_tokens', 'utc_days', 'utc_end', 'utc_start']);
@@ -151,6 +99,42 @@ export const MAX_GROQ_KEYS = 8;
 
 const GROQ_KEY_PROBE_CACHE = join(homedir(), '.cache', 'ph', 'groq-key-probe.json');
 const GROQ_KEY_PROBE_TTL_MS = 60 * 60 * 1000;
+
+const OPENCODE_RUNTIME_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'USERPROFILE',
+  'USER',
+  'LOGNAME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'NO_COLOR',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_CACHE_HOME',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'PROGRAMDATA',
+  'SYSTEMROOT',
+  'WINDIR',
+  'COMSPEC',
+];
+
+function increasedNemotronMaxTokens(maxTokens) {
+  const increased = Math.min(Math.ceil(maxTokens * NEMOTRON_TOKEN_RETRY_MULTIPLIER), MAX_COMPLETION_TOKENS);
+  return increased > maxTokens ? increased : null;
+}
+
+function opencodeRuntimeEnvironment(environment) {
+  return Object.fromEntries(
+    OPENCODE_RUNTIME_ENV_KEYS.flatMap((key) => (typeof environment[key] === 'string' ? [[key, environment[key]]] : []))
+  );
+}
 
 async function loadGroqKeyProbeCache() {
   const { readFile } = await import('node:fs/promises');
@@ -344,30 +328,19 @@ function isExactZero(value) {
   return typeof value === 'string' && /^0+(?:\.0+)?$/.test(value);
 }
 
-function isNemotron3UltraCandidate(candidate) {
-  return /\bnemotron[\s.-]+3(?![\d.])[\s.-]+ultra\b/i.test(`${candidate.model} ${candidate.name ?? ''}`);
-}
-
-function prioritizeCandidatesByModel(candidates) {
-  const nemotron3Ultra = [];
-  const remaining = [];
-  for (const candidate of candidates) {
-    (isNemotron3UltraCandidate(candidate) ? nemotron3Ultra : remaining).push(candidate);
-  }
-  return [...nemotron3Ultra, ...remaining];
-}
-
 export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
   const rows = Array.isArray(data) ? data : (data?.data ?? []);
   const candidates = rows
     .filter((row) => {
       if (typeof row?.id !== 'string' || row.id.length === 0) return false;
+      if (isDisabledFreeModel(row.id, row.name)) return false;
       if (DISABLED_MODEL_PREFIXES.some((prefix) => row.id.toLowerCase().startsWith(prefix))) return false;
       if (quarantinedKeys.has(quarantineKey(source, row.id))) return false;
       if (UNPINNABLE_ROUTER_MODELS.has(row.id)) return false;
-      // OpenCode's public inference catalog has no price fields. Its documented
-      // free-model IDs carry the -free suffix; paid IDs are deliberately excluded.
-      if (source === 'opencode') return row.owned_by === 'opencode' && row.id.endsWith('-free');
+      // OpenCode's catalog has no price fields; only provider-owned -free IDs qualify.
+      if (source === 'opencode') {
+        return row.owned_by === 'opencode' && (row.id.endsWith('-free') || row.id === NEMOTRON_3_ULTRA_FREE_MODEL);
+      }
       // Groq's model catalog does not expose pricing. Routing is additionally
       // gated by an explicit free-plan opt-in before this catalog is requested.
       if (source === 'groq') return row.id === GROQ_FREE_MODEL;
@@ -375,14 +348,49 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
       if (source === 'openrouter') return row.id.endsWith(':free');
       return source === 'kilo' && (row.isFree === true || row.id.endsWith(':free'));
     })
-    .map((row) => ({ source, model: row.id, name: row.name ?? row.id }));
-  if (source !== 'kilo' && source !== 'openrouter') return candidates;
-  const preferredModels = source === 'kilo' ? PREFERRED_KILO_MODELS : PREFERRED_OPENROUTER_MODELS;
-  const preference = new Map(preferredModels.map((model, index) => [model, index]));
-  return candidates.sort(
-    (left, right) =>
-      (preference.get(left.model) ?? Number.MAX_SAFE_INTEGER) - (preference.get(right.model) ?? Number.MAX_SAFE_INTEGER)
-  );
+    .map((row) => ({
+      source,
+      model: row.id,
+      name: row.name ?? row.id,
+      ...(source === 'opencode' && row.id === NEMOTRON_3_ULTRA_FREE_MODEL ? { providerOwned: true } : {}),
+    }));
+  return candidates;
+}
+
+export function orderFreeModelRoutes(candidates) {
+  const sourcePreference = ['kilo', 'openrouter', 'opencode', 'groq'];
+  const byStrength = new Map();
+  for (const candidate of candidates) {
+    if (isDisabledFreeModel(candidate.model, candidate.name)) continue;
+    const rank = modelStrengthRank(candidate.model);
+    const bySource = byStrength.get(rank) ?? new Map();
+    const sourceCandidates = bySource.get(candidate.source) ?? [];
+    sourceCandidates.push(candidate);
+    bySource.set(candidate.source, sourceCandidates);
+    byStrength.set(rank, bySource);
+  }
+
+  const ordered = [];
+  for (const rank of [...byStrength.keys()].sort((left, right) => left - right)) {
+    const bySource = byStrength.get(rank);
+    const sources = [
+      ...sourcePreference,
+      ...[...bySource.keys()].filter((source) => !sourcePreference.includes(source)),
+    ];
+    const positions = new Map(sources.map((source) => [source, 0]));
+    let remaining = [...bySource.values()].reduce((count, rows) => count + rows.length, 0);
+    while (remaining > 0) {
+      for (const source of sources) {
+        const rows = bySource.get(source);
+        const position = positions.get(source);
+        if (!rows || position >= rows.length) continue;
+        ordered.push(rows[position]);
+        positions.set(source, position + 1);
+        remaining -= 1;
+      }
+    }
+  }
+  return ordered;
 }
 
 export async function loadCatalogs({
@@ -470,7 +478,7 @@ export async function loadCatalogs({
     onCatalogError(sources[index].source, result.reason);
     return [];
   });
-  return prioritizeCandidatesByModel(candidates);
+  return candidates;
 }
 
 export async function probeOpenRouterQuota({
@@ -610,9 +618,258 @@ export function retryAfterDelayMs(response, now = Date.now()) {
 }
 
 function failureReason(response, payload) {
-  const message = payload?.error?.message ?? payload?.message ?? '';
+  const choiceError = Array.isArray(payload?.choices) ? payload.choices.find((choice) => choice?.error)?.error : null;
+  const message = payload?.error?.message ?? choiceError?.message ?? payload?.message ?? '';
   const retryAfter = retryAfterHint(response);
   return `${response.status}${message ? `: ${message}` : ''}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`;
+}
+
+function openRouterPlatformRemaining(response) {
+  const value = response?.headers?.get?.('x-ratelimit-remaining');
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const remaining = Number(value);
+  return Number.isFinite(remaining) && remaining >= 0 ? remaining : null;
+}
+
+function responseErrorObjects(payload) {
+  const choiceErrors = Array.isArray(payload?.choices) ? payload.choices.map((choice) => choice?.error) : [];
+  return [payload?.error, ...choiceErrors].filter(
+    (error) => error && typeof error === 'object' && !Array.isArray(error)
+  );
+}
+
+function openRouterLimitSources(payload) {
+  return responseErrorObjects(payload)
+    .map((error) => error?.metadata?.limit_source)
+    .filter((source) => typeof source === 'string')
+    .map((source) => source.trim().toLowerCase().replaceAll('-', '_'));
+}
+
+function normalizedOpenRouterErrorTypes(payload) {
+  return responseErrorObjects(payload)
+    .map((error) => error?.metadata?.error_type)
+    .filter((errorType) => typeof errorType === 'string')
+    .map((errorType) => errorType.trim().toLowerCase().replaceAll('-', '_'));
+}
+
+const OPENROUTER_TRANSIENT_ERROR_TYPES = new Set([
+  'rate_limit_exceeded',
+  'provider_overloaded',
+  'provider_unavailable',
+  'timeout',
+]);
+const OPENROUTER_TYPED_UPSTREAM_ERROR_TYPES = new Set(['provider_overloaded', 'provider_unavailable', 'timeout']);
+
+function hasTransientOpenRouterProviderError(payload) {
+  return normalizedOpenRouterErrorTypes(payload).some((errorType) => OPENROUTER_TRANSIENT_ERROR_TYPES.has(errorType));
+}
+
+function hasOpenRouterRateLimitError(payload) {
+  return normalizedOpenRouterErrorTypes(payload).includes('rate_limit_exceeded');
+}
+
+function hasTypedOpenRouterUpstreamError(payload) {
+  return normalizedOpenRouterErrorTypes(payload).some((errorType) =>
+    OPENROUTER_TYPED_UPSTREAM_ERROR_TYPES.has(errorType)
+  );
+}
+
+function hasUpstreamProviderMetadata(payload) {
+  const metadata = responseErrorObjects(payload).map((error) => error.metadata);
+  return metadata.some(
+    (entry) =>
+      entry &&
+      typeof entry === 'object' &&
+      (entry.provider_name || entry.provider || entry.upstream_provider || entry.provider_code)
+  );
+}
+
+function isOpenRouterDailyQuotaError(payload) {
+  const errors = responseErrorObjects(payload);
+  if (openRouterLimitSources(payload).some((source) => source === 'openrouter_free_tier_daily')) return true;
+  const code = errors
+    .map((error) => error.code ?? error.type ?? '')
+    .join(' ')
+    .toLowerCase();
+  const message = [...errors.map((error) => error.message), payload?.message].join(' ').toLowerCase();
+  return (
+    /free[-_ ]models[-_ ]per[-_ ]day|daily[-_ ]quota|daily.*limit/.test(code) ||
+    /free model.*daily|daily.*free model|quota.*exhaust|daily.*limit/.test(message)
+  );
+}
+
+function hasOpenRouterQuotaFailure(response, payload, finishReason) {
+  if (response?.status !== 200) return false;
+  const errors = responseErrorObjects(payload);
+  const embeddedLimit =
+    errors.length > 0 &&
+    (isOpenRouterDailyQuotaError(payload) ||
+      openRouterLimitSources(payload).some((source) => source.startsWith('openrouter_')));
+  // Structured error metadata describes this completion; a zero remaining header alone does not invalidate a completed answer.
+  const zeroPlatformRemainingOnIncompleteResponse =
+    openRouterPlatformRemaining(response) === 0 && finishReason !== 'stop';
+  return embeddedLimit || zeroPlatformRemainingOnIncompleteResponse;
+}
+
+function isModelAttributableOpenRouterFailure(response, payload) {
+  const status = response?.status;
+  if (isOpenRouterDailyQuotaError(payload)) return false;
+  if (openRouterLimitSources(payload).some((source) => source.startsWith('openrouter_'))) return false;
+  if (status === 200 && hasTransientOpenRouterProviderError(payload)) return true;
+  if (!Number.isInteger(status) || status < 400 || status > 599 || status === 401 || status === 402) return false;
+  if (status === 429) {
+    const limitSources = openRouterLimitSources(payload);
+    if (limitSources.includes('upstream_provider_shared_pool')) return true;
+    const remaining = openRouterPlatformRemaining(response);
+    if (remaining !== null) return remaining > 0;
+    return hasUpstreamProviderMetadata(payload) || hasTransientOpenRouterProviderError(payload);
+  }
+  return status >= 500 && (hasUpstreamProviderMetadata(payload) || hasTypedOpenRouterUpstreamError(payload));
+}
+
+function retryAfterValueDelayMs(value, now = Date.now()) {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  return retryAfterDelayMs({ headers: { get: (name) => (name.toLowerCase() === 'retry-after' ? value : null) } }, now);
+}
+
+function retryAfterMillisecondsValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : null;
+  if (typeof value !== 'string' || !/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())) return null;
+  const milliseconds = Number(value.trim());
+  return Number.isFinite(milliseconds) ? milliseconds : null;
+}
+
+function openCodeHeaderValue(headers, name) {
+  if (!headers || typeof headers !== 'object') return undefined;
+  const fromGetter = typeof headers.get === 'function' ? headers.get(name) : undefined;
+  if (fromGetter !== undefined && fromGetter !== null) return fromGetter;
+  const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+  return key === undefined ? undefined : headers[key];
+}
+
+function openCodeRetryDelayMs(metadata) {
+  const delays = [
+    retryAfterMillisecondsValue(metadata.retryAfterMs),
+    retryAfterValueDelayMs(metadata.retryAfter),
+  ].filter((delay) => delay !== null);
+  return delays.length > 0 ? Math.max(...delays) : null;
+}
+
+function isExactZeroCost(cost) {
+  if (typeof cost === 'number') return Number.isFinite(cost) && cost === 0;
+  return typeof cost === 'string' && /^0+(?:\.0+)?$/.test(cost.trim());
+}
+
+function openCodeReportedCosts(events) {
+  return events.flatMap((event) =>
+    [event?.part?.cost, event?.cost, event?.error?.cost].filter((cost) => cost !== undefined && cost !== null)
+  );
+}
+
+function openCodeErrorMetadata(value) {
+  if (!value || typeof value !== 'object') return {};
+  const metadata = value.error && typeof value.error === 'object' ? value.error : value;
+  const errorTypes = [
+    metadata.type,
+    metadata.code,
+    metadata.errorType,
+    value.errorType,
+    value.error,
+    value.type,
+    value.code,
+  ].filter((entry) => typeof entry === 'string');
+  const errorType = errorTypes[0];
+  const rawStatus = metadata.status ?? metadata.statusCode ?? value.status ?? value.statusCode;
+  const status =
+    Number.isInteger(Number(rawStatus)) && Number(rawStatus) >= 100 && Number(rawStatus) <= 599
+      ? Number(rawStatus)
+      : null;
+  const headerSources = [metadata.responseHeaders, value.responseHeaders, metadata.headers, value.headers];
+  const retryAfter =
+    metadata.retryAfter ??
+    metadata.retry_after ??
+    value.retryAfter ??
+    value.retry_after ??
+    headerSources.map((headers) => openCodeHeaderValue(headers, 'retry-after')).find((entry) => entry != null) ??
+    null;
+  const retryAfterMsValues = [
+    metadata.retryAfterMs,
+    metadata.retry_after_ms,
+    metadata['retry-after-ms'],
+    value.retryAfterMs,
+    value.retry_after_ms,
+    value['retry-after-ms'],
+    ...headerSources.map((headers) => openCodeHeaderValue(headers, 'retry-after-ms')),
+  ]
+    .map(retryAfterMillisecondsValue)
+    .filter((delay) => delay !== null);
+  const normalizedRetryAfter = typeof retryAfter === 'string' ? retryAfter : null;
+  const retryAfterDelays = [...retryAfterMsValues, retryAfterValueDelayMs(normalizedRetryAfter)].filter(
+    (delay) => delay !== null
+  );
+  const message = String(metadata.message ?? value.message ?? (typeof value.error === 'string' ? value.error : ''));
+  const normalizedTypes = errorTypes.map((type) => type.trim().toLowerCase());
+  return {
+    errorType: errorType ?? null,
+    status,
+    retryAfter: normalizedRetryAfter,
+    retryAfterMs: retryAfterDelays.length > 0 ? Math.max(...retryAfterDelays) : null,
+    accountQuota:
+      metadata.accountQuota === true ||
+      value.accountQuota === true ||
+      normalizedTypes.some((type) => type === 'provider.free-limit' || /(?:^|[._])freeusagelimiterror$/.test(type)),
+    modelAttributable:
+      metadata.modelAttributable === true ||
+      value.modelAttributable === true ||
+      normalizedTypes.some((type) => /(?:^|[._-])model(?:[._-]|$)/i.test(type)),
+    contentPolicyRejected:
+      metadata.contentPolicyRejected === true ||
+      value.contentPolicyRejected === true ||
+      normalizedTypes.some((type) =>
+        CONTENT_POLICY_ERROR_CODES.has(type.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''))
+      ) ||
+      CONTENT_POLICY_ERROR_PATTERNS.some((pattern) => pattern.test(message)),
+  };
+}
+
+function openCodeCompletionFailureMetadata(events) {
+  const errors = events.filter((event) => event?.type === 'error').map(openCodeErrorMetadata);
+  const contentFilterTerminal = events.some(
+    (event) =>
+      event?.type === 'step_finish' &&
+      String(event.part?.reason ?? '')
+        .toLowerCase()
+        .replaceAll('_', '-') === 'content-filter'
+  );
+  if (contentFilterTerminal) {
+    errors.unshift({
+      errorType: 'content_filter',
+      status: null,
+      retryAfter: null,
+      accountQuota: false,
+      modelAttributable: false,
+      contentPolicyRejected: true,
+    });
+  }
+  if (errors.length === 0) return {};
+
+  // Preserve policy and source-wide stops first, then metadata needed to retry a model-attributable 429.
+  const primary =
+    errors.find((metadata) => metadata.contentPolicyRejected) ??
+    errors.find((metadata) => metadata.accountQuota) ??
+    errors.find((metadata) => metadata.modelAttributable && metadata.status === 429) ??
+    errors.find((metadata) => metadata.modelAttributable && Number.isInteger(metadata.status)) ??
+    errors[0];
+  const modelRateLimits = errors.filter(
+    (metadata) => metadata.modelAttributable && metadata.status === 429 && !metadata.accountQuota
+  );
+  const retryDelays = modelRateLimits.map(openCodeRetryDelayMs).filter((delay) => delay !== null);
+  return {
+    ...primary,
+    ...(modelRateLimits.length > 0 && retryDelays.length > 0 ? { retryAfterMs: Math.max(...retryDelays) } : {}),
+    accountQuota: errors.some((metadata) => metadata.accountQuota),
+    contentPolicyRejected: errors.some((metadata) => metadata.contentPolicyRejected),
+  };
 }
 
 function isPerKeyFailure(status) {
@@ -628,6 +885,7 @@ const CONTENT_POLICY_ERROR_CODES = new Set([
   'moderation_blocked',
   'moderation_rejected',
   'prompt_injection_detected',
+  'refusal',
   'safety_filter',
   'safety_violation',
 ]);
@@ -651,6 +909,7 @@ function hasFilteredContent(result) {
 
 export function isContentPolicyError(payload) {
   if (!payload || typeof payload !== 'object') return false;
+  if (payload.contentPolicyRejected === true) return true;
 
   const choices = Array.isArray(payload.choices) ? payload.choices : [];
   if (
@@ -666,8 +925,13 @@ export function isContentPolicyError(payload) {
     if (payload.prompt_filter_results.some((result) => hasFilteredContent(result?.content_filter_results))) return true;
   }
 
-  const error = payload.error;
-  const codes = [error?.code, error?.type, payload.code, payload.type];
+  const errors = responseErrorObjects(payload);
+  const codes = [
+    ...errors.flatMap((error) => [error.code, error.type, error.metadata?.error_type]),
+    payload.code,
+    payload.type,
+    payload.errorType,
+  ];
   if (
     codes.some(
       (code) =>
@@ -677,8 +941,10 @@ export function isContentPolicyError(payload) {
     return true;
   }
 
-  const message = String(error?.message ?? payload.message ?? '');
-  return CONTENT_POLICY_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+  const messages = [...errors.map((error) => error.message), payload.message].filter(
+    (message) => typeof message === 'string'
+  );
+  return CONTENT_POLICY_ERROR_PATTERNS.some((pattern) => messages.some((message) => pattern.test(message)));
 }
 
 function hasReportedNonZeroCost(usage) {
@@ -705,8 +971,9 @@ function hasReportedNonZeroCost(usage) {
 }
 
 async function quarantineReportedCost(source, model, quarantineFile) {
+  if (isOperatorOnlyQuarantine(source, model)) return;
   await withQuarantineWriteLock(quarantineFile, async (saveState) => {
-    const state = await loadQuarantineState(quarantineFile);
+    const state = await loadQuarantineStateLocked(quarantineFile);
     upsertQuarantine(state, {
       source,
       model,
@@ -778,16 +1045,45 @@ export async function runOpenCodeCompletion({
   command = 'opencode',
   model,
   prompt,
-  maxTokens = 1200,
-  timeoutMs = MAX_OPENCODE_TIMEOUT_MS,
+  maxTokens,
+  timeoutMs,
+  providerOwned = false,
+  spawnImpl = spawn,
+  platform = process.platform,
+  terminateWindowsProcessTreeImpl = terminateWindowsProcessTree,
 }) {
-  if (typeof model !== 'string' || !/^[A-Za-z0-9._/-]+-free$/.test(model)) {
+  if (isDisabledFreeModel(model)) {
+    return { error: 'Nemotron model ID is not approved by free-model policy' };
+  }
+  const exactNemotron = model === NEMOTRON_3_ULTRA_FREE_MODEL;
+  if (
+    typeof model !== 'string' ||
+    (!/^[A-Za-z0-9._/-]+-free$/.test(model) && !(exactNemotron && providerOwned === true))
+  ) {
     return { error: 'OpenCode model is not an eligible free catalog ID' };
   }
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
+  if (
+    maxTokens !== undefined &&
+    (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS)
+  ) {
     return { error: 'Invalid token limit' };
   }
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_OPENCODE_TIMEOUT_MS) {
+  if (
+    timeoutMs !== undefined &&
+    (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_OPENCODE_TIMEOUT_MS)
+  ) {
+    return { error: 'Invalid OpenCode timeout' };
+  }
+  const profile = freeModelProfile(model, maxTokens);
+  const effectiveTimeoutMs = timeoutMs ?? profile.timeoutMs;
+  if (!Number.isSafeInteger(profile.maxTokens) || profile.maxTokens < 1 || profile.maxTokens > MAX_COMPLETION_TOKENS) {
+    return { error: 'Invalid token limit' };
+  }
+  if (
+    !Number.isSafeInteger(effectiveTimeoutMs) ||
+    effectiveTimeoutMs < 1 ||
+    effectiveTimeoutMs > MAX_OPENCODE_TIMEOUT_MS
+  ) {
     return { error: 'Invalid OpenCode timeout' };
   }
   const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-'));
@@ -795,7 +1091,7 @@ export async function runOpenCodeCompletion({
   try {
     await writeFile(promptPath, prompt, { encoding: 'utf8', mode: 0o600 });
     const env = {
-      ...process.env,
+      ...opencodeRuntimeEnvironment(process.env),
       OPENCODE_CONFIG_CONTENT: OPENCODE_TOOL_DENY_CONFIG,
       OPENCODE_DISABLE_AUTOUPDATE: '1',
       OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
@@ -809,17 +1105,18 @@ export async function runOpenCodeCompletion({
         'json',
         '--model',
         `opencode/${model}`,
+        ...(profile.reasoningEffort ? ['--variant', profile.reasoningEffort] : []),
         '--file',
         promptPath,
-        `Answer the attached request concisely (about ${maxTokens} tokens or fewer). Do not use tools.`,
+        `Answer the attached request concisely (about ${profile.maxTokens} tokens or fewer). Do not use tools.`,
       ];
       const commandShim = resolveCommandShim(command, args, { env, cwd: directory });
-      const child = spawn(commandShim.command, commandShim.args, {
+      const child = spawnImpl(commandShim.command, commandShim.args, {
         cwd: directory,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,
-        detached: process.platform !== 'win32',
+        detached: platform !== 'win32',
         windowsHide: true,
         ...commandShim.spawnOptions,
       });
@@ -829,20 +1126,91 @@ export async function runOpenCodeCompletion({
       let timedOut = false;
       let outputExceeded = false;
       let terminationError = null;
+      let terminationKillError = null;
       let killTimer;
+      let terminationCloseTimer;
+      let timer;
+      let settled = false;
+      let childClosed = false;
       let killPromise = Promise.resolve();
+      const settle = (finish, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(killTimer);
+        clearTimeout(terminationCloseTimer);
+        finish(value);
+      };
+      const parseCapturedOutput = () => {
+        const parsed = [];
+        let malformedJsonl = false;
+        for (const line of Buffer.concat(chunks).toString('utf8').split(/\r?\n/).filter(Boolean)) {
+          try {
+            const event = JSON.parse(line);
+            if (event && typeof event === 'object' && !Array.isArray(event)) parsed.push(event);
+            else malformedJsonl = true;
+          } catch {
+            malformedJsonl = true;
+          }
+        }
+        return { parsed, malformedJsonl };
+      };
+      const processFailureError = (message, parsed, code) => {
+        const metadata = openCodeCompletionFailureMetadata(parsed);
+        const reportedCosts = openCodeReportedCosts(parsed);
+        if ((message || code !== 0) && reportedCosts.some((cost) => !isExactZeroCost(cost))) {
+          const error = new Error('OpenCode reported non-zero or invalid cost');
+          error.safetyStop = true;
+          error.reportedCost = true;
+          Object.assign(error, metadata);
+          if (message) error.processFailure = message;
+          return error;
+        }
+        if (message) {
+          const error = new Error(message);
+          Object.assign(error, metadata);
+          return error;
+        }
+        const type =
+          typeof metadata.errorType === 'string' && /^[a-z0-9._-]+$/i.test(metadata.errorType)
+            ? metadata.errorType
+            : '';
+        const status = metadata.status;
+        const statusText = Number.isInteger(status) && status >= 100 && status <= 599 ? ` (HTTP ${status})` : '';
+        const error = new Error(`OpenCode exited ${code ?? 'null'}${type ? `: ${type}${statusText}` : ''}`);
+        Object.assign(error, metadata);
+        return error;
+      };
+      const processTerminationFailureError = (parsed) => {
+        const reasons = [terminationError?.message ?? String(terminationError)];
+        if (terminationKillError) {
+          reasons.push(`direct child kill: ${terminationKillError.message ?? String(terminationKillError)}`);
+        }
+        const error = processFailureError(`OpenCode process termination failed: ${reasons.join('; ')}`, parsed, null);
+        error.safetyStop = true;
+        return error;
+      };
       const stopChild = () => {
         if (stopping) return killPromise;
         stopping = true;
-        if (process.platform === 'win32') {
-          killPromise = terminateWindowsProcessTree(child.pid).catch((error) => {
-            terminationError = error;
-            try {
-              child.kill('SIGKILL');
-            } catch {}
-            clearTimeout(timer);
-            reject(new Error(`OpenCode process termination failed: ${terminationError.message}`));
-          });
+        clearTimeout(timer);
+        if (platform === 'win32') {
+          killPromise = Promise.resolve()
+            .then(() => terminateWindowsProcessTreeImpl(child.pid))
+            .catch((error) => {
+              terminationError = error;
+              try {
+                child.kill('SIGKILL');
+              } catch (killError) {
+                terminationKillError = killError;
+              }
+              if (!childClosed) {
+                terminationCloseTimer = setTimeout(() => {
+                  const { parsed } = parseCapturedOutput();
+                  settle(reject, processTerminationFailureError(parsed));
+                }, 5_000);
+              }
+            });
           return killPromise;
         }
         try {
@@ -862,62 +1230,71 @@ export async function runOpenCodeCompletion({
         });
         return killPromise;
       };
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         timedOut = true;
         void stopChild();
-      }, timeoutMs);
+      }, effectiveTimeoutMs);
       child.stdout.on('data', (chunk) => {
+        const capturedBytes = Math.max(0, MAX_OPENCODE_OUTPUT_BYTES - outputBytes);
+        if (capturedBytes > 0) {
+          chunks.push(capturedBytes >= chunk.byteLength ? chunk : Buffer.from(chunk.subarray(0, capturedBytes)));
+        }
         outputBytes += chunk.byteLength;
-        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) {
+        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES && !outputExceeded) {
           outputExceeded = true;
           void stopChild();
-        } else {
-          chunks.push(chunk);
         }
       });
       child.stderr.on('data', () => {});
       child.once('error', (error) => {
-        clearTimeout(timer);
-        clearTimeout(killTimer);
-        reject(error);
+        if (stopping && terminationError) {
+          terminationKillError = error;
+          return;
+        }
+        settle(reject, error);
       });
       child.once('close', (code, signal) => {
+        childClosed = true;
         clearTimeout(timer);
+        clearTimeout(terminationCloseTimer);
         void (async () => {
           if (stopping) await killPromise;
+          if (settled) return;
           clearTimeout(killTimer);
-          if (terminationError) throw new Error(`OpenCode process termination failed: ${terminationError.message}`);
-          if (timedOut) throw new Error(`OpenCode timed out after ${timeoutMs}ms`);
-          if (outputExceeded) throw new Error(`OpenCode output exceeded ${MAX_OPENCODE_OUTPUT_BYTES} bytes`);
-
-          let parsed;
-          try {
-            parsed = Buffer.concat(chunks)
-              .toString('utf8')
-              .split(/\r?\n/)
-              .filter(Boolean)
-              .map((line) => JSON.parse(line));
-          } catch {
-            throw new Error('OpenCode returned malformed JSONL output');
-          }
-          if (code !== 0) {
-            const providerError = parsed.find((event) => event.type === 'error')?.error;
-            const type =
-              typeof providerError?.type === 'string' && /^[a-z0-9._-]+$/i.test(providerError.type)
-                ? providerError.type
-                : '';
-            const status = Number(providerError?.status);
-            const statusText = Number.isInteger(status) && status >= 100 && status <= 599 ? ` (HTTP ${status})` : '';
-            throw new Error(`OpenCode exited ${code ?? signal}${type ? `: ${type}${statusText}` : ''}`);
-          }
+          clearTimeout(terminationCloseTimer);
+          const { parsed, malformedJsonl } = parseCapturedOutput();
+          const processFailure = terminationError
+            ? `OpenCode process termination failed: ${terminationError.message}`
+            : timedOut
+              ? `OpenCode timed out after ${effectiveTimeoutMs}ms`
+              : outputExceeded
+                ? `OpenCode output exceeded ${MAX_OPENCODE_OUTPUT_BYTES} bytes`
+                : malformedJsonl
+                  ? 'OpenCode returned malformed JSONL output'
+                  : null;
+          if (terminationError) throw processTerminationFailureError(parsed);
+          if (processFailure || code !== 0) throw processFailureError(processFailure, parsed, code ?? signal);
           return parsed;
-        })().then(resolve, reject);
+        })().then(
+          (value) => settle(resolve, value),
+          (error) => settle(reject, error)
+        );
       });
     });
+    const reportedCosts = openCodeReportedCosts(events);
+    if (reportedCosts.some((cost) => !isExactZeroCost(cost))) {
+      return { error: 'OpenCode reported non-zero or invalid cost', safetyStop: true };
+    }
+    const errorMetadata = openCodeCompletionFailureMetadata(events);
+    if (Object.keys(errorMetadata).length > 0) {
+      return {
+        error: 'OpenCode reported a provider completion error',
+        ...errorMetadata,
+      };
+    }
     if (
       events.some(
         (event) =>
-          event.type === 'error' ||
           event.type === 'tool_use' ||
           (event.type === 'done' && Array.isArray(event.rejected) && event.rejected.length > 0)
       )
@@ -936,12 +1313,6 @@ export async function runOpenCodeCompletion({
       .map((event) => event.part.text)
       .join('');
     const finishedSteps = events.filter((event) => event.type === 'step_finish');
-    const reportedCosts = events
-      .filter((event) => event.part?.cost !== undefined && event.part?.cost !== null)
-      .map((event) => Number(event.part.cost));
-    if (reportedCosts.some((cost) => !Number.isFinite(cost) || cost !== 0)) {
-      return { error: 'OpenCode reported non-zero or invalid cost' };
-    }
     if (!terminal || !content.trim()) return { error: 'OpenCode did not return a complete non-empty response' };
     const tokens = finishedSteps.at(-1)?.part?.tokens;
     return {
@@ -953,7 +1324,9 @@ export async function runOpenCodeCompletion({
             input_tokens: tokens.input,
             output_tokens: tokens.output,
             reasoning_tokens: tokens.reasoning,
-            ...(reportedCosts.length > 0 ? { cost: reportedCosts.reduce((total, cost) => total + cost, 0) } : {}),
+            ...(reportedCosts.length > 0
+              ? { cost: reportedCosts.reduce((total, cost) => total + Number(cost), 0) }
+              : {}),
           }
         : null,
     };
@@ -962,9 +1335,8 @@ export async function runOpenCodeCompletion({
   }
 }
 
-export async function completeWithFreeModel(
-  prompt,
-  {
+export async function completeWithFreeModel(prompt, options = {}) {
+  const {
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
     groqApiKey = process.env.GROQ_API_KEY,
@@ -978,33 +1350,42 @@ export async function completeWithFreeModel(
     runKilo = runKiloCompletion,
     opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
     runOpenCode = runOpenCodeCompletion,
-    checkOpenRouterQuota = false,
-    maxTokens = 1200,
+    maxTokens,
+    waitForKiloBackoff = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     waitForRetryAfter = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     quarantineFile = DEFAULT_QUARANTINE_FILE,
+    poolStateFile: requestedPoolStateFile,
     initializeLegacyQuarantine = true,
     onCatalogError = () => {},
     onOpenRouterQuota = () => {},
+    onAllFreeExhausted = () => {},
     stderr = { write: () => {} },
-  } = {}
-) {
+  } = options;
   if (typeof prompt !== 'string' || prompt.length === 0 || prompt.length > MAX_PROMPT_CHARS) {
     throw new Error(`Prompt must contain 1 to ${MAX_PROMPT_CHARS} characters`);
   }
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
-    throw new Error('maxTokens must be an integer from 1 to 4000');
+  if (
+    maxTokens !== undefined &&
+    (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS)
+  ) {
+    throw new Error(`maxTokens must be an integer from 1 to ${MAX_COMPLETION_TOKENS}`);
   }
   const effectiveKiloCommand = kiloCommand === '' ? '' : (kiloCommand ?? (await resolveKiloCli()));
   const groqKeys = normalizeGroqKeys(groqApiKey, groqApiKeys);
-  const available = await loadCatalogs({
-    fetchImpl,
-    openRouterKey,
-    groqApiKey: groqFreePlan ? groqKeys[0] : '',
-    groqApiKeys: groqFreePlan ? groqKeys : [],
-    quarantineFile,
-    initializeLegacyQuarantine,
-    onCatalogError,
-  });
+  const available = orderFreeModelRoutes(
+    await loadCatalogs({
+      fetchImpl,
+      openRouterKey,
+      groqApiKey: groqFreePlan ? groqKeys[0] : '',
+      groqApiKeys: groqFreePlan ? groqKeys : [],
+      quarantineFile,
+      initializeLegacyQuarantine,
+      onCatalogError,
+    })
+  );
+  const poolStateFile =
+    requestedPoolStateFile ??
+    (quarantineFile === DEFAULT_QUARANTINE_FILE ? DEFAULT_POOL_STATE_FILE : `${quarantineFile}.pool-state.json`);
   const exhausted = new Set();
   const exhaustedGroqKeys = new Set();
   const attempts = new Map();
@@ -1012,10 +1393,6 @@ export async function completeWithFreeModel(
 
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-  if (available.some((entry) => entry.source === 'kilo') && !effectiveKiloCommand) {
-    exhausted.add('kilo');
-    errors.push('kilo: Kilo CLI not found; install the Kilo Code extension or set KILO_CLI');
   }
   const requestCounts = () => {
     const counts = {
@@ -1027,366 +1404,748 @@ export async function completeWithFreeModel(
     }
     return counts;
   };
-  if (checkOpenRouterQuota && openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
-    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
-    if (quota.reason === 'ok') {
-      onOpenRouterQuota(quota);
-      if (quota.remaining <= 0) exhausted.add('openrouter');
-    } else if (/^http_(?:401|402)$/.test(quota.reason)) {
-      exhausted.add('openrouter');
-      stderr.write(`OpenRouter quota endpoint returned ${quota.reason}; skipping OpenRouter for this run.\n`);
-    } else if (quota.reason !== 'no_key') {
-      // Log unknown quota state so callers can distinguish from "available"
+  let allFreeExhausted = false;
+  try {
+    if (available.some((entry) => entry.source === 'kilo') && !effectiveKiloCommand) {
+      exhausted.add('kilo');
+      errors.push('kilo: Kilo CLI not found; install the Kilo Code extension or set KILO_CLI');
+    }
+    const kiloCooldownUntil = await getKiloCooldownUntil({ stateFile: poolStateFile });
+    if (kiloCooldownUntil !== null && available.some((entry) => entry.source === 'kilo')) {
+      exhausted.add('kilo');
       stderr.write(
-        `OpenRouter quota unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}); proceeding with fail-open routing.\n`
+        `Kilo is cooling down after HTTP 429 until ${new Date(kiloCooldownUntil).toISOString()}; skipping this run.\n`
       );
     }
-  }
-  const handleOpenRouterFailure = async (status, model, response, hasNextCandidate) => {
-    if (status === 401 || status === 402) {
-      exhausted.add('openrouter');
-      return null;
-    }
-    if (status !== 429 && status !== 503) return 0;
-
-    if (status === 429) {
-      const remainingHeader = response?.headers?.get?.('x-ratelimit-remaining');
-      if (typeof remainingHeader === 'string' && remainingHeader.trim() !== '') {
-        const remaining = Number(remainingHeader);
-        if (Number.isFinite(remaining) && remaining <= 0) {
-          exhausted.add('openrouter');
-          stderr.write(
-            `OpenRouter rate-limit headers report no remaining requests for ${model}; skipping this source for the run.\n`
-          );
-          return null;
-        }
+    const stopForReportedCost = async (candidate, detail = 'provider reported non-zero or invalid completion cost') => {
+      const quarantineNote = isOperatorOnlyQuarantine(candidate.source, candidate.model)
+        ? '; quarantine is operator-managed'
+        : '';
+      const message = `${candidate.source}/${candidate.model}: ${detail}${quarantineNote}; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
+      try {
+        await quarantineReportedCost(candidate.source, candidate.model, quarantineFile);
+      } catch (error) {
+        const failure = new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
+        failure.safetyStop = true;
+        failure.costSafetyStopHandled = true;
+        throw failure;
       }
-    }
-
-    if (!hasNextCandidate) return 0;
-
-    const retryAfterMs = retryAfterDelayMs(response);
-    if (retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
-      exhausted.add('openrouter');
-      stderr.write(
-        `OpenRouter returned HTTP ${status} with Retry-After above ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this source for the run.\n`
+      const error = new Error(message);
+      error.safetyStop = true;
+      error.costSafetyStopHandled = true;
+      throw error;
+    };
+    const stopForContentPolicy = (candidate) => {
+      const error = new Error(
+        `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request. Requests attempted: ${JSON.stringify(requestCounts())}`
       );
-      return null;
-    }
-
-    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
-    if (quota.reason === 'ok') {
-      onOpenRouterQuota(quota);
-      if (quota.remaining <= 0) {
-        exhausted.add('openrouter');
-        stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter models.\n');
+      error.contentPolicyRejected = true;
+      throw error;
+    };
+    const recordModelFailureSafely = async (options) => {
+      try {
+        return await recordModelFailure({ ...options, stateFile: poolStateFile, quarantineFile });
+      } catch (error) {
+        const failure = new Error(`Could not persist ${options.source} model failure state: ${error.message}`, {
+          cause: error,
+        });
+        failure.safetyStop = true;
+        throw failure;
+      }
+    };
+    const recordAttributableFailure = async (candidate, failure, { include429 = false } = {}) => {
+      if (
+        failure?.modelAttributable !== true ||
+        !Number.isInteger(failure.status) ||
+        failure.status === 401 ||
+        failure.status === 402 ||
+        (failure.status === 429 && !include429) ||
+        failure.accountQuota === true
+      ) {
         return null;
       }
-      if (status === 429) {
+      const recorded = await recordModelFailureSafely({ source: candidate.source, model: candidate.model });
+      if (recorded.quarantineHours !== null) {
         stderr.write(
-          `OpenRouter model ${model} returned HTTP 429 with ${quota.remaining} daily free requests remaining; trying another verified-free model.\n`
+          `${candidate.source} model ${candidate.model} was quarantined for ${recorded.quarantineHours} hours after attributable failures.\n`
         );
       }
-    } else if (quota.reason === 'http_401' || quota.reason === 'http_402') {
-      exhausted.add('openrouter');
-      stderr.write(`OpenRouter quota check returned ${quota.reason}; skipping OpenRouter for this run.\n`);
-      return null;
-    } else {
-      stderr.write(
-        `OpenRouter model ${model} returned HTTP ${status}; daily quota is unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}), so continuing within the per-run limit.\n`
-      );
-    }
-
-    if (retryAfterMs === null || retryAfterMs === 0) return 0;
-    stderr.write(`Honoring OpenRouter Retry-After (${Math.ceil(retryAfterMs / 1000)}s) before trying another model.\n`);
-    return retryAfterMs;
-  };
-  for (const [candidateIndex, candidate] of available.entries()) {
-    if (exhausted.has(candidate.source)) continue;
-    const sourceAttempts = attempts.get(candidate.source) ?? 0;
-    if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
-    if (candidate.source === 'openrouter' && !openRouterKey) continue;
-    if (candidate.source === 'groq' && (!groqKeys.length || !groqFreePlan)) continue;
-    if (candidate.source === 'opencode' && !opencodeCommand) continue;
-    attempts.set(candidate.source, sourceAttempts + 1);
-    if (candidate.source === 'kilo') {
+      return recorded;
+    };
+    const persistKiloRateLimit = async () => {
       try {
-        const result = await runKilo({
-          command: effectiveKiloCommand,
-          source: 'kilo',
-          model: candidate.model,
-          prompt,
-          maxTokens,
-        });
-        if (result?.content && result.finishReason === 'stop') {
-          return {
-            source: candidate.source,
-            model: result.model ?? candidate.model,
-            content: result.content,
-            finishReason: result.finishReason,
-            usage: result.usage ?? null,
-            requestCounts: requestCounts(),
-          };
-        }
-        errors.push(`kilo/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
-        if (result?.exhaustSource) exhausted.add(candidate.source);
+        await markKiloRateLimited({ stateFile: poolStateFile, quarantineFile });
+        exhausted.add('kilo');
       } catch (error) {
-        errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
-        if (error.code === 'ENOENT' || error.code === 'KILO_SPAWN') exhausted.add(candidate.source);
+        const failure = new Error(`Could not persist Kilo HTTP 429 cooldown: ${error.message}`, { cause: error });
+        failure.safetyStop = true;
+        throw failure;
       }
-      const attemptNumber = attempts.get(candidate.source) ?? 0;
-      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      await delay(backoffMs);
-      continue;
-    }
-    if (candidate.source === 'groq') {
-      const effectiveMaxTokens = Math.max(maxTokens, 1024);
-      for (const key of groqKeys) {
-        if (exhaustedGroqKeys.has(key)) continue;
-        let response;
+    };
+    let openRouterQuotaChecked = false;
+    let openRouterQuotaKnownPositive = false;
+    let openRouterQuotaInitiallyUnknown = false;
+    let openRouterRetryCount = 0;
+    const ensureOpenRouterAvailable = async () => {
+      if (exhausted.has('openrouter')) return false;
+      if (!openRouterQuotaChecked) {
+        openRouterQuotaChecked = true;
+        if (await isOpenRouterQuotaExhaustedToday({ stateFile: poolStateFile })) {
+          exhausted.add('openrouter');
+          stderr.write('OpenRouter daily free-model quota was exhausted earlier today; skipping this run.\n');
+          return false;
+        }
+        const quotaProbeStartedAt = Date.now();
+        const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+        if (quota.reason === 'ok') {
+          onOpenRouterQuota(quota);
+          if (quota.remaining <= 0 || quota.used >= quota.limit) {
+            await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: quotaProbeStartedAt });
+            exhausted.add('openrouter');
+            stderr.write('OpenRouter daily free-model quota is exhausted; skipping this run.\n');
+            return false;
+          }
+          openRouterQuotaKnownPositive = true;
+        } else if (quota.reason === 'http_401' || quota.reason === 'http_402') {
+          exhausted.add('openrouter');
+          stderr.write(`OpenRouter quota endpoint returned ${quota.reason}; skipping OpenRouter for this run.\n`);
+          return false;
+        } else {
+          openRouterQuotaInitiallyUnknown = true;
+          stderr.write(
+            `OpenRouter quota unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}); allowing at most one inference attempt.\n`
+          );
+        }
+      }
+      return !exhausted.has('openrouter');
+    };
+    let openRouterQuotaCheckedAfterAttempt = 0;
+    const refreshOpenRouterQuotaAfterAttempt = async () => {
+      const openRouterAttempts = attempts.get('openrouter') ?? 0;
+      if (openRouterAttempts <= openRouterQuotaCheckedAfterAttempt) {
+        return openRouterQuotaKnownPositive && !exhausted.has('openrouter');
+      }
+      openRouterQuotaCheckedAfterAttempt = openRouterAttempts;
+      openRouterQuotaKnownPositive = false;
+      const quotaProbeStartedAt = Date.now();
+      const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+      if (quota.reason === 'ok') {
+        onOpenRouterQuota(quota);
+        if (quota.remaining <= 0 || quota.used >= quota.limit) {
+          await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: quotaProbeStartedAt });
+          exhausted.add('openrouter');
+          stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter routes.\n');
+        } else {
+          openRouterQuotaKnownPositive = true;
+        }
+      } else if (quota.reason === 'http_401' || quota.reason === 'http_402') {
+        exhausted.add('openrouter');
+        stderr.write(
+          `OpenRouter quota endpoint returned ${quota.reason} after an attempt; skipping remaining routes.\n`
+        );
+      } else {
+        const detail = quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : '';
+        stderr.write(`OpenRouter quota refresh unknown (${quota.reason}${detail}); skipping remaining routes.\n`);
+      }
+      if (openRouterQuotaInitiallyUnknown || !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+      return openRouterQuotaKnownPositive && !exhausted.has('openrouter');
+    };
+    const handleOpenRouterFailure = async ({
+      candidate,
+      response,
+      payload,
+      quotaWasPositive,
+      retryAttempt,
+      requestStartedAt,
+    }) => {
+      const status = response?.status;
+      const transientServerFailure = Number.isInteger(status) && status >= 500 && status <= 599;
+      const transientTypedFailure = status === 200 && hasTransientOpenRouterProviderError(payload);
+      const dailyQuotaFailure = isOpenRouterDailyQuotaError(payload);
+      const limitSources = openRouterLimitSources(payload);
+      if (limitSources.includes('openrouter_free_tier_daily')) {
+        await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: requestStartedAt });
+      }
+      if (status === 401 || status === 402) {
+        exhausted.add('openrouter');
+        return { retry: false };
+      }
+      const isPlatformLimit =
+        limitSources.some((source) => source.startsWith('openrouter_')) || openRouterPlatformRemaining(response) === 0;
+      const rateLimitFailure =
+        status === 429 || hasOpenRouterRateLimitError(payload) || dailyQuotaFailure || isPlatformLimit;
+      let quotaRefreshed = false;
+      let refreshedQuotaRemains = openRouterQuotaKnownPositive;
+      if (rateLimitFailure) {
+        refreshedQuotaRemains = await refreshOpenRouterQuotaAfterAttempt();
+        quotaRefreshed = true;
+        if (!refreshedQuotaRemains) return { retry: false };
+      }
+      if (isPlatformLimit || dailyQuotaFailure) {
+        exhausted.add('openrouter');
+        stderr.write(
+          'OpenRouter platform rate limit or daily quota applies to this run; skipping its remaining routes.\n'
+        );
+        return { retry: false };
+      }
+      const attributed = isModelAttributableOpenRouterFailure(response, payload);
+      let failureResult = null;
+      if (attributed) {
         try {
-          response = await fetchImpl(GROQ_CHAT, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${key}`,
-            },
-            signal: AbortSignal.timeout(COMPLETION_TIMEOUT_MS),
-            body: JSON.stringify({
-              model: candidate.model,
-              messages: [{ role: 'user', content: prompt }],
-              max_tokens: effectiveMaxTokens,
-              reasoning_effort: 'low',
-            }),
+          failureResult = await recordModelFailureSafely({
+            source: 'openrouter',
+            model: candidate.model,
+            rateLimit: status === 429 || hasOpenRouterRateLimitError(payload),
           });
         } catch (error) {
-          const retryAfter = retryAfterHint(response);
-          errors.push(
-            `groq/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
-          );
-          const attemptNumber = attempts.get(candidate.source) ?? 0;
-          const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-          await delay(backoffMs);
-          continue;
+          throw error;
         }
-        let payload;
-        try {
-          payload = await readBoundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'Model response');
-        } catch (error) {
-          const retryAfter = retryAfterHint(response);
-          errors.push(
-            `groq/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+        if (failureResult.quarantineHours !== null) {
+          stderr.write(
+            `OpenRouter model ${candidate.model} was quarantined for ${failureResult.quarantineHours} hours after attributable failures.\n`
           );
-          if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
-          const attemptNumber = attempts.get(candidate.source) ?? 0;
-          const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-          await delay(backoffMs);
-          continue;
         }
-        if (hasReportedNonZeroCost(payload?.usage)) {
-          const message = `groq/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
-          try {
-            await quarantineReportedCost('groq', candidate.model, quarantineFile);
-          } catch (error) {
-            throw new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
+      }
+      const retryAfterMs = retryAfterDelayMs(response);
+      if (retryAfterMs !== null && retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
+        if (status === 429 && attributed) {
+          if (refreshedQuotaRemains) {
+            stderr.write(
+              `OpenRouter model ${candidate.model} Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this model and checking the next route.\n`
+            );
           }
-          throw new Error(message);
+          // A zero or unknown refresh already marks OpenRouter exhausted, so the loop cannot rotate.
+          return { retry: false };
         }
-        const choice = payload?.choices?.[0];
-        const content = choice?.message?.content;
-        const finishReason = choice?.finish_reason;
-        if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
-          const resolvedModel = payload.model;
-          const stillFree = available.some(
-            (entry) => entry.source === candidate.source && entry.model === resolvedModel
-          );
-          if (!stillFree) {
+        exhausted.add('openrouter');
+        stderr.write(
+          `OpenRouter Retry-After exceeds ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping its remaining routes for this run.\n`
+        );
+        return { retry: false };
+      }
+      const clientError = Number.isInteger(status) && status >= 300 && status < 500;
+      if (
+        !quotaRefreshed &&
+        (status === 429 || transientTypedFailure || transientServerFailure || response?.ok === true || clientError)
+      ) {
+        await refreshOpenRouterQuotaAfterAttempt();
+      }
+      if (openRouterQuotaInitiallyUnknown) exhausted.add('openrouter');
+      if (!openRouterQuotaKnownPositive) exhausted.add('openrouter');
+      if (retryAttempt) {
+        // This route's retry is spent; only a fresh positive quota permits the next model below.
+        return { retry: false };
+      }
+      if (
+        !quotaWasPositive ||
+        !openRouterQuotaKnownPositive ||
+        (attempts.get('openrouter') ?? 0) >= MAX_ATTEMPTS_PER_SOURCE ||
+        openRouterRetryCount >= MAX_OPENROUTER_RETRIES ||
+        (!attributed && !transientServerFailure && !transientTypedFailure)
+      ) {
+        return { retry: false };
+      }
+      if (failureResult?.quarantineHours !== null && failureResult?.quarantineHours !== undefined) {
+        return { retry: false };
+      }
+      return {
+        retry: true,
+        delayMs: retryAfterMs ?? (status === 429 || hasOpenRouterRateLimitError(payload) ? 1000 : 0),
+      };
+    };
+    for (let candidateIndex = 0; candidateIndex < available.length; candidateIndex += 1) {
+      const candidate = available[candidateIndex];
+      if (exhausted.has(candidate.source)) continue;
+      if (candidate.source === 'openrouter' && !(await ensureOpenRouterAvailable())) continue;
+      const sourceAttempts = attempts.get(candidate.source) ?? 0;
+      if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
+      if (candidate.source === 'openrouter' && !openRouterKey) continue;
+      if (candidate.source === 'groq' && (!groqKeys.length || !groqFreePlan)) continue;
+      if (candidate.source === 'opencode' && !opencodeCommand) continue;
+      attempts.set(candidate.source, sourceAttempts + 1);
+      const routeProfile = freeModelProfile(candidate.model, maxTokens);
+      const routeMaxTokens = routeProfile.maxTokens;
+      const routeTimeoutMs = routeProfile.timeoutMs;
+      if (candidate.source === 'kilo') {
+        try {
+          const effectiveMaxTokens = candidate.maxTokensOverride ?? routeMaxTokens;
+          const result = await runKilo({
+            command: effectiveKiloCommand,
+            source: 'kilo',
+            model: candidate.model,
+            prompt,
+            maxTokens: effectiveMaxTokens,
+            timeoutMs: routeTimeoutMs,
+          });
+          if (result?.reportedCost === true || hasReportedNonZeroCost(result?.usage)) {
+            await stopForReportedCost(candidate);
+          }
+          if (result?.safetyStop) {
+            const error = new Error(result.error ?? 'Kilo completion safety stop');
+            error.safetyStop = true;
+            throw error;
+          }
+          if (isContentPolicyError(result)) stopForContentPolicy(candidate);
+          if (result?.status === 401 || result?.status === 402) {
+            exhausted.add(candidate.source);
+            errors.push(`kilo/${candidate.model}: ${result.error ?? `HTTP ${result.status}`}`);
+            continue;
+          }
+          if (result?.status === 429) {
+            await persistKiloRateLimit();
+            errors.push(`kilo/${candidate.model}: ${result.error ?? 'HTTP 429'}`);
+            continue;
+          }
+          if (result?.finishReason === 'length') {
+            const isNemotron = candidate.model === NEMOTRON_3_ULTRA_FREE_MODEL;
+            const alreadyRetried = candidate.nemotronTokenRetry === true;
+            const increasedTokens = increasedNemotronMaxTokens(routeMaxTokens);
+            if (isNemotron && !alreadyRetried && increasedTokens !== null) {
+              stderr.write(
+                `Nemotron 3 Ultra finish_reason=length; retrying with ${increasedTokens} tokens (was ${routeMaxTokens}).\n`
+              );
+              available.splice(candidateIndex + 1, 0, {
+                ...candidate,
+                nemotronTokenRetry: true,
+                maxTokensOverride: increasedTokens,
+              });
+              continue;
+            }
+            errors.push(`kilo/${candidate.model}: incomplete completion (finish_reason=length)`);
+            continue;
+          }
+          if (result?.content && result.finishReason === 'stop') {
+            const resolvedModel = result.model ?? candidate.model;
+            if (!available.some((entry) => entry.source === 'kilo' && entry.model === resolvedModel)) {
+              errors.push(`kilo/${candidate.model}: response resolved to missing or unverified model ${resolvedModel}`);
+              continue;
+            }
+            return {
+              source: candidate.source,
+              model: resolvedModel,
+              content: result.content,
+              finishReason: result.finishReason,
+              usage: result.usage ?? null,
+              requestCounts: requestCounts(),
+            };
+          }
+          await recordAttributableFailure(candidate, result);
+          errors.push(`kilo/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
+          if (result?.exhaustSource) exhausted.add(candidate.source);
+        } catch (error) {
+          if (error.costSafetyStopHandled) throw error;
+          if (error.reportedCost === true || hasReportedNonZeroCost(error.usage)) {
+            await stopForReportedCost(candidate);
+          }
+          if (error.safetyStop) throw error;
+          if (isContentPolicyError(error)) stopForContentPolicy(candidate);
+          if (error.status === 401 || error.status === 402) {
+            exhausted.add(candidate.source);
+            errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+            continue;
+          }
+          if (error.status === 429) {
+            await persistKiloRateLimit();
+            errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+            continue;
+          }
+          await recordAttributableFailure(candidate, error);
+          errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+          if (error.exhaustSource || error.code === 'ENOENT' || error.code === 'KILO_SPAWN') {
+            exhausted.add(candidate.source);
+          }
+        }
+        if (exhausted.has(candidate.source)) continue;
+        const attemptNumber = attempts.get(candidate.source) ?? 0;
+        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+        await waitForKiloBackoff(backoffMs);
+        continue;
+      }
+      if (candidate.source === 'groq') {
+        const effectiveMaxTokens = Math.max(routeMaxTokens, 1024);
+        for (const key of groqKeys) {
+          if (exhaustedGroqKeys.has(key)) continue;
+          let response;
+          try {
+            response = await fetchImpl(GROQ_CHAT, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${key}`,
+              },
+              signal: AbortSignal.timeout(routeTimeoutMs),
+              body: JSON.stringify({
+                model: candidate.model,
+                messages: [{ role: 'user', content: prompt }],
+                max_tokens: effectiveMaxTokens,
+                reasoning_effort: 'low',
+              }),
+            });
+          } catch (error) {
+            const retryAfter = retryAfterHint(response);
             errors.push(
-              `groq/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
+              `groq/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
             );
             const attemptNumber = attempts.get(candidate.source) ?? 0;
             const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
             await delay(backoffMs);
             continue;
           }
-          return {
-            source: candidate.source,
-            model: resolvedModel,
-            content,
-            finishReason,
-            usage: payload.usage ?? null,
-            requestCounts: requestCounts(),
-            groqKeysAvailable: groqKeys.length - exhaustedGroqKeys.size,
-          };
-        }
-        if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
-          errors.push(`groq/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`);
+          let payload;
+          try {
+            payload = await readBoundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'Model response');
+          } catch (error) {
+            const retryAfter = retryAfterHint(response);
+            errors.push(
+              `groq/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+            );
+            if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
+            const attemptNumber = attempts.get(candidate.source) ?? 0;
+            const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+            await delay(backoffMs);
+            continue;
+          }
+          if (hasReportedNonZeroCost(payload?.usage)) {
+            const message = `groq/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
+            try {
+              await quarantineReportedCost('groq', candidate.model, quarantineFile);
+            } catch (error) {
+              throw new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
+            }
+            throw new Error(message);
+          }
+          if (isContentPolicyError(payload)) stopForContentPolicy(candidate);
+          const choice = payload?.choices?.[0];
+          const content = choice?.message?.content;
+          const finishReason = choice?.finish_reason;
+          if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
+            const resolvedModel = payload.model;
+            const stillFree = available.some(
+              (entry) => entry.source === candidate.source && entry.model === resolvedModel
+            );
+            if (!stillFree) {
+              errors.push(
+                `groq/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
+              );
+              const attemptNumber = attempts.get(candidate.source) ?? 0;
+              const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+              await delay(backoffMs);
+              continue;
+            }
+            return {
+              source: candidate.source,
+              model: resolvedModel,
+              content,
+              finishReason,
+              usage: payload.usage ?? null,
+              requestCounts: requestCounts(),
+              groqKeysAvailable: groqKeys.length - exhaustedGroqKeys.size,
+            };
+          }
+          if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
+            errors.push(`groq/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`);
+            const attemptNumber = attempts.get(candidate.source) ?? 0;
+            const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+            await delay(backoffMs);
+            continue;
+          }
+          const reason = response.ok
+            ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
+            : failureReason(response, payload);
+          errors.push(`groq/${candidate.model}: ${reason}`);
+          if (response.status >= 500 && hasUpstreamProviderMetadata(payload)) {
+            const failure = await recordAttributableFailure(candidate, {
+              status: response.status,
+              modelAttributable: true,
+            });
+            if (failure && failure.quarantineHours !== null) {
+              exhausted.add('groq');
+              break;
+            }
+          }
+          if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
           const attemptNumber = attempts.get(candidate.source) ?? 0;
           const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
           await delay(backoffMs);
-          continue;
         }
-        const reason = response.ok
-          ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
-          : failureReason(response, payload);
-        errors.push(`groq/${candidate.model}: ${reason}`);
-        if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
-        const attemptNumber = attempts.get(candidate.source) ?? 0;
-        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-        await delay(backoffMs);
+        if (groqKeys.every((key) => exhaustedGroqKeys.has(key))) exhausted.add('groq');
+        continue;
       }
-      if (groqKeys.every((key) => exhaustedGroqKeys.has(key))) exhausted.add('groq');
-      continue;
-    }
-    if (candidate.source === 'opencode') {
-      try {
-        const result = await runOpenCode({ command: opencodeCommand, model: candidate.model, prompt, maxTokens });
-        if (result?.content && result.finishReason === 'stop') {
-          return {
-            source: candidate.source,
-            model: result.model ?? candidate.model,
-            content: result.content,
-            finishReason: result.finishReason,
-            usage: result.usage ?? null,
-            requestCounts: requestCounts(),
-          };
+      if (candidate.source === 'opencode') {
+        try {
+          const result = await runOpenCode({
+            command: opencodeCommand,
+            model: candidate.model,
+            prompt,
+            maxTokens: routeMaxTokens,
+            timeoutMs: routeTimeoutMs,
+            ...(candidate.providerOwned === true ? { providerOwned: true } : {}),
+          });
+          if (result?.safetyStop || hasReportedNonZeroCost(result?.usage)) {
+            await stopForReportedCost(candidate);
+          }
+          if (isContentPolicyError(result)) stopForContentPolicy(candidate);
+          if (result?.content && result.finishReason === 'stop') {
+            const resolvedModel = result.model ?? candidate.model;
+            if (!available.some((entry) => entry.source === 'opencode' && entry.model === resolvedModel)) {
+              errors.push(
+                `opencode/${candidate.model}: response resolved to missing or unverified model ${resolvedModel}`
+              );
+              continue;
+            }
+            return {
+              source: candidate.source,
+              model: resolvedModel,
+              content: result.content,
+              finishReason: result.finishReason,
+              usage: result.usage ?? null,
+              requestCounts: requestCounts(),
+            };
+          }
+          errors.push(`opencode/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
+          const metadata = openCodeErrorMetadata(result);
+          if (metadata.accountQuota) {
+            exhausted.add('opencode');
+            stderr.write(
+              'OpenCode reported provider.free-limit; skipping OpenCode for this run without a persistent cooldown.\n'
+            );
+          } else if (metadata.modelAttributable && metadata.status !== null) {
+            const failure = await recordAttributableFailure(candidate, metadata, { include429: true });
+            if (failure && failure.quarantineHours !== null) continue;
+          }
+          if (
+            metadata.status === 429 &&
+            metadata.modelAttributable &&
+            !metadata.accountQuota &&
+            !candidate.retryAttempt
+          ) {
+            const retryAfterMs = openCodeRetryDelayMs(metadata);
+            if (retryAfterMs === null || retryAfterMs <= MAX_OPENCODE_RETRY_AFTER_MS) {
+              await waitForRetryAfter(retryAfterMs ?? 1000);
+              available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+            }
+          }
+        } catch (error) {
+          if (error.costSafetyStopHandled) throw error;
+          if (error.reportedCost === true || hasReportedNonZeroCost(error.usage)) {
+            await stopForReportedCost(candidate);
+          }
+          if (error.safetyStop) throw error;
+          if (isContentPolicyError(error)) stopForContentPolicy(candidate);
+          errors.push(`opencode/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
+          const metadata = openCodeErrorMetadata(error);
+          if (error.code === 'ENOENT') exhausted.add(candidate.source);
+          if (metadata.accountQuota) exhausted.add('opencode');
+          if (metadata.modelAttributable && metadata.status !== null && !metadata.accountQuota) {
+            const failure = await recordAttributableFailure(candidate, metadata, { include429: true });
+            if (failure && failure.quarantineHours !== null) continue;
+          }
+          if (
+            metadata.status === 429 &&
+            metadata.modelAttributable &&
+            !metadata.accountQuota &&
+            !candidate.retryAttempt
+          ) {
+            const retryAfterMs = openCodeRetryDelayMs(metadata);
+            if (retryAfterMs === null || retryAfterMs <= MAX_OPENCODE_RETRY_AFTER_MS) {
+              await waitForRetryAfter(retryAfterMs ?? 1000);
+              available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+            }
+          }
         }
-        errors.push(`opencode/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
-      } catch (error) {
-        errors.push(`opencode/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
-        if (error.code === 'ENOENT') exhausted.add(candidate.source);
-      }
-      const attemptNumber = attempts.get(candidate.source) ?? 0;
-      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      await delay(backoffMs);
-      continue;
-    }
-    const url = OPENROUTER_CHAT;
-    const headers = { 'Content-Type': 'application/json' };
-    if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
-    const effectiveMaxTokens =
-      candidate.source === 'openrouter' && candidate.model === NEMOTRON_3_ULTRA_MODEL
-        ? Math.max(maxTokens, MIN_REASONING_COMPLETION_TOKENS)
-        : maxTokens;
-    let response;
-    try {
-      response = await fetchImpl(url, {
-        method: 'POST',
-        headers,
-        signal: AbortSignal.timeout(COMPLETION_TIMEOUT_MS),
-        body: JSON.stringify({
-          model: candidate.model,
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: effectiveMaxTokens,
-        }),
-      });
-    } catch (error) {
-      const retryAfter = retryAfterHint(response);
-      errors.push(
-        `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
-      );
-      const attemptNumber = attempts.get(candidate.source) ?? 0;
-      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      await delay(backoffMs);
-      continue;
-    }
-    let payload;
-    try {
-      payload = await readBoundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'Model response');
-    } catch (error) {
-      const retryAfter = retryAfterHint(response);
-      errors.push(
-        `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
-      );
-      const hasNextOpenRouterCandidate =
-        available.slice(candidateIndex + 1).some((entry) => entry.source === 'openrouter') &&
-        (attempts.get('openrouter') ?? 0) < MAX_ATTEMPTS_PER_SOURCE;
-      const retryAfterMs =
-        candidate.source === 'openrouter'
-          ? await handleOpenRouterFailure(response.status, candidate.model, response, hasNextOpenRouterCandidate)
-          : 0;
-      if (
-        response.status === 401 ||
-        (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
-      )
-        exhausted.add(candidate.source);
-      const attemptNumber = attempts.get(candidate.source) ?? 0;
-      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      if (retryAfterMs > 0) await waitForRetryAfter(Math.max(backoffMs, retryAfterMs));
-      else await delay(backoffMs);
-      continue;
-    }
-    if (hasReportedNonZeroCost(payload?.usage)) {
-      const message = `${candidate.source}/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
-      try {
-        await quarantineReportedCost(candidate.source, candidate.model, quarantineFile);
-      } catch (error) {
-        throw new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
-      }
-      throw new Error(message);
-    }
-    if (isContentPolicyError(payload)) {
-      throw new Error(
-        `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
-      );
-    }
-    const choice = payload?.choices?.[0];
-    const content = choice?.message?.content;
-    const finishReason = choice?.finish_reason;
-    if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
-      const resolvedModel = payload.model;
-      const stillFree = available.some((entry) => entry.source === candidate.source && entry.model === resolvedModel);
-      if (!stillFree) {
-        errors.push(
-          `${candidate.source}/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
-        );
         const attemptNumber = attempts.get(candidate.source) ?? 0;
         const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
         await delay(backoffMs);
         continue;
       }
-      return {
-        source: candidate.source,
-        model: resolvedModel,
-        content,
-        finishReason,
-        usage: payload.usage ?? null,
-        requestCounts: requestCounts(),
-      };
-    }
-    if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
-      errors.push(
-        `${candidate.source}/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`
-      );
+      const url = OPENROUTER_CHAT;
+      const headers = { 'Content-Type': 'application/json' };
+      if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
+      const quotaWasPositive = candidate.source === 'openrouter' && openRouterQuotaKnownPositive;
+      const effectiveMaxTokens = candidate.maxTokensOverride ?? routeMaxTokens;
+      let response;
+      const requestStartedAt = Date.now();
+      try {
+        response = await fetchImpl(url, {
+          method: 'POST',
+          headers,
+          signal: AbortSignal.timeout(routeTimeoutMs),
+          body: JSON.stringify({
+            model: candidate.model,
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: effectiveMaxTokens,
+            ...(routeProfile.reasoningEffort ? { reasoning: { effort: routeProfile.reasoningEffort } } : {}),
+          }),
+        });
+      } catch (error) {
+        const retryAfter = retryAfterHint(response);
+        errors.push(
+          `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+        );
+        if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
+        if (exhausted.has(candidate.source)) continue;
+        const attemptNumber = attempts.get(candidate.source) ?? 0;
+        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+        await delay(backoffMs);
+        continue;
+      }
+      let payload;
+      try {
+        payload = await readBoundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'Model response');
+      } catch (error) {
+        const retryAfter = retryAfterHint(response);
+        errors.push(
+          `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+        );
+        const retryDecision = await handleOpenRouterFailure({
+          candidate,
+          response,
+          payload: null,
+          quotaWasPositive,
+          retryAttempt: candidate.retryAttempt === true,
+          requestStartedAt,
+        });
+        if (retryDecision.retry) {
+          openRouterRetryCount += 1;
+          if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
+          available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+          continue;
+        }
+        const attemptNumber = attempts.get(candidate.source) ?? 0;
+        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+        await delay(backoffMs);
+        continue;
+      }
+      if (hasReportedNonZeroCost(payload?.usage)) {
+        const message = `${candidate.source}/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
+        try {
+          await quarantineReportedCost(candidate.source, candidate.model, quarantineFile);
+        } catch (error) {
+          throw new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
+        }
+        throw new Error(message);
+      }
+      if (isContentPolicyError(payload)) {
+        throw new Error(
+          `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
+        );
+      }
+      const choice = payload?.choices?.[0];
+      const content = choice?.message?.content;
+      const finishReason = choice?.finish_reason;
+      if (
+        candidate.source === 'openrouter' &&
+        response.ok &&
+        (hasTransientOpenRouterProviderError(payload) || hasOpenRouterQuotaFailure(response, payload, finishReason))
+      ) {
+        errors.push(`${candidate.source}/${candidate.model}: ${failureReason(response, payload)}`);
+        const retryDecision = await handleOpenRouterFailure({
+          candidate,
+          response,
+          payload,
+          quotaWasPositive,
+          retryAttempt: candidate.retryAttempt === true,
+          requestStartedAt,
+        });
+        if (retryDecision.retry) {
+          openRouterRetryCount += 1;
+          if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
+          available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+        }
+        continue;
+      }
+      if (response.ok && finishReason === 'length' && candidate.source === 'openrouter') {
+        const isNemotron = candidate.model === NEMOTRON_3_ULTRA_FREE_MODEL;
+        const alreadyRetried = candidate.nemotronTokenRetry === true;
+        const increasedTokens = increasedNemotronMaxTokens(routeMaxTokens);
+        if (isNemotron && !alreadyRetried && increasedTokens !== null) {
+          const quotaAvailable = await refreshOpenRouterQuotaAfterAttempt();
+          if (quotaAvailable) {
+            stderr.write(
+              `Nemotron 3 Ultra finish_reason=length; retrying with ${increasedTokens} tokens (was ${routeMaxTokens}).\n`
+            );
+            available.splice(candidateIndex + 1, 0, {
+              ...candidate,
+              nemotronTokenRetry: true,
+              maxTokensOverride: increasedTokens,
+            });
+            continue;
+          }
+        }
+        await refreshOpenRouterQuotaAfterAttempt();
+      }
+      if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
+        const resolvedModel = payload.model;
+        const stillFree = available.some((entry) => entry.source === candidate.source && entry.model === resolvedModel);
+        if (!stillFree) {
+          errors.push(
+            `${candidate.source}/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
+          );
+          if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
+          if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+          if (exhausted.has(candidate.source)) continue;
+          const attemptNumber = attempts.get(candidate.source) ?? 0;
+          const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+          await delay(backoffMs);
+          continue;
+        }
+        return {
+          source: candidate.source,
+          model: resolvedModel,
+          content,
+          finishReason,
+          usage: payload.usage ?? null,
+          requestCounts: requestCounts(),
+        };
+      }
+      if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
+        if (candidate.source === 'openrouter') await refreshOpenRouterQuotaAfterAttempt();
+        errors.push(
+          `${candidate.source}/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`
+        );
+        if (candidate.source === 'openrouter' && !openRouterQuotaKnownPositive) exhausted.add('openrouter');
+        if (exhausted.has(candidate.source)) continue;
+        const attemptNumber = attempts.get(candidate.source) ?? 0;
+        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+        await delay(backoffMs);
+        continue;
+      }
+      const reason = response.ok
+        ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
+        : failureReason(response, payload);
+      errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
+      const retryDecision = await handleOpenRouterFailure({
+        candidate,
+        response,
+        payload,
+        quotaWasPositive,
+        retryAttempt: candidate.retryAttempt === true,
+        requestStartedAt,
+      });
+      if (
+        response.status === 401 ||
+        (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
+      )
+        exhausted.add(candidate.source);
+      if (retryDecision.retry) {
+        openRouterRetryCount += 1;
+        if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
+        available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+        continue;
+      }
       const attemptNumber = attempts.get(candidate.source) ?? 0;
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
       await delay(backoffMs);
-      continue;
     }
-    const reason = response.ok
-      ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
-      : failureReason(response, payload);
-    errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
-    const hasNextOpenRouterCandidate =
-      available.slice(candidateIndex + 1).some((entry) => entry.source === 'openrouter') &&
-      (attempts.get('openrouter') ?? 0) < MAX_ATTEMPTS_PER_SOURCE;
-    const retryAfterMs =
-      candidate.source === 'openrouter'
-        ? await handleOpenRouterFailure(response.status, candidate.model, response, hasNextOpenRouterCandidate)
-        : 0;
-    if (
-      response.status === 401 ||
-      (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
-    )
-      exhausted.add(candidate.source);
-    const attemptNumber = attempts.get(candidate.source) ?? 0;
-    const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-    if (retryAfterMs > 0) await waitForRetryAfter(Math.max(backoffMs, retryAfterMs));
-    else await delay(backoffMs);
+    allFreeExhausted = true;
+    throw new Error(
+      `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.map((e) => sanitizeErrorMessage(e)).join(' | ') || 'No eligible free models were available.'}`
+    );
+  } finally {
+    if (allFreeExhausted) {
+      await onAllFreeExhausted({ requestCounts: requestCounts(), errors: errors.map((e) => sanitizeErrorMessage(e)) });
+    }
   }
-  throw new Error(
-    `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.map((e) => sanitizeErrorMessage(e)).join(' | ') || 'No eligible free models were available.'}`
-  );
 }
 
 function usage() {
@@ -1399,8 +2158,9 @@ function usage() {
     '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
     '--list fetches public model catalogs; configured=null means local CLI credentials were not checked.\n' +
     'configured=false means provider credentials/opt-in are missing, not that a model is invalid.\n' +
+    'Model strength determines routing priority: exact Nemotron 3 Ultra routes are attempted across eligible providers before weaker models. Nemotron requests use high reasoning where supported, at least 4,096 output tokens, and a 12-minute timeout. Other routes default to 1,200 tokens; Groq keeps its 1,024-token reasoning floor.\n' +
     'Kilo completions use the authenticated Kilo CLI; set KILO_CLI only when its automatic discovery fails.\n' +
-    'Inference calls can run for up to five minutes; catalog and quota checks use a separate 15-second timeout.\n' +
+    'Nemotron inference uses 12 minutes; other inference uses five minutes. Catalog and quota checks use 15 seconds.\n' +
     'Groq routing requires GROQ_API_KEY and GROQ_FREE_PLAN=1 because its catalog does not expose free pricing.\n' +
     'OpenCode free models run through the opencode CLI with tool permissions denied.\n' +
     '--openrouter-quota reports the server-side daily free-model request count without sending an inference request.\n' +
@@ -1427,6 +2187,7 @@ export async function main(
     opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
     runOpenCode = runOpenCodeCompletion,
     quarantineFile = DEFAULT_QUARANTINE_FILE,
+    poolStateFile,
     initializeLegacyQuarantine = true,
     stdout = process.stdout,
     stderr = process.stderr,
@@ -1558,7 +2319,9 @@ export async function main(
       if (source === 'opencode') return null;
       return source === 'groq' && groqConfigured;
     };
-    const listed = candidates.slice(0, limit).map((entry) => ({ ...entry, configured: configured(entry.source) }));
+    const listed = orderFreeModelRoutes(candidates)
+      .slice(0, limit)
+      .map((entry) => ({ ...entry, priority: modelStrengthRank(entry.model), configured: configured(entry.source) }));
     stdout.write(`${JSON.stringify(listed, null, 2)}\n`);
     return 0;
   }
@@ -1569,9 +2332,12 @@ export async function main(
     stderr.write(`${error.message}\n`);
     return 2;
   }
-  const maxTokens = tokenAt >= 0 ? Number(args[tokenAt + 1]) : 1200;
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
-    stderr.write('--max-tokens must be an integer from 1 to 4000.\n');
+  const maxTokens = tokenAt >= 0 ? Number(args[tokenAt + 1]) : undefined;
+  if (
+    maxTokens !== undefined &&
+    (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_COMPLETION_TOKENS)
+  ) {
+    stderr.write(`--max-tokens must be an integer from 1 to ${MAX_COMPLETION_TOKENS}.\n`);
     return 2;
   }
   const result = await completeWithFreeModel(prompt, {
@@ -1586,6 +2352,7 @@ export async function main(
     runOpenCode,
     maxTokens,
     quarantineFile,
+    poolStateFile,
     initializeLegacyQuarantine,
     onCatalogError: (source, error) =>
       stderr.write(`${source} catalog unavailable: ${sanitizeErrorMessage(error.message)}\n`),

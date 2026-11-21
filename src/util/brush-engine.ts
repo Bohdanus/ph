@@ -130,7 +130,7 @@ export const clampBrushTipSettings = (settings: Partial<BrushTipSettings>): Brus
  * on-canvas preview must both call it, or the preview stops predicting the stroke.
  */
 export const tipAlphaAt = (distance: number, radius: number, hardness: number): number => {
-  if (!(radius > 0) || !(distance < radius)) return 0;
+  if (!Number.isFinite(distance) || !Number.isFinite(radius) || !(radius > 0) || !(distance < radius)) return 0;
 
   const core = radius * (clampSlider(hardness, BRUSH_HARDNESS_MIN, BRUSH_HARDNESS_MAX, BRUSH_HARDNESS_DEFAULT) / 100);
   if (distance <= core) return 1;

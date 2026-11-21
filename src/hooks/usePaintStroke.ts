@@ -73,18 +73,16 @@ export type PaintStrokeCallbacks = {
    */
   onCommit: (points: Point[]) => void;
   /**
-   * Fired on pointer-leave or pointer-cancel mid-gesture, and by `cancel()`,
-   * when a gesture is in flight. Clears without committing, which is what lets
-   * a tool drop a partial preview instead of leaving it on screen.
+   * Roll back transient layer or overlay previews when an in-flight gesture is abandoned by
+   * pointer-leave, pointer-cancel, capture loss, or `cancel()`.
    */
-  /** Roll back transient layer or overlay previews when an in-flight gesture is abandoned. */
   onCancel?: () => void;
 };
 
 export type UsePaintStrokeOptions = {
   /** The canvas size the container renders, as `usePointerPosition` wants it. */
   imageSize: Size;
-  /** The element carrying the pointer handlers; also where `pointercancel` is observed. */
+  /** The element carrying the pointer handlers; also where native cancel and capture-loss events are observed. */
   containerRef: RefObject<HTMLElement | null>;
   /**
    * Kept in the hook so a tool can draw a live overlay preview without
@@ -102,9 +100,9 @@ export type UsePaintStrokeOptions = {
    * Set false to make the tool ignore the gesture entirely (e.g. no active
    * layer). Every handler becomes a no-op and `isMouseDown` stays false.
    *
-   * If it becomes false during a gesture, the owner pointer's next release or
-   * native cancellation aborts the gesture and calls `onCancel` instead of
-   * committing. Tool-area unmount also calls `onCancel` for a live gesture.
+   * If it becomes false during a gesture, the owner pointer's next release,
+   * native cancellation, or capture loss aborts the gesture and calls `onCancel`
+   * instead of committing. Tool-area unmount also calls `onCancel` for a live gesture.
    */
   enabled?: boolean;
   /**
@@ -307,15 +305,27 @@ export const usePaintStroke = (
       if (!isGestureActiveRef.current || claimedPointerIdRef.current !== event.pointerId) return;
 
       clearGesture();
+      // `usePointerPosition` owns capture release on the same native cancellation event.
+      abortCallbackRef.current?.();
+    };
+    const handleLostPointerCapture = (event: globalThis.PointerEvent) => {
+      if (!isGestureActiveRef.current || claimedPointerIdRef.current !== event.pointerId) return;
+
+      // Capture is already gone, but `usePointerPosition` still tracks its owner until
+      // an up/cancel path clears it. Release both layers before a later down can be accepted.
+      clearGesture();
+      releasePointer();
       abortCallbackRef.current?.();
     };
 
     node?.addEventListener('pointercancel', handlePointerCancel);
+    node?.addEventListener('lostpointercapture', handleLostPointerCapture);
 
     return () => {
       node?.removeEventListener('pointercancel', handlePointerCancel);
+      node?.removeEventListener('lostpointercapture', handleLostPointerCapture);
     };
-  }, [clearGesture, containerRef]);
+  }, [clearGesture, containerRef, releasePointer]);
 
   useEffect(() => {
     return () => {

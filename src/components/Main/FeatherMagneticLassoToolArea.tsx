@@ -8,7 +8,7 @@ import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useContainScale } from '../../hooks/useContainScale.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import type { FeatherMagneticLassoToolArgs } from '../../tools/featherMagneticLasso.ts';
-import { magneticLassoAnchorSpan } from '../../tools/featherMagneticLasso.ts';
+import { magneticLassoAnchorSpan, normalizeMagneticLassoEdgeContrast } from '../../tools/featherMagneticLasso.ts';
 import { createCommittedPolygonSelection, distanceBetweenPoints, drawSelectionAnchors } from '../../util/selection.ts';
 import {
   createEdgeMapFromCanvas,
@@ -20,7 +20,7 @@ import {
   type MagneticSegmentResult,
 } from '../../util/magneticLasso.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, type DocumentFrame } from '../../contexts/document-frame.ts';
-import { resetOverlayAlpha } from '../../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../../util/canvas.ts';
 
 const MIN_POINTS_FOR_SELECTION = 3;
 const CLOSE_START_THRESHOLD = 10;
@@ -79,7 +79,7 @@ function drawFeatherMagneticOverlay({
     draftPoints.push(...previewPath.slice(1));
   }
 
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  clearCanvasBackingStore(ctx);
   // `drawSelectionAnchors` resets the alpha itself, but the draft path below is stroked by this
   // function on the same shared context and writes `strokeStyle`/`lineWidth` with no alpha of its
   // own, so the reset has to happen before both rather than only inside the anchors.
@@ -192,7 +192,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
 
   function getMagneticPathOptions(): MagneticPathOptions {
     return {
-      edgeContrast: args.edgeContrast,
+      edgeContrast: normalizeMagneticLassoEdgeContrast(args.edgeContrast),
       maxArea: 32_000,
       searchRadius: args.magneticWidth,
       snapStrength: args.snapStrength,
@@ -203,7 +203,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    clearCanvasBackingStore(ctx);
   }
 
   const redrawOverlay = useCallback(() => {
@@ -404,7 +404,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
         featherRadius: args.featherRadius,
         magneticLasso: {
           antiAlias: args.antiAlias,
-          contrast: args.edgeContrast,
+          contrast: normalizeMagneticLassoEdgeContrast(args.edgeContrast),
           frequency: args.frequency,
           pathPointCount: finalPoints.length,
           smoothing: args.smoothing,
@@ -624,7 +624,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
       lastAutoAnchorTimeRef.current = 0;
 
       if (ctx) {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [overlayCtxRef]);

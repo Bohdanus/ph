@@ -15,7 +15,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -27,6 +27,7 @@ import {
   IDLE_LIVE_MS,
   MAX_MESSAGE_CHARS,
   isImportedOrigin,
+  normalizePaths,
   parseDuration,
 } from '../lib/agent-board/db.mjs';
 import { resolveIdentity } from '../lib/agent-board/identity.mjs';
@@ -107,6 +108,8 @@ const boardFor = (agentId) => {
   openBoards.push(board);
   return board;
 };
+
+const ensureAgentWorktree = (agentId) => mkdirSync(identityFor(agentId).worktree, { recursive: true });
 
 /**
  * A board on the real clock, for the tests that are about two processes seeing
@@ -402,6 +405,58 @@ describe('claims are exclusive and leased', () => {
     b.close();
   });
 
+  it('keeps an unreadable claim lease live across claim and issue readers', () => {
+    const a = boardFor('a');
+    mkdirSync(a.identity.worktree, { recursive: true });
+    const { id } = a.createIssue({ title: 'unreadable lease', files: ['src/lease.ts'], holdFiles: false });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run('not-a-date', id);
+
+    const b = boardFor('b');
+    expect(b.liveClaimOrNull(id)?.agent_id).toBe('a');
+    expect(b.readyIssues().map((issue) => issue.id)).not.toContain(id);
+    expect(b.issuesForPath('src/lease.ts')[0]?.claimed_by).toBe('a');
+    expect(b.listIssues({ claimedBy: 'a' }).map((issue) => issue.id)).toContain(id);
+    expect(b.listIssues({ claimedBy: 'b' }).map((issue) => issue.id)).not.toContain(id);
+    expect(b.status().expiredClaims).toBe(0);
+    expect(b.health().claims.expired).toBe(0);
+    expect(b.doctor()).toEqual([]);
+    expect(b.unreadableLeaseDeadlines()).toEqual([
+      {
+        kind: 'unreadable-claim-deadline',
+        issue: id,
+        agent: 'a',
+        worktree: a.identity.worktree,
+        deadline: 'not-a-date',
+      },
+    ]);
+    expect(() => b.claimIssue(id)).toThrow(/claimed by a/);
+    expect(a.renewOwnClaims()).toEqual([id]);
+    expect(
+      Date.parse(a.db.prepare('SELECT lease_until FROM claims WHERE issue_id = ?').get(id).lease_until)
+    ).toBeGreaterThan(clock);
+    expect(b.unreadableLeaseDeadlines()).toEqual([]);
+    b.close();
+  });
+
+  it('uses parsed deadline time when its text ordering disagrees with ISO UTC', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'different date parsers', files: ['src/parser.ts'], holdFiles: false });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    const deadline = 'Thu, 01 Jan 1970 00:00:00 GMT';
+    const now = a.iso();
+    expect(Date.parse(deadline)).toBe(0);
+    expect(Date.parse(deadline)).toBeLessThan(Date.parse(now));
+    expect(a.db.prepare('SELECT ? > ? AS later').get(deadline, now).later).toBe(1);
+    a.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run(deadline, id);
+
+    const b = boardFor('b');
+    expect(b.liveClaimOrNull(id)).toBeNull();
+    expect(b.issuesForPath('src/parser.ts')[0]?.claimed_by).toBeNull();
+    expect(b.listIssues({ claimedBy: 'a' }).map((issue) => issue.id)).not.toContain(id);
+    b.close();
+  });
+
   it('records the takeover in the log, with both agents named', () => {
     const a = boardFor('a');
     const { id } = a.createIssue({ title: 'stolen' });
@@ -446,9 +501,201 @@ describe('claims are exclusive and leased', () => {
     expect(() => b.releaseClaim(id, { force: true })).not.toThrow();
     b.close();
   });
+
+  it("preserves another agent's live issue locks during a forced claim release", () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'not yours' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/held-by-a.ts'], { issueId: id, leaseMs: 60_000 });
+    a.close();
+
+    const b = boardFor('b');
+    const result = b.releaseClaim(id, { force: true });
+    expect(result.files_released).toEqual([]);
+    expect(result.files_retained).toEqual([{ path: 'src/held-by-a.ts', agent_id: 'a' }]);
+    expect(b.getIssue(id).status).toBe('open');
+    expect(b.locksHeldBy('a').map((lock) => lock.path)).toEqual(['src/held-by-a.ts']);
+    expect(b.locksFor(id).map(({ path, agent_id }) => ({ path, agent_id }))).toEqual([
+      { path: 'src/held-by-a.ts', agent_id: 'a' },
+    ]);
+    b.close();
+  });
+
+  it('preserves all live issue locks when a forced release has no caller identity', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'unattributed forced release' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/held-without-caller.ts'], { issueId: id, leaseMs: 60_000 });
+    a.close();
+
+    const unattributed = new Board({ dir, now: () => clock }).open();
+    const result = unattributed.releaseClaim(id, { force: true });
+
+    expect(result.files_retained).toEqual([{ path: 'src/held-without-caller.ts', agent_id: 'a' }]);
+    expect(unattributed.checkPath('src/held-without-caller.ts').free).toBe(false);
+    unattributed.close();
+  });
+
+  it('preserves a live contributor lock when the claim owner releases the issue', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'shared issue' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    const b = boardFor('b');
+    b.holdFiles(['src/held-by-b.ts'], { issueId: id, leaseMs: 60_000 });
+
+    const result = a.releaseClaim(id);
+    expect(result.files_retained).toEqual([{ path: 'src/held-by-b.ts', agent_id: 'b' }]);
+    expect(b.locksFor(id).map(({ path, agent_id }) => ({ path, agent_id }))).toEqual([
+      { path: 'src/held-by-b.ts', agent_id: 'b' },
+    ]);
+    expect(b.checkPath('src/held-by-b.ts', { agent: 'someone-else' }).free).toBe(false);
+    a.close();
+    b.close();
+  });
+
+  it('preserves a live contributor lock when the claim owner reopens the issue', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'reopened with a contributor lock' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/reopen-owner.ts'], { issueId: id, leaseMs: 60_000 });
+    const b = boardFor('b');
+    b.holdFiles(['src/reopen-contributor.ts'], { issueId: id, leaseMs: 60_000 });
+
+    const result = a.reopenIssue(id);
+
+    expect(result.files_released).toEqual(['src/reopen-owner.ts']);
+    expect(result.files_retained).toEqual([{ path: 'src/reopen-contributor.ts', agent_id: 'b' }]);
+    expect(b.checkPath('src/reopen-contributor.ts', { agent: 'someone-else' }).free).toBe(false);
+    expect(a.readyIssues().map((entry) => entry.id)).toContain(id);
+    a.close();
+    b.close();
+  });
+
+  it('uses one transaction time for claim and lock checks when reopening', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'reopen with a near-expired contributor lock' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    const b = boardFor('b');
+    b.holdFiles(['src/reopen-near-expiry.ts'], { issueId: id, leaseMs: 1 });
+    const reopenAt = clock;
+    let reads = 0;
+    a.now = () => (reads++ === 0 ? reopenAt : reopenAt + 2);
+
+    const result = a.reopenIssue(id);
+
+    expect(result.files_retained).toEqual([{ path: 'src/reopen-near-expiry.ts', agent_id: 'b' }]);
+    expect(b.checkPath('src/reopen-near-expiry.ts', { agent: 'someone-else', at: reopenAt }).free).toBe(false);
+    a.close();
+    b.close();
+  });
+
+  it('releases issue locks on reopen even when the claim is no longer live', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'reopened after its claim expired' });
+    a.holdFiles(['src/reopen-unclaimed-owner.ts'], { issueId: id, leaseMs: 60_000 });
+
+    const b = boardFor('b');
+    b.holdFiles(['src/reopen-unclaimed-contributor.ts'], { issueId: id, leaseMs: 60_000 });
+
+    const result = a.reopenIssue(id);
+
+    expect(result.files_released).toEqual(['src/reopen-unclaimed-owner.ts']);
+    expect(result.files_retained).toEqual([{ path: 'src/reopen-unclaimed-contributor.ts', agent_id: 'b' }]);
+    expect(b.checkPath('src/reopen-unclaimed-contributor.ts', { agent: 'someone-else' }).free).toBe(false);
+    a.close();
+    b.close();
+  });
+
+  it("lets doctor release a dead claim without dropping another agent's live issue lock", () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'abandoned claim' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.close();
+
+    const b = boardFor('b');
+    ensureAgentWorktree('b');
+    b.holdFiles(['src/held-by-b.ts'], { issueId: id, leaseMs: 60_000 });
+    const findings = b.doctor();
+
+    expect(findings.map((finding) => finding.issue)).toContain(id);
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        issue: id,
+        files_released: [],
+        files_retained: [{ path: 'src/held-by-b.ts', agent_id: 'b' }],
+      })
+    );
+    expect(b.getIssue(id).status).toBe('open');
+    expect(b.locksFor(id).map(({ path, agent_id }) => ({ path, agent_id }))).toEqual([
+      { path: 'src/held-by-b.ts', agent_id: 'b' },
+    ]);
+    b.close();
+  });
+
+  it('does not report a foreign live lock after doctor reclaims its dead worktree', () => {
+    ensureAgentWorktree('a');
+    ensureAgentWorktree('b');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'stale claim with dead contributor' });
+    a.claimIssue(id, { leaseMs: 86_400_000 });
+    const b = boardFor('b');
+    b.holdFiles(['src/dead-contributor.ts'], { issueId: id, leaseMs: 86_400_000 });
+    a.close();
+    b.close();
+
+    rmSync(join(dir, 'wt-a'), { recursive: true, force: true });
+    rmSync(join(dir, 'wt-b'), { recursive: true, force: true });
+    const doctor = boardFor('doctor');
+    const findings = doctor.doctor();
+
+    expect(findings.map((finding) => finding.kind)).toEqual(['dead-worktree', 'dead-worktree-lock']);
+    expect(findings[0].files_retained).toEqual([]);
+    expect(doctor.locksHeldBy('b')).toHaveLength(0);
+    doctor.close();
+  });
 });
 
 describe('file locks make one-file-one-agent real', () => {
+  it.skipIf(process.platform === 'win32')('preserves backslashes in POSIX worktree and file names', () => {
+    const worktree = join(dir, 'repo\\name');
+    mkdirSync(worktree);
+    const file = join(worktree, 'src\\literal.ts');
+    const board = new Board({
+      dir: join(dir, 'shared-board'),
+      identity: { agentId: 'a', worktree },
+    }).open();
+
+    try {
+      expect(normalizePaths([file], { roots: [worktree] })).toEqual(['src\\literal.ts']);
+      board.holdFiles([file]);
+      expect(board.locksHeldBy('a').map(({ path }) => path)).toEqual(['src\\literal.ts']);
+    } finally {
+      board.close();
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('uses one lock for an absolute symlink alias and its worktree path', () => {
+    const worktree = join(dir, 'repo');
+    const sourceDirectory = join(worktree, 'src');
+    const aliasDirectory = join(dir, 'src-alias');
+    mkdirSync(sourceDirectory, { recursive: true });
+    symlinkSync(sourceDirectory, aliasDirectory, 'dir');
+    identityFor('a').worktree = worktree;
+    identityFor('b').worktree = worktree;
+
+    const a = boardFor('a');
+    const b = boardFor('b');
+    try {
+      a.holdFiles([join(aliasDirectory, 'not-created.ts')]);
+      expect(a.locksHeldBy('a').map(({ path }) => path)).toEqual(['src/not-created.ts']);
+      expect(b.checkPath('src/not-created.ts').free).toBe(false);
+      expect(() => b.holdFiles(['src/not-created.ts'])).toThrow(/held by another agent/);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
   it('refuses a path another live agent holds, naming the holder', () => {
     const a = boardFor('a');
     a.holdFiles(['src/contexts/StoreContext.tsx']);
@@ -461,6 +708,69 @@ describe('file locks make one-file-one-agent real', () => {
       expect(error.code).toBe(4);
       expect(error.message).toMatch(/src\/contexts\/StoreContext.tsx \(a\)/);
     }
+    b.close();
+  });
+
+  it("does not force-unlock another agent's live file", () => {
+    const a = boardFor('a');
+    a.holdFiles(['src/held-by-a.ts'], { leaseMs: 60_000 });
+    a.close();
+
+    const b = boardFor('b');
+    const result = b.releaseFiles(['src/held-by-a.ts'], { force: true });
+    expect(result).toEqual({ released: [], blocked: [{ path: 'src/held-by-a.ts', agent_id: 'a' }] });
+    expect(b.checkPath('src/held-by-a.ts').free).toBe(false);
+    b.close();
+  });
+
+  it("allows force-unlock of another agent's expired file lease", () => {
+    const a = boardFor('a');
+    a.holdFiles(['src/expired-forced.ts'], { leaseMs: 60_000 });
+    a.close();
+    advance(60_001);
+
+    const b = boardFor('b');
+    expect(b.releaseFiles(['src/expired-forced.ts'], { force: true })).toEqual({
+      released: ['src/expired-forced.ts'],
+      blocked: [],
+    });
+    expect(b.checkPath('src/expired-forced.ts').free).toBe(true);
+    b.close();
+  });
+
+  it('keeps a file lock with an unreadable expiry live instead of granting it twice', () => {
+    const a = boardFor('a');
+    mkdirSync(a.identity.worktree, { recursive: true });
+    a.holdFiles(['src/unreadable-lock.ts'], { leaseMs: 60_000 });
+    a.db
+      .prepare('UPDATE file_locks SET expires_at = ? WHERE path = ? AND agent_id = ?')
+      .run('not-a-date', 'src/unreadable-lock.ts', 'a');
+
+    const b = boardFor('b');
+    expect(b.liveLocks().map((lock) => lock.path)).toContain('src/unreadable-lock.ts');
+    expect(b.checkPath('src/unreadable-lock.ts').free).toBe(false);
+    expect(b.releaseFiles(['src/unreadable-lock.ts'], { force: true })).toEqual({
+      released: [],
+      blocked: [{ path: 'src/unreadable-lock.ts', agent_id: 'a' }],
+    });
+    expect(b.doctor()).toEqual([]);
+    expect(b.unreadableLeaseDeadlines()).toEqual([
+      {
+        kind: 'unreadable-lock-deadline',
+        path: 'src/unreadable-lock.ts',
+        agent: 'a',
+        worktree: a.identity.worktree,
+        deadline: 'not-a-date',
+      },
+    ]);
+    expect(() => b.holdFiles(['src/unreadable-lock.ts'])).toThrow(/held by another agent/);
+    expect(a.renewOwnLocks()).toEqual(['src/unreadable-lock.ts']);
+    expect(
+      Date.parse(
+        a.db.prepare('SELECT expires_at FROM file_locks WHERE path = ?').get('src/unreadable-lock.ts').expires_at
+      )
+    ).toBeGreaterThan(clock);
+    expect(b.unreadableLeaseDeadlines()).toEqual([]);
     b.close();
   });
 
@@ -988,6 +1298,163 @@ describe('deferrals decide what is ready', () => {
 });
 
 describe('doctor reclaims what dead agents left', () => {
+  it('uses one supplied timestamp to evaluate claims and locks', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'claim and lock expire together' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/same-scan-deadline.ts'], { issueId: id, leaseMs: 60_000 });
+    a.close();
+
+    const b = boardFor('b');
+    const candidates = b.doctor({ at: clock + 60_001, dryRun: true });
+
+    expect(candidates.map(({ kind }) => kind)).toEqual(['expired-lease', 'expired-lock']);
+    expect(b.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(id).released_at).toBeNull();
+    expect(
+      b.db
+        .prepare('SELECT released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+        .get('src/same-scan-deadline.ts', 'a').released_at
+    ).toBeNull();
+  });
+
+  it('does not release a claim or paired lock renewed after the scan', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'active again during sweep' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/renewed-during-sweep.ts'], { issueId: id, leaseMs: 60_000 });
+    advance(60_001);
+
+    const b = boardFor('b');
+    const releaseClaim = b.releaseClaim.bind(b);
+    const releaseFiles = b.releaseFiles.bind(b);
+    vi.spyOn(b, 'releaseClaim').mockImplementation((issue, options) => {
+      a.autoSweep();
+      return releaseClaim(issue, options);
+    });
+    vi.spyOn(b, 'releaseFiles').mockImplementation((paths, options) => {
+      a.autoSweep();
+      return releaseFiles(paths, options);
+    });
+
+    expect(b.doctor()).toEqual([]);
+    const claim = b.db.prepare('SELECT lease_until, released_at FROM claims WHERE issue_id = ?').get(id);
+    const lock = b.db
+      .prepare('SELECT expires_at, released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/renewed-during-sweep.ts', 'a');
+    expect(claim.released_at).toBeNull();
+    expect(Date.parse(claim.lease_until)).toBeGreaterThan(clock);
+    expect(lock.released_at).toBeNull();
+    expect(Date.parse(lock.expires_at)).toBeGreaterThan(clock);
+    expect(b.events({ kind: 'doctor.run' })).toHaveLength(0);
+  });
+
+  it('does not cascade an expired claim into an independently live file lock', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'claim and file lock have separate leases' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/longer-file-lease.ts'], { issueId: id, leaseMs: 120_000 });
+    advance(60_001);
+
+    const b = boardFor('b');
+    expect(b.doctor().map((finding) => finding.issue)).toEqual([id]);
+    expect(b.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(id).released_at).not.toBeNull();
+    const lock = b.db
+      .prepare('SELECT expires_at, released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/longer-file-lease.ts', 'a');
+    expect(lock.released_at).toBeNull();
+    expect(Date.parse(lock.expires_at)).toBeGreaterThan(clock);
+    expect(b.liveLocks().map((entry) => entry.path)).toContain('src/longer-file-lease.ts');
+    expect(b.db.prepare('SELECT issue_id FROM issue_locks WHERE path = ?').get('src/longer-file-lease.ts')).toEqual({
+      issue_id: id,
+    });
+  });
+
+  it('does not release a standalone lock renewed after the scan', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    a.holdFiles(['src/standalone-renewed-during-sweep.ts'], { leaseMs: 60_000 });
+    advance(60_001);
+
+    const b = boardFor('b');
+    const releaseFiles = b.releaseFiles.bind(b);
+    vi.spyOn(b, 'releaseFiles').mockImplementation((paths, options) => {
+      expect(a.renewOwnLocks()).toEqual(['src/standalone-renewed-during-sweep.ts']);
+      return releaseFiles(paths, options);
+    });
+
+    expect(b.doctor()).toEqual([]);
+    const lock = b.db
+      .prepare('SELECT expires_at, released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/standalone-renewed-during-sweep.ts', 'a');
+    expect(lock.released_at).toBeNull();
+    expect(Date.parse(lock.expires_at)).toBeGreaterThan(clock);
+    expect(b.events({ kind: 'doctor.run' })).toHaveLength(0);
+  });
+
+  it('preserves a renewed file lock when its expired claim is swept', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'claim expired while file use continued' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/lock-renewed-after-claim-scan.ts'], { issueId: id, leaseMs: 60_000 });
+    advance(60_001);
+
+    const b = boardFor('b');
+    const releaseClaim = b.releaseClaim.bind(b);
+    vi.spyOn(b, 'releaseClaim').mockImplementation((issue, options) => {
+      expect(a.renewOwnLocks()).toEqual(['src/lock-renewed-after-claim-scan.ts']);
+      return releaseClaim(issue, options);
+    });
+
+    expect(b.doctor().map((finding) => finding.issue)).toEqual([id]);
+    expect(b.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(id).released_at).not.toBeNull();
+    const lock = b.db
+      .prepare('SELECT expires_at, released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/lock-renewed-after-claim-scan.ts', 'a');
+    expect(lock.released_at).toBeNull();
+    expect(Date.parse(lock.expires_at)).toBeGreaterThan(clock);
+    expect(
+      b.db.prepare('SELECT issue_id FROM issue_locks WHERE path = ?').get('src/lock-renewed-after-claim-scan.ts')
+    ).toEqual({ issue_id: id });
+    expect(b.events({ kind: 'doctor.run' })).toHaveLength(1);
+  });
+
+  it('keeps a new claim pairing created after the sweep snapshot', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'lock paired during sweep' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    advance(60_001);
+
+    const b = boardFor('b');
+    const releaseClaim = b.releaseClaim.bind(b);
+    vi.spyOn(b, 'releaseClaim').mockImplementation((issue, options) => {
+      a.holdFiles(['src/new-pairing-during-sweep.ts'], { issueId: id, leaseMs: 120_000 });
+      return releaseClaim(issue, options);
+    });
+
+    expect(b.doctor().map((finding) => finding.issue)).toEqual([id]);
+    expect(b.liveLocks().map((lock) => lock.path)).toContain('src/new-pairing-during-sweep.ts');
+    expect(
+      b.db.prepare('SELECT issue_id FROM issue_locks WHERE path = ?').get('src/new-pairing-during-sweep.ts')
+    ).toEqual({ issue_id: id });
+  });
+
+  it('reclaims a dead worktree standalone lock even when that agent has a dead claim', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'claim and unrelated standalone hold' });
+    a.claimIssue(id, { leaseMs: 86_400_000 });
+    a.holdFiles(['src/standalone-next-to-dead-claim.ts'], { leaseMs: 86_400_000 });
+    a.close();
+
+    const b = boardFor('b');
+    expect(b.doctor().map((finding) => finding.kind)).toEqual(['dead-worktree', 'dead-worktree-lock']);
+    expect(b.locksHeldBy('a')).toHaveLength(0);
+  });
+
   it('releases a claim held from a worktree that no longer exists', () => {
     const a = boardFor('a');
     const { id } = a.createIssue({ title: 'worktree deleted mid-task' });
@@ -1004,6 +1471,32 @@ describe('doctor reclaims what dead agents left', () => {
     expect(findings.map((finding) => finding.kind)).toEqual(['dead-worktree']);
     expect(b.getIssue(id).status).toBe('open');
     expect(b.locksHeldBy('a')).toHaveLength(0);
+    b.close();
+  });
+
+  it('keeps a still-live claim and lock if the worktree path reappears before release', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'worktree path reappeared during sweep' });
+    a.claimIssue(id, { leaseMs: 86_400_000 });
+    a.holdFiles(['src/reappeared-worktree.ts'], { issueId: id, leaseMs: 86_400_000 });
+    a.close();
+    rmSync(join(dir, 'wt-a'), { recursive: true, force: true });
+
+    const b = boardFor('b');
+    const releaseClaim = b.releaseClaim.bind(b);
+    vi.spyOn(b, 'releaseClaim').mockImplementation((issue, options) => {
+      ensureAgentWorktree('a');
+      return releaseClaim(issue, options);
+    });
+
+    expect(b.doctor()).toEqual([]);
+    expect(b.getIssue(id).status).toBe('claimed');
+    expect(b.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(id).released_at).toBeNull();
+    expect(
+      b.db.prepare('SELECT released_at FROM file_locks WHERE path = ?').get('src/reappeared-worktree.ts').released_at
+    ).toBeNull();
+    expect(b.events({ kind: 'doctor.run' })).toHaveLength(0);
     b.close();
   });
 
@@ -1038,7 +1531,7 @@ describe('doctor reclaims what dead agents left', () => {
 
   it('leaves a live claim from a live worktree alone', () => {
     const a = boardFor('a');
-    mkdirSync(join(dir, 'wt-a'), { recursive: true });
+    ensureAgentWorktree('a');
     const { id } = a.createIssue({ title: 'in progress' });
     a.claimIssue(id, { leaseMs: 60_000 });
     a.close();
@@ -1119,6 +1612,31 @@ describe('the board maintains itself, because nobody remembers to', () => {
     expect(a.events({ since: 0, limit: 1000 }).filter((e) => e.kind === 'doctor.run')).toHaveLength(1);
     expect(a.health().sweeps).toBe(1);
     a.close();
+  });
+
+  it('records partial sweep activity when a later stale release fails', () => {
+    ensureAgentWorktree('a');
+    ensureAgentWorktree('b');
+    const a = boardFor('a');
+    const b = boardFor('b');
+    a.holdFiles(['src/partial-sweep-a.ts'], { leaseMs: 1 });
+    b.holdFiles(['src/partial-sweep-b.ts'], { leaseMs: 1 });
+    advance(2);
+
+    const releaseFiles = a.releaseFiles.bind(a);
+    let releaseCount = 0;
+    a.releaseFiles = (...args) => {
+      releaseCount += 1;
+      if (releaseCount === 2) throw new Error('injected later release failure');
+      return releaseFiles(...args);
+    };
+
+    expect(() => a.doctor()).toThrow('injected later release failure');
+    expect(a.db.prepare('SELECT COUNT(*) n FROM file_locks WHERE released_at IS NOT NULL').get().n).toBe(1);
+    const [partialSweep] = a.events({ kind: 'doctor.run' });
+    expect(partialSweep.message).toBe('1 stale holding(s) released before sweep failed');
+    expect(JSON.parse(partialSweep.data)).toEqual({ partial: true });
+    expect(a.health().sweeps).toBe(1);
   });
 
   it('writes a renew event only when the lease actually needed it', () => {
@@ -1642,6 +2160,70 @@ describe('the schema this script writes', () => {
     expect(board.db, 'a failed open left a live handle, so a retry short-circuits').toBeNull();
   });
 
+  it('retries a busy journal-mode probe during first-open contention', () => {
+    const board = new Board({ dir, identity: identityFor('wal-retry') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 5 });
+    board.db = { exec: vi.fn() };
+    const currentJournalMode = vi
+      .spyOn(board, 'currentJournalMode')
+      .mockImplementationOnce(() => {
+        throw busy;
+      })
+      .mockReturnValueOnce('wal');
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBe('wal');
+    expect(currentJournalMode).toHaveBeenCalledTimes(2);
+    expect(board.db.exec).not.toHaveBeenCalled();
+  });
+
+  it('does not fail open when the final journal-mode probe stays busy', () => {
+    const board = new Board({ dir, identity: identityFor('wal-busy') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 5 });
+    board.db = { exec: vi.fn() };
+    const currentJournalMode = vi.spyOn(board, 'currentJournalMode').mockImplementation(() => {
+      throw busy;
+    });
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBeNull();
+    expect(currentJournalMode).toHaveBeenCalledTimes(3);
+    expect(board.db.exec).not.toHaveBeenCalled();
+  });
+
+  it('retries an extended busy error from WAL conversion', () => {
+    const board = new Board({ dir, identity: identityFor('wal-conversion-busy') });
+    const busy = Object.assign(new Error('database is locked'), { errcode: 517 });
+    const exec = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw busy;
+      })
+      .mockImplementationOnce(() => {});
+    board.db = { exec };
+    const currentJournalMode = vi
+      .spyOn(board, 'currentJournalMode')
+      .mockReturnValueOnce('delete')
+      .mockReturnValueOnce('delete')
+      .mockReturnValueOnce('wal');
+
+    expect(board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toBe('wal');
+    expect(currentJournalMode).toHaveBeenCalledTimes(3);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not hide non-busy errors from the WAL conversion', () => {
+    const board = new Board({ dir, identity: identityFor('wal-error') });
+    const ioError = Object.assign(new Error('disk I/O error'), { errcode: 10 });
+    board.db = {
+      exec: vi.fn(() => {
+        throw ioError;
+      }),
+    };
+    vi.spyOn(board, 'currentJournalMode').mockReturnValue('delete');
+
+    expect(() => board.enableWriteAheadLog({ attempts: 2, delayMs: 0 })).toThrow(ioError);
+    expect(board.db.exec).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses before it creates anything, not after', () => {
     // The two refusals in `migrate()` have to agree: a newer board is refused
     // BEFORE `exec(SCHEMA)` precisely so it does not half-adopt a schema, and a
@@ -1867,6 +2449,37 @@ describe('the command line', () => {
     const other = await cli(['hold', 'src/util/draw.ts'], 'b');
     expect(other.code).toBe(4);
     expect(other.err).toMatch(/held by another agent/);
+  });
+
+  it('preserves foreign live locks when releasing a claim or force-unlocking a path', async () => {
+    const filed = JSON.parse((await cli(['new', 'keep a live lock', '--json'])).out);
+    const path = 'src/keep-live-lock.ts';
+    expect((await cli(['claim', filed.id, '--files', path])).code).toBe(0);
+
+    const released = await cli(['release', filed.id, '--force'], 'b');
+    expect(released.code).toBe(4);
+    expect(released.out).toMatch(/released; live file locks remain held/);
+    expect(JSON.parse((await cli(['show', filed.id, '--json'])).out).issue.status).toBe('open');
+
+    const unlocked = await cli(['unlock', path, '--force'], 'b');
+    expect(unlocked.code).toBe(4);
+    expect(unlocked.out).toMatch(/not released, held by another agent/);
+    expect((await cli(['check', path], 'b')).code).toBe(1);
+  });
+
+  it('reports a retained contributor lock when reopening a claimed issue', async () => {
+    const filed = JSON.parse((await cli(['new', 'reopen with contributor lock', '--json'])).out);
+    const path = 'src/reopen-cli-contributor.ts';
+    expect((await cli(['claim', filed.id, '--files', 'src/reopen-cli-owner.ts'])).code).toBe(0);
+    expect((await cli(['hold', path, '--issue', filed.id], 'b')).code).toBe(0);
+
+    const reopened = await cli(['reopen', filed.id]);
+
+    expect(reopened.code).toBe(4);
+    expect(reopened.out).toContain('reopened; live file locks remain held');
+    expect(reopened.out).toContain(`${path} by b`);
+    expect(JSON.parse((await cli(['show', filed.id, '--json'])).out).issue.status).toBe('open');
+    expect((await cli(['check', path], 'a')).code).toBe(1);
   });
 
   it('shows, in `ready`, the files an issue is about and whether they are free', async () => {
@@ -2337,12 +2950,16 @@ describe('the command line', () => {
     execFileSync('git', ['init', '--quiet'], { cwd: repo });
     const { id } = JSON.parse((await cli(['new', 'orphaned', '--json'], 'a', repo)).out);
     await cli(['claim', id, '--lease', '24h', '--files', 'src/orphan.ts'], 'a', repo);
+    await cli(['hold', 'src/orphan-contributor.ts', '--issue', id], 'b');
     rmSync(repo, { recursive: true, force: true });
     const dry = await cli(['doctor', '--dry-run', '--json']);
     expect(dry.code).toBe(0);
     expect(JSON.parse(dry.out).findings.length).toBeGreaterThan(0);
-    const fixed = await cli(['doctor']);
+    const fixed = await cli(['doctor'], 'b');
+    expect(fixed.code).toBe(4);
     expect(fixed.out).toContain('released');
+    expect(fixed.out).toContain('live file locks remain held');
+    expect(fixed.out).toContain('src/orphan-contributor.ts by b');
     expect(JSON.parse((await cli(['show', id, '--json'])).out).issue.status).toBe('open');
   });
 
@@ -2396,6 +3013,43 @@ describe('the command line', () => {
     // the sweep being broken.
     await cli(['status']);
     expect(JSON.parse((await cli(['doctor', '--dry-run', '--json'])).out).findings).toEqual([]);
+  });
+
+  it('reports unreadable lease deadlines without releasing them', async () => {
+    const a = boardFor('a');
+    mkdirSync(a.identity.worktree, { recursive: true });
+    const { id } = a.createIssue({ title: 'unreadable deadline', holdFiles: false });
+    a.claimIssue(id);
+    a.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run('invalid-deadline', id);
+
+    const dead = boardFor('dead');
+    const { id: deadId } = dead.createIssue({ title: 'missing worktree evidence', holdFiles: false });
+    dead.claimIssue(deadId);
+    rmSync(dead.identity.worktree, { recursive: true, force: true });
+
+    const dry = await cli(['doctor', '--dry-run', '--json']);
+    expect(dry.code).toBe(0);
+    const report = JSON.parse(dry.out);
+    expect(report.findings).toMatchObject([
+      { kind: 'dead-worktree', issue: deadId, agent: 'dead', worktree: dead.identity.worktree, releaseable: true },
+    ]);
+    expect(report.anomalies).toEqual([
+      {
+        kind: 'unreadable-claim-deadline',
+        issue: id,
+        agent: 'a',
+        worktree: a.identity.worktree,
+        deadline: 'invalid-deadline',
+      },
+    ]);
+    expect(a.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(id).released_at).toBeNull();
+    expect(a.db.prepare('SELECT released_at FROM claims WHERE issue_id = ?').get(deadId).released_at).toBeNull();
+
+    const human = await cli(['doctor', '--dry-run']);
+    expect(human.out).toContain('stale release candidate(s)');
+    expect(human.out).toContain('rechecked before release');
+    expect(human.out).toContain('deadline alone is treated as live');
+    expect(human.out).toContain('invalid-deadline');
   });
 
   it('emits valid JSON for EVERY machine-facing command, driven from the list', async () => {
@@ -2667,6 +3321,178 @@ describe('lease renewal when two agents share a branch', () => {
     );
     expect(Date.parse(leases.get('ph-1'))).toBeGreaterThan(clock);
     expect(Date.parse(leases.get('ph-2'))).toBeLessThan(clock);
+  });
+
+  it('does not renew a same-branch lock from a different worktree', () => {
+    const mine = join(dir, 'wt-lock-owner');
+    const theirs = join(dir, 'wt-lock-peer');
+    mkdirSync(mine, { recursive: true });
+    mkdirSync(theirs, { recursive: true });
+
+    const a = openAs('feat/shared-locks', mine);
+    const b = openAs('feat/shared-locks', theirs);
+    a.holdFiles(['src/worktree-scoped-lock.ts']);
+    a.db
+      .prepare('UPDATE file_locks SET expires_at = ? WHERE path = ? AND agent_id = ?')
+      .run('not-a-date', 'src/worktree-scoped-lock.ts', 'feat/shared-locks');
+
+    advance(DEFAULT_LEASE_MS + 1000);
+    expect(b.renewOwnLocks()).toEqual([]);
+    const after = a.db
+      .prepare('SELECT expires_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/worktree-scoped-lock.ts', 'feat/shared-locks').expires_at;
+    expect(after).toBe('not-a-date');
+    expect(b.unreadableLeaseDeadlines()).toEqual([
+      {
+        kind: 'unreadable-lock-deadline',
+        path: 'src/worktree-scoped-lock.ts',
+        agent: 'feat/shared-locks',
+        worktree: mine,
+        deadline: 'not-a-date',
+      },
+    ]);
+
+    expect(a.renewOwnLocks()).toEqual(['src/worktree-scoped-lock.ts']);
+    expect(
+      Date.parse(
+        a.db
+          .prepare('SELECT expires_at FROM file_locks WHERE path = ? AND agent_id = ?')
+          .get('src/worktree-scoped-lock.ts', 'feat/shared-locks').expires_at
+      )
+    ).toBeGreaterThan(clock);
+  });
+
+  it('does not release a lock renewed after doctor observed its expired deadline', () => {
+    const ownerWorktree = join(dir, 'wt-lock-race-owner');
+    const sweeperWorktree = join(dir, 'wt-lock-race-sweeper');
+    mkdirSync(ownerWorktree, { recursive: true });
+    mkdirSync(sweeperWorktree, { recursive: true });
+
+    const owner = openAs('feat/lock-race', ownerWorktree);
+    const sweeper = openAs('feat/sweeper', sweeperWorktree);
+    owner.holdFiles(['src/renewed-during-sweep.ts']);
+    advance(DEFAULT_LEASE_MS + 1);
+
+    const releaseFiles = sweeper.releaseFiles.bind(sweeper);
+    sweeper.releaseFiles = (...args) => {
+      // Model another process renewing after doctor selected its stale row but
+      // before the sweep's release transaction begins.
+      expect(owner.renewOwnLocks()).toEqual(['src/renewed-during-sweep.ts']);
+      return releaseFiles(...args);
+    };
+
+    expect(sweeper.doctor()).toEqual([]);
+
+    const lock = owner.db
+      .prepare('SELECT expires_at, released_at FROM file_locks WHERE path = ? AND agent_id = ?')
+      .get('src/renewed-during-sweep.ts', 'feat/lock-race');
+    expect(Date.parse(lock.expires_at)).toBeGreaterThan(clock);
+    expect(lock.released_at).toBeNull();
+  });
+
+  it('renews claims and file locks in one transaction before sweeping', () => {
+    const ownerWorktree = join(dir, 'wt-atomic-renew-owner');
+    const sweeperWorktree = join(dir, 'wt-atomic-renew-sweeper');
+    mkdirSync(ownerWorktree, { recursive: true });
+    mkdirSync(sweeperWorktree, { recursive: true });
+    const owner = openAs('feat/atomic-renew', ownerWorktree);
+    const sweeper = openAs('feat/atomic-renew-sweeper', sweeperWorktree);
+    sweeper.db.exec('PRAGMA busy_timeout=0');
+    const { id } = owner.createIssue({ title: 'renew both leases together' });
+    owner.claimIssue(id);
+    owner.holdFiles(['src/atomic-renew.ts']);
+    advance(DEFAULT_LEASE_MS + 1);
+
+    const transactionStates = [];
+    const renewClaims = owner.renewOwnClaims.bind(owner);
+    const renewLocks = owner.renewOwnLocks.bind(owner);
+    owner.renewOwnClaims = (options) => {
+      transactionStates.push(owner.db.isTransaction);
+      const renewed = renewClaims(options);
+      // A concurrent doctor must not reclaim the expired lock in the interval
+      // after its claim is renewed but before the lock renewal runs.
+      expect(() => sweeper.doctor()).toThrow();
+      return renewed;
+    };
+    owner.renewOwnLocks = (options) => {
+      transactionStates.push(owner.db.isTransaction);
+      return renewLocks(options);
+    };
+
+    const result = owner.autoSweep();
+
+    expect(transactionStates).toEqual([true, true]);
+    expect(result.renewed).toEqual([id]);
+    expect(result.renewedFiles).toEqual(['src/atomic-renew.ts']);
+    expect(result.released).toEqual([]);
+    expect(sweeper.doctor()).toEqual([]);
+  });
+
+  it('renews a lock without a claim and starts its lease after the write-lock wait', () => {
+    const ownerWorktree = join(dir, 'wt-lock-only-renew-owner');
+    mkdirSync(ownerWorktree, { recursive: true });
+    const owner = openAs('feat/lock-only-renew', ownerWorktree);
+    owner.holdFiles(['src/lock-only-renew.ts']);
+    const originalDeadline = owner.db
+      .prepare('SELECT expires_at FROM file_locks WHERE path = ?')
+      .get('src/lock-only-renew.ts').expires_at;
+    advance(DEFAULT_LEASE_MS / 2 + 1);
+
+    const transaction = owner.transaction.bind(owner);
+    owner.transaction = (fn) =>
+      transaction(() => {
+        advance(5_000);
+        return fn();
+      });
+
+    const result = owner.autoSweep();
+    const renewedDeadline = owner.db
+      .prepare('SELECT expires_at FROM file_locks WHERE path = ?')
+      .get('src/lock-only-renew.ts').expires_at;
+
+    expect(result.renewed).toEqual([]);
+    expect(result.renewedFiles).toEqual(['src/lock-only-renew.ts']);
+    expect(Date.parse(renewedDeadline)).toBe(clock + DEFAULT_LEASE_MS);
+    expect(Date.parse(renewedDeadline)).toBeGreaterThan(Date.parse(originalDeadline));
+  });
+
+  it('uses the same supplied timestamp to evaluate locks and claims', () => {
+    const ownerWorktree = join(dir, 'wt-doctor-clock-owner');
+    mkdirSync(ownerWorktree, { recursive: true });
+    const owner = openAs('feat/doctor-clock', ownerWorktree);
+    owner.holdFiles(['src/doctor-clock.ts'], { leaseMs: 60_000 });
+
+    const findings = owner.doctor({ at: clock + 60_001, dryRun: true });
+
+    expect(findings.map((finding) => finding.path)).toEqual(['src/doctor-clock.ts']);
+  });
+
+  it('does not release a claim renewed after doctor observed its expired deadline', () => {
+    const ownerWorktree = join(dir, 'wt-claim-race-owner');
+    const sweeperWorktree = join(dir, 'wt-claim-race-sweeper');
+    mkdirSync(ownerWorktree, { recursive: true });
+    mkdirSync(sweeperWorktree, { recursive: true });
+
+    const owner = openAs('feat/claim-race', ownerWorktree);
+    const sweeper = openAs('feat/claim-sweeper', sweeperWorktree);
+    const { id } = owner.createIssue({ title: 'renew during sweep' });
+    owner.claimIssue(id);
+    advance(DEFAULT_LEASE_MS + 1);
+
+    const releaseClaim = sweeper.releaseClaim.bind(sweeper);
+    sweeper.releaseClaim = (...args) => {
+      // Model another process renewing after doctor selected its stale row but
+      // before the sweep's claim-release transaction begins.
+      expect(owner.renewOwnClaims()).toEqual([id]);
+      return releaseClaim(...args);
+    };
+
+    expect(sweeper.doctor()).toEqual([]);
+
+    const claim = owner.db.prepare('SELECT lease_until, released_at FROM claims WHERE issue_id = ?').get(id);
+    expect(Date.parse(claim.lease_until)).toBeGreaterThan(clock);
+    expect(claim.released_at).toBeNull();
+    expect(owner.getIssue(id).status).toBe('claimed');
   });
 
   it("still releases the dead worktree's claim, and keeps the live one", () => {

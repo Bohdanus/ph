@@ -189,6 +189,16 @@ describe('a locked layer refuses the raster commit path', () => {
     expect(historyLength(editing.result)).toBe(0);
   });
 
+  it('refuses to remove a full-locked layer without changing history', () => {
+    const locked = setup({ photo: makeLayer('photo', 0, { locked: true }) });
+
+    act(() => locked.result.current.layers.removeLayer('photo'));
+
+    expect(locked.result.current.store.layers.photo).toBeDefined();
+    expect(locked.result.current.store.deletedLayers.photo).toBeUndefined();
+    expect(historyLength(locked.result)).toBe(0);
+  });
+
   it('writes no live pixels for it, where the same stroke on an unlocked layer does', () => {
     const locked = setup({ photo: makeLayer('photo', 0, { locked: true }) });
     act(() => locked.result.current.layers.tempUpdateLayer({ id: 'photo', toolArgs: eraserArgs() }));

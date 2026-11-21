@@ -149,7 +149,9 @@ test.describe('Layers', () => {
     };
     const removeLayer = async (name: string) => {
       const row = layerRow(name);
-      await row.getByRole('button', { name: 'Remove layer' }).click();
+      await row.click();
+      await page.getByTestId('layers-delete-active-button').click();
+      await page.getByTestId('confirm-dialog-confirm-button').click();
       await expect(row).toHaveCount(0);
     };
     const removeAndCapture = async (name: string, screenshotName: string) => {
@@ -369,8 +371,8 @@ test.describe('Layers', () => {
    * deletion that published no entry leaves the canvas correct and every pixel assertion green,
    * while the layer is silently un-undoable — which is the regression this pins.
    *
-   * `removeLayer` in the test above calls `handleConfirmRemove`, dispatched as `REMOVE_ACTION`
-   * (`src/util/constants.ts`), so the row title is the product's own lower-case spelling read
+   * `removeLayer` in the test above confirms `requestLayerRemoval`'s request, dispatched as
+   * `REMOVE_ACTION` (`src/util/constants.ts`), so the row title is the product's own spelling read
    * through the same case-insensitive filter `REORDER_ENTRY` uses for reorders.
    */
   test('deleting a layer is a history entry of its own', async ({ page }) => {
@@ -391,7 +393,9 @@ test.describe('Layers', () => {
     await expect(historyRows, 'the document entry plus the stroke').toHaveCount(2);
     const beforeDelete = await historyRows.count();
 
-    await drawnRow.getByRole('button', { name: 'Remove layer' }).click();
+    await drawnRow.click();
+    await page.getByTestId('layers-delete-active-button').click();
+    await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(drawnRow).toHaveCount(0);
 
     await expect(historyRows, 'deleting a layer is ONE entry of its own, not zero').toHaveCount(beforeDelete + 1);
@@ -480,13 +484,11 @@ test.describe('Layers', () => {
     const rowCount = await rows.count();
     expect(rowCount, 'a stroke plus the bedrock layer').toBe(2);
 
-    // Per-layer glyphs are also decorative SVGs, so identify the drag affordance explicitly.
-    const handleCount = await rows.evaluateAll((nodes) =>
-      nodes.reduce((count, row) => {
-        return count + row.querySelectorAll('[data-testid="drag-handle-icon"]').length;
-      }, 0)
-    );
-    expect(handleCount, 'every row renders exactly one drag handle').toBe(rowCount);
+    const draggableStates = await rows.evaluateAll((nodes) => nodes.map((row) => row.getAttribute('draggable')));
+    expect(draggableStates, 'the row itself is the drag handle except for the backing layer').toEqual([
+      'true',
+      'false',
+    ]);
   });
 
   /**
@@ -1068,5 +1070,60 @@ test.describe('Tablet touch layer reordering', () => {
         }
       }
     }
+  });
+});
+
+test.describe('Layer locking state preservation across reorder', () => {
+  test('a locked layer remains locked after reorder', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    await page.goto('/');
+    const canvas = getWorkspaceCanvas(page);
+    await expect(canvas).toBeVisible();
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
+
+    const layerRows = page.getByTitle('Drag to reorder');
+    const layerRow = (name: string) => layerRows.filter({ hasText: name });
+
+    const draw = async (color: string, start: { x: number; y: number }, end: { x: number; y: number }) => {
+      await clickToolButton(page, 'draw');
+      await setForegroundColor(page, color, true);
+      await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 15 });
+    };
+
+    const moveToTop = async (sourceName: string, targetName: string) => {
+      const source = layerRow(sourceName);
+      const target = layerRow(targetName);
+      const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+      const targetBox = await target.boundingBox();
+      if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
+      await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
+      await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      await dispatchDragOverAndExpectPrevented(page, target, { dataTransfer, clientY: targetBox.y + 5 });
+      await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
+      await source.dispatchEvent('dragend', { dataTransfer });
+      await expect(layerRows.first()).toContainText(sourceName);
+    };
+
+    const lockButton = (name: string) => page.getByRole('button', { name: new RegExp(`^(Lock|Unlock) ${name}$`) });
+
+    // Two layers: black (bottom), green (top)
+    await draw('#000000', { x: box.x + 180, y: box.y + 180 }, { x: box.x + 420, y: box.y + 340 }); // draw 2
+    await draw('#00aa00', { x: box.x + 160, y: box.y + 260 }, { x: box.x + 440, y: box.y + 260 }); // draw 3, top
+
+    // Lock the top layer (draw 3)
+    await expect(lockButton('draw 3')).toHaveAccessibleName('Lock draw 3');
+    await lockButton('draw 3').click();
+    await expect(lockButton('draw 3')).toHaveAccessibleName('Unlock draw 3');
+
+    // Reorder: move black to top
+    await moveToTop('draw 2', 'draw 3');
+
+    // Lock state should persist
+    await expect(lockButton('draw 3'), 'lock state must survive reorder').toHaveAccessibleName('Unlock draw 3');
   });
 });

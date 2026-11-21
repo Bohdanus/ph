@@ -19,6 +19,24 @@ function parseHttpUrl(value: string | undefined): URL | null {
   }
 }
 
+export function normalizeOwnServerBaseUrl(configuredBaseUrl: string | undefined, webServerUrl: string): string {
+  if (!configuredBaseUrl) return webServerUrl;
+
+  const configured = parseHttpUrl(configuredBaseUrl);
+  const webServer = parseHttpUrl(webServerUrl);
+  if (
+    configured?.protocol === 'http:' &&
+    configured.hostname === 'localhost' &&
+    webServer?.protocol === 'http:' &&
+    configured.port === webServer.port
+  ) {
+    configured.hostname = webServer.hostname;
+    return configured.toString();
+  }
+
+  return configuredBaseUrl;
+}
+
 export function checkOwnServer(options: {
   baseUrl: string | undefined;
   webServerUrl: string | undefined;

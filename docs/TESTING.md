@@ -34,10 +34,12 @@ forgotten it. Two rows have weaker coverage than the table implies:
 - `--debug` is an **`ask`**, not a `deny`, at the permission layer, so approving
   the prompt is possible — and the `global-setup.ts` argv guard throws anyway, so
   the run still does not start headed. Layered, not open.
-- `test.use({ headless: false })` **inside a single spec file is blocked by
-  nothing.** `global-setup.ts` inspects the _project_ scope and names the per-spec
-  hole explicitly. Read the table's last row as "do not do this", not as
-  "something will stop you".
+- `test.use({ headless: false })` inside a spec is below the scope visible to
+  `global-setup.ts`. `e2e/helpers/__tests__/global-setup.unit.test.ts` derives the
+  Playwright spec tree and rejects direct headed overrides in CI. This is a
+  source-level regression guard, not a runtime sandbox: dynamically constructed
+  options or an alternate test API can evade static detection, so keep headed
+  browser options out of specs and use only the operator-owned headed command.
 
 ## Commands
 
@@ -84,7 +86,7 @@ malformed lease all produce a message and then a normal run, because the port
 guarantee does not depend on any of it. Two runs at once is survivable: each has
 its own port and its own output directory. Do not "fix" a slow run by making the
 lock load-bearing; that is the change that put an unenforceable mechanism in front
-of a merge gate once already. Board detail: [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md).
+of a merge gate once already. Board detail: [`ORCHESTRATION.md`](ORCHESTRATION.md).
 
 Each run also writes to its own `test-results/runs/<run-id>/`, because Playwright
 **deletes** `outputDir` at the start of every run, and records its port to
@@ -131,6 +133,15 @@ drop.
   `['**/__tests__/**', '**/*.unit.spec.ts', '**/*.unit.test.ts']` — three
   patterns, not two. A Playwright spec in jsdom, or an e2e helper test in a
   browser, fails in a way that looks like a product bug.
+- **Playwright disabled-state matchers target the labelled select, not an
+  `<option>`.** The pinned 1.64.1 implementation routes enabled/disabled checks
+  through `retarget(..., 'follow-label')`. Because `<option>` is not treated as a
+  form control, a label-wrapped option resolves to the label's associated
+  `<select>`. If that select is enabled, `toBeEnabled()` or
+  `not.toBeDisabled()` can pass for a disabled option; `toBeDisabled()` can fail
+  for one. Assert the option's own `disabled` property or attribute instead.
+  `e2e/erase-fill-eyedropper.spec.ts` demonstrates this. See the [pinned
+  implementation](https://github.com/microsoft/playwright/blob/v1.64.1/packages/injected/src/injectedScript.ts).
 - **`toBeVisible()` does not test clipping, and jsdom cannot test layout at all.**
   The left rail is `overflow-y-auto`, which makes CSS compute `overflow-x: auto`
   too, so the rail clips on BOTH axes and paints nothing of what a child positions
@@ -322,12 +333,10 @@ decision to the operator.
   so a run's machine-readable result survives it. A run through the wrapper writes
   under `test-results/runs/<run-id>/` and prints that path before the suite starts.
 - **The latest recorded full headless run passed; its machine-specific result is
-  in `e2e/OPEN_PROBLEMS.md`.** Two tests are `test.skip` by declaration: the Photopea
-  round-trip needs an external service, and `e2e/viewport-drawing.spec.ts` is skipped
-  by the operator's decision of 2026-09-29 because of intermittent capture drift. Its
-  frequency is unknown: `TEST-FLAKES.md` §12 explicitly says the observations have
-  not been reconciled into a rate. The skip is a gate decision, not a fix or waiver;
-  do not loosen the assertion or add retries.
+  in `e2e/OPEN_PROBLEMS.md`.** The Photopea round-trip is the only declared `test.skip` because
+  it needs an external service. The three-viewport viewport-drawing pixel assertion is active
+  again with its exact derived bound and no retries; its historical failure and verification
+  status are in `TEST-FLAKES.md` §12.
 - The CI skip baseline check recombines the JSON reports from all three platforms
   and both shards before comparing them with `e2e/skip-baseline.json`. Each reviewed
   skip must appear exactly once per platform; adding or removing one requires a

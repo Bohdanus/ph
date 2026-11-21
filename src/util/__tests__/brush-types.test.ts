@@ -5,10 +5,12 @@ import {
   dabStep,
   sampleTip,
   buildBlendLut,
+  isBlendLut,
   resolveBlend,
   normalBlend,
   MIN_TIP_SIZE,
   MAX_TIP_SIZE,
+  MAX_TIP_RADIUS,
   MIN_TIP_ASPECT,
   MAX_TIP_ASPECT,
   DEFAULT_SPACING_PCT,
@@ -16,6 +18,7 @@ import {
   type TipParams,
   type BlendLut,
 } from '../brush-types.ts';
+import { buildTipLut } from '../brush-tip.ts';
 
 describe('clamp', () => {
   it('returns the value when within bounds', () => {
@@ -34,10 +37,20 @@ describe('clamp', () => {
     expect(clamp(100, 0, 10)).toBe(10);
   });
 
-  it('returns lo for non-finite values', () => {
+  it('returns lo for NaN and negative infinity, and hi for positive infinity', () => {
     expect(clamp(NaN, 0, 10)).toBe(0);
-    expect(clamp(Infinity, 0, 10)).toBe(0);
+    expect(clamp(Infinity, 0, 10)).toBe(10);
     expect(clamp(-Infinity, 0, 10)).toBe(0);
+  });
+});
+
+describe('buildTipLut', () => {
+  it('uses zero rotation for non-finite brush angles', () => {
+    for (const angle of [NaN, Infinity, -Infinity]) {
+      const lut = buildTipLut({ angle });
+      expect(lut.cos).toBe(1);
+      expect(lut.sin).toBe(0);
+    }
   });
 });
 
@@ -68,18 +81,15 @@ describe('dabStep', () => {
     expect(dabStep(20, 10)).toBe(4);
   });
 
-  it('returns NaN for non-finite radius (radius not clamped, but result clamped to >=1)', () => {
-    // radius is not clamped in dabStep, only spacingPct is clamped
-    // Math.max(1, ...) clamps the final result to at least 1
-    expect(Number.isNaN(dabStep(NaN, 25))).toBe(true);
-    expect(dabStep(Infinity, 25)).toBe(Infinity);
-    expect(dabStep(-Infinity, 25)).toBe(1); // max(1, -Infinity) = 1
+  it('clamps non-finite radii to the supported brush range', () => {
+    expect(dabStep(NaN, 25)).toBe(1);
+    expect(dabStep(Infinity, 25)).toBe(dabStep(MAX_TIP_RADIUS, 25));
+    expect(dabStep(-Infinity, 25)).toBe(1);
   });
 
-  it('treats non-finite spacing as 0% (clamped to minimum)', () => {
-    // clamp returns lo (0) for non-finite spacing
+  it('clamps non-finite spacing to the supported percentage range', () => {
     expect(dabStep(20, NaN)).toBe(1);
-    expect(dabStep(20, Infinity)).toBe(1);
+    expect(dabStep(20, Infinity)).toBe(dabStep(20, 100));
     expect(dabStep(20, -Infinity)).toBe(1);
   });
 });
@@ -129,9 +139,14 @@ describe('sampleTip', () => {
   });
 
   it('applies rotation via cos/sin', () => {
-    const lut = createTestLut({ cos: 0, sin: 1 });
+    const lut = createTestLut({
+      lutX: new Float32Array([0, 0.25, 0.5, 0.75, 1]),
+      lutY: new Float32Array([0, 0.125, 0.25, 0.375, 0.5]),
+      cos: 0,
+      sin: 1,
+    });
     // With 90-degree rotation, dx=1, dy=0 becomes ox=0, oy=-1
-    expect(sampleTip(lut, 1, 0)).toBe(0.5);
+    expect(sampleTip(lut, 1, 0)).toBe(0.0625);
   });
 
   it('uses Chebyshev norm for square tips', () => {
@@ -145,15 +160,13 @@ describe('sampleTip', () => {
     expect(sampleTip(lut, 0, 0)).toBe(1);
     expect(sampleTip(lut, 5, 0)).toBe(1);
     expect(sampleTip(lut, 6, 0)).toBe(0);
-    expect(sampleTip(lut, 3, 3)).toBeCloseTo(1, 5);
+    expect(sampleTip(lut, 3, 3)).toBe(1);
     expect(sampleTip(lut, 5, 5)).toBe(0);
   });
 
   it('applies wet edges reweighting', () => {
     const lut = createTestLut({ wetEdges: 0.5 });
-    const a = 0.5;
-    const expected = a * (1 - 0.5 + 0.5 * a); // 0.5 * 0.75 = 0.375
-    expect(sampleTip(lut, 1, 0)).toBeCloseTo(expected, 5);
+    expect(sampleTip(lut, 1, 0)).toBe(0.375);
   });
 
   it('leaves a=1 untouched with wet edges', () => {
@@ -211,10 +224,10 @@ describe('resolveBlend', () => {
   });
 
   it('clamps indices to valid range', () => {
-    const lut: BlendLut = { size: 4, data: new Float32Array(16).fill(0.5) };
+    const lut: BlendLut = { size: 2, data: new Float32Array([0, 0.25, 0.75, 1]) };
     const fn = resolveBlend(lut);
-    expect(fn(-1, -1)).toBe(0.5);
-    expect(fn(2, 2)).toBe(0.5);
+    expect(fn(-1, -1)).toBe(0);
+    expect(fn(2, 2)).toBe(1);
   });
 
   it('defaults to normalBlend', () => {
@@ -225,12 +238,12 @@ describe('resolveBlend', () => {
 
 describe('isBlendLut', () => {
   it('returns false for a function', () => {
-    expect(typeof normalBlend === 'function').toBe(true);
+    expect(isBlendLut(normalBlend)).toBe(false);
   });
 
   it('returns true for a BlendLut object', () => {
     const lut: BlendLut = { size: 256, data: new Float32Array(256 * 256) };
-    expect(typeof lut !== 'function').toBe(true);
+    expect(isBlendLut(lut)).toBe(true);
   });
 });
 
@@ -275,12 +288,15 @@ describe('RGB and Rect types', () => {
   });
 });
 
-describe('tripwires (it.fails: known gaps)', () => {
-  it.fails('clamps a non-finite radius to the pixel minimum in dabStep', () => {
+describe('regression coverage for non-finite brush inputs', () => {
+  it('clamps a non-finite radius to the supported brush range in dabStep', () => {
     expect(dabStep(NaN, 25)).toBe(1);
+    expect(dabStep(Infinity, 25)).toBe(dabStep(MAX_TIP_RADIUS, 25));
+    expect(dabStep(-Infinity, 25)).toBe(1);
   });
 
-  it.fails('treats non-finite spacing as 100% (maximum) rather than 0% in dabStep', () => {
+  it('treats positive infinite spacing as 100% and negative infinity as 0%', () => {
     expect(dabStep(20, Infinity)).toBe(dabStep(20, 100));
+    expect(dabStep(20, -Infinity)).toBe(dabStep(20, 0));
   });
 });

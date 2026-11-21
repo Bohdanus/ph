@@ -336,6 +336,58 @@ async function strokeDocument(page: Page, geometry: Geometry, from: DocPoint, to
   await page.mouse.up();
 }
 
+/** Retain the real element and pointer id that receive capture during the next browser gesture. */
+async function observeNextPointerCapture(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const state = window as Window & {
+      __spongePointerCapture?: { target: HTMLElement; pointerId: number };
+      __spongeLostPointerId?: number | null;
+      __spongeCanceledPointerId?: number | null;
+    };
+    delete state.__spongePointerCapture;
+    state.__spongeLostPointerId = null;
+    state.__spongeCanceledPointerId = null;
+    document.addEventListener(
+      'gotpointercapture',
+      (event) => {
+        if (!(event.target instanceof HTMLElement)) throw new Error('pointer capture target is not an HTML element');
+        state.__spongePointerCapture = { target: event.target, pointerId: event.pointerId };
+      },
+      { capture: true, once: true }
+    );
+    document.addEventListener(
+      'lostpointercapture',
+      (event) => {
+        if (state.__spongePointerCapture?.pointerId === event.pointerId) state.__spongeLostPointerId = event.pointerId;
+      },
+      { capture: true }
+    );
+    document.addEventListener(
+      'pointercancel',
+      (event) => {
+        if (state.__spongePointerCapture?.pointerId === event.pointerId)
+          state.__spongeCanceledPointerId = event.pointerId;
+      },
+      { capture: true }
+    );
+  });
+}
+
+/** Request release on the actual target; the next pointer event processes the browser's request. */
+async function requestObservedPointerCaptureLoss(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const state = window as Window & {
+      __spongePointerCapture?: { target: HTMLElement; pointerId: number };
+    };
+    const capture = state.__spongePointerCapture;
+    if (!capture) throw new Error('the Sponge stroke did not receive pointer capture');
+    const { target, pointerId } = capture;
+    if (!target.hasPointerCapture(pointerId)) throw new Error('the observed Sponge target no longer owns capture');
+    target.releasePointerCapture(pointerId);
+    return pointerId;
+  });
+}
+
 /** The one Sponge stroke every pixel test here makes: along the band's centre row. */
 function spongeStroke(page: Page, geometry: Geometry) {
   return strokeDocument(page, geometry, { x: STROKE_FROM_X, y: BAND_Y }, { x: STROKE_TO_X, y: BAND_Y }, 20);
@@ -484,6 +536,67 @@ test.describe('Sponge tool', () => {
     expect
       .soft(await readWindow(page, sponged, OUTSIDE), 'pixels outside the brush footprint must be byte-identical')
       .toEqual(outsideBefore);
+  });
+
+  test('rolls back a live Sponge preview when its pointer capture is lost', async ({ page }) => {
+    await paintColourBand(page);
+    const geometry = await selectSponge(page, 'desaturate');
+    const before = await readWindow(page, geometry, INSIDE);
+    const start = geometry.toCss({ x: STROKE_FROM_X, y: BAND_Y });
+    const probe = geometry.toCss(INSIDE);
+
+    await observeNextPointerCapture(page);
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(probe.x, probe.y, { steps: 10 });
+    await expect
+      .poll(async () => readWindow(page, geometry, INSIDE), {
+        message: 'the captured Sponge stroke must create a visible preview before capture is released',
+        ...pollOptions,
+      })
+      .not.toEqual(before);
+
+    const pointerId = await requestObservedPointerCaptureLoss(page);
+    // Processing pending capture changes happens at the next pointer event. Move one CSS pixel
+    // while still inside the workspace so the browser emits the native loss before this move.
+    await page.mouse.move(probe.x + 1, probe.y);
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() => (window as Window & { __spongeLostPointerId?: number | null }).__spongeLostPointerId),
+        {
+          message: 'the browser must deliver lostpointercapture for the owner pointer',
+          ...pollOptions,
+        }
+      )
+      .toBe(pointerId);
+    expect(
+      await page.evaluate(
+        () => (window as Window & { __spongeCanceledPointerId?: number | null }).__spongeCanceledPointerId
+      ),
+      'explicit capture release must exercise lostpointercapture without pointercancel'
+    ).toBeNull();
+    await expectWindow(
+      page,
+      geometry,
+      INSIDE,
+      before,
+      'losing the active pointer capture rolls the Sponge preview back'
+    );
+
+    await page.mouse.up();
+    await expectWindow(page, geometry, INSIDE, before, 'the later mouseup must not commit the abandoned stroke');
+
+    await spongeStroke(page, geometry);
+    await expect
+      .poll(async () => meanChannels(await readWindow(page, geometry, INSIDE)), {
+        message: 'a new Sponge gesture still captures and commits after the lost-capture rollback',
+        ...pollOptions,
+      })
+      .toEqual({ r: BAND_LUMA, g: BAND_LUMA, b: BAND_LUMA });
+
+    await undo(page);
+    await expectWindow(page, geometry, INSIDE, before, 'the new completed stroke adds one reversible history entry');
   });
 
   /**

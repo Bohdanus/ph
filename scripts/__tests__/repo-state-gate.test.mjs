@@ -30,9 +30,20 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative as relativePath } from 'node:path';
+import { relativePathInside, samePath } from '../lib/path-identity.mjs';
 
 import {
   OPERATION_MARKERS,
@@ -174,7 +185,7 @@ afterEach(() => {
 });
 
 /** Capture both streams and the exit code, so the assertions read what an operator reads. */
-function report(recordsOrCwd) {
+function report(recordsOrCwd, options = {}) {
   const out = [];
   const err = [];
   const cwd = typeof recordsOrCwd === 'function' ? undefined : recordsOrCwd;
@@ -182,6 +193,7 @@ function report(recordsOrCwd) {
   // The returned `code` is the whole signal now — there is no exit to intercept, because
   // `run` sets `process.exitCode` and returns rather than cutting itself off mid-write.
   const result = run({
+    ...options,
     cwd,
     scan: records === null ? undefined : () => ({ ok: true, reason: null, worktrees: records }),
     out: { write: (s) => out.push(s) },
@@ -198,9 +210,11 @@ describe('readOperations reads what git actually writes', () => {
     // The refusal-free direction: a conflicting merge exits non-zero, and this test
     // needs the state that failure leaves behind rather than the failure itself.
     const operations = readOperations(resolveGitDir(repo));
+    expect(existsSync(join(resolveGitDir(repo), 'AUTO_MERGE'))).toBe(true);
     expect(operations).toEqual([
       { operation: 'merge', marker: 'MERGE_HEAD', value: git(repo, 'rev-parse', 'theirs').trim() },
     ]);
+    expect(report(repo).err).toContain('in progress: merge  [MERGE_HEAD]');
   });
 
   it('reports the paths the index cannot resolve, which porcelain calls modifications', () => {
@@ -212,6 +226,22 @@ describe('readOperations reads what git actually writes', () => {
     // parser in `worktree-inventory` treats a non-`??` line as modified.
     expect(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' })).toContain('UU f.txt');
     expect(unmergedPaths(repo)).toEqual(['f.txt']);
+  });
+
+  it('keeps unresolved index paths blocking when no operation marker remains', () => {
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    mergeThatConflicts(repo, 'theirs');
+    const gitDir = resolveGitDir(repo);
+    rmSync(join(gitDir, 'MERGE_HEAD'), { force: true });
+    rmSync(join(gitDir, 'AUTO_MERGE'), { force: true });
+
+    const r = report(repo);
+
+    expect(readOperations(gitDir)).toEqual([]);
+    expect(unmergedPaths(repo)).toEqual(['f.txt']);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('unmerged in the index: 1 path(s)');
+    expect(r.err).toContain('no operation marker');
   });
 
   it('reports nothing for a worktree with no operation in progress', () => {
@@ -413,21 +443,37 @@ describe('scanRepository covers every registered worktree, not one', () => {
     const path = addWorktree(repo, 'linked');
 
     const found = scanRepository(repo).worktrees;
-    // `realpathSync` on this side of the comparison, because git reports worktree
-    // paths already resolved while `mkdtempSync` hands back the unresolved form.
-    // On macOS `TMPDIR` is under `/var`, which is a symlink to `/private/var`, so
-    // the two strings differ while the directories are the same — the identical trap
-    // `main-worktree-guard.mjs` documents and the reason it normalises both sides.
-    const asPaths = (entries) => entries.map((w) => realpathSync(w.path)).sort();
-    expect(asPaths(found)).toEqual([realpathSync(repo), realpathSync(path)].sort());
+    expect(found).toHaveLength(2);
+    expect(found.some((worktree) => samePath(worktree.path, repo))).toBe(true);
+    expect(found.some((worktree) => samePath(worktree.path, path))).toBe(true);
 
-    const primary = found.find((w) => realpathSync(w.path) === realpathSync(repo));
-    const linked = found.find((w) => realpathSync(w.path) === realpathSync(path));
+    // Compare directory identity because Git and Node can spell the same Windows
+    // checkout through its long and 8.3 path forms.
+    // `samePath` handles those spellings; non-Windows still checks canonical paths.
+    if (process.platform !== 'win32') {
+      const asPaths = (entries) => entries.map((w) => realpathSync(w.path)).sort();
+      expect(asPaths(found)).toEqual([realpathSync(repo), realpathSync(path)].sort());
+    }
+    const primary = found.find((worktree) => samePath(worktree.path, repo));
+    const linked = found.find((worktree) => samePath(worktree.path, path));
+    if (process.platform !== 'win32') {
+      const realpathPrimary = found.find((w) => realpathSync(w.path) === realpathSync(repo));
+      const realpathLinked = found.find((w) => realpathSync(w.path) === realpathSync(path));
+      expect(realpathPrimary).toBe(primary);
+      expect(realpathLinked).toBe(linked);
+    }
+    expect(found.find((worktree) => samePath(worktree.path, repo))).toBe(primary);
+    expect(found.find((worktree) => samePath(worktree.path, path))).toBe(linked);
     // The primary's git dir is the repository's own; a linked worktree's is a
     // directory INSIDE it. A reader that assumed the first form for both would read
     // every linked worktree's state out of the shared `.git`, which is the primary's.
     expect(primary.gitDir).not.toBe(linked.gitDir);
-    expect(linked.gitDir.startsWith(`${primary.gitDir}/worktrees/`)).toBe(true);
+    expect(relativePathInside(primary.gitDir, linked.gitDir)?.startsWith('worktrees/')).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(linked.gitDir.startsWith(`${primary.gitDir}/worktrees/`)).toBe(true);
+    }
+    const normalizedPrimaryGitDir = primary.gitDir.replace(/\\/g, '/');
+    expect(linked.gitDir.replace(/\\/g, '/').startsWith(`${normalizedPrimaryGitDir}/worktrees/`)).toBe(true);
     expect(linked.branch).toBe('wt/linked');
   });
 
@@ -658,23 +704,28 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(unmergedPaths(repo)).toEqual([]);
   });
 
-  it('names the unmerged paths and detects AUTO_MERGE as an unnamed in-progress operation', () => {
+  it('names unmerged paths and reports AUTO_MERGE as an unpaired marker', () => {
     const repo = addConflictingBranch(makeRepo(), 'theirs');
     const path = addWorktree(repo, 'linked');
     // The merge is started IN the linked worktree, so the conflict belongs to it, and
     // then `MERGE_HEAD` is removed by hand — the shape a half-finished `git merge
     // --quit`, a hand-unwound merge, or an `am` with a gone queue leaves behind.
-    // `AUTO_MERGE` survives this removal, so the fallback reports the operation
-    // as in-progress rather than as marker-less.
+    // `AUTO_MERGE` survives this removal, so the report identifies the marker
+    // without claiming that it proves an active operation.
     git(path, 'checkout', '-B', 'wt/linked');
     mergeThatConflicts(path, 'theirs');
     rmSync(join(resolveGitDir(path), 'MERGE_HEAD'), { force: true });
 
     const r = report(repo);
     expect(r.code).toBe(1);
-    // The operation IS detected — AUTO_MERGE is present even with no primary marker.
+    // The marker IS detected — AUTO_MERGE is present even with no primary marker.
     expect(r.err).toContain('AUTO_MERGE');
-    expect(r.err).toContain('in-progress');
+    expect(r.err).toContain('AUTO_MERGE marker has no primary operation marker');
+    expect(r.err).toMatch(
+      /A marker does not\s+identify its owner or prove that its owner has stopped or that the marker is stale/
+    );
+    expect(r.err).not.toContain('orphan');
+    expect(r.err).not.toContain('mid-operation');
     expect(r.err).toContain('f.txt');
     // No abort command is named for the unnamed operation, so no destructive
     // warning fires — the operator is told to decide by hand.
@@ -684,7 +735,7 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.err).not.toContain('repo:state:recover-auto-merge');
   });
 
-  it('prints guarded recovery preflight for a clean orphan marker in a non-main worktree', () => {
+  it('keeps default repo state blocking and prints guarded recovery preflight for an AUTO_MERGE-only marker', () => {
     const repo = makeRepo();
     const path = addWorktree(repo, 'linked');
     const tree = git(path, 'rev-parse', 'HEAD^{tree}');
@@ -692,9 +743,32 @@ describe('the report says which remedy applies, and warns about the destructive 
 
     const r = report(repo);
     expect(r.code).toBe(1);
-    expect(r.err).toContain('run the guarded recovery preflight from this worktree');
-    expect(r.err).toContain('npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"');
+    expect(r.err).not.toContain('in progress:');
+    expect(r.err).toContain('AUTO_MERGE marker has no primary operation marker');
+    expect(r.err).toContain('unique `branch refs/heads/main` entry in `git worktree list --porcelain`');
+    expect(r.err).toContain("from that target worktree's root");
+    expect(r.err).toContain('keeping the current directory at this target worktree root');
+    expect(r.err).toContain(
+      'node "<absolute-main-worktree>/scripts/recover-stale-auto-merge.mjs" --expected-head "$(git rev-parse HEAD)"'
+    );
+    expect(r.err).toContain('Do not use an npm script from this target');
+    expect(r.err).not.toContain('npm run repo:state:recover-auto-merge');
     expect(r.err).toContain('--preserve-matching-worktree preflight');
+    expect(r.err).toContain('--preserve-divergent-worktree preflight');
+    expect(r.err).toContain(
+      '--preserve-divergent-worktree preflight only when at least one unstaged tracked path differs from both HEAD and AUTO_MERGE. Multiple qualifying paths are allowed'
+    );
+    expect(r.err).toContain('differences confined to separate paths and untracked-only changes do not qualify');
+    expect(r.err).toContain('original --expected-head plus these three printed values');
+    expect(r.err).toContain('--expected-worktree-content-sha256');
+    expect(r.err).toContain('refs/recovery/auto-merge/<HEAD>/<TREE>');
+    expect(r.err).toContain('before removing AUTO_MERGE');
+    expect(r.err).toContain('does not edit files or the index');
+    expect(r.err).toContain('full root/descendant owner family is stopped');
+    expect(r.err).toContain('live-session overlay');
+    expect(r.err).toContain('process tree/open files');
+    expect(r.err).toContain('board for target writers or locks');
+    expect(r.err).toContain('manual assertion');
     expect(r.err).toContain('--confirm-owner-stopped');
   });
 
@@ -707,6 +781,248 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.code).toBe(1);
     expect(r.err).toContain('AUTO_MERGE');
     expect(r.err).not.toContain('repo:state:recover-auto-merge');
+  });
+
+  it('keeps unrelated worktree operations visible without blocking a pinned landing scope', () => {
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    addWorktree(repo, 'candidate');
+    const unrelated = addWorktree(repo, 'unrelated');
+    mergeThatConflicts(unrelated, 'theirs');
+    expect(report(repo).code).toBe(1);
+
+    const r = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('landing scope clear for wt/candidate');
+    expect(r.out).toContain('1 unrelated finding(s) remain reported and untouched');
+    if (process.platform !== 'win32') {
+      expect(r.err).toContain(unrelated.replaceAll('\\', '/'));
+    }
+    const reportedPaths = r.err
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('    '))
+      .map((line) => line.trim())
+      .filter((path) => samePath(path, unrelated));
+    expect(reportedPaths).toHaveLength(1);
+    expect(r.err).toContain('unrelated worktree; preserved and non-blocking');
+    expect(r.err).toContain('MERGE_HEAD');
+  });
+
+  it('reports an unrelated unpaired AUTO_MERGE marker while allowing the scoped landing', () => {
+    const repo = makeRepo();
+    addWorktree(repo, 'candidate');
+    const unrelated = addWorktree(repo, 'unrelated');
+    const marker = join(resolveGitDir(unrelated), 'AUTO_MERGE');
+    writeFileSync(marker, `${git(unrelated, 'rev-parse', 'HEAD^{tree}').trim()}\n`);
+
+    const r = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.err).toContain('AUTO_MERGE marker has no primary operation marker');
+    expect(r.err).toContain('unrelated worktree; preserved and non-blocking');
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  it('does not let a preserved non-designated main worktree veto the registered main landing checkout', () => {
+    const records = [
+      {
+        name: 'registered-main',
+        path: '/registered-main',
+        branch: 'main',
+        present: true,
+        gitDir: '/registered-main/.git',
+        operations: [],
+        unmerged: [],
+      },
+      {
+        name: 'candidate',
+        path: '/candidate',
+        branch: 'wt/candidate',
+        present: true,
+        gitDir: '/candidate/.git',
+        operations: [],
+        unmerged: [],
+      },
+      {
+        name: 'preserved-main',
+        path: '/preserved-main',
+        branch: 'main',
+        present: true,
+        gitDir: '/preserved-main/.git',
+        operations: [{ operation: 'in-progress', marker: 'AUTO_MERGE', value: null }],
+        unmerged: [],
+      },
+    ];
+    const r = run({
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: '/registered-main',
+        mainGitDir: '/registered-main/.git',
+      },
+      scan: () => ({ ok: true, reason: null, roster: records.length, worktrees: records }),
+      out: { write: () => {} },
+      err: { write: () => {} },
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.landing?.unrelated).toEqual([{ name: 'preserved-main', path: '/preserved-main' }]);
+  });
+
+  it('blocks unknown or unreadable operation state in a scoped landing report', () => {
+    const worktrees = [
+      {
+        name: 'registered-main',
+        path: '/registered-main',
+        branch: 'main',
+        present: true,
+        gitDir: '/registered-main/.git',
+        operations: [],
+        unmerged: [],
+      },
+      {
+        name: 'candidate',
+        path: '/candidate',
+        branch: 'wt/candidate',
+        present: true,
+        gitDir: '/candidate/.git',
+        operations: [],
+        unmerged: [],
+      },
+      {
+        name: 'unknown',
+        path: '/unknown',
+        branch: null,
+        present: false,
+        gitDir: '/unknown/.git',
+        operations: [],
+        unmerged: [],
+        readError: 'administrative directory could not be described',
+      },
+    ];
+    const out = [];
+    const err = [];
+    const r = run({
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: '/registered-main',
+        mainGitDir: '/registered-main/.git',
+      },
+      scan: () => ({ ok: true, reason: null, roster: worktrees.length, worktrees }),
+      out: { write: (text) => out.push(text) },
+      err: { write: (text) => err.push(text) },
+    });
+
+    expect(r.code).toBe(1);
+    expect(out.join('')).toContain('landing scope BLOCKED');
+    expect(err.join('')).toContain('unknown');
+    expect(err.join('')).toContain('BLOCKS selected landing');
+  });
+
+  it('matches a registered main checkout reached through a filesystem alias', () => {
+    const root = scratch();
+    const mainPath = join(root, 'main');
+    const mainAlias = join(root, 'main-alias');
+    mkdirSync(mainPath);
+    symlinkSync(mainPath, mainAlias, process.platform === 'win32' ? 'junction' : 'dir');
+
+    const output = [];
+    const r = run({
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath,
+        mainGitDir: join(mainPath, '.git'),
+      },
+      scan: () => ({
+        ok: true,
+        reason: null,
+        roster: 2,
+        worktrees: [
+          {
+            name: 'registered-main',
+            path: mainAlias,
+            branch: 'main',
+            present: true,
+            gitDir: join(mainAlias, '.git'),
+            operations: [],
+            unmerged: [],
+          },
+          {
+            name: 'candidate',
+            path: join(root, 'candidate'),
+            branch: 'wt/candidate',
+            present: true,
+            gitDir: join(root, 'candidate', '.git'),
+            operations: [],
+            unmerged: [],
+          },
+        ],
+      }),
+      out: { write: (text) => output.push(text) },
+      err: { write: () => {} },
+    });
+
+    expect(r.code).toBe(0);
+    expect(output.join('')).toContain('landing scope clear for wt/candidate');
+  });
+
+  it('blocks a landing when its candidate branch has an operation in progress', () => {
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const candidate = addWorktree(repo, 'candidate');
+    mergeThatConflicts(candidate, 'theirs');
+
+    const r = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('landing scope BLOCKED for wt/candidate');
+    expect(r.err).toContain('BLOCKS selected landing');
+  });
+
+  it('blocks designated-main operations but delegates its orphan AUTO_MERGE shape to main:landing', () => {
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    addWorktree(repo, 'candidate');
+    mergeThatConflicts(repo, 'theirs');
+
+    const blocked = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+    expect(blocked.code).toBe(1);
+    expect(blocked.err).toContain('BLOCKS selected landing');
+
+    git(repo, 'merge', '--abort');
+    const marker = join(resolveGitDir(repo), 'AUTO_MERGE');
+    writeFileSync(marker, `${git(repo, 'rev-parse', 'HEAD^{tree}').trim()}\n`);
+    const recovery = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+    expect(recovery.code).toBe(0);
+    expect(recovery.out).toContain('designated-main orphan AUTO_MERGE');
+    expect(existsSync(marker)).toBe(true);
   });
 
   it('emits findings as JSON with no prose mixed in', () => {
@@ -800,9 +1116,15 @@ describe("the third review's findings, pinned", () => {
     const boom = () => {
       throw new Error('Command failed: git diff --name-only --diff-filter=U -z');
     };
-    const found = scanRepository(repo, { unmergedOf: boom }).worktrees.find(
-      (w) => realpathSync(w.path) === realpathSync(path)
-    );
+    const worktrees = scanRepository(repo, { unmergedOf: boom }).worktrees;
+    const found = worktrees.find((worktree) => samePath(worktree.path, path));
+    expect(found).toBeDefined();
+    if (!found) throw new Error('scan did not report the linked worktree');
+    if (process.platform !== 'win32') {
+      const realpathFound = worktrees.find((w) => realpathSync(w.path) === realpathSync(path));
+      expect(realpathFound).toBe(found);
+    }
+    expect(samePath(found.path, path)).toBe(true);
     // The operation is still known — that is the point of recording rather than throwing.
     expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
     expect(found.unmerged).toEqual([]);
@@ -958,6 +1280,7 @@ describe('the roster cannot be trusted on its own', () => {
       const found = scanRepository(repo).worktrees.find((w) => w.path.includes('\n'));
       expect(found, 'the newline path must survive parsing').toBeDefined();
       expect(found.path).toBe(realpathSync(path));
+      expect(samePath(found.path, path)).toBe(true);
       expect(found.present).toBe(true);
       expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
       expect(found.unmerged).toEqual(['f.txt']);
@@ -1066,7 +1389,10 @@ describe('the cross-check must not invent worktrees either', () => {
     expect(isAbsolute(gitdir)).toBe(false);
 
     const resolved = resolveAdminDirFor(resolveCommonDir(repo), relative);
-    expect(realpathSync(resolved)).toBe(realpathSync(adminDir));
+    if (process.platform !== 'win32') {
+      expect(realpathSync(resolved)).toBe(realpathSync(adminDir));
+    }
+    expect(samePath(resolved, adminDir)).toBe(true);
     expect(readOperations(resolved).map((o) => o.operation)).toEqual(['merge']);
 
     if (hasRelativeWriter) {
@@ -1120,7 +1446,8 @@ describe('the cross-check must not invent worktrees either', () => {
     // A Set cannot see this: the second directory's state is then read by nothing at
     // all. Measured, a `gitdir` naming an already-claimed worktree produced no finding
     // and its `MERGE_HEAD` was never read — real merge state, in a directory git does
-    // not list, invisible.
+    // not list, invisible. The worktree's own `.git` link identifies the authoritative
+    // directory; a duplicate must be reported separately so its markers cannot be hidden.
     const repo = addConflictingBranch(makeRepo(), 'theirs');
     const path = addWorktree(repo, 'one');
     git(path, 'checkout', '-B', 'wt/one');
@@ -1133,8 +1460,18 @@ describe('the cross-check must not invent worktrees either', () => {
 
     const scanned = scanRepository(repo);
     const reported = findings(scanned.worktrees);
-    // The roster entry for the live worktree is still found on its own account; the twin
-    // is the extra fact, and it must be visible rather than absorbed.
+    const duplicate = scanned.worktrees.find((worktree) => samePath(worktree.gitDir, twin));
+    expect(duplicate).toMatchObject({
+      name: 'twin',
+      operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbeef' }],
+    });
+    expect(reported).toContainEqual(
+      expect.objectContaining({
+        name: 'twin',
+        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbeef' }],
+        readError: expect.stringContaining('administrative directories claim this worktree'),
+      })
+    );
     expect(reported.some((f) => f.operations.length > 0)).toBe(true);
   });
 

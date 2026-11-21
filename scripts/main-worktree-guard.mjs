@@ -63,6 +63,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { samePath } from './lib/path-identity.mjs';
 
 /**
  * The environment variable that lets a commit be recorded in the main worktree.
@@ -100,10 +101,15 @@ function readMainWorktreeIdentity(gitDir) {
  * that Git creates with a recycled path-derived admin directory.
  *
  * @param {string} cwd
- * @param {{ required?: boolean }} options When true, persistence failures are surfaced to hook installation.
+ * @param {{ required?: boolean, expectedCommonDir?: string }} options
+ * `expectedCommonDir` rejects a path replaced between selection and registration;
+ * `required` surfaces persistence failures to hook installation.
  * @returns {boolean}
  */
-export function registerMainWorktree(cwd = process.cwd(), { required = false, allowDetached = false } = {}) {
+export function registerMainWorktree(
+  cwd = process.cwd(),
+  { required = false, allowDetached = false, expectedCommonDir = null } = {}
+) {
   const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   try {
     let branchRef = null;
@@ -114,6 +120,15 @@ export function registerMainWorktree(cwd = process.cwd(), { required = false, al
     }
     const gitDir = gitConfigPath(realpathSync(resolve(cwd, git(['rev-parse', '--absolute-git-dir']))));
     const worktreePath = gitConfigPath(realpathSync(cwd));
+    if (
+      expectedCommonDir &&
+      !samePath(
+        gitConfigPath(realpathSync(resolve(cwd, git(['rev-parse', '--path-format=absolute', '--git-common-dir'])))),
+        gitConfigPath(realpathSync(expectedCommonDir))
+      )
+    ) {
+      return false;
+    }
     let registeredGitDir = null;
     let registeredPath = null;
     let registeredGitDirRaw = null;
@@ -140,14 +155,14 @@ export function registerMainWorktree(cwd = process.cwd(), { required = false, al
       branchRef !== 'refs/heads/main' &&
       (!allowDetached ||
         branchRef !== null ||
-        registeredGitDir !== gitDir ||
-        (registeredPath !== worktreePath && registeredIdentity !== readMainWorktreeIdentity(gitDir)))
+        !samePath(registeredGitDir, gitDir) ||
+        (!samePath(registeredPath, worktreePath) && registeredIdentity !== readMainWorktreeIdentity(gitDir)))
     ) {
       return false;
     }
     const worktreeIdentity = readMainWorktreeIdentity(gitDir);
     if (
-      registeredGitDir !== gitDir ||
+      !samePath(registeredGitDir, gitDir) ||
       !registeredIdentity ||
       !worktreeIdentity ||
       registeredIdentity !== worktreeIdentity
@@ -249,7 +264,7 @@ export function resolveWorktree(cwd = process.cwd()) {
     } catch {
       // Detached and unborn worktrees have no current branch identity.
     }
-    const isPrimaryWorktree = gitDir === commonDir;
+    const isPrimaryWorktree = samePath(gitDir, commonDir);
     const isMainWorktree = branchRef === 'refs/heads/main';
     let registeredMainGitDir = null;
     try {
@@ -270,21 +285,19 @@ export function resolveWorktree(cwd = process.cwd()) {
       // A repository that has not registered main has no saved identity token yet.
     }
     const worktreePath = gitConfigPath(realpathSync(cwd));
-    if (
-      isMainWorktree &&
-      (registeredMainGitDir !== gitDir ||
-        registeredMainPath !== worktreePath ||
-        !registeredMainIdentity ||
-        registeredMainIdentity !== readMainWorktreeIdentity(gitDir))
-    ) {
+    if (isMainWorktree && !registeredMainGitDir && !registeredMainPath && !registeredMainIdentity) {
+      // First-use discovery is safe only before a designated checkout exists. A
+      // forced recovery checkout can intentionally share refs/heads/main with a
+      // preserved damaged worktree; inspecting the old checkout must not steal the
+      // shared designation back from the explicitly installed replacement.
       registerMainWorktree(cwd);
     }
     const hasRegisteredMainIdentity =
-      registeredMainGitDir === gitDir &&
+      samePath(registeredMainGitDir, gitDir) &&
       Boolean(registeredMainIdentity) &&
       registeredMainIdentity === readMainWorktreeIdentity(gitDir);
     const isDesignatedMainWorktree =
-      isMainWorktree || hasRegisteredMainIdentity || (branchRef === null && registeredMainPath === worktreePath);
+      isMainWorktree || hasRegisteredMainIdentity || (branchRef === null && samePath(registeredMainPath, worktreePath));
     return {
       gitDir,
       commonDir,

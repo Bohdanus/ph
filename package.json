@@ -37,7 +37,7 @@
     "test:e2e:unit:coverage": "vitest --run --coverage --config vitest.e2e.config.ts",
     "test:e2e:update-baselines": "node scripts/e2e-run.mjs e2e/export/visual-regression.spec.ts --update-snapshots=all",
     "test:e2e:report": "playwright show-report",
-    "test:e2e:clean": "rm -rf test-results/*/ test-results/.last-run.json playwright-report",
+    "test:e2e:clean": "node -e \"const fs=require('fs'); const path=require('path'); const results=path.join('test-results'); if(fs.existsSync(results)){ fs.readdirSync(results).forEach(f=>{ const p=path.join(results,f); if(f!=='.last-run.json' && f!=='results.json'){ fs.rmSync(p,{recursive:true,force:true}) } }); if(fs.existsSync(path.join(results,'.last-run.json'))) fs.rmSync(path.join(results,'.last-run.json')) } if(fs.existsSync('playwright-report')) fs.rmSync('playwright-report',{recursive:true,force:true})\"",
     "test:e2e:install": "playwright install chrome",
     "probe:console": "node scripts/probe-console.mjs",
     "free:models": "node scripts/free-model-pool.mjs",
@@ -78,7 +78,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.63.0",
+    "@playwright/test": "^1.65.0",
     "@tailwindcss/postcss": "^4.1.18",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",

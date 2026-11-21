@@ -30,9 +30,26 @@ import {
 } from '../mirror-e2e.mjs';
 import { validateE2ESpec } from '../validate-e2e-spec.mjs';
 
-const baselineWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/capture-linux-baselines.yml'), 'utf8');
-const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
-const focusedWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/focused-e2e.yml'), 'utf8');
+function normalizeWorkflowText(text) {
+  return text.replace(/\r\n?/g, '\n');
+}
+
+function readWorkflow(path) {
+  return normalizeWorkflowText(readFileSync(path, 'utf8'));
+}
+
+const baselineWorkflow = readWorkflow(resolve(process.cwd(), '.github/workflows/capture-linux-baselines.yml'));
+const platformBaselineWorkflow = readWorkflow(
+  resolve(process.cwd(), '.github/workflows/capture-platform-export-baselines.yml')
+);
+const ciWorkflow = readWorkflow(resolve(process.cwd(), '.github/workflows/ci.yml'));
+const focusedWorkflow = readWorkflow(resolve(process.cwd(), '.github/workflows/focused-e2e.yml'));
+const workflowFiles = [
+  ['capture-linux-baselines.yml', baselineWorkflow],
+  ['capture-platform-export-baselines.yml', platformBaselineWorkflow],
+  ['ci.yml', ciWorkflow],
+  ['focused-e2e.yml', focusedWorkflow],
+];
 
 function runGit(cwd, args, input) {
   const commandArgs = basename(cwd) === 'mirror.git' ? ['-c', 'safe.bareRepository=all', ...args] : args;
@@ -174,6 +191,148 @@ describe('Linux baseline promotion workflow', () => {
 
   it('waits beyond both Linux baseline job limits with queue margin', () => {
     expect(RUN_WAIT_TIMEOUT_MS_BY_MODE.baselines).toBeGreaterThanOrEqual((55 + 10 + 20) * 60_000);
+  });
+});
+
+describe('cross-platform baseline artifact workflow', () => {
+  it('normalizes Windows CRLF checkouts before inspecting workflow sections', () => {
+    const workflowDirectory = mkdtempSync(join(tmpdir(), 'mirror-e2e-workflows-'));
+    try {
+      const windowsWorkflows = new Map();
+      for (const [filename, workflow] of workflowFiles) {
+        const workflowPath = join(workflowDirectory, filename);
+        writeFileSync(workflowPath, workflow.replace(/\n/g, '\r\n'));
+        const windowsWorkflow = readWorkflow(workflowPath);
+        expect(windowsWorkflow, `${filename} should preserve its contents after newline normalization`).toBe(workflow);
+        windowsWorkflows.set(filename, windowsWorkflow);
+      }
+      const windowsWorkflow = windowsWorkflows.get('capture-platform-export-baselines.yml');
+      const concurrencyIndex = windowsWorkflow.indexOf('\n\nconcurrency:');
+      const captureIndex = windowsWorkflow.indexOf('  capture:\n');
+      expect(concurrencyIndex).toBeGreaterThan(0);
+      expect(captureIndex).toBeGreaterThan(0);
+      const triggerSection = windowsWorkflow.slice(0, concurrencyIndex);
+      expect(triggerSection.match(/^  [a-z_-]+:/gm)).toEqual(['  workflow_dispatch:']);
+      expect(windowsWorkflow.slice(captureIndex)).toContain('fromJSON(needs.validate.outputs.platforms)');
+    } finally {
+      rmSync(workflowDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('restricts manual captures to the compute mirror trusted main revision', () => {
+    const triggerSection = platformBaselineWorkflow.slice(0, platformBaselineWorkflow.indexOf('\n\nconcurrency:'));
+    expect(triggerSection.match(/^  [a-z_-]+:/gm)).toEqual(['  workflow_dispatch:']);
+    expect(platformBaselineWorkflow).toContain('required: true\n        type: choice');
+    expect(platformBaselineWorkflow).toContain("required: false\n        type: string\n        default: ''");
+    expect(platformBaselineWorkflow).toContain('default: all');
+    expect(platformBaselineWorkflow).toContain(
+      'options:\n          - all\n          - linux\n          - windows\n          - macos'
+    );
+    expect(platformBaselineWorkflow).toContain('inputs.platform');
+    expect(platformBaselineWorkflow).toContain('concurrency:');
+    expect(platformBaselineWorkflow).toContain('group: export-baselines-${{ github.ref }}-${{ inputs.platform }}');
+    expect(platformBaselineWorkflow).toContain('cancel-in-progress: false');
+    expect(platformBaselineWorkflow).toContain('source_sha:');
+    expect(platformBaselineWorkflow).toContain('SOURCE_SHA_INPUT: ${{ inputs.source_sha }}');
+    expect(platformBaselineWorkflow).toContain('source_sha="${SOURCE_SHA_INPUT:-$WORKFLOW_SHA}"');
+    expect(platformBaselineWorkflow).toContain('^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$');
+    expect(platformBaselineWorkflow).toContain('printf \'source_sha=%s\\n\' "$source_sha" >> "$GITHUB_OUTPUT"');
+    expect(platformBaselineWorkflow).toContain('source_sha: ${{ steps.validate-target.outputs.source_sha }}');
+    expect(platformBaselineWorkflow).toContain('platforms: ${{ steps.validate-target.outputs.platforms }}');
+    expect(platformBaselineWorkflow).toContain('fromJSON(needs.validate.outputs.platforms)');
+    expect(platformBaselineWorkflow).toContain('all) platforms=\'["linux","windows","macos"]\'');
+    expect(platformBaselineWorkflow).toContain('linux) platforms=\'["linux"]\'');
+    expect(platformBaselineWorkflow).toContain('windows) platforms=\'["windows"]\'');
+    expect(platformBaselineWorkflow).toContain('macos) platforms=\'["macos"]\'');
+    expect(platformBaselineWorkflow).toContain('REF: ${{ github.ref }}');
+    expect(platformBaselineWorkflow).toContain('REPOSITORY: ${{ github.repository }}');
+    expect(platformBaselineWorkflow).toContain('"${REPOSITORY,,}" == "bohdanus/ph"');
+    expect(platformBaselineWorkflow).toContain('"$REF" == "refs/heads/main"');
+    expect(platformBaselineWorkflow).toContain('needs: validate');
+    expect(platformBaselineWorkflow).toContain('ref: ${{ needs.validate.outputs.source_sha }}');
+    expect(platformBaselineWorkflow).toContain('persist-credentials: false');
+    expect(platformBaselineWorkflow).toContain('permissions:\n  contents: read');
+    expect(platformBaselineWorkflow).not.toMatch(/contents:\s*write/i);
+  });
+
+  it('captures, verifies, validates and uploads exact OS-specific PNG sets without promotion', () => {
+    const captureJob = platformBaselineWorkflow.slice(platformBaselineWorkflow.indexOf('  capture:\n'));
+    const actionPins = [...captureJob.matchAll(/^\s+uses:\s*[^@\s]+@([^\s#]+).*$/gm)].map((match) => match[1]);
+    const stepNames = [...captureJob.matchAll(/^\s+- name: ([^\r\n]+)$/gm)].map((match) => match[1]);
+
+    expect(captureJob).toContain('fromJSON(needs.validate.outputs.platforms)');
+    expect(stepNames).toEqual([
+      'Checkout exact source commit',
+      'Setup Node',
+      'Install dependencies',
+      'Install Chrome',
+      'Record export baselines',
+      'Verify recorded baselines',
+      'Validate exact platform baseline set',
+      'Upload export baseline artifact',
+      'Upload Playwright diagnostics',
+    ]);
+    expect(captureJob).toContain('persist-credentials: false');
+    expect(captureJob).toContain("node-version-file: '.nvmrc'");
+    expect(captureJob).toContain("cache: 'npm'");
+    expect(captureJob).toContain(
+      "runs-on: ${{ matrix.platform == 'linux' && 'ubuntu-latest' || matrix.platform == 'windows' && 'windows-latest' || 'macos-latest' }}"
+    );
+    expect(captureJob).toContain("matrix.platform == 'windows' && 'win32'");
+    expect(captureJob).toContain("matrix.platform == 'macos' && 'darwin'");
+    expect(captureJob).toContain(
+      "run: ${{ matrix.platform == 'linux' && 'npx playwright install --with-deps chrome' || 'npx playwright install chrome' }}"
+    );
+    const snapshotPlatformExpression =
+      "${{ matrix.platform == 'windows' && 'win32' || matrix.platform == 'macos' && 'darwin' || 'linux' }}";
+    expect(captureJob).toContain(`SNAPSHOT_PLATFORM: ${snapshotPlatformExpression}`);
+    expect(captureJob).toContain(
+      `path: e2e/export/visual-regression.spec.ts-snapshots/export-baselines/${snapshotPlatformExpression}/`
+    );
+
+    const capture = captureJob.indexOf('run: npm run test:e2e:update-baselines -- --workers=1');
+    const verify = captureJob.indexOf('run: npm run test:e2e -- e2e/export/visual-regression.spec.ts --workers=1');
+    const validate = captureJob.indexOf('- name: Validate exact platform baseline set');
+    const upload = captureJob.indexOf('- name: Upload export baseline artifact');
+    expect(capture).toBeGreaterThan(-1);
+    expect(verify).toBeGreaterThan(capture);
+    expect(validate).toBeGreaterThan(verify);
+    expect(upload).toBeGreaterThan(validate);
+    expect(captureJob).toContain(
+      'name: ${{ matrix.platform }}-export-baselines-source-${{ needs.validate.outputs.source_sha }}-workflow-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}'
+    );
+    expect(captureJob).toContain(
+      'name: ${{ matrix.platform }}-baseline-diagnostics-source-${{ needs.validate.outputs.source_sha }}-workflow-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}'
+    );
+    const baselineUploadStart = captureJob.indexOf('- name: Upload export baseline artifact');
+    const diagnosticsUploadStart = captureJob.indexOf('- name: Upload Playwright diagnostics');
+    const baselineUpload = captureJob.slice(baselineUploadStart, diagnosticsUploadStart);
+    const diagnosticsUpload = captureJob.slice(diagnosticsUploadStart);
+    for (const upload of [baselineUpload, diagnosticsUpload]) expect(upload).toContain('retention-days: 7');
+    expect(baselineUpload).toContain('if-no-files-found: error');
+    expect(diagnosticsUpload).toContain('if-no-files-found: warn');
+    const expectedFiles = /const expected = \[([\s\S]*?)\]\.sort\(\);/.exec(captureJob)?.[1];
+    expect(expectedFiles).toBeDefined();
+    expect(
+      expectedFiles
+        ?.split(/\r?\n/)
+        .map((line) => line.trim().replace(/,$/, '').replace(/^'|'$/g, ''))
+        .filter(Boolean)
+    ).toEqual([
+      'drawing.avif.png',
+      'drawing.bmp.png',
+      'drawing.gif.png',
+      'drawing.jpeg.png',
+      'drawing.png.png',
+      'drawing.svg.png',
+      'drawing.webp.png',
+    ]);
+    expect(captureJob).toContain('for (const name of expected)');
+    expect(captureJob).toContain("signature !== '89504e470d0a1a0a'");
+    expect(actionPins).toHaveLength(4);
+    expect(actionPins.every((pin) => /^[a-f0-9]{40}$/.test(pin))).toBe(true);
+    expect(platformBaselineWorkflow).not.toMatch(/\bgit\s+(?:commit|push)\b|contents:\s*write/i);
+    expect(platformBaselineWorkflow).not.toContain('promote:');
   });
 });
 

@@ -11,7 +11,7 @@ import {
   getActiveSelection,
 } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, type DocumentFrame } from '../../contexts/document-frame.ts';
-import { resetOverlayAlpha } from '../../util/canvas.ts';
+import { clearCanvasBackingStore, resetOverlayAlpha } from '../../util/canvas.ts';
 import { readCanvasImageDataAtLogicalSize } from '../../util/canvas-image-data.ts';
 import { createSelectionRasterOutlineCanvas, type SelectionRasterOutline } from '../../hooks/useSelectionAnts.ts';
 import {
@@ -64,21 +64,25 @@ function drawRegionPreview(ctx: CanvasRenderingContext2D, contours: Point[][]): 
   if (!contours.some((points) => points.length >= 2)) return;
 
   ctx.save();
-  ctx.beginPath();
-  for (const points of contours) {
-    if (points.length < 2) continue;
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let index = 1; index < points.length; index++) {
-      ctx.lineTo(points[index].x, points[index].y);
+  try {
+    ctx.beginPath();
+    for (const points of contours) {
+      if (points.length < 2) continue;
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let index = 1; index < points.length; index++) {
+        ctx.lineTo(points[index].x, points[index].y);
+      }
+      // Each contour is a closed boundary; close it before starting the next subpath.
+      ctx.closePath();
     }
-    ctx.closePath();
+    ctx.strokeStyle = 'rgba(0,123,255,0.95)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } finally {
+    ctx.restore();
   }
-  ctx.strokeStyle = 'rgba(0,123,255,0.95)';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([6, 4]);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.restore();
 }
 
 function drawRasterRegionPreview(
@@ -86,17 +90,20 @@ function drawRasterRegionPreview(
   preview: { outline: SelectionRasterOutline; x: number; y: number; scale: number }
 ): void {
   ctx.save();
-  ctx.drawImage(
-    preview.outline.canvas,
-    preview.x,
-    preview.y,
-    preview.outline.width * preview.scale,
-    preview.outline.height * preview.scale
-  );
-  ctx.globalCompositeOperation = 'source-in';
-  ctx.fillStyle = 'rgba(0,123,255,0.95)';
-  ctx.fillRect(preview.x, preview.y, preview.outline.width * preview.scale, preview.outline.height * preview.scale);
-  ctx.restore();
+  try {
+    ctx.drawImage(
+      preview.outline.canvas,
+      preview.x,
+      preview.y,
+      preview.outline.width * preview.scale,
+      preview.outline.height * preview.scale
+    );
+    ctx.globalCompositeOperation = 'source-in';
+    ctx.fillStyle = 'rgba(0,123,255,0.95)';
+    ctx.fillRect(preview.x, preview.y, preview.outline.width * preview.scale, preview.outline.height * preview.scale);
+  } finally {
+    ctx.restore();
+  }
 }
 
 export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelectionToolAreaProps) => {
@@ -155,6 +162,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
   const imageDataRef = useRef<ImageData | null>(null);
   const accumulatorRef = useRef<QuickSelectionAccumulator | null>(null);
   const baseSelectionIdRef = useRef<string | null>(null);
+  const strokeBaseModeRef = useRef<QuickSelectionToolArgs['mode'] | null>(null);
   const strokeModeRef = useRef<QuickSelectionToolArgs['mode'] | null>(null);
   const strokeToleranceRef = useRef<number>(args?.tolerance ?? 0);
   const selectionChangedRef = useRef(false);
@@ -191,16 +199,19 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
       const ctx = overlayCtxRef.current;
       if (!ctx) return;
 
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      clearCanvasBackingStore(ctx);
       resetOverlayAlpha(ctx);
       if (previewSize && (previewRaster || (previewPoints && previewPoints.length > 0))) {
         ctx.save();
-        ctx.beginPath();
-        ctx.rect(0, 0, previewSize.width, previewSize.height);
-        ctx.clip();
-        if (previewRaster) drawRasterRegionPreview(ctx, previewRaster);
-        else if (previewPoints) drawRegionPreview(ctx, previewPoints);
-        ctx.restore();
+        try {
+          ctx.beginPath();
+          ctx.rect(0, 0, previewSize.width, previewSize.height);
+          ctx.clip();
+          if (previewRaster) drawRasterRegionPreview(ctx, previewRaster);
+          else if (previewPoints) drawRegionPreview(ctx, previewPoints);
+        } finally {
+          ctx.restore();
+        }
       }
     },
     [overlayCtxRef]
@@ -277,6 +288,14 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     return true;
   }
 
+  function updateStrokeModeFromModifiers(event: PointerEvent<HTMLDivElement>): void {
+    const baseMode = strokeBaseModeRef.current;
+    if (baseMode === null) return;
+
+    strokeModeRef.current =
+      event.shiftKey && !event.altKey ? 'add' : event.altKey && !event.shiftKey ? 'subtract' : baseMode;
+  }
+
   const resetGesture = useCallback(() => {
     if (previewAnimationFrameRef.current !== null) {
       cancelAnimationFrame(previewAnimationFrameRef.current);
@@ -288,6 +307,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     imageDataRef.current = null;
     accumulatorRef.current = null;
     baseSelectionIdRef.current = null;
+    strokeBaseModeRef.current = null;
     strokeModeRef.current = null;
     selectionChangedRef.current = false;
     previewPointsRef.current = null;
@@ -371,7 +391,8 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
       imageDataRef.current = imageData;
       accumulatorRef.current = accumulator;
       baseSelectionIdRef.current = activeSelection?.id ?? null;
-      strokeModeRef.current = args.mode;
+      strokeBaseModeRef.current = args.mode;
+      updateStrokeModeFromModifiers(event);
       strokeToleranceRef.current = args.tolerance;
       seedSamplerRef.current = seedSampler;
       selectionChangedRef.current = false;
@@ -406,6 +427,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
     try {
       const point = getLocalCoords(event);
+      updateStrokeModeFromModifiers(event);
       growStroke(point);
     } catch (error) {
       console.error('Unable to grow Quick Selection stroke', error);
@@ -424,10 +446,11 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
     let selection: Selection | null;
     let selectionChanged: boolean;
-    let shouldClearSubtractedSelection: boolean;
+    let shouldClearEmptiedSelection: boolean;
     try {
       // The release position can carry a seed the last move did not, so the stroke is grown
       // once more before it is read for the commit. Nothing is written by that call.
+      updateStrokeModeFromModifiers(event);
       growStroke(getLocalCoords(event), true);
 
       const accumulator = accumulatorRef.current;
@@ -437,11 +460,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
           ? createQuickSelectionPolygon(accumulator.mask, accumulator.width, accumulator.height)
           : null;
       const hasSelectedPixels = accumulator?.mask.some((pixel) => pixel === 1) ?? false;
-      shouldClearSubtractedSelection =
-        selectionChanged &&
-        !hasSelectedPixels &&
-        strokeModeRef.current === 'subtract' &&
-        baseSelectionIdRef.current !== null;
+      shouldClearEmptiedSelection = selectionChanged && !hasSelectedPixels && baseSelectionIdRef.current !== null;
 
       selection = polygon
         ? polygon.rasterMask
@@ -474,7 +493,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
     if (!selection || !selectionChanged) {
       try {
-        if (shouldClearSubtractedSelection) {
+        if (shouldClearEmptiedSelection) {
           clearSelections();
           selectionDraftStartedRef.current = false;
         } else {
@@ -527,7 +546,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
       resetGesture();
       releasePointerRef.current();
       if (ctx) {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [cancelSelectionDraft, overlayCtxRef, resetGesture]);

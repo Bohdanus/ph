@@ -233,6 +233,65 @@ describe('durable document refusal and composition', () => {
     registry.shutdown();
   });
 
+  it.each(['abort', 'document disposal'] as const)(
+    'rejects stale composition during bitmap conversion after %s and releases its resources',
+    async (invalidation) => {
+      vi.stubGlobal('OffscreenCanvas', RecordingCanvas);
+      const registry = new AssetRegistry();
+      let startConversion!: () => void;
+      const conversionStarted = new Promise<void>((resolve) => {
+        startConversion = resolve;
+      });
+      let resolveConvertedBitmap!: (bitmap: ImageBitmap) => void;
+      const convertedBitmap = new Promise<ImageBitmap>((resolve) => {
+        resolveConvertedBitmap = resolve;
+      });
+      vi.stubGlobal(
+        'createImageBitmap',
+        vi.fn(() => {
+          startConversion();
+          return convertedBitmap;
+        })
+      );
+      const close = vi.fn();
+      const bitmap = { width: frame.width, height: frame.height, close } as unknown as ImageBitmap;
+      const controller = new AbortController();
+      const releaseSpies: ReturnType<typeof vi.fn>[] = [];
+      const originalMaterialize = registry.materialize.bind(registry);
+      vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+        const lease = await originalMaterialize(input);
+        const release = vi.fn(lease.release);
+        releaseSpies.push(release);
+        return { ...lease, release };
+      });
+
+      try {
+        const composition = composeDurableDocument(replay({ 'layer-good': layer('layer-good', 0) }), {
+          ...request(registry),
+          signal: controller.signal,
+        });
+        await conversionStarted;
+        const compositionCanvas = recordingCanvases.find(
+          (candidate) => candidate.width === frame.width && candidate.height === frame.height
+        );
+        expect(compositionCanvas).toBeDefined();
+
+        if (invalidation === 'abort') controller.abort();
+        else registry.disposeDocument('test-document');
+        resolveConvertedBitmap(bitmap);
+
+        await expect(composition).rejects.toMatchObject({ name: 'AbortError' });
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(releaseSpies).toHaveLength(1);
+        expect(releaseSpies[0]).toHaveBeenCalledTimes(1);
+        expect(compositionCanvas?.width).toBe(1);
+        expect(compositionCanvas?.height).toBe(1);
+      } finally {
+        registry.shutdown();
+      }
+    }
+  );
+
   it('handles AbortError signal in composeDurableDocument', async () => {
     overrideCanvasFilterSupport(false);
     const registry = new AssetRegistry();

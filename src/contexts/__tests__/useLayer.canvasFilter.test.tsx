@@ -217,7 +217,30 @@ describe('a refused ctx.filter tool leaves no history state and no operation', (
     errorSpy.mockRestore();
   });
 
-  it('clamps grayscale/sepia and preserves finite saturation before committing the operation', () => {
+  it('clamps out-of-range Levels args before retaining the operation and history item', async () => {
+    overrideCanvasFilterSupport(true);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const result = setupToolWithLayer('levels');
+
+    await act(async () => {
+      await result.current.layers.updateLayerByTool({
+        id: 'layer-1',
+        toolArgs: { toolName: 'levels', brightness: -200, contrast: 200 },
+      });
+    });
+
+    const operation = result.current.store.layers['layer-1'].operations[0];
+    if (!operation || operation.kind === 'affine-transform') throw new Error('expected a Levels filter operation');
+    expect(operation.args).toEqual({ toolName: 'levels', brightness: -150, contrast: 100 });
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: TOOL_ACTION,
+      args: { toolName: 'levels', brightness: -150, contrast: 100 },
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('clamps all Colors controls before committing the operation', () => {
     overrideCanvasFilterSupport(true);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const result = setupToolWithLayer('color');
@@ -235,10 +258,34 @@ describe('a refused ctx.filter tool leaves no history state and no operation', (
     const operation = layer.operations[0];
     expect(previewed).toBe(true);
     if (!operation || operation.kind === 'affine-transform') throw new Error('expected a Colors filter operation');
-    expect(operation.args).toEqual({ toolName: 'color', grayscale: 0, sepia: 100, saturation: 200 });
+    expect(operation.args).toEqual({ toolName: 'color', grayscale: 0, sepia: 100, saturation: 100 });
     expect(result.current.store.history.at(-1)).toMatchObject({
       actionName: TOOL_ACTION,
-      args: { toolName: 'color', grayscale: 0, sepia: 100, saturation: 200 },
+      args: { toolName: 'color', grayscale: 0, sepia: 100, saturation: 100 },
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('clamps blur radius before retaining the operation and history item', async () => {
+    overrideCanvasFilterSupport(true);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const result = setupToolWithLayer('blur');
+
+    await act(async () => {
+      await result.current.layers.updateLayerByTool({
+        id: 'layer-1',
+        toolArgs: { toolName: 'blur', radius: 200 },
+      });
+    });
+
+    const layer = result.current.store.layers['layer-1'];
+    const operation = layer.operations[0];
+    if (!operation || operation.kind === 'affine-transform') throw new Error('expected a Blur filter operation');
+    expect(operation.args).toEqual({ toolName: 'blur', radius: 100 });
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: TOOL_ACTION,
+      args: { toolName: 'blur', radius: 100 },
     });
     expect(errorSpy).not.toHaveBeenCalled();
     errorSpy.mockRestore();

@@ -216,7 +216,7 @@ describe('CLI: integration with mocked deps', () => {
     const fetchUrlImpl = vi.fn().mockResolvedValue('Example domain content for testing');
     const completeImpl = vi.fn().mockResolvedValue({
       source: 'kilo',
-      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      model: 'xingchen-agi/xing4.0-29b-a4b:free',
       content: 'This is a test summary.',
       finishReason: 'stop',
       usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0 },
@@ -290,28 +290,38 @@ describe('CLI: integration with mocked deps', () => {
   });
 
   it('retries transient HTTP server errors', async () => {
-    const stdout = { write: vi.fn() };
-    const stderr = { write: vi.fn() };
-    const fetchUrlImpl = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('HTTP 503'))
-      .mockResolvedValueOnce('Example domain content for testing');
-    const completeImpl = vi.fn().mockResolvedValue({
-      source: 'kilo',
-      model: 'test-free-model',
-      content: 'This is a test summary.',
-      finishReason: 'stop',
-      usage: null,
-    });
-    const code = await main(['https://example.com', '--json'], {
-      fetchUrlImpl,
-      completeImpl,
-      stdout,
-      stderr,
-    });
+    vi.useFakeTimers();
+    try {
+      const stdout = { write: vi.fn() };
+      const stderr = { write: vi.fn() };
+      const fetchUrlImpl = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('HTTP 503'))
+        .mockResolvedValueOnce('Example domain content for testing');
+      const completeImpl = vi.fn().mockResolvedValue({
+        source: 'kilo',
+        model: 'test-free-model',
+        content: 'This is a test summary.',
+        finishReason: 'stop',
+        usage: null,
+      });
+      const result = main(['https://example.com', '--json'], {
+        fetchUrlImpl,
+        completeImpl,
+        stdout,
+        stderr,
+      });
 
-    expect(code).toBe(0);
-    expect(fetchUrlImpl).toHaveBeenCalledTimes(2);
+      // The production retry uses a randomized real-time backoff. Advance the
+      // bounded timer here so worker scheduling does not decide whether the
+      // retry test fits inside Vitest's wall-clock timeout.
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(1200);
+      expect(await result).toBe(0);
+      expect(fetchUrlImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('returns exit code 3 when page has no content', async () => {
@@ -340,7 +350,7 @@ describe('CLI: integration with mocked deps', () => {
     const fetchUrlImpl = vi.fn().mockResolvedValue('Test content');
     const completeImpl = vi.fn().mockResolvedValue({
       source: 'kilo',
-      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      model: 'xingchen-agi/xing4.0-29b-a4b:free',
       content: 'Summary result',
       finishReason: 'stop',
       usage: null,
@@ -400,7 +410,7 @@ describe('CLI: integration with mocked deps', () => {
     const fetchUrlImpl = vi.fn().mockResolvedValue('Content');
     const completeImpl = vi.fn().mockResolvedValue({
       source: 'kilo',
-      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      model: 'xingchen-agi/xing4.0-29b-a4b:free',
       content: 'Answer',
       finishReason: 'stop',
       usage: null,

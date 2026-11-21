@@ -3,9 +3,11 @@ import {
   getDarkPixelBounds,
   getSelectionBounds,
   getWorkspaceCanvas,
+  documentOnlyPixelMask,
   hasDarkPixels,
   loadImageData,
   documentToCanvasOffset,
+  screenshotBoundsToCss,
   type BoundingBox,
   type ClipOptions,
   type SelectionBounds,
@@ -213,11 +215,21 @@ type Rect = { x: number; y: number; width: number; height: number };
 const selectionBlue = async (page: Page, clip: ViewportClip): Promise<SelectionBounds | null> =>
   getSelectionBounds(await page.screenshot({ clip }), SELECTION_COLOR_THRESHOLDS);
 
-/** Resolves once selection blue is inside `clip`. The suite's single poll loop. */
-const waitForSelectionBlue = (page: Page, clip: ViewportClip, description: string) =>
-  waitForCanvasPixels(page, clip, async (png) => (await getSelectionBounds(png, SELECTION_COLOR_THRESHOLDS)) !== null, {
-    description,
-  });
+/** Resolves with the successful capture's bounds once selection blue is inside `clip`. */
+const waitForSelectionBlue = async (page: Page, clip: ViewportClip, description: string): Promise<SelectionBounds> => {
+  let found: SelectionBounds | null = null;
+  await waitForCanvasPixels(
+    page,
+    clip,
+    async (png) => {
+      found = await getSelectionBounds(png, SELECTION_COLOR_THRESHOLDS);
+      return found !== null;
+    },
+    { description }
+  );
+  if (!found) throw new Error(`${description} resolved without selection-blue bounds`);
+  return found;
+};
 
 /** Resolves once selection blue has left `clip`. Same poll loop, negated predicate. */
 const waitForNoSelectionBlue = (page: Page, clip: ViewportClip, description: string) =>
@@ -356,15 +368,16 @@ const overlayChromeAtRest = (box: BoundingBox, rect: Rect): ViewportClip => {
 };
 
 /**
- * `expectOutlineAround` adds a clip origin to the bounds it is given. A screenshot read is
- * clip-relative, so it passes the clip it captured; the ants read is already in page coordinates,
- * so it passes a zero origin. Saying that explicitly keeps the two coordinate spaces from being
- * mixed in a reader's head, which is the mistake the clip argument exists to prevent.
+ * `expectOutlineAround` converts screenshot bounds from IMAGE pixels to CSS page coordinates using
+ * the clip they came from. The ants read is already in CSS page coordinates, so its clip is unused.
+ * Both readings reach the assertion in one space, which keeps DPR from doubling screenshot bounds.
  */
 const ORIGIN_CLIP = viewportClip({ x: 0, y: 0, width: 0, height: 0 });
 
 /**
- * Asserts that the selection border found in `clip` outlines `expected`, both in page coordinates.
+ * Asserts that the selection border found in `clip` outlines `expected` in CSS page coordinates.
+ * Screenshot bounds are decoded IMAGE pixels and are converted through `clip`; committed ants are
+ * already CSS page coordinates.
  *
  * "Selection border" rather than "selection blue": every committed selection's border is the ants
  * on their own canvas, and those readings arrive by a different route than a screenshot of the
@@ -372,25 +385,25 @@ const ORIGIN_CLIP = viewportClip({ x: 0, y: 0, width: 0, height: 0 });
  * on the surface that carried it.
  */
 const expectOutlineAround = (
-  // Only the four edges are read here, so this asks for only the four edges: the ants read has no
-  // `imageWidth`/`centerX` to offer, and a parameter that required fields it never uses would be
-  // padding the read with values computed for a different purpose.
-  found: Pick<SelectionBounds, 'left' | 'top' | 'right' | 'bottom'> | null,
+  // Screenshot bounds need their image dimensions to map them to CSS; `centerX`/`centerY` are not
+  // part of the outline assertion. The ants read already returns CSS bounds and has no image size.
+  found: SelectionBounds | Awaited<ReturnType<typeof committedAntsOutline>>,
   clip: ViewportClip,
   expected: Required<ClipOptions>,
   slackPx = OUTLINE_SLACK_PX
 ) => {
+  const pageBounds = found && 'imageWidth' in found ? screenshotBoundsToCss(found, clip) : found;
   const report = {
     expected,
-    found: found && { ...found, left: found.left + clip.x, top: found.top + clip.y },
+    found: pageBounds,
   };
-  expect(found, `no selection border pixels found (${JSON.stringify(report)})`).not.toBeNull();
-  const outline = found!;
+  expect(pageBounds, `no selection border pixels found (${JSON.stringify(report)})`).not.toBeNull();
+  const outline = pageBounds!;
   const edges = {
-    left: outline.left + clip.x,
-    top: outline.top + clip.y,
-    right: outline.right + clip.x,
-    bottom: outline.bottom + clip.y,
+    left: outline.left,
+    top: outline.top,
+    right: outline.right,
+    bottom: outline.bottom,
   };
   expect(
     edges.left,
@@ -491,7 +504,7 @@ test.describe('Selection tools', () => {
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
 
-    await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
+    const outline = await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
     // What this reads at rest is narrower than the test's name sounds, and that is a property of
     // the app rather than a choice made here. `borderMode: 'while-dragging'` (`useRect.ts:319`)
     // keeps the dashed border for the drag the ants stood down for and drops it once the gesture
@@ -501,7 +514,7 @@ test.describe('Selection tools', () => {
     // selection where the drag was", which is this test's intent and which the handles prove — and
     // it would still pass if the ants were switched off entirely. Asserting the border itself needs
     // `committedAntsOutline`, which the wand and the polygon below already use.
-    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
+    expectOutlineAround(outline, clip, overlayChromeAtRest(box, dragged));
   });
 
   test('Space repositions a live rectangular marquee before size adjustment resumes', async ({ page }) => {
@@ -546,8 +559,8 @@ test.describe('Selection tools', () => {
       { x: dragged.x, y: dragged.y },
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
-    await waitForSelectionBlue(page, clip, 'a selection outline before Deselect');
-    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
+    const outline = await waitForSelectionBlue(page, clip, 'a selection outline before Deselect');
+    expectOutlineAround(outline, clip, overlayChromeAtRest(box, dragged));
 
     const clearButton = page.getByRole('button', { name: 'Deselect', exact: true });
     await expect(clearButton).toBeEnabled();
@@ -589,8 +602,8 @@ test.describe('Selection tools', () => {
       { x: dragged.x, y: dragged.y },
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
-    await waitForSelectionBlue(page, clip, 'a selection outline before the tool switch');
-    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
+    const outline = await waitForSelectionBlue(page, clip, 'a selection outline before the tool switch');
+    expectOutlineAround(outline, clip, overlayChromeAtRest(box, dragged));
 
     // This is what makes the "and its darkening mask" half of the test non-vacuous: it proves
     // the region WAS inside the mask, so a later "the mask is gone" cannot pass because the
@@ -642,8 +655,8 @@ test.describe('Selection tools', () => {
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
 
-    await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
-    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
+    const outline = await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
+    expectOutlineAround(outline, clip, overlayChromeAtRest(box, dragged));
     await expect(copyButton, 'Copy with a committed selection').toBeEnabled();
     await expect(clearButton, 'Deselect with a committed selection').toBeEnabled();
 
@@ -690,11 +703,17 @@ test.describe('Selection tools', () => {
       width: stroke.to.x - stroke.from.x + BRUSH_PX * 4,
       height: BRUSH_PX * 4,
     });
-    const painted = await getDarkPixelBounds(await page.screenshot({ clip: barRegion }));
+    const painted = await getDarkPixelBounds(
+      await page.screenshot({ clip: barRegion }),
+      await documentOnlyPixelMask(page, barRegion)
+    );
     if (!painted) throw new Error(`No dark pixels painted in the bar region ${JSON.stringify(barRegion)}`);
+    const paintedCss = screenshotBoundsToCss(painted, barRegion);
     // `PixelBounds` is inclusive on both edges, so a bar of odd width has its centre half a pixel
-    // out. One pixel of slack covers that quantisation and nothing else.
-    const barCentreOffset = Math.abs(painted.left + painted.width / 2 + barRegion.x - (box.x + barMidpoint.x));
+    // out. One pixel of slack covers that quantisation and nothing else. Scale comes from the
+    // decoded capture rather than devicePixelRatio, which is not the screenshot's size authority.
+    const paintedCentreX = (paintedCss.left + paintedCss.right) / 2;
+    const barCentreOffset = Math.abs(paintedCentreX - (box.x + barMidpoint.x));
     expect(barCentreOffset, 'painted bar centre vs the stroke midpoint').toBeLessThanOrEqual(1);
 
     await clickToolButton(page, 'magic-wand');
@@ -717,10 +736,10 @@ test.describe('Selection tools', () => {
     // instead would bake this file's viewport into the assertion.
     await waitForCommittedAnts(page, 'a committed selection border after the wand click');
     expectOutlineAround(await committedAntsOutline(page), ORIGIN_CLIP, {
-      x: barRegion.x + painted.left,
-      y: barRegion.y + painted.top,
-      width: painted.right - painted.left,
-      height: painted.bottom - painted.top,
+      x: paintedCss.left,
+      y: paintedCss.top,
+      width: paintedCss.right - paintedCss.left,
+      height: paintedCss.bottom - paintedCss.top,
     });
 
     // The flood fill's own count, reported by the tool, as a CROSS-CHECK against the outline

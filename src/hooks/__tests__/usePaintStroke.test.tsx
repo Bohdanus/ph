@@ -97,6 +97,11 @@ const down = (x: number, y: number) => createPointerDownEvent({ clientX: x, clie
 const move = (x: number, y: number) => createPointerMoveEvent({ clientX: x, clientY: y });
 const up = (x: number, y: number) => createPointerUpEvent({ clientX: x, clientY: y });
 const leave = (x: number, y: number) => createPointerLeaveEvent({ clientX: x, clientY: y });
+const lostPointerCapture = (pointerId: number) => {
+  const event = new Event('lostpointercapture', { bubbles: true });
+  Object.defineProperty(event, 'pointerId', { value: pointerId });
+  return event;
+};
 
 describe('usePaintStroke', () => {
   let container: HTMLDivElement;
@@ -384,6 +389,7 @@ describe('usePaintStroke', () => {
     act(() => result.current.onPointerLeave(leave(50, 50)));
 
     expect(callbacks.onCancel).not.toHaveBeenCalled();
+    expect(pointerPositionMock.releasePointer).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(true);
   });
 
@@ -405,6 +411,9 @@ describe('usePaintStroke', () => {
     act(() => {
       fireEvent.pointerCancel(container, { pointerId: 1 });
     });
+    act(() => {
+      fireEvent(container, lostPointerCapture(1));
+    });
 
     expect(callbacks.onCancel).toHaveBeenCalledTimes(1);
     expect(callbacks.onCommit).not.toHaveBeenCalled();
@@ -412,7 +421,62 @@ describe('usePaintStroke', () => {
     expect(isDocumentGestureOpen()).toBe(false);
   });
 
-  it.each(['pointerup', 'pointercancel'] as const)(
+  it('cancels and releases pointer tracking when the owner loses capture', () => {
+    const callbacks = makeCallbacks();
+    const { result } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(0, 0)));
+    act(() => result.current.onPointerMove(move(5, 5)));
+    act(() => {
+      fireEvent(container, lostPointerCapture(1));
+    });
+
+    expect(callbacks.onCancel).toHaveBeenCalledOnce();
+    expect(callbacks.onCommit).not.toHaveBeenCalled();
+    expect(pointerPositionMock.releasePointer).toHaveBeenCalledOnce();
+    expect(result.current.isMouseDown).toBe(false);
+    expect(result.current.points).toEqual([]);
+    expect(isDocumentGestureOpen()).toBe(false);
+  });
+
+  it('ignores lost capture from a different pointer while preserving the owner stroke', () => {
+    const callbacks = makeCallbacks();
+    const { result } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(0, 0)));
+    act(() => result.current.onPointerMove(move(5, 5)));
+    act(() => {
+      fireEvent(container, lostPointerCapture(99));
+    });
+
+    expect(callbacks.onCancel).not.toHaveBeenCalled();
+    expect(pointerPositionMock.releasePointer).not.toHaveBeenCalled();
+    expect(result.current.isMouseDown).toBe(true);
+    expect(isDocumentGestureOpen()).toBe(true);
+
+    act(() => result.current.onPointerUp(up(10, 10)));
+
+    expect(callbacks.onCommit).toHaveBeenCalledOnce();
+    expect(isDocumentGestureOpen()).toBe(false);
+  });
+
+  it('ignores the implicit lost capture that follows a successful pointerup', () => {
+    const callbacks = makeCallbacks();
+    const { result } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(0, 0)));
+    act(() => result.current.onPointerUp(up(5, 5)));
+    act(() => {
+      fireEvent(container, lostPointerCapture(1));
+    });
+
+    expect(callbacks.onCommit).toHaveBeenCalledOnce();
+    expect(callbacks.onCancel).not.toHaveBeenCalled();
+    expect(result.current.isMouseDown).toBe(false);
+    expect(isDocumentGestureOpen()).toBe(false);
+  });
+
+  it.each(['pointerup', 'pointercancel', 'lostpointercapture'] as const)(
     'aborts and releases its claim when disabled before the owning %s',
     (ending) => {
       const callbacks = makeCallbacks();
@@ -424,7 +488,8 @@ describe('usePaintStroke', () => {
       rerender({ enabled: false });
       act(() => {
         if (ending === 'pointerup') result.current.onPointerUp(up(5, 5));
-        else fireEvent.pointerCancel(container, { pointerId: 1 });
+        else if (ending === 'pointercancel') fireEvent.pointerCancel(container, { pointerId: 1 });
+        else fireEvent(container, lostPointerCapture(1));
       });
 
       expect(callbacks.onCancel).toHaveBeenCalledTimes(1);
@@ -446,6 +511,7 @@ describe('usePaintStroke', () => {
     });
 
     expect(callbacks.onCancel).not.toHaveBeenCalled();
+    expect(pointerPositionMock.releasePointer).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(true);
     expect(isDocumentGestureOpen()).toBe(true);
 
@@ -486,13 +552,16 @@ describe('usePaintStroke', () => {
     act(() => result.current.onPointerDown(down(0, 0)));
     expect(isDocumentGestureOpen()).toBe(true);
     const pointerCancelRegistration = addEventListener.mock.calls.find(([type]) => type === 'pointercancel');
+    const lostPointerCaptureRegistration = addEventListener.mock.calls.find(([type]) => type === 'lostpointercapture');
     expect(pointerCancelRegistration).toBeDefined();
+    expect(lostPointerCaptureRegistration).toBeDefined();
 
     unmount();
 
     expect(isDocumentGestureOpen()).toBe(false);
     expect(callbacks.onCancel).toHaveBeenCalledTimes(1);
     expect(removeEventListener).toHaveBeenCalledWith('pointercancel', pointerCancelRegistration?.[1]);
+    expect(removeEventListener).toHaveBeenCalledWith('lostpointercapture', lostPointerCaptureRegistration?.[1]);
 
     act(() => fireEvent.pointerCancel(container, { pointerId: 1 }));
     expect(callbacks.onCancel).toHaveBeenCalledTimes(1);

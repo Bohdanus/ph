@@ -29,7 +29,7 @@ const DEFAULT_WINDOW_DAYS = 30;
 const DEFAULT_MAX_TOKENS = 800;
 const MAX_RELEVANCE_CANDIDATES = 30;
 const MAX_PROMPT_CHARS = 120_000;
-const MAX_TOKENS_LIMIT = 4000;
+const MAX_TOKENS_LIMIT = 65536;
 const ZSTD_TIMEOUT_MS = 15_000;
 const CODEX_BACKFILL_QUERY = 'SELECT status FROM backfill_state WHERE id = 1';
 const ALLOWED_OPENCODE_COMMANDS = ['opencode', 'opencode.exe'];
@@ -872,7 +872,7 @@ Answer:`;
  * @param {number} [options.maxResults] Max sessions to retrieve per provider (default 20).
  * @param {number} [options.maxSessions] Max evidence excerpts to feed to the model (default 10).
  * @param {number} [options.maxExcerptChars] Max chars per excerpt (default 4000).
- * @param {number} [options.maxTokens]   Completion token budget (default 800, max 4000).
+ * @param {number} [options.maxTokens]   Completion token budget (default 800, max 65536).
  * @param {string} [options.outputFile] Where to write the synthesized answer.
  * @param {string} [options.kiloDb]     Override Kilo DB path.
  * @param {string} [options.codexHome]  Override Codex home.

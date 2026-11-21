@@ -2,10 +2,10 @@
 name: parallel-test-hardening
 description: >-
   Harden and write tests in the `ph` photo editor using wave-based parallel
-  subagents. Launch up to 3 subagents per wave, persist findings to `.kilo/plans/`
-  for crash survival, and cycle exploration → writing → review → fixes → loop-back.
-  Subagents return proposed test content; the coordinator owns file writes and all
-  Git operations.
+  free read-only model reviews. Launch up to 3 children per wave, persist coordinator-owned
+  findings to `.kilo/plans/` for crash survival, and cycle exploration → proposals → review →
+  fixes. Free children return proposed test content; the coordinator owns file writes, commands,
+  and all Git operations.
 ---
 
 # Parallel Test Hardening for Free Models
@@ -13,7 +13,10 @@ description: >-
 Free model catalogs and limits change. Keep each task to one test file, request a
 compact structured result, and persist hand-offs in `.kilo/plans/` before starting
 the next wave. Select models from the refreshed catalog according to `MODELS.md`;
-do not reuse model names, variants, or quotas from old runs.
+do not reuse model names, variants, or quotas from old runs. Free children are read-only:
+use Kilo's `explore` role or the project's `read-only-research` profile only with Bash,
+edit, write, patch, and file-mutating MCP tools denied. If the host cannot enforce and verify
+that boundary, use the tool-free free-completion runner and provide the source excerpts it needs.
 
 ## Crash Analysis
 
@@ -24,7 +27,7 @@ current catalog and policy in `MODELS.md`.
 
 **Fixes applied in this skill:**
 
-1. **One narrow outcome per subagent** — one small edit, one test case, no
+1. **One narrow outcome per child** — one small test proposal, no
    broad rewrites
 2. **Current model selection** — use an exact free model/provider pair from the
    refreshed catalog; do not hardcode a model into this workflow
@@ -42,22 +45,26 @@ current catalog and policy in `MODELS.md`.
 
 ## Architecture
 
-| Phase              | Wave | Subagents                | Output                                                                                                                   |
-| ------------------ | ---- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| **1. Exploration** | W1a  | Up to 3, one file each   | `.kilo/plans/wave-1a-exploration.json` — per-file: imports, helpers, fixtures, test gaps, stale assertions, crash points |
-|                    | W1b  | Up to 3, different files | `.kilo/plans/wave-1b-exploration.json`                                                                                   |
-| **2. Writing**     | W2a  | Up to 3, one file each   | `.kilo/plans/wave-2a-writing.json` — per-file: complete file content, import list, helper signatures                     |
-|                    | W2b  | Up to 3, different files | `.kilo/plans/wave-2b-writing.json`                                                                                       |
-| **3. Review**      | W3   | 1 (aggregator)           | `.kilo/plans/wave-3-review.json` — pass/fail, typecheck, lint, coverage delta                                            |
-| **4. Fixes**       | W4   | 1-3                      | `.kilo/plans/wave-4-fixes.json` — per-file: failure + fix                                                                |
+| Phase                | Wave | Subagents                | Output                                                                                                                   |
+| -------------------- | ---- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| **1. Exploration**   | W1a  | Up to 3, one file each   | `.kilo/plans/wave-1a-exploration.json` — per-file: imports, helpers, fixtures, test gaps, stale assertions, crash points |
+|                      | W1b  | Up to 3, different files | `.kilo/plans/wave-1b-exploration.json`                                                                                   |
+| **2. Proposals**     | W2a  | Up to 3, one file each   | `.kilo/plans/wave-2a-proposals.json` — per-file: proposed diff or complete new file content                              |
+|                      | W2b  | Up to 3, different files | `.kilo/plans/wave-2b-proposals.json`                                                                                     |
+| **3. Review**        | W3   | 1 (read-only reviewer)   | `.kilo/plans/wave-3-review.json` — findings against the diff and coordinator-supplied gate output                        |
+| **4. Fix proposals** | W4   | 1-3                      | `.kilo/plans/wave-4-fixes.json` — per-file: failure + proposed correction                                                |
 
-Each wave writes its JSON **before** launching the next. If a subagent dies,
+After each wave, the coordinator writes accepted results to its JSON plan **before** launching
+the next. Free children return results in their task response and never write plan files. If a child dies,
 re-read the plan and relaunch only that file.
 
 ## Safety Constraints (READ BEFORE LAUNCHING)
 
 ### Subagents MUST NOT:
 
+- Edit or write files, including test files and `.kilo/plans/` — return proposed diffs or content in the task response
+- Run shell commands, npm/npx commands, tests, builds, or Git commands
+- Use file-mutating MCP tools; deny connected write/delete tools not covered by common patterns
 - Edit production/source files (`src/` non-test files)
 - Run `git` commands (commit, merge, push, branch, worktree, stash, reset)
 - Modify `package.json`, `tsconfig.json`, `vitest.config.*`, or other config
@@ -71,30 +78,77 @@ re-read the plan and relaunch only that file.
 - Commit test changes (`git add <specific test files>` + commit)
 - Merge to main (with `Branch:` trailer)
 - Push to origin
+- Apply accepted test proposals in the task worktree and run applicable npm gates there
 - Modify `.kilo/plans/` JSON files for crash recovery
 - Update `scripts/__tests__/docs-index.test.mjs` ALLOWED_UNLISTED for new docs
 
 ## Prerequisites
 
 1. **Worktree exists** — never fan out from main checkout
-2. **Current model/provider pair** — follow `MODELS.md`, inspect the newest
-   `npm run swarm -- tokens --json` reading, refresh the free catalog, and pass the
-   exact model and provider together
+2. **Current model/provider pair** — follow `MODELS.md`, refresh the free catalog with
+   `node scripts/free-model-pool.mjs --list`, and pass the exact eligible model and
+   provider together. Do not treat swarm status as budget telemetry.
+   Free children must use a verified read-only profile; if the host cannot deny and verify Bash
+   and file-mutation tools, use the tool-free completion runner.
 3. **One file per subagent** — never two agents on one file
 4. **Wave limit** — at most 3 subagents; use fewer when current budget or provider
    limits require it
 5. **Task scope is tiny** — one small outcome, not a broad rewrite
 
+## Before Phase 1: Create and verify the task worktree
+
+Follow `AGENTS.md` before any Git command or child launch. The task checkout belongs under the
+repository root's `.kilo/worktrees/`, even when the selected main worktree is itself inside that
+directory.
+
+```bash
+# Run from an existing verified task worktree under `.kilo/worktrees`.
+git worktree list --porcelain
+# Select the absolute path from the stanza with: branch refs/heads/main
+MAIN_WORKTREE="<absolute-main-worktree-path>"
+TASK_NAME="test-improve-<slug>"
+: "${MAIN_WORKTREE:?Set MAIN_WORKTREE from the refs/heads/main worktree stanza}"
+if [ "$MAIN_WORKTREE" = "<absolute-main-worktree-path>" ] || [ "$TASK_NAME" = "test-improve-<slug>" ]; then
+  printf 'Replace the main-worktree and task-name placeholders before continuing\n' >&2
+  exit 1
+fi
+GIT_COMMON_DIR="$(git -C "$MAIN_WORKTREE" rev-parse --path-format=absolute --git-common-dir)"
+PROJECT_ROOT="$(dirname "$GIT_COMMON_DIR")"
+case "$MAIN_WORKTREE" in
+  "$PROJECT_ROOT"/.kilo/worktrees/*) ;;
+  *) printf 'Selected main worktree is outside the repository-managed .kilo/worktrees directory: %s\n' "$MAIN_WORKTREE" >&2; exit 1 ;;
+esac
+TASK_WORKTREE="$PROJECT_ROOT/.kilo/worktrees/$TASK_NAME"
+cd "$MAIN_WORKTREE" || exit 1
+pwd
+git -C "$MAIN_WORKTREE" rev-parse --show-toplevel
+git -C "$MAIN_WORKTREE" rev-parse --git-dir --git-common-dir
+test "$(pwd -P)" = "$(git rev-parse --show-toplevel)" || exit 1
+test "$(git rev-parse --abbrev-ref HEAD)" = "main" || exit 1
+git -C "$MAIN_WORKTREE" worktree add -b "task/$TASK_NAME" "$TASK_WORKTREE" main
+cd "$TASK_WORKTREE" || exit 1
+pwd
+git rev-parse --show-toplevel
+git rev-parse --git-dir --git-common-dir
+test "$(pwd -P)" = "$(git rev-parse --show-toplevel)" || exit 1
+```
+
+Create and verify the checkout before launching children. Give each child its absolute path and an
+empty write set.
+
 ## Phase 1: Exploration (2 waves × up to 3 agents)
 
 ### Task Template (Exploration)
+
+Summarize supplied stack traces without source line numbers; use the file path and test or symbol
+name to identify the failure.
 
 ```json
 {
   "description": "Explore: <file-path>",
   "model": "<exact-free-model-id-from-current-catalog>",
   "provider": "<matching-provider-from-current-catalog>",
-  "prompt": "READ-ONLY exploration. Worktree: <ABSOLUTE_WORKTREE_PATH>. Target file: <FILE_PATH>.\n\nReturn ONLY a JSON object (no prose) with these keys:\n{\n  \"file\": \"<FILE_PATH>\",\n  \"imports\": [\"exact import specifiers from the file\"],\n  \"helpers\": [\"function/class names defined in the file\"],\n  \"fixtures\": [\"test fixtures or factories used\"],\n  \"testCounts\": {\"pass\": <n>, \"fail\": <n>, \"skip\": <n>},\n  \"crashPoint\": \"exact error if any, else null\",\n  \"staleAssertions\": [\"description of assertions that contradict current production code\"],\n  \"missingCoverage\": [\"what the file should test but doesn't\"],\n  \"dependencies\": [\"other test files this file depends on or mirrors\"],\n  \"productionSymbols\": [\"production functions/types this test imports or mocks\"]\n}\n\nDo NOT edit files. Run `npx vitest run <FILE_PATH> 2>&1` first. If it crashes, capture the error. Then read the file and related production code. Output pure JSON."
+  "prompt": "READ-ONLY exploration. Worktree: <ABSOLUTE_WORKTREE_PATH>. Target file: <FILE_PATH>. The coordinator supplies the latest test result summary; do not run commands. If no result is supplied, set testCounts to null.\n\nReturn ONLY a JSON object (no prose) with these keys:\n{\n  \"file\": \"<FILE_PATH>\",\n  \"imports\": [\"exact import specifiers from the file\"],\n  \"helpers\": [\"function/class names defined in the file\"],\n  \"fixtures\": [\"test fixtures or factories used\"],\n  \"testCounts\": {\"pass\": <n>, \"fail\": <n>, \"skip\": <n>} | null,\n  \"crashPoint\": \"exact supplied error if any, else null\",\n  \"staleAssertions\": [\"description of assertions that contradict current production code\"],\n  \"missingCoverage\": [\"what the file should test but doesn't\"],\n  \"dependencies\": [\"other test files this file depends on or mirrors\"],\n  \"productionSymbols\": [\"production functions/types this test imports or mocks\"]\n}\n\nRead only the assigned file, related production code, and supplied output. Do not edit or write files, run shell/npm/npx commands, use Git, or use file-mutation tools. If operating through the tool-free completion runner, rely only on the source and output excerpts in this prompt. Output pure JSON."
 }
 ```
 
@@ -108,22 +162,22 @@ different test file.
 After Wave 1a completes, read `wave-1a-exploration.json`, then launch Wave 1b
 for the next 3 files.
 
-**Persist after each wave:**
+**Coordinator persists after each wave:**
 
 ```bash
 cat wave-1a-*.json | jq -s . > .kilo/plans/wave-1a-exploration.json
 ```
 
-## Phase 2: Writing (2 waves × up to 3 agents)
+## Phase 2: Proposals (2 waves × up to 3 agents)
 
-### Task Template (Writing)
+### Task Template (Test Proposal)
 
 ```json
 {
-  "description": "Write: <file-path>",
+  "description": "Propose test changes: <file-path>",
   "model": "<exact-free-model-id-from-current-catalog>",
   "provider": "<matching-provider-from-current-catalog>",
-  "prompt": "WRITE-ONLY task. Worktree: <ABSOLUTE_WORKTREE_PATH>. Target file: <FILE_PATH>.\n\nRead `.kilo/plans/wave-1a-exploration.json` and `wave-1b-exploration.json` for context.\n\nYour exploration summary for THIS file:\n<PASTE_THIS_FILES_EXPLORATION_JSON>\n\nWrite the COMPLETE new file content (or a unified diff if editing). Do NOT output prose. Return ONLY JSON:\n{\n  \"file\": \"<FILE_PATH>\",\n  \"action\": \"create\" | \"replace\",\n  \"content\": \"<ENTIRE_FILE_CONTENT_AS_STRING>\",\n  \"imports\": [\"import specifiers used\"],\n  \"helpers\": [\"helper functions defined\"],\n  \"testCases\": [\"descriptive names of test cases added/changed\"],\n  \"verificationCommand\": \"npx vitest run <FILE_PATH> 2>&1\"\n}\n\nConstraints:\n- Use EXACT imports and helper signatures from exploration\n- Mirror patterns from sibling test files (HistoryTab.test.tsx pattern for panel tests)\n- Do NOT weaken assertions to go green\n- Do NOT add `data-testid` to production\n- Do NOT run git, commit, merge, or push\n- Run ONLY the verification command and report exact pass/fail\n- If output limit hit, output the JSON with \"content\": \"TRUNCATED\" and re-launch with \"continue from line N\""
+  "prompt": "READ-ONLY test proposal. Worktree: <ABSOLUTE_WORKTREE_PATH>. Target file: <FILE_PATH>.\n\nRead the exploration JSON and source excerpts supplied in this prompt. Your exploration summary for THIS file:\n<PASTE_THIS_FILES_EXPLORATION_JSON>\n\nPropose a focused test change. Return a unified diff, or the complete file content only for a new file. Do NOT edit or write files. Return ONLY JSON:\n{\n  \"file\": \"<FILE_PATH>\",\n  \"action\": \"create\" | \"modify\",\n  \"proposal\": \"<UNIFIED_DIFF_OR_COMPLETE_NEW_FILE_CONTENT>\",\n  \"imports\": [\"import specifiers used\"],\n  \"helpers\": [\"helper functions defined\"],\n  \"testCases\": [\"descriptive names of tests proposed\"],\n  \"evidence\": [\"source symbols and test contracts supporting the proposal\"]\n}\n\nConstraints:\n- Use EXACT imports and helper signatures from exploration\n- Mirror patterns from sibling test files (HistoryTab.test.tsx pattern for panel tests)\n- Do NOT weaken assertions to go green\n- Do NOT add `data-testid` to production\n- Do not run shell/npm/npx commands, tests, builds, or Git; do not use file-mutation tools\n- If output limit is reached, return a concise JSON summary with \"proposalStatus\": \"incomplete\" and say what context or output is missing"
 }
 ```
 
@@ -133,60 +187,62 @@ Launch up to 3 subagents with their per-file exploration data.
 
 ### Wave 2b — Next 3 files
 
-After Wave 2a, read its plan, launch Wave 2b.
+After Wave 2a, read its plan, launch Wave 2b for different files.
 
 **Persist after each wave:**
 
 ```bash
-cat wave-2a-*.json | jq -s . > .kilo/plans/wave-2a-writing.json
+cat wave-2a-*.json | jq -s . > .kilo/plans/wave-2a-proposals.json
 ```
 
-## Phase 3: Review (1 read-only aggregator)
+The coordinator reviews each proposal, applies accepted changes in the task worktree, and owns all
+file writes. Free children return proposals in their task response only.
+
+## Phase 3: Coordinator Verification and Read-Only Review
+
+The coordinator runs the repository's focused test command for all changed files, plus applicable
+`npm run tsc`, `npm run lint:check`, and build gates, from the verified task worktree. Free children
+do not run these commands. A read-only reviewer can inspect the candidate diff and the complete,
+bounded outputs the coordinator supplies, then report any mismatch between the proposed tests,
+source contracts, and observed gate results.
 
 ### Task Template (Review)
 
 ```json
 {
-  "description": "Review: test hardening batch",
+  "description": "Read-only review: test hardening batch",
   "model": "<exact-free-model-id-from-current-catalog>",
   "provider": "<matching-provider-from-current-catalog>",
-  "prompt": "REVIEW task. Worktree: <ABSOLUTE_WORKTREE_PATH>.\n\nRead `.kilo/plans/wave-1a-exploration.json`, `wave-1b-exploration.json`, `wave-2a-writing.json`, `wave-2b-writing.json`.\n\nRun verification for ALL changed files:\n- `npx vitest run <FILE1> <FILE2> ... 2>&1`\n- `npm run tsc` (typecheck)\n- `npm run lint` if available\n\nReturn ONLY JSON:\n{\n  \"allTestsPass\": true | false,\n  \"typecheckPass\": true | false,\n  \"lintPass\": true | false,\n  \"filesVerified\": [\"<FILE_PATH>\", ...],\n  \"failures\": [{\"file\": \"<FILE_PATH>\", \"error\": \"<exact error>\"}],\n  \"coverageDelta\": {\"lines\": <n>, \"branches\": <n>, \"functions\": <n>},\n  \"mergePlan\": [\"git add <FILE1>\", \"git add <FILE2>\", ...],\n  \"readyToCommit\": true | false,\n  \"loopAgain\": true | false\n}\n\nIf any file fails, output the exact error. Set \"loopAgain\": true if coverage gaps remain or new production changes landed. The coordinator commits only if allTestsPass AND typecheckPass AND readyToCommit are true."
+  "prompt": "READ-ONLY review. Worktree: <ABSOLUTE_WORKTREE_PATH>.\n\nReview the supplied candidate diff, exploration summaries, proposal summaries, and coordinator-provided focused test, typecheck, lint, and build outputs. Do not run commands or infer a passing gate when its output was not supplied.\n\nReturn ONLY JSON:\n{\n  \"findings\": [{\"file\": \"<FILE_PATH>\", \"identifier\": \"symbol, test name, heading, or unique phrase\", \"evidence\": \"<specific source or supplied output>\", \"failure\": \"<concrete risk>\"}],\n  \"missingEvidence\": [\"gate or context not supplied\"],\n  \"coverageConcerns\": [\"specific scenario not covered\"]\n}\n\nDo not include source line numbers. Do not edit or write files, run shell/npm/npx commands, tests, builds, or Git, or use file-mutation tools. The coordinator owns gate results, the landing decision, and Git operations."
 }
 ```
 
-## Phase 4: Fixes & Loop Back (1-3 agents)
+## Phase 4: Fix Proposals & Loop Back (1-3 children)
 
 ### Task Template (Fixes)
 
 ```json
 {
-  "description": "Fix: <file-path>",
+  "description": "Propose a test fix: <file-path>",
   "model": "<exact-free-model-id-from-current-catalog>",
   "provider": "<matching-provider-from-current-catalog>",
-  "prompt": "FIX task. Worktree: <ABSOLUTE_WORKTREE_PATH>. Target file: <FILE_PATH>.\n\nRead `.kilo/plans/wave-3-review.json` — it contains failures for this file.\n\nYour failure:\n<PASTE_FAILURE_JSON>\n\nFix ONLY the reported failure. Return ONLY JSON:\n{\n  \"file\": \"<FILE_PATH>\",\n  \"action\": \"replace\",\n  \"content\": \"<ENTIRE_FILE_CONTENT_AS_STRING>\",\n  \"verificationCommand\": \"npx vitest run <FILE_PATH> 2>&1\"\n}\n\nRun the verification command and confirm pass. Do NOT add new test cases beyond fixing the failure. Do NOT run git, commit, merge, or push."
+  "prompt": "READ-ONLY fix proposal. Worktree: <ABSOLUTE_WORKTREE_PATH>. Target file: <FILE_PATH>.\n\nRead the supplied review findings and source excerpts. Failure:\n<PASTE_FAILURE_JSON>\n\nPropose the smallest correction. Return ONLY JSON:\n{\n  \"file\": \"<FILE_PATH>\",\n  \"proposal\": \"<UNIFIED_DIFF_OR_EDIT_INSTRUCTIONS>\",\n  \"evidence\": [\"source contract and test behavior supporting the fix\"]\n}\n\nDo not edit or write files, run shell/npm/npx commands, tests, builds, or Git, or use file-mutation tools. Do NOT add new test cases beyond fixing the reported failure. The coordinator applies and verifies accepted proposals."
 }
 ```
 
 ### Loop Protocol
 
-After Phase 3 Review, read `wave-3-review.json`:
+After Phase 3, the coordinator reads `wave-3-review.json` alongside actual focused-test,
+typecheck, lint, and build results.
 
-1. **If `allTestsPass: true` AND `typecheckPass: true` AND `readyToCommit: true` AND `loopAgain: false`** → Coordinator commits and STOP. Hardening complete.
-
-2. **If `readyToCommit: false` OR `loopAgain: true` OR not all pass** → Enter Wave 4 (Fixes):
-   - For each failed file, launch 1 fix agent (max 3 concurrent)
-   - Each fix agent outputs JSON to `wave-4-fixes.json`
-   - After all fixes pass, **loop back to Phase 1 (Exploration)**
-   - Increment loop counter in `.kilo/plans/loop-count.json`
-
-3. **Maximum 3 loops** — after 3 full cycles (W1a→W1b→W2a→W2b→W3→W4), escalate to
-   HANDOFF.md if still not green.
-
-**Loop counter persisted in `.kilo/plans/loop-count.json`:**
-
-```json
-{ "loop": 1, "maxLoops": 3, "lastWave": "wave-3-review" }
-```
+1. If coordinator-run gates pass, the review has no unresolved blocking findings, and all required
+   evidence is present, the coordinator follows repository landing procedure. A review response
+   never authorizes a commit by itself.
+2. If a gate fails, a blocking finding remains, or evidence is missing, request one focused fix
+   proposal for each affected file (max 3 concurrent). The coordinator applies accepted proposals,
+   reruns applicable gates, and records the updated state in the plan.
+3. Limit fix/review loops to three per target. If the issue remains, stop and record the unresolved
+   evidence and blocker in the durable handoff.
 
 ## Crash Recovery Protocol
 
@@ -201,17 +257,16 @@ Example recovery:
 
 ```bash
 # Check what's in the plan
-cat .kilo/plans/wave-2a-writing.json | jq '.[] | .file'
+cat .kilo/plans/wave-2a-proposals.json | jq '.[] | .file'
 
 # Re-launch only the missing file
-# (use the Writing template with that file's exploration data)
+# (use the Test Proposal template with that file's exploration data)
 ```
 
 ## Model Selection
 
 Use the current catalog and rules in `MODELS.md`; this skill does not maintain a
-model list or provider quota. Before every launch, the coordinator inspects the
-newest `npm run swarm -- tokens --json` reading and runs
+model list or provider quota. Before every launch, the coordinator runs
 `node scripts/free-model-pool.mjs --list` to verify current zero-priced choices.
 Pass the exact model/provider pair to Kilo `task` and verify the resolved model.
 If the budget or free route is uncertain or exhausted, stop instead of silently
@@ -230,6 +285,8 @@ falling back to a paid model.
 
 `.kilo/plans/wave-1a-exploration.json`:
 
+The values below are illustrative only; they are not a current test baseline or a live defect list.
+
 ```json
 [
   {
@@ -238,7 +295,7 @@ falling back to a paid model.
     "helpers": ["seedHistory", "openHistoryTab", "historyRow", "rewindControl", "eyeControl"],
     "fixtures": ["storeStateMock", "freshLayers"],
     "testCounts": { "pass": 0, "fail": 33, "skip": 0 },
-    "crashPoint": "TypeError: Cannot read properties of undefined (reading 'rows') at MobileLayersDrawer.tsx:34",
+    "crashPoint": "TypeError: Cannot read properties of undefined (reading 'rows') in MobileLayersDrawer",
     "staleAssertions": [],
     "missingCoverage": ["historyPanelProjection mock fixture"],
     "dependencies": ["src/components/SidebarRight/__tests__/HistoryTab.test.tsx"],
@@ -258,4 +315,4 @@ falling back to a paid model.
 - Run from the main checkout
 - Assign free-model subagents to any Git operations
 - Let a subagent merge or push to origin
-- Edit source files from a subagent — tests only
+- Let a free child edit any file; children may propose test changes, and the coordinator applies them

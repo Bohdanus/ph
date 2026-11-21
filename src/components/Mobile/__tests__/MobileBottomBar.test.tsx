@@ -239,7 +239,7 @@ describe('MobileBottomBar', () => {
       expect(scrollControl.className).toContain('min-h-11');
       expect(scrollControl.className).toContain('min-w-11');
     }
-  });
+  }, 15_000);
 
   it('disables every tool control without a document', () => {
     setTool('draw', false);

@@ -27,15 +27,15 @@ export type ColorReplacementLimits = 'contiguous' | 'discontinuous';
 export type ColorReplacementSampling = 'current-layer' | 'all-layers';
 
 /**
- * Adobe's tolerance scale for this tool is 0-100 — NOT the 0-255 the bucket, the magic eraser
- * and the background eraser use (`FILL_TOLERANCE_MAX`) and NOT the wand's 0-100 measured against
- * a 4-channel distance in the flood-fill tolerance helpers. The two 0-100 scales are different
- * metrics, which is why the scale lives here and the contiguous scan converts this value before
- * calculating the same RGB distance as the shared fill implementation.
+ * This tool uses a local 0-100 percentage input, separate from the fill tool's 0-255 input
+ * (`FILL_TOLERANCE_MAX`) and the wand's 0-100 input measured against a different distance. The
+ * app converts this value before calculating its squared RGB-distance threshold. Adobe describes
+ * Tolerance as a percentage but does not state numeric bounds or matching math in the archived
+ * Photoshop CC reference, so this input range should not be read as Photoshop's verified scale.
  */
 export const COLOR_REPLACEMENT_TOLERANCE_MAX = 100;
 
-/** Adobe's seeded default for the Color Replacement Tool. */
+/** This app's default; Adobe's archived reference does not state a Photoshop default. */
 export const COLOR_REPLACEMENT_TOLERANCE_DEFAULT = 30;
 
 /** Adobe's Smoothness (`Anti-aliased` on older builds) runs 0-50, not 0-100. */
@@ -121,9 +121,9 @@ const luminance = (r: number, g: number, b: number): number =>
   LUMINANCE_RED * r + LUMINANCE_GREEN * g + LUMINANCE_BLUE * b;
 
 /**
- * The factor that converts this tool's 0-100 Tolerance to the 0-255 scale used by
- * `src/util/floodFill.ts`. Both implementations compare the same RGB distance; using this scale
- * before squaring it keeps their threshold arithmetic aligned.
+ * The factor that converts this tool's 0-100 Tolerance to a 0-255 value before applying its own
+ * RGB distance. This does not share the Paint Bucket's RGBA matcher; it preserves this tool's
+ * normalized threshold when using the 0-255 input scale.
  */
 export const COLOR_REPLACEMENT_TOLERANCE_TO_FILL_TOLERANCE_SCALE = 255 / COLOR_REPLACEMENT_TOLERANCE_MAX;
 

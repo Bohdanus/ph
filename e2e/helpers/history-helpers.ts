@@ -25,7 +25,10 @@ import {
   hasDarkPixels,
   isBuffer,
   loadImageData,
+  WHOLE_CAPTURE,
   viewportClip,
+  type DocumentCaptureMask,
+  type PixelMask,
   type BoundingBox,
   type ImageDataResult,
   type ViewportClip,
@@ -248,8 +251,8 @@ export function bandRows(
  * deliberately lenient: a half-restored stroke leaves a few dark pixels and
  * still reads as inked, which is what makes the band assertion able to fail.
  */
-export function bandIsInked(screenshot: Buffer | ImageDataResult): Promise<boolean> {
-  return hasDarkPixels(screenshot);
+export function bandIsInked(screenshot: Buffer | ImageDataResult, mask: PixelMask): Promise<boolean> {
+  return hasDarkPixels(screenshot, mask);
 }
 
 function sliceRows(image: ImageDataResult, top: number, bottom: number): ImageDataResult {
@@ -269,13 +272,36 @@ function sliceRows(image: ImageDataResult, top: number, bottom: number): ImageDa
  */
 export async function bandInkFlags(
   screenshot: Buffer | ImageDataResult,
-  bands: readonly CanvasBand[]
+  bands: readonly CanvasBand[],
+  mask: PixelMask
 ): Promise<boolean[]> {
   const image = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const rows = bandRows(bands, image.height);
   const flags: boolean[] = [];
-  for (const row of rows) {
-    flags.push(await hasDarkPixels(sliceRows(image, row.top, row.bottom)));
+  if (mask === WHOLE_CAPTURE) {
+    for (const row of rows) flags.push(await hasDarkPixels(sliceRows(image, row.top, row.bottom), WHOLE_CAPTURE));
+    return flags;
+  }
+  if (mask === null) return bands.map(() => false);
+
+  const union = bandUnionClip(bands);
+  const shiftX = mask.capture.x - union.x;
+  const shiftY = mask.capture.y - union.y;
+  for (const band of bands) {
+    const capture = viewportClip({ ...band.clip, x: band.clip.x + shiftX, y: band.clip.y + shiftY });
+    const left = Math.max(mask.document.x, capture.x);
+    const top = Math.max(mask.document.y, capture.y);
+    const right = Math.min(mask.document.x + mask.document.width, capture.x + capture.width);
+    const bottom = Math.min(mask.document.y + mask.document.height, capture.y + capture.height);
+    if (right <= left || bottom <= top) {
+      flags.push(false);
+      continue;
+    }
+    const bandMask: DocumentCaptureMask = {
+      capture: mask.capture,
+      document: viewportClip({ x: left, y: top, width: right - left, height: bottom - top }),
+    };
+    flags.push(await hasDarkPixels(image, bandMask));
   }
   return flags;
 }
@@ -311,8 +337,8 @@ export function waitForBands(
   return waitForCanvasPixels(
     page,
     bandUnionClip(bands),
-    async (screenshot) => {
-      const flags = await bandInkFlags(screenshot, bands);
+    async (screenshot, mask) => {
+      const flags = await bandInkFlags(screenshot, bands, mask);
       return flags.every((inked, index) => inked === expected[index]);
     },
     {

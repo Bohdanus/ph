@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
 import { HIDE_LAYER_ACTION, REMOVE_ACTION } from '@/util/constants.ts';
 import { createMockStoreState, type MockStoreState } from '@/__tests__/fixtures/store.ts';
@@ -89,6 +89,10 @@ describe('LayersTab dispatch edge cases', () => {
     seedStore();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('toggles visibility on a locked layer (no lock guard on the toggle)', () => {
     seedStore({
       layers: {
@@ -119,7 +123,7 @@ describe('LayersTab dispatch edge cases', () => {
     const span = getNameSpan(getRow('Top Layer'));
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     expect(span).toHaveAttribute('contenteditable', 'true');
 
@@ -144,9 +148,8 @@ describe('LayersTab dispatch edge cases', () => {
     });
     render(<LayersTab />);
 
-    act(() => {
-      fireEvent.click(getRow('Top Layer').querySelector('button[aria-label="Remove layer"]')!);
-    });
+    fireEvent.click(screen.getByTestId('layers-delete-active-button'));
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
 
     const action = dispatched()[0];
     expect(action.type).toBe('COMMIT_DOCUMENT_EDIT');
@@ -186,7 +189,7 @@ describe('LayersTab dispatch edge cases', () => {
     const span = getNameSpan(getRow('Top Layer'));
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
 
     expect(span).toHaveAttribute('contenteditable', 'true');

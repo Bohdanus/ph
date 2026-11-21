@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import {
   catalogCandidates,
   completeWithFreeModel as completeWithFreeModelImplementation,
@@ -14,16 +17,19 @@ import {
   MAX_CATALOG_RESPONSE_BYTES,
   MAX_COMPLETION_RESPONSE_BYTES,
   normalizeGroqKeys,
+  orderFreeModelRoutes,
   readBoundedPrompt,
   runOpenCodeCompletion,
   zeroPriced,
 } from '../free-model-pool.mjs';
 import { COMPLETION_TIMEOUT_MS } from '../lib/free-model-kilo.mjs';
+import { readQuarantineState } from '../lib/free-model-quarantine.mjs';
 
 vi.setConfig({ testTimeout: 30_000 });
 
 const completeWithFreeModel = async (prompt, options = {}) => {
   const temporaryDirectory = options.quarantineFile ? null : await mkdtemp(join(tmpdir(), 'free-model-pool-test-'));
+  const quarantineFile = options.quarantineFile ?? join(temporaryDirectory, 'quarantine.json');
   try {
     return await completeWithFreeModelImplementation(prompt, {
       kiloCommand: '',
@@ -32,7 +38,8 @@ const completeWithFreeModel = async (prompt, options = {}) => {
       groqApiKeys: [],
       groqFreePlan: false,
       opencodeCommand: '',
-      quarantineFile: options.quarantineFile ?? join(temporaryDirectory, 'quarantine.json'),
+      quarantineFile,
+      poolStateFile: options.poolStateFile ?? `${quarantineFile}.pool-state.json`,
       ...options,
       initializeLegacyQuarantine: false,
     });
@@ -77,7 +84,10 @@ function catalogFetch({ kilo = [], openrouter = [], opencode = [], groq = [], ke
     } else if (url.includes('api.groq.com') && url.endsWith('/models')) {
       response = { ok: true, json: async () => ({ data: groq }) };
     } else if (url.includes('/api/v1/key')) {
-      response = keyInfo?.() ?? { ok: false, status: 503 };
+      response = keyInfo?.() ?? {
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 0, limit: 1000, remaining: 1000 } } }),
+      };
     } else if (url.endsWith('/models')) {
       response = { ok: true, json: async () => kilo };
     } else {
@@ -120,7 +130,7 @@ describe('free model catalog filtering', () => {
 
   it('filters only currently quarantined source/model pairs', () => {
     const data = [
-      kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'),
+      kiloRow('keep:free'),
       kiloRow('kilo-auto/free'),
       kiloRow('nvidia/nemotron-3.5-super-vl:free'),
       kiloRow('recursive/flint-v1.0:free'),
@@ -130,8 +140,39 @@ describe('free model catalog filtering', () => {
       'kilo:nvidia/nemotron-3.5-super-vl:free',
       'kilo:recursive/flint-v1.0:free',
     ]);
-    expect(catalogCandidates('kilo', data, quarantined).map((row) => row.model)).toEqual([
-      'nvidia/nemotron-3-ultra-550b-a55b:free',
+    expect(catalogCandidates('kilo', data, quarantined).map((row) => row.model)).toEqual(['keep:free']);
+  });
+
+  it('allows the exact Nemotron 3 Ultra free route on every verified provider', () => {
+    const exactId = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    expect(catalogCandidates('kilo', [kiloRow(exactId)]).map((row) => row.model)).toEqual([exactId]);
+    expect(
+      catalogCandidates('openrouter', [openRouterRow('nvidia/nemotron-3-ultra-550b-a55b')]).map((row) => row.model)
+    ).toEqual([exactId]);
+    expect(catalogCandidates('opencode', [{ id: exactId, owned_by: 'opencode' }])).toEqual([
+      { source: 'opencode', model: exactId, name: exactId, providerOwned: true },
+    ]);
+    expect(catalogCandidates('kilo', [kiloRow('nvidia/nemotron-3-ultra-550b-a55b-v2:free')])).toEqual([]);
+    expect(
+      catalogCandidates('opencode', [
+        { id: exactId, owned_by: 'other-provider' },
+        { id: 'nvidia/nemotron-alias-free', owned_by: 'opencode' },
+        { id: 'partner/supernemotronx-free', owned_by: 'opencode' },
+        { id: 'vendor/renamed-free', name: 'NVIDIA Nemotron 3 Ultra', owned_by: 'opencode' },
+      ])
+    ).toEqual([]);
+    expect(catalogCandidates('groq', [{ id: 'openai/gpt-oss-120b', name: 'Nemotron compatibility alias' }])).toEqual(
+      []
+    );
+    expect(
+      orderFreeModelRoutes([
+        { source: 'openrouter', model: exactId },
+        { source: 'opencode', model: exactId, providerOwned: true },
+        { source: 'opencode', model: 'vendor/renamed-free', name: 'Nemotron alias' },
+      ])
+    ).toEqual([
+      { source: 'openrouter', model: exactId },
+      { source: 'opencode', model: exactId, providerOwned: true },
     ]);
   });
 
@@ -186,6 +227,19 @@ describe('free model catalog filtering', () => {
     }
   });
 
+  it('keeps a model eligible on other providers when one provider/model pair is quarantined', () => {
+    const nemotron = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const quarantined = new Set([`openrouter:${nemotron}`]);
+
+    expect(catalogCandidates('openrouter', [openRouterRow(nemotron.slice(0, -':free'.length))], quarantined)).toEqual(
+      []
+    );
+    expect(catalogCandidates('kilo', [kiloRow(nemotron)], quarantined).map(({ model }) => model)).toEqual([nemotron]);
+    expect(
+      catalogCandidates('opencode', [{ id: nemotron, owned_by: 'opencode' }], quarantined).map(({ model }) => model)
+    ).toEqual([nemotron]);
+  });
+
   it('fails closed before requesting catalogs when quarantine state is corrupt', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-corrupt-'));
     const quarantineFile = join(directory, 'quarantine.json');
@@ -200,106 +254,252 @@ describe('free model catalog filtering', () => {
     }
   });
 
-  it('tries the observed reliable Kilo model before other eligible candidates', () => {
+  it('preserves catalog order before global model-strength ordering', () => {
     const data = [
       kiloRow('unverified:free'),
+      kiloRow('xingchen-agi/xing4.0-29b-a4b:free'),
       kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'),
       kiloRow('also-unverified'),
     ];
     expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual([
+      'unverified:free',
+      'xingchen-agi/xing4.0-29b-a4b:free',
       'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'also-unverified',
+    ]);
+    expect(orderFreeModelRoutes(catalogCandidates('kilo', data)).map((row) => row.model)).toEqual([
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'xingchen-agi/xing4.0-29b-a4b:free',
       'unverified:free',
       'also-unverified',
     ]);
   });
 
-  it('tries OpenRouter Nemotron 3 Ultra first and preserves catalog order for remaining free models', () => {
+  it('keeps OpenRouter catalog order intact before global route ranking', () => {
     const data = [
       openRouterRow('vendor/first'),
+      openRouterRow('xingchen-agi/xing4.0-29b-a4b'),
       openRouterRow('nvidia/nemotron-3-ultra-550b-a55b'),
       openRouterRow('vendor/last'),
     ];
     expect(catalogCandidates('openrouter', data).map((row) => row.model)).toEqual([
+      'vendor/first:free',
+      'xingchen-agi/xing4.0-29b-a4b:free',
       'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'vendor/last:free',
+    ]);
+    expect(orderFreeModelRoutes(catalogCandidates('openrouter', data)).map((row) => row.model)).toEqual([
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'xingchen-agi/xing4.0-29b-a4b:free',
       'vendor/first:free',
       'vendor/last:free',
     ]);
   });
 
-  it('keeps Kilo candidates available when the optional OpenRouter catalog is down', async () => {
-    const fetchImpl = readableFetch((url) =>
-      url.includes('openrouter')
-        ? Promise.resolve({ ok: false, status: 401 })
-        : Promise.resolve({ ok: true, json: async () => [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')] })
-    );
-    const errors = [];
-    const candidates = await loadCatalogs({
-      fetchImpl,
-      openRouterKey: 'test',
-      onCatalogError: (source) => errors.push(source),
+  it('ranks model strength before provider and keeps all exact Nemotron routes first', () => {
+    const nemotron = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const routes = orderFreeModelRoutes([
+      { source: 'groq', model: 'openai/gpt-oss-120b' },
+      { source: 'kilo', model: 'kilo-lower:free' },
+      { source: 'opencode', model: 'beam-free' },
+      { source: 'openrouter', model: nemotron },
+      { source: 'openrouter', model: 'vendor/first:free' },
+      { source: 'kilo', model: nemotron },
+      { source: 'openrouter', model: 'xingchen-agi/xing4.0-29b-a4b:free' },
+      { source: 'opencode', model: nemotron, providerOwned: true },
+    ]);
+
+    expect(routes.map(({ source, model }) => `${source}:${model}`)).toEqual([
+      `kilo:${nemotron}`,
+      `openrouter:${nemotron}`,
+      `opencode:${nemotron}`,
+      'openrouter:xingchen-agi/xing4.0-29b-a4b:free',
+      'kilo:kilo-lower:free',
+      'openrouter:vendor/first:free',
+      'opencode:beam-free',
+      'groq:openai/gpt-oss-120b',
+    ]);
+  });
+
+  it('interleaves providers within the same fallback strength tier', () => {
+    expect(
+      orderFreeModelRoutes([
+        { source: 'kilo', model: 'kilo-1:free' },
+        { source: 'kilo', model: 'kilo-2:free' },
+        { source: 'openrouter', model: 'router-1:free' },
+        { source: 'openrouter', model: 'router-2:free' },
+        { source: 'opencode', model: 'code-1-free' },
+      ]).map(({ source, model }) => `${source}/${model}`)
+    ).toEqual([
+      'kilo/kilo-1:free',
+      'openrouter/router-1:free',
+      'opencode/code-1-free',
+      'kilo/kilo-2:free',
+      'openrouter/router-2:free',
+    ]);
+  });
+
+  it('blocks Nemotron aliases by ID or display name while retaining the approved exact route', () => {
+    const openCode = catalogCandidates('opencode', [
+      {
+        id: 'nvidia/nemotron-3-ultra-550b-a55b-free',
+        name: 'NVIDIA Nemotron 3 Ultra',
+        owned_by: 'opencode',
+      },
+    ]);
+    const openRouter = { source: 'openrouter', model: 'nvidia/nemotron-3-ultra-550b-a55b:free' };
+
+    expect(orderFreeModelRoutes([...openCode, openRouter])).toEqual([openRouter]);
+  });
+
+  it('accepts the exact Nemotron ID only from the provider-owned OpenCode catalog', () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const candidates = catalogCandidates('opencode', [{ id: model, owned_by: 'opencode' }]);
+
+    expect(candidates).toEqual([{ source: 'opencode', model, name: model, providerOwned: true }]);
+    expect(catalogCandidates('opencode', [{ id: model, owned_by: 'other-provider' }])).toEqual([]);
+    expect(orderFreeModelRoutes(candidates)).toEqual(candidates);
+  });
+
+  it('routes provider-owned Nemotron through OpenCode after catalog verification', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({ opencode: [{ id: model, owned_by: 'opencode' }], chat: vi.fn() });
+    const runOpenCode = vi.fn().mockResolvedValue({ model, content: 'OpenCode Nemotron', finishReason: 'stop' });
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        opencodeCommand: '/fake-opencode',
+        runOpenCode,
+      })
+    ).resolves.toMatchObject({ source: 'opencode', model, content: 'OpenCode Nemotron' });
+    expect(runOpenCode).toHaveBeenCalledWith({
+      command: '/fake-opencode',
+      model,
+      prompt: 'prompt',
+      maxTokens: 4096,
+      timeoutMs: 12 * 60 * 1000,
+      providerOwned: true,
     });
-    expect(candidates.map((row) => row.model)).toEqual(['nvidia/nemotron-3-ultra-550b-a55b:free']);
-    expect(errors).toEqual(['openrouter']);
+  });
+
+  it('honors an explicit Nemotron token budget above the default', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({ kilo: [kiloRow(model)] });
+    const runKilo = vi.fn().mockResolvedValue({ model, content: 'Kilo Nemotron', finishReason: 'stop' });
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, kiloCommand: '/fake-kilo', maxTokens: 8192, runKilo })
+    ).resolves.toMatchObject({ source: 'kilo', model, content: 'Kilo Nemotron' });
+    expect(runKilo).toHaveBeenCalledWith({
+      command: '/fake-kilo',
+      source: 'kilo',
+      model,
+      prompt: 'prompt',
+      maxTokens: 8192,
+      timeoutMs: 12 * 60 * 1000,
+    });
+  });
+
+  it('retries truncated Kilo Nemotron once with a larger response-length budget', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({ kilo: [kiloRow(model)] });
+    const runKilo = vi
+      .fn()
+      .mockResolvedValueOnce({ model, content: 'partial', finishReason: 'length' })
+      .mockResolvedValueOnce({ model, content: 'complete', finishReason: 'stop' });
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, kiloCommand: '/fake-kilo', runKilo })
+    ).resolves.toMatchObject({ source: 'kilo', model, content: 'complete' });
+    expect(runKilo.mock.calls.map(([options]) => options?.maxTokens)).toEqual([4096, 6144]);
+  });
+
+  it('blocks noncanonical Nemotron variants before any inference request', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b-v2:free';
+    const chat = vi.fn();
+    const runKilo = vi.fn();
+    const runOpenCode = vi.fn();
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow(model)],
+      openrouter: [openRouterRow(model.slice(0, -':free'.length))],
+      opencode: [{ id: 'vendor/nemotron-alias-free', owned_by: 'opencode' }],
+      groq: [{ id: 'openai/gpt-oss-120b', name: 'Nemotron compatibility alias' }],
+      chat,
+    });
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'openrouter-test',
+        groqApiKey: 'groq-test',
+        groqFreePlan: true,
+        kiloCommand: '/fake-kilo',
+        runKilo,
+        opencodeCommand: '/fake-opencode',
+        runOpenCode,
+      })
+    ).rejects.toThrow(/No free model completed/);
+    expect(runKilo).not.toHaveBeenCalled();
+    expect(runOpenCode).not.toHaveBeenCalled();
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('keeps Kilo candidates available when the optional OpenRouter catalog is down', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-catalog-fallback-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+
+    try {
+      await writeFile(quarantineFile, JSON.stringify({ schemaVersion: 1, entries: {} }), 'utf8');
+      const fetchImpl = readableFetch((url) =>
+        url.includes('openrouter')
+          ? Promise.resolve({ ok: false, status: 401 })
+          : Promise.resolve({ ok: true, json: async () => [kiloRow('xingchen-agi/xing4.0-29b-a4b:free')] })
+      );
+      const errors = [];
+      const candidates = await loadCatalogs({
+        fetchImpl,
+        openRouterKey: 'test',
+        quarantineFile,
+        onCatalogError: (source) => errors.push(source),
+      });
+      expect(candidates.map((row) => row.model)).toEqual(['xingchen-agi/xing4.0-29b-a4b:free']);
+      expect(errors).toEqual(['openrouter']);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('refuses an oversized catalog body', async () => {
-    const fetchImpl = readableFetch(() => new Response(Buffer.alloc(MAX_CATALOG_RESPONSE_BYTES + 1)));
-    const errors = [];
-    const candidates = await loadCatalogs({
-      fetchImpl,
-      openRouterKey: '',
-      onCatalogError: (_source, error) => errors.push(error.message),
-    });
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-catalog-oversized-'));
+    const quarantineFile = join(directory, 'quarantine.json');
 
-    expect(candidates).toEqual([]);
-    expect(errors).toHaveLength(2);
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(`${MAX_CATALOG_RESPONSE_BYTES}-byte limit`),
-        expect.stringContaining('opencode catalog exceeds'),
-      ])
-    );
+    try {
+      await writeFile(quarantineFile, JSON.stringify({ schemaVersion: 1, entries: {} }), 'utf8');
+      const fetchImpl = readableFetch(() => new Response(Buffer.alloc(MAX_CATALOG_RESPONSE_BYTES + 1)));
+      const errors = [];
+      const candidates = await loadCatalogs({
+        fetchImpl,
+        openRouterKey: '',
+        quarantineFile,
+        onCatalogError: (_source, error) => errors.push(error.message),
+      });
+
+      expect(candidates).toEqual([]);
+      expect(errors).toHaveLength(2);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(`${MAX_CATALOG_RESPONSE_BYTES}-byte limit`),
+          expect.stringContaining('opencode catalog exceeds'),
+        ])
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 
 describe('free model rotation', () => {
-  it('gives preferred OpenRouter Nemotron 3 Ultra enough tokens when the requested cap is tiny', async () => {
-    const chat = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
-        choices: [{ message: { content: 'Nemotron result' }, finish_reason: 'stop' }],
-      }),
-    });
-    const fetchImpl = catalogFetch({
-      kilo: [kiloRow('weaker-kilo:free')],
-      openrouter: [openRouterRow('nvidia/nemotron-3-ultra-550b-a55b')],
-      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
-      chat,
-    });
-    const runKilo = vi.fn().mockResolvedValue({ content: 'weaker Kilo result', finishReason: 'stop' });
-    const runOpenCode = vi.fn().mockResolvedValue({ content: 'weaker OpenCode result', finishReason: 'stop' });
-    const result = await completeWithFreeModel('safe prompt', {
-      fetchImpl,
-      openRouterKey: 'test',
-      maxTokens: 20,
-      kiloCommand: '/fake-kilo',
-      runKilo,
-      opencodeCommand: '/opt/opencode',
-      runOpenCode,
-    });
-
-    expect(result).toMatchObject({
-      source: 'openrouter',
-      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
-      content: 'Nemotron result',
-    });
-    expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ max_tokens: 1024 });
-    expect(runKilo).not.toHaveBeenCalled();
-    expect(runOpenCode).not.toHaveBeenCalled();
-  });
-
   it('falls through to OpenCode using its tool-disabled completion adapter', async () => {
     const chat = vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
     const fetchImpl = catalogFetch({
@@ -321,6 +521,7 @@ describe('free model rotation', () => {
       model: 'beam-free',
       prompt: 'safe prompt',
       maxTokens: 1200,
+      timeoutMs: COMPLETION_TIMEOUT_MS,
     });
   });
 
@@ -349,31 +550,20 @@ describe('free model rotation', () => {
     expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ reasoning_effort: 'low', max_tokens: 1200 });
   });
 
-  it('tries every Nemotron 3 Ultra route before weaker models, then preserves fallback provider order', async () => {
+  it('tries every Nemotron provider route before weaker fallback routes', async () => {
     const attempts = [];
+    const nemotron = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     const chat = vi.fn(async (url, options) => {
       const model = JSON.parse(options.body).model;
-      if (url.includes('openrouter')) {
-        attempts.push(`openrouter/${model}`);
-        return { ok: false, status: 500, json: async () => ({}) };
-      }
-      attempts.push(`groq/${model}`);
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          model: 'openai/gpt-oss-120b',
-          choices: [{ message: { content: 'Groq result' }, finish_reason: 'stop' }],
-        }),
-      };
+      attempts.push(`openrouter/${model}`);
+      return { ok: false, status: 404, json: async () => ({ error: { message: 'model unavailable' } }) };
     });
     const fetchImpl = catalogFetch({
-      kilo: [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'), kiloRow('kilo:free')],
-      openrouter: [openRouterRow('nvidia/nemotron-3-ultra-550b-a55b'), openRouterRow('openrouter/model')],
-      groq: [{ id: 'openai/gpt-oss-120b' }],
+      kilo: [kiloRow(nemotron), kiloRow('kilo:1'), kiloRow('kilo:2'), kiloRow('kilo:3'), kiloRow('kilo:4')],
+      openrouter: [openRouterRow(nemotron.slice(0, -':free'.length)), ...['o1', 'o2', 'o3', 'o4'].map(openRouterRow)],
       opencode: [
-        { id: 'nemotron-3-ultra-free', name: 'NVIDIA Nemotron 3 Ultra Free', owned_by: 'opencode' },
-        { id: 'nemotron-3.5-super-vl-free', name: 'NVIDIA Nemotron 3.5 Super VL Free', owned_by: 'opencode' },
+        { id: nemotron, owned_by: 'opencode' },
+        { id: 'beam-free', owned_by: 'opencode' },
       ],
       chat,
     });
@@ -383,30 +573,65 @@ describe('free model rotation', () => {
     });
     const runOpenCode = vi.fn(async ({ model }) => {
       attempts.push(`opencode/${model}`);
-      return { error: 'model unavailable' };
+      if (model !== 'beam-free') return { error: 'model unavailable' };
+      return { content: 'OpenCode result', finishReason: 'stop', model };
     });
-    const result = await completeWithFreeModel('safe prompt', {
+
+    const result = await completeWithFreeModel('prompt', {
       fetchImpl,
-      openRouterKey: 'openrouter-test',
-      groqApiKey: 'groq-test',
-      groqFreePlan: true,
+      openRouterKey: 'rk',
       kiloCommand: '/fake-kilo',
       runKilo,
-      opencodeCommand: '/opt/opencode',
+      opencodeCommand: '/fake-opencode',
       runOpenCode,
     });
 
-    expect(result).toMatchObject({ source: 'groq', model: 'openai/gpt-oss-120b', content: 'Groq result' });
+    expect(result).toMatchObject({ source: 'opencode', model: 'beam-free', content: 'OpenCode result' });
+    expect(attempts.slice(0, 3)).toEqual([`kilo/${nemotron}`, `openrouter/${nemotron}`, `opencode/${nemotron}`]);
+    expect(attempts.slice(-1)).toEqual(['opencode/beam-free']);
+    expect(runKilo).toHaveBeenCalledTimes(2);
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(result.requestCounts).toMatchObject({ kilo: 2, openrouter: 2, opencode: 2 });
+  });
+
+  it('caps completion attempts at three per provider while rotating fallback models', async () => {
+    const attempts = [];
+    const nemotron = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const chat = vi.fn(async (_url, options) => {
+      const model = JSON.parse(options.body).model;
+      attempts.push(`openrouter/${model}`);
+      return { ok: false, status: 404, json: async () => ({ error: { message: 'model unavailable' } }) };
+    });
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow(nemotron), ...['kilo:1', 'kilo:2', 'kilo:3', 'kilo:4'].map(kiloRow)],
+      openrouter: [openRouterRow(nemotron.slice(0, -':free'.length)), ...['o1', 'o2', 'o3', 'o4'].map(openRouterRow)],
+      chat,
+    });
+    const runKilo = vi.fn(async ({ model }) => {
+      attempts.push(`kilo/${model}`);
+      return { error: 'model unavailable' };
+    });
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'rk',
+        kiloCommand: '/fake-kilo',
+        runKilo,
+        opencodeCommand: '',
+      })
+    ).rejects.toThrow(/No free model completed/);
+
     expect(attempts).toEqual([
-      'opencode/nemotron-3-ultra-free',
-      'kilo/nvidia/nemotron-3-ultra-550b-a55b:free',
-      'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free',
-      'opencode/nemotron-3.5-super-vl-free',
-      'kilo/kilo:free',
-      'openrouter/openrouter/model:free',
-      'groq/openai/gpt-oss-120b',
+      `kilo/${nemotron}`,
+      `openrouter/${nemotron}`,
+      'kilo/kilo:1',
+      'openrouter/o1:free',
+      'kilo/kilo:2',
+      'openrouter/o2:free',
     ]);
-    expect(result.requestCounts).toMatchObject({ kilo: 2, openrouter: 2, opencode: 2, groq: 1 });
+    expect(runKilo).toHaveBeenCalledTimes(3);
+    expect(chat).toHaveBeenCalledTimes(3);
   });
 
   it('rotates to the next Groq key on HTTP 429 from the first key', async () => {
@@ -657,6 +882,7 @@ describe('free model rotation', () => {
       directory,
       `const fs = require('node:fs');
 const args = process.argv.slice(2);
+const model = args[args.indexOf('--model') + 1];
 if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(9);
 if (!fs.readFileSync(args[args.indexOf('--file') + 1], 'utf8').includes('private prompt')) process.exit(8);
 console.log(JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }));
@@ -668,6 +894,51 @@ console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }))
         runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'private prompt', maxTokens: 64 })
       ).resolves.toMatchObject({ content: 'complete answer', finishReason: 'stop', model: 'beam-free', usage: null });
     } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('passes runtime paths but isolates OpenCode from unrelated credentials and config', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-env-test-'));
+    const overrides = {
+      HOME: '/fixture/opencode-home',
+      XDG_CONFIG_HOME: '/fixture/opencode-config',
+      XDG_DATA_HOME: '/fixture/opencode-data',
+      OPENROUTER_API_KEY: 'must-not-reach-opencode',
+      GROQ_API_KEY: 'must-not-reach-opencode',
+      KILO_CONFIG_CONTENT: 'must-not-reach-opencode',
+      OPENCODE_CONFIG_CONTENT: 'caller-config-must-be-replaced',
+      OPENCODE_CONFIG_DIR: '/fixture/private-opencode-config',
+      UNRELATED_SECRET: 'must-not-reach-opencode',
+    };
+    const previous = new Map(Object.keys(overrides).map((key) => [key, process.env[key]]));
+    const command = await writeFakeOpenCode(
+      directory,
+      `const expectedRuntime = {
+  HOME: '/fixture/opencode-home',
+  XDG_CONFIG_HOME: '/fixture/opencode-config',
+  XDG_DATA_HOME: '/fixture/opencode-data',
+};
+const mismatched = Object.entries(expectedRuntime).filter(([key, value]) => process.env[key] !== value);
+const leaked = ['OPENROUTER_API_KEY', 'GROQ_API_KEY', 'KILO_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR', 'UNRELATED_SECRET']
+  .filter((key) => process.env[key] !== undefined);
+if (mismatched.length || leaked.length) process.exit(10);
+if (process.env.OPENCODE_CONFIG_CONTENT === 'caller-config-must-be-replaced') process.exit(11);
+if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(12);
+if (process.env.OPENCODE_DISABLE_AUTOUPDATE !== '1' || process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS !== '1') process.exit(13);
+console.log(JSON.stringify({ type: 'text', part: { text: 'isolated answer' } }));`
+    );
+
+    for (const [key, value] of Object.entries(overrides)) process.env[key] = value;
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'private prompt', maxTokens: 64 })
+      ).resolves.toMatchObject({ content: 'isolated answer', finishReason: 'stop', model: 'beam-free' });
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       await rm(directory, { recursive: true, force: true });
     }
   });
@@ -713,10 +984,406 @@ process.exit(1);`
     }
   });
 
+  it('preserves a later OpenCode account quota event after a model-specific error on a non-zero exit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, message: 'Model rate limited' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'RateLimit.FreeUsageLimitError', message: 'Free usage limit reached' } }));
+process.exit(1);`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toMatchObject({
+        errorType: 'provider.error',
+        status: null,
+        accountQuota: true,
+        modelAttributable: false,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves later OpenCode account quota events on a clean CLI exit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, message: 'Model rate limited' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', status: 429, message: 'Free usage limit reached' } }));
+console.log(JSON.stringify({ type: 'text', part: { text: 'partial answer' } }));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).resolves.toMatchObject({
+        errorType: 'provider.free-limit',
+        status: 429,
+        accountQuota: true,
+        modelAttributable: false,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps content-policy rejection fail-closed when OpenCode emits multiple errors', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', status: 429, message: 'Free usage limit reached' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'CONTENT.FILTER', message: 'Provider rejected this request' } }));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).resolves.toMatchObject({
+        errorType: 'provider.error',
+        accountQuota: true,
+        contentPolicyRejected: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not turn a model-specific 429 into account quota when content policy also rejects', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, message: 'Model rate limited' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'content_filter', message: 'Provider rejected this request' } }));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).resolves.toMatchObject({
+        errorType: 'provider.error',
+        status: null,
+        accountQuota: false,
+        contentPolicyRejected: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a later model-specific 429 and its retry metadata after a generic OpenCode error', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.request-error', status: 500, message: 'Request failed' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-upstream-error', status: 500, message: 'Model upstream error' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.error', code: 'provider.model-rate-limit', status: 429, retryAfter: '2', message: 'Model rate limited' } }));
+process.exit(1);`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toMatchObject({
+        errorType: 'provider.error',
+        status: 429,
+        retryAfter: '2',
+        retryAfterMs: 2000,
+        modelAttributable: true,
+        accountQuota: false,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the longest valid OpenCode model 429 delay across retry metadata shapes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, retryAfter: '2', message: 'Model rate limited' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, retryAfterMs: '3500', message: 'Model rate limited' } }));
+console.log(JSON.stringify({ type: 'error', error: { type: 'provider.model-rate-limit', status: 429, responseHeaders: { 'Retry-After': '4', 'Retry-After-Ms': '5000' }, message: 'Model rate limited' } }));
+process.exit(1);`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toMatchObject({
+        errorType: 'provider.model-rate-limit',
+        status: 429,
+        retryAfter: '2',
+        retryAfterMs: 5000,
+        modelAttributable: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed on an OpenCode content-filter step finish without an error event', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'partial answer' } }));
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'content-filter' } }));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).resolves.toMatchObject({ errorType: 'content_filter', contentPolicyRejected: true });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a typed OpenCode quota event when another JSONL line is malformed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', message: 'Free usage limit reached' } }));
+console.log('not-json');
+process.exit(1);`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toMatchObject({ errorType: 'provider.free-limit', status: null, accountQuota: true });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { label: 'without reported cost', includeCost: false },
+    { label: 'with reported non-zero cost', includeCost: true },
+  ])('preserves safety metadata and stops fallback when Windows cleanup fails $label', async ({ includeCost }) => {
+    let child;
+    let rejectTermination;
+    let resolveChildClose;
+    let completionSettled = false;
+    const termination = new Promise((_, reject) => {
+      rejectTermination = reject;
+    });
+    const childClosed = new Promise((resolve) => {
+      resolveChildClose = resolve;
+    });
+    const spawnImpl = vi.fn(() => {
+      child = new EventEmitter();
+      child.pid = 4242;
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = vi.fn(() => {
+        queueMicrotask(() => child.emit('error', new Error('simulated direct child kill failure')));
+        return false;
+      });
+      child.stdout.once('end', () => {
+        child.stderr.end();
+        child.emit('close', null, 'SIGTERM');
+        resolveChildClose();
+      });
+      return child;
+    });
+    const terminateWindowsProcessTreeImpl = vi.fn(() => termination);
+    const completion = runOpenCodeCompletion({
+      command: process.execPath,
+      model: 'beam-free',
+      prompt: 'prompt',
+      maxTokens: 8,
+      platform: 'win32',
+      spawnImpl,
+      terminateWindowsProcessTreeImpl,
+    }).finally(() => {
+      completionSettled = true;
+    });
+
+    await vi.waitFor(() => expect(child).toBeDefined());
+    const output = [
+      JSON.stringify({ type: 'error', error: { type: 'content_filter', message: 'Blocked by policy' } }),
+      ...(includeCost ? [JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.01 } })] : []),
+      'x'.repeat(2 * 1024 * 1024),
+    ].join('\n');
+    child.stdout.write(Buffer.from(output));
+    await vi.waitFor(() => expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledOnce());
+    child.stdout.end();
+    await childClosed;
+    expect(completionSettled).toBe(false);
+
+    rejectTermination(new Error('simulated taskkill race'));
+    const expectedFailure = {
+      errorType: 'content_filter',
+      contentPolicyRejected: true,
+      safetyStop: true,
+      ...(includeCost
+        ? {
+            message: 'OpenCode reported non-zero or invalid cost',
+            reportedCost: true,
+            processFailure: expect.stringContaining('OpenCode process termination failed: simulated taskkill race'),
+          }
+        : {
+            message: expect.stringContaining('OpenCode process termination failed: simulated taskkill race'),
+          }),
+    };
+    await expect(completion).rejects.toMatchObject(expectedFailure);
+    expect(spawnImpl).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('fails closed on a reported OpenCode cost even when later output exceeds its cap', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.01 } }));
+process.stdout.write('x'.repeat(2 * 1024 * 1024));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toMatchObject({ safetyStop: true, reportedCost: true });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      'reported cost',
+      { type: 'step_finish', part: { reason: 'stop', cost: 0.01 } },
+      { reportedCost: true, safetyStop: true },
+    ],
+    [
+      'content-policy rejection',
+      { type: 'error', error: { type: 'content_filter', message: 'Blocked by policy' } },
+      { contentPolicyRejected: true, safetyStop: true },
+    ],
+  ])('preserves buffered OpenCode %s when Windows tree termination times out', async (_label, event, expected) => {
+    let child;
+    const spawnImpl = () => {
+      child = new EventEmitter();
+      child.pid = 4242;
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from(JSON.stringify(event) + '\n'));
+        child.stdout.emit('data', Buffer.alloc(2 * 1024 * 1024));
+      });
+      return child;
+    };
+    const terminateWindowsProcessTreeImpl = vi.fn(() => Promise.reject(new Error('taskkill failed')));
+
+    const error = await runOpenCodeCompletion({
+      command: '/unused/opencode',
+      model: 'beam-free',
+      prompt: 'prompt',
+      maxTokens: 8,
+      timeoutMs: 10_000,
+      platform: 'win32',
+      spawnImpl,
+      terminateWindowsProcessTreeImpl,
+    }).then(
+      () => null,
+      (failure) => failure
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject(expected);
+    if (!expected.safetyStop) expect(error.safetyStop).toBeUndefined();
+    expect(terminateWindowsProcessTreeImpl).toHaveBeenCalledWith(4242);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it.each([
+    ['number zero', 0, false, true],
+    ['string zero', '0', false, true],
+    ['boolean false', false, false, false],
+    ['empty string', '', false, false],
+    ['whitespace string', ' ', true, false],
+    ['array', [], true, false],
+  ])('accepts only exact zero OpenCode cost metadata: %s', async (_label, cost, overflow, shouldAccept) => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const overflowScript = overflow ? "\nprocess.stdout.write('x'.repeat(2 * 1024 * 1024));" : '';
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: ${JSON.stringify(cost)} } }));${overflowScript}`
+    );
+
+    try {
+      const completion = runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 });
+      if (overflow) {
+        await expect(completion).rejects.toMatchObject({ safetyStop: true });
+      } else if (shouldAccept) {
+        await expect(completion).resolves.toMatchObject({ content: 'answer', finishReason: 'stop' });
+      } else {
+        await expect(completion).resolves.toMatchObject({
+          error: 'OpenCode reported non-zero or invalid cost',
+          safetyStop: true,
+        });
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('rejects non-free OpenCode IDs before starting the CLI', async () => {
     await expect(
       runOpenCodeCompletion({ command: '/missing-opencode', model: 'beam', prompt: 'prompt', maxTokens: 8 })
     ).resolves.toMatchObject({ error: 'OpenCode model is not an eligible free catalog ID' });
+  });
+
+  it('requires provider ownership before starting the exact Nemotron OpenCode route', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    await expect(runOpenCodeCompletion({ command: '/missing-opencode', model, prompt: 'prompt' })).resolves.toEqual({
+      error: 'OpenCode model is not an eligible free catalog ID',
+    });
+    await expect(
+      runOpenCodeCompletion({ command: '/missing-opencode', model, prompt: 'prompt', providerOwned: true })
+    ).rejects.toThrow(/ENOENT/);
+  });
+
+  it('runs provider-owned Nemotron through the tool-free OpenCode adapter with its minimum token profile', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-nemotron-'));
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const command = await writeFakeOpenCode(
+      directory,
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+const valueAfter = (flag) => args[args.indexOf(flag) + 1];
+if (!args.includes('--standalone') || !args.includes('run')) process.exit(4);
+if (valueAfter('--model') !== 'opencode/${model}') process.exit(5);
+if (valueAfter('--variant') !== 'high') process.exit(6);
+if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(7);
+if (!args.at(-1).includes('about 4096 tokens or fewer')) process.exit(8);
+if (!fs.readFileSync(valueAfter('--file'), 'utf8').includes('private prompt')) process.exit(9);
+console.log(JSON.stringify({ type: 'text', part: { text: 'provider-owned Nemotron result' } }));
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0, tokens: { input: 8, output: 14 } } }));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({
+          command,
+          model,
+          prompt: 'private prompt',
+          maxTokens: 1200,
+          providerOwned: true,
+        })
+      ).resolves.toMatchObject({
+        model,
+        content: 'provider-owned Nemotron result',
+        finishReason: 'stop',
+        usage: { cost: 0 },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('rejects invalid OpenCode timeouts before starting the CLI', async () => {
@@ -728,71 +1395,179 @@ process.exit(1);`
         command: '/missing-opencode',
         model: 'beam-free',
         prompt: 'prompt',
-        timeoutMs: COMPLETION_TIMEOUT_MS + 1,
+        timeoutMs: 12 * 60 * 1000 + 1,
       })
     ).resolves.toMatchObject({ error: 'Invalid OpenCode timeout' });
   });
 
-  it('kills the OpenCode process tree after a timeout', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
-    const pidFile = join(directory, 'descendant.pid');
-    const sentinel = join(directory, 'descendant-survived');
-    const descendantScript = `process.on('SIGTERM', () => {}); setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'), 4000); setInterval(() => {}, 1000);`;
-    const command = await writeFakeOpenCode(
-      directory,
-      `const { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nconst descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' });\nfs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));\nsetInterval(() => {}, 1000);\n`
-    );
-    let descendantPid;
-
-    try {
+  it('rejects invalid output-token limits before starting the OpenCode CLI', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    for (const maxTokens of [null, '4096', 1.5, 65_537]) {
       await expect(
         runOpenCodeCompletion({
-          command,
-          model: 'beam-free',
+          command: '/missing-opencode',
+          model,
           prompt: 'prompt',
-          maxTokens: 8,
-          timeoutMs: 1000,
+          maxTokens,
+          providerOwned: true,
         })
-      ).rejects.toThrow('OpenCode timed out after 1000ms');
-      descendantPid = Number(await readFile(pidFile, 'utf8'));
-      await new Promise((resolve) => setTimeout(resolve, 4500));
-      expect(existsSync(sentinel)).toBe(false);
-    } finally {
-      if (Number.isSafeInteger(descendantPid) && descendantPid > 0) {
-        try {
-          process.kill(descendantPid);
-        } catch (error) {
-          if (error?.code !== 'ESRCH') throw error;
-        }
-      }
-      await rm(directory, { recursive: true, force: true });
+      ).resolves.toMatchObject({ error: 'Invalid token limit' });
     }
-  }, 15_000);
+  });
 
-  it('rejects an explicit non-zero OpenCode cost even for a free catalog ID', async () => {
+  it('kills the OpenCode process tree after a timeout', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const parentPidFile = join(directory, 'opencode.pid');
+    const pidFile = join(directory, 'descendant.pid');
+    const parentSentinel = join(directory, 'opencode-survived');
+    const sentinel = join(directory, 'descendant-survived');
+    // The timeout starts at spawn, so let both Node processes start under a busy Vitest worker.
+    const timeoutMs = 5_000;
+    const sentinelDelayMs = timeoutMs + 5_000;
+    const descendantScript = [
+      "process.on('SIGTERM', () => {});",
+      `setTimeout(() => { try { require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'); } finally { process.exit(0); } }, ${sentinelDelayMs});`,
+      'setInterval(() => {}, 1000);',
+    ].join(' ');
     const command = await writeFakeOpenCode(
       directory,
-      `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));
-console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`
+      `const { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nfs.writeFileSync(${JSON.stringify(parentPidFile)}, String(process.pid));\nconst descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' });\nfs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));\nsetTimeout(() => { try { fs.writeFileSync(${JSON.stringify(parentSentinel)}, 'alive'); } finally { process.exit(0); } }, ${sentinelDelayMs});\nsetInterval(() => {}, 1000);\n`
     );
+    let parentPid;
+    let descendantPid;
+    let completionSettled = false;
+    let cleanupGuard;
+    const completion = runOpenCodeCompletion({
+      command,
+      model: 'beam-free',
+      prompt: 'prompt',
+      maxTokens: 8,
+      timeoutMs,
+    }).finally(() => {
+      completionSettled = true;
+    });
+    const completionGuard = new Promise((_, reject) => {
+      // A broken tree killer must fail this test soon enough for finally to clean up its fixtures.
+      cleanupGuard = setTimeout(
+        () => reject(new Error('OpenCode timeout test did not close its child process')),
+        timeoutMs + 15_000
+      );
+    });
+
+    try {
+      await expect(Promise.race([completion, completionGuard])).rejects.toThrow(
+        `OpenCode timed out after ${timeoutMs}ms`
+      );
+      clearTimeout(cleanupGuard);
+      parentPid = Number(await readFile(parentPidFile, 'utf8'));
+      descendantPid = Number(await readFile(pidFile, 'utf8'));
+      // Observe past the latest time the live descendant could create its sentinel.
+      await new Promise((resolve) => setTimeout(resolve, sentinelDelayMs + 1_000));
+      expect(existsSync(sentinel)).toBe(false);
+      expect(existsSync(parentSentinel)).toBe(false);
+    } finally {
+      clearTimeout(cleanupGuard);
+      try {
+        if (!Number.isSafeInteger(parentPid) || parentPid <= 0) {
+          try {
+            parentPid = Number(await readFile(parentPidFile, 'utf8'));
+          } catch (error) {
+            if (error?.code !== 'ENOENT') throw error;
+          }
+        }
+        if (!Number.isSafeInteger(descendantPid) || descendantPid <= 0) {
+          try {
+            descendantPid = Number(await readFile(pidFile, 'utf8'));
+          } catch (error) {
+            if (error?.code !== 'ENOENT') throw error;
+          }
+        }
+        if (!completionSettled && Number.isSafeInteger(parentPid) && parentPid > 0) {
+          if (process.platform === 'win32') {
+            const result = spawnSync('taskkill.exe', ['/PID', String(parentPid), '/T', '/F'], {
+              encoding: 'utf8',
+              maxBuffer: 4_096,
+              timeout: 5_000,
+              windowsHide: true,
+            });
+            if (result.status !== 0) {
+              try {
+                process.kill(parentPid, 'SIGKILL');
+              } catch (error) {
+                if (error?.code !== 'ESRCH') throw error;
+              }
+            }
+          } else {
+            try {
+              // The runner starts OpenCode in its own process group on POSIX.
+              process.kill(-parentPid, 'SIGKILL');
+            } catch (error) {
+              if (error?.code !== 'ESRCH') throw error;
+            }
+          }
+        }
+      } finally {
+        try {
+          if (!Number.isSafeInteger(descendantPid) || descendantPid <= 0) {
+            try {
+              descendantPid = Number(await readFile(pidFile, 'utf8'));
+            } catch (error) {
+              if (error?.code !== 'ENOENT') throw error;
+            }
+          }
+          if (Number.isSafeInteger(descendantPid) && descendantPid > 0 && !existsSync(sentinel)) {
+            try {
+              // The fake descendant ignores SIGTERM; force it down on every assertion path.
+              process.kill(descendantPid, 'SIGKILL');
+            } catch (error) {
+              if (error?.code !== 'ESRCH') throw error;
+            }
+          }
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
+      }
+    }
+  }, 30_000);
+
+  it.each([
+    [
+      'a successful terminal event',
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));\nconsole.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`,
+    ],
+    [
+      'a clean-exit provider error event',
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.request-error' }, cost: 0.001 }));`,
+    ],
+    ['a tool event', `console.log(JSON.stringify({ type: 'tool_use', part: { type: 'tool' }, cost: 0.001 }));`],
+    [
+      'a nested provider error cost',
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.request-error', cost: 0.001 } }));`,
+    ],
+  ])('rejects reported OpenCode costs before accepting or classifying %s', async (_scenario, source) => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(directory, source);
 
     try {
       await expect(
         runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
-      ).resolves.toMatchObject({ error: 'OpenCode reported non-zero or invalid cost' });
+      ).resolves.toMatchObject({ error: 'OpenCode reported non-zero or invalid cost', safetyStop: true });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });
 
-  it('moves to the next provider after exhaustion and never retries that source', async () => {
+  it('tries the highest-ranked Kilo model before falling back to weaker OpenRouter models', async () => {
     const chat = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
     });
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1'), kiloRow('k2')], openrouter: [openRouterRow('o1')], chat });
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'), kiloRow('k2')],
+      openrouter: [openRouterRow('o1')],
+      chat,
+    });
     const runKilo = vi.fn().mockResolvedValue({ error: 'provider quota', exhaustSource: true });
     const result = await completeWithFreeModel('safe prompt', {
       fetchImpl,
@@ -802,29 +1577,47 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     });
     expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free', content: 'done' });
     expect(runKilo).toHaveBeenCalledTimes(1);
+    expect(runKilo).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'nvidia/nemotron-3-ultra-550b-a55b:free', maxTokens: 4096, timeoutMs: 720_000 })
+    );
+    expect(result.requestCounts).toMatchObject({ kilo: 1, openrouter: 1 });
     expect(chat).toHaveBeenCalledTimes(1);
     expect(JSON.parse(chat.mock.calls[0][1].body).model).toBe('o1:free');
   });
 
-  it('exhausts Kilo after its resolved CLI cannot start instead of retrying every model', async () => {
-    const chat = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
+  it('does not quarantine Kilo for a process-tree cleanup failure without cost evidence', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-kilo-cleanup-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const chat = vi.fn();
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')],
+      openrouter: [openRouterRow('o1')],
+      chat,
     });
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1'), kiloRow('k2')], openrouter: [openRouterRow('o1')], chat });
-    const spawnError = Object.assign(new Error('Kilo CLI could not be started'), { code: 'KILO_SPAWN' });
-    const runKilo = vi.fn().mockRejectedValue(spawnError);
-    const result = await completeWithFreeModel('safe prompt', {
-      fetchImpl,
-      openRouterKey: 'test',
-      kiloCommand: '/invalid-kilo-cli',
-      runKilo,
+    const runKilo = vi.fn().mockResolvedValue({
+      error: 'Kilo process-tree termination failed',
+      exhaustSource: true,
+      safetyStop: true,
     });
 
-    expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free', content: 'done' });
-    expect(runKilo).toHaveBeenCalledTimes(1);
-    expect(result.requestCounts).toMatchObject({ kilo: 1, openrouter: 1 });
+    try {
+      await expect(
+        completeWithFreeModel('prompt', {
+          fetchImpl,
+          openRouterKey: 'rk',
+          kiloCommand: '/fake-kilo',
+          runKilo,
+          quarantineFile,
+        })
+      ).rejects.toThrow(/Kilo process-tree termination failed/);
+      expect(runKilo).toHaveBeenCalledOnce();
+      expect(chat).not.toHaveBeenCalled();
+      expect((await readQuarantineState(quarantineFile)).entries['kilo:nvidia/nemotron-3-ultra-550b-a55b:free']).toBe(
+        undefined
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('stops with a clear error when every free source is exhausted', async () => {
@@ -832,6 +1625,44 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], chat });
     await expect(completeWithFreeModel('prompt', { fetchImpl })).rejects.toThrow(/No free model completed/);
     expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('calls onAllFreeExhausted once only after every free source fails', async () => {
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')] });
+    const runKilo = vi.fn().mockResolvedValue({ error: 'free tier exhausted', exhaustSource: true });
+    const onAllFreeExhausted = vi.fn();
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        kiloCommand: '/fake-kilo',
+        runKilo,
+        onAllFreeExhausted,
+      })
+    ).rejects.toThrow(/No free model completed/);
+
+    expect(onAllFreeExhausted).toHaveBeenCalledOnce();
+    expect(onAllFreeExhausted).toHaveBeenCalledWith({
+      requestCounts: { kilo: 1, openrouter: 0 },
+      errors: ['kilo/k1: free tier exhausted'],
+    });
+  });
+
+  it('does not call onAllFreeExhausted after a free model succeeds', async () => {
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')] });
+    const runKilo = vi.fn().mockResolvedValue({ model: 'k1', content: 'done', finishReason: 'stop' });
+    const onAllFreeExhausted = vi.fn();
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        kiloCommand: '/fake-kilo',
+        runKilo,
+        onAllFreeExhausted,
+      })
+    ).resolves.toMatchObject({ source: 'kilo', model: 'k1', content: 'done' });
+
+    expect(onAllFreeExhausted).not.toHaveBeenCalled();
   });
 
   it('exhausts a single-key provider on HTTP 401 to avoid retrying an invalid key', async () => {
@@ -847,15 +1678,15 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     expect(chat.mock.calls[0][1].headers.Authorization).toBe('Bearer expired-key');
   });
 
-  it('caps retries to three model requests per source before rotating providers', async () => {
+  it('automatically routes the exact Nemotron route through Kilo before weaker fallback routes', async () => {
     const chat = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
     });
-    const runKilo = vi.fn().mockResolvedValue({ error: 'model unavailable' });
+    const runKilo = vi.fn().mockResolvedValue({ error: 'provider unavailable', exhaustSource: true });
     const fetchImpl = catalogFetch({
-      kilo: [kiloRow('k1'), kiloRow('k2'), kiloRow('k3'), kiloRow('k4')],
+      kilo: [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'), kiloRow('k2'), kiloRow('k3'), kiloRow('k4')],
       openrouter: [openRouterRow('o1')],
       chat,
     });
@@ -866,10 +1697,242 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       runKilo,
     });
     expect(result.source).toBe('openrouter');
-    expect(runKilo).toHaveBeenCalledTimes(3);
-    expect(runKilo.mock.calls.map(([options]) => options.model)).toEqual(['k1', 'k2', 'k3']);
+    expect(runKilo).toHaveBeenCalledTimes(1);
+    expect(runKilo.mock.calls[0][0]).toMatchObject({ model: 'nvidia/nemotron-3-ultra-550b-a55b:free' });
     expect(chat).toHaveBeenCalledTimes(1);
     expect(JSON.parse(chat.mock.calls[0][1].body).model).toBe('o1:free');
+  });
+
+  it('skips exhausted OpenRouter quota for the UTC date and re-enables it after rollover without a cron', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-openrouter-quota-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const poolStateFile = join(directory, 'pool-state.json');
+    const beforeRollover = Date.parse('2026-11-09T23:59:00.000Z');
+    const afterRollover = Date.parse('2026-11-10T00:00:01.000Z');
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(beforeRollover);
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'vendor/model:free',
+        choices: [{ message: { content: 'next-day result' }, finish_reason: 'stop' }],
+      }),
+    });
+    const keyInfo = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 17, limit: 17, remaining: 0 } } }),
+      }))
+      .mockImplementationOnce(() => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 0, limit: 50, remaining: 50 } } }),
+      }));
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('vendor/model')], keyInfo, chat });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', quarantineFile, poolStateFile })
+      ).rejects.toThrow(/No free model completed/);
+      await expect(
+        completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', quarantineFile, poolStateFile })
+      ).rejects.toThrow(/No free model completed/);
+
+      const state = JSON.parse(await readFile(poolStateFile, 'utf8'));
+      expect(state.openRouterExhaustedUtcDate).toBe('2026-11-09');
+      expect(keyInfo).toHaveBeenCalledTimes(1);
+      expect(chat).not.toHaveBeenCalled();
+
+      nowSpy.mockReturnValue(afterRollover);
+      const nextDay = await completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'rk',
+        quarantineFile,
+        poolStateFile,
+      });
+      expect(nextDay).toMatchObject({ source: 'openrouter', model: 'vendor/model:free', content: 'next-day result' });
+      expect(keyInfo).toHaveBeenCalledTimes(2);
+      expect(chat).toHaveBeenCalledTimes(1);
+    } finally {
+      nowSpy.mockRestore();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not retry or quarantine OpenCode provider.free-limit account quota errors', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-opencode-limit-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const poolStateFile = join(directory, 'pool-state.json');
+    const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'openai/gpt-oss-120b',
+        choices: [{ message: { content: 'Groq fallback' }, finish_reason: 'stop' }],
+      }),
+    });
+    const fetchImpl = catalogFetch({
+      opencode: [
+        { id: 'beam-free', owned_by: 'opencode' },
+        { id: 'flint-free', owned_by: 'opencode' },
+      ],
+      groq: [{ id: 'openai/gpt-oss-120b' }],
+      chat,
+    });
+    const runOpenCode = vi.fn().mockResolvedValue({
+      error: 'OpenCode free account limit',
+      errorType: 'RateLimit.FreeUsageLimitError',
+      status: 429,
+      retryAfterMs: 30_000,
+    });
+
+    try {
+      const result = await completeWithFreeModel('prompt', {
+        fetchImpl,
+        opencodeCommand: '/fake-opencode',
+        runOpenCode,
+        waitForRetryAfter,
+        groqApiKey: 'gk',
+        groqFreePlan: true,
+        quarantineFile,
+        poolStateFile,
+      });
+
+      expect(result.source).toBe('groq');
+      expect(runOpenCode).toHaveBeenCalledTimes(1);
+      expect(waitForRetryAfter).not.toHaveBeenCalled();
+      expect((await readQuarantineState(quarantineFile)).entries['opencode:beam-free']).toBeUndefined();
+      await expect(readFile(poolStateFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('retries a non-account OpenCode 429 once after a bounded Retry-After', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-opencode-retry-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const poolStateFile = join(directory, 'pool-state.json');
+    const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+    const fetchImpl = catalogFetch({ opencode: [{ id: 'beam-free', owned_by: 'opencode' }], chat: vi.fn() });
+    const runOpenCode = vi
+      .fn()
+      .mockResolvedValueOnce({
+        error: 'model rate limited',
+        errorType: 'model.rate_limit',
+        status: 429,
+        retryAfterMs: 5000,
+        modelAttributable: true,
+      })
+      .mockResolvedValueOnce({ content: 'recovered', finishReason: 'stop', model: 'beam-free' });
+
+    try {
+      const result = await completeWithFreeModel('prompt', {
+        fetchImpl,
+        opencodeCommand: '/fake-opencode',
+        runOpenCode,
+        waitForRetryAfter,
+        quarantineFile,
+        poolStateFile,
+      });
+
+      expect(result).toMatchObject({ source: 'opencode', model: 'beam-free', content: 'recovered' });
+      expect(runOpenCode).toHaveBeenCalledTimes(2);
+      expect(waitForRetryAfter).toHaveBeenCalledWith(5000);
+      expect(
+        JSON.parse(await readFile(poolStateFile, 'utf8')).modelFailures['opencode:beam-free'].failures
+      ).toHaveLength(1);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed on OpenCode content-policy rejection without falling back to Groq', async () => {
+    const chat = vi.fn();
+    const fetchImpl = catalogFetch({
+      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      groq: [{ id: 'openai/gpt-oss-120b' }],
+      chat,
+    });
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        opencodeCommand: '/fake-opencode',
+        runOpenCode: vi.fn().mockResolvedValue({
+          error: 'blocked by provider moderation',
+          errorType: 'content_policy_violation',
+          contentPolicyRejected: true,
+        }),
+        groqApiKey: 'gk',
+        groqFreePlan: true,
+      })
+    ).rejects.toThrow(/content policy rejected/);
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('fails closed and quarantines OpenCode non-zero cost before Groq fallback', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-opencode-cost-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const chat = vi.fn();
+    const fetchImpl = catalogFetch({
+      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      groq: [{ id: 'openai/gpt-oss-120b' }],
+      chat,
+    });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', {
+          fetchImpl,
+          opencodeCommand: '/fake-opencode',
+          runOpenCode: vi.fn().mockResolvedValue({ error: 'reported cost', safetyStop: true }),
+          groqApiKey: 'gk',
+          groqFreePlan: true,
+          quarantineFile,
+        })
+      ).rejects.toThrow(/refusing further requests/);
+      expect(chat).not.toHaveBeenCalled();
+      expect((await readQuarantineState(quarantineFile)).entries['opencode:beam-free']).toMatchObject({
+        reason: 'non_zero_cost',
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('quarantines OpenCode reported cost on an abnormal process exit before Groq fallback', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-opencode-cost-exit-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.01 } }));
+process.stdout.write('x'.repeat(2 * 1024 * 1024));`
+    );
+    const chat = vi.fn();
+    const fetchImpl = catalogFetch({
+      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      groq: [{ id: 'openai/gpt-oss-120b' }],
+      chat,
+    });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', {
+          fetchImpl,
+          opencodeCommand: command,
+          groqApiKey: 'gk',
+          groqFreePlan: true,
+          quarantineFile,
+        })
+      ).rejects.toThrow(/refusing further requests/);
+      expect(chat).not.toHaveBeenCalled();
+      expect((await readQuarantineState(quarantineFile)).entries['opencode:beam-free']).toMatchObject({
+        reason: 'non_zero_cost',
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('ignores caller supplied paid candidates and only uses the live filtered catalog', async () => {
@@ -928,25 +1991,30 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     expect(chat).toHaveBeenCalledTimes(2);
   });
 
-  it('uses short control-plane timeouts and a five-minute inference timeout', async () => {
+  it('applies model-specific inference timeouts and a short control-plane timeout', async () => {
     const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
     const timeoutDurations = [];
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockImplementation((duration) => {
       timeoutDurations.push(duration);
       return originalTimeout(duration);
     });
+    const nemotron = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     const chat = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
+      json: async () => ({ model: nemotron, choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
     });
-    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('o1')], chat });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow(nemotron.slice(0, -':free'.length))], chat });
 
     try {
-      await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
+      await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test', maxTokens: 1200 });
       expect(timeoutDurations).toContain(CONTROL_PLANE_TIMEOUT_MS);
-      expect(timeoutDurations).toContain(COMPLETION_TIMEOUT_MS);
+      expect(timeoutDurations).toContain(12 * 60 * 1000);
       expect(COMPLETION_TIMEOUT_MS).toBe(300_000);
+      expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({
+        max_tokens: 4096,
+        reasoning: { effort: 'high' },
+      });
     } finally {
       timeoutSpy.mockRestore();
     }
@@ -1104,6 +2172,22 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
 describe('provider content policy handling', () => {
   it.each([
     ['content-filter error code', { error: { code: 'content_filter' } }],
+    [
+      'OpenRouter typed content-policy error',
+      { error: { code: 403, metadata: { error_type: 'content_policy_violation' } } },
+    ],
+    ['OpenRouter typed refusal', { error: { code: 403, metadata: { error_type: 'refusal' } } }],
+    [
+      'OpenRouter choice error policy metadata',
+      {
+        choices: [
+          {
+            finish_reason: 'error',
+            error: { code: 403, metadata: { error_type: 'content_policy_violation' } },
+          },
+        ],
+      },
+    ],
     ['content policy message', { error: { message: 'This prompt violates our usage policy.' } }],
     [
       'OpenRouter prompt-injection guardrail',
@@ -1124,6 +2208,11 @@ describe('provider content policy handling', () => {
       { error: { code: 'content_filter_error', message: 'Content filter unavailable.' } },
     ],
     ['ordinary rate limit', { error: { code: 429, message: 'Rate limited.' } }],
+    ['OpenRouter provider rate limit type', { error: { metadata: { error_type: 'rate_limit_exceeded' } } }],
+    [
+      'OpenRouter choice rate limit type',
+      { choices: [{ error: { metadata: { error_type: 'rate_limit_exceeded' } } }] },
+    ],
     ['generic bad request', { error: { message: 'Bad request.' } }],
     ['empty payload', null],
   ])('does not confuse a non-rejection with a content-policy block: %s', (_label, payload) => {
@@ -1188,32 +2277,31 @@ describe('free model runner CLI', () => {
     const outputPath = join(directory, 'result.txt');
     const stdout = { write: vi.fn() };
     const stderr = { write: vi.fn() };
-    const fetchImpl = readableFetch((url) =>
-      url.endsWith('/models')
-        ? Promise.resolve({ ok: true, json: async () => [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')] })
-        : Promise.resolve({
-            ok: true,
-            json: async () => ({
-              model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
-              choices: [{ message: { content: 'concise result' }, finish_reason: 'stop' }],
-            }),
-          })
-    );
+    const fetchImpl = catalogFetch({
+      openrouter: [openRouterRow('vendor/model')],
+      chat: vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          model: 'vendor/model:free',
+          choices: [{ message: { content: 'concise result' }, finish_reason: 'stop' }],
+        }),
+      }),
+    });
     try {
       await writeFile(promptPath, 'summarize briefly', 'utf8');
       const code = await main(['--prompt-file', promptPath, '--output-file', outputPath], {
         fetchImpl,
-        openRouterKey: '',
-        kiloCommand: '/fake-kilo',
-        runKilo: vi.fn().mockResolvedValue({ content: 'concise result', finishReason: 'stop' }),
+        openRouterKey: 'test-key',
+        quarantineFile: join(directory, 'quarantine.json'),
+        poolStateFile: join(directory, 'pool-state.json'),
         initializeLegacyQuarantine: false,
         stdout,
         stderr,
       });
       expect(code).toBe(0);
       expect(await readFile(outputPath, 'utf8')).toBe(
-        '[kilo/nvidia/nemotron-3-ultra-550b-a55b:free]\nFinish reason: stop\nUsage: null\n' +
-          'Requests attempted (this run): {"kilo":1,"openrouter":0}\n\nconcise result\n'
+        '[openrouter/vendor/model:free]\nFinish reason: stop\nUsage: null\n' +
+          'Requests attempted (this run): {"kilo":0,"openrouter":1}\n\nconcise result\n'
       );
       expect(stdout.write).not.toHaveBeenCalled();
       expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Result written to'));

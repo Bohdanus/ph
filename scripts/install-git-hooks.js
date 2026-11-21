@@ -32,6 +32,7 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { samePath } from './lib/path-identity.mjs';
 
 import { registerMainWorktree } from './main-worktree-guard.mjs';
 
@@ -219,6 +220,90 @@ function hasLinkedWorktree(records, commonDir) {
   });
 }
 
+function isMainRecord(record) {
+  return /(?:^|\n)branch refs\/heads\/main(?:\n|$)/.test(record) && !/(?:^|\n)prunable(?:\s|$)/.test(record);
+}
+
+function worktreePath(record) {
+  return record.match(/^worktree (.+)$/m)?.[1] ?? null;
+}
+
+function isCurrentMainCheckout(recordPath, commonDir) {
+  try {
+    const actualPath = realpathSync(recordPath);
+    const actualCommonDir = realpathSync(
+      git(['-C', actualPath, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+    );
+    const actualBranch = git(['-C', actualPath, 'symbolic-ref', '--quiet', '--short', 'HEAD']);
+    return actualBranch === 'main' && samePath(actualCommonDir, realpathSync(commonDir));
+  } catch {
+    return false;
+  }
+}
+
+function registeredMainWorktree(records, commonDir) {
+  try {
+    const registeredPath = realpathSync(git(['config', '--local', '--get', 'ph.mainWorktreePath']));
+    const registeredGitDir = realpathSync(git(['config', '--local', '--get', 'ph.mainWorktreeGitDir']));
+    const registeredIdentity = git(['config', '--local', '--get', 'ph.mainWorktreeIdentity']);
+    if (!registeredIdentity) return null;
+
+    const mainRecord = records.find((record) => {
+      const recordPath = worktreePath(record);
+      if (!isMainRecord(record) || !recordPath) return false;
+      return samePath(realpathSync(recordPath), registeredPath);
+    });
+    if (!mainRecord) return null;
+
+    const actualGitDir = realpathSync(
+      git(['-C', registeredPath, 'rev-parse', '--path-format=absolute', '--absolute-git-dir'])
+    );
+    const actualCommonDir = realpathSync(
+      git(['-C', registeredPath, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+    );
+    if (!samePath(actualGitDir, registeredGitDir) || !samePath(actualCommonDir, realpathSync(commonDir))) return null;
+    return readFileSync(path.join(actualGitDir, 'kilo-main-worktree-identity'), 'utf8').trim() === registeredIdentity
+      ? registeredPath
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function chooseMainWorktree(records, commonDir) {
+  const mainRecords = records.filter(isMainRecord);
+  const recoveryPath = process.env.KILO_MAIN_LANDING_RECOVERY_PATH;
+  if (recoveryPath) {
+    const currentPath = realpathSync(git(['rev-parse', '--show-toplevel']));
+    const currentBranch = git(['symbolic-ref', '--quiet', 'HEAD']);
+    const currentCommonDir = realpathSync(git(['rev-parse', '--path-format=absolute', '--git-common-dir']));
+    if (
+      currentBranch !== 'refs/heads/main' ||
+      !samePath(currentPath, realpathSync(recoveryPath)) ||
+      !samePath(currentCommonDir, realpathSync(commonDir)) ||
+      !mainRecords.some((record) => {
+        const recordPath = worktreePath(record);
+        return recordPath && samePath(realpathSync(recordPath), currentPath);
+      })
+    ) {
+      throw new Error('the recovery path is not the current main worktree in this repository');
+    }
+    return currentPath;
+  }
+
+  if (mainRecords.length === 1) {
+    const recordPath = worktreePath(mainRecords[0]);
+    return recordPath && isCurrentMainCheckout(recordPath, commonDir) ? realpathSync(recordPath) : null;
+  }
+  if (mainRecords.length > 1) {
+    // A forced duplicate branch is ambiguous; preserve the saved identity unless recovery explicitly selects its checkout.
+    const registeredPath = registeredMainWorktree(records, commonDir);
+    if (registeredPath) return registeredPath;
+    throw new Error('multiple main worktrees exist but the saved designated-main identity is unavailable');
+  }
+  return null;
+}
+
 function main() {
   let commonDir;
   try {
@@ -229,10 +314,9 @@ function main() {
   }
 
   const records = git(['worktree', 'list', '--porcelain']).split('\n\n');
-  const mainRecord = records.find((record) => /(?:^|\n)branch refs\/heads\/main(?:\n|$)/.test(record));
-  const mainPath = mainRecord?.match(/^worktree (.+)$/m)?.[1];
+  const mainPath = chooseMainWorktree(records, commonDir);
   const hasLinkedCheckout = !mainPath && hasLinkedWorktree(records, commonDir);
-  if (mainPath && !registerMainWorktree(mainPath, { required: true })) {
+  if (mainPath && !registerMainWorktree(mainPath, { required: true, expectedCommonDir: commonDir })) {
     throw new Error(`could not persist the designated main worktree identity for ${mainPath}`);
   }
   if (!mainPath && process.env.CI === 'true' && !hasLinkedCheckout) {
@@ -335,7 +419,13 @@ function main() {
         'cannot identify the designated main worktree: keep refs/heads/main checked out during the first hook install, or restore its saved identity'
       );
     }
-    if (!registerMainWorktree(validatedDetachedMainPath, { required: true, allowDetached: true })) {
+    if (
+      !registerMainWorktree(validatedDetachedMainPath, {
+        required: true,
+        allowDetached: true,
+        expectedCommonDir: commonDir,
+      })
+    ) {
       throw new Error(`could not migrate the detached main worktree identity for ${validatedDetachedMainPath}`);
     }
   }

@@ -135,6 +135,7 @@ function createOverlayContext() {
     stroke: vi.fn(),
     save: vi.fn(),
     restore: vi.fn(),
+    setTransform: vi.fn(),
     setLineDash: vi.fn(),
     strokeStyle: '',
     fillStyle: '',

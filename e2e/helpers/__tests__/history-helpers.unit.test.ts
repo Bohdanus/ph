@@ -15,7 +15,13 @@ import {
   wholeCanvasBand,
   type CanvasBand,
 } from '../history-helpers';
-import { type BoundingBox, type ImageDataResult, viewportClip, type ViewportClip } from '../canvas-helpers';
+import {
+  viewportClip,
+  WHOLE_CAPTURE,
+  type BoundingBox,
+  type ImageDataResult,
+  type ViewportClip,
+} from '../canvas-helpers';
 import {
   BLACK,
   DARK_GRAY,
@@ -24,8 +30,7 @@ import {
   WHITE,
   createFakePage,
   createImageData,
-  createPageMock,
-  createScreenshotSpy,
+  createScrollablePage,
   createTestImage,
   fillAll,
   resolveFakeMatches,
@@ -65,17 +70,21 @@ type WaitForTimeoutSpy = Mock<(ms: number) => Promise<void>>;
  */
 function createPollingPage(result: Buffer) {
   let elapsed = 0;
-  const screenshot = createScreenshotSpy(result);
   const waitForTimeout: WaitForTimeoutSpy = vi.fn(async (ms: number) => {
     elapsed += ms;
     vi.advanceTimersByTime(ms);
   });
+  const scrollable = createScrollablePage({
+    result,
+    waitForTimeout,
+    canvasBox: { x: BOX.x, y: BOX.y, width: BOX.width + 80, height: BOX.height },
+  });
   return {
-    page: createPageMock({ screenshot, waitForTimeout }),
-    screenshot,
+    page: scrollable.page,
+    screenshot: scrollable.screenshot,
     waitForTimeout,
     elapsed: () => elapsed,
-    clips: () => screenshot.mock.calls.map(([options]) => options.clip),
+    clips: scrollable.clips,
   };
 }
 
@@ -358,37 +367,41 @@ describe('bandIsInked', () => {
   ])('reports %s as ink', async (_label, color) => {
     const image = createImageData(4, 4);
     fillAll(image, color, OPAQUE);
-    await expect(bandIsInked(image)).resolves.toBe(true);
+    await expect(bandIsInked(image, WHOLE_CAPTURE)).resolves.toBe(true);
   });
 
   it('reports a white band as clean', async () => {
     const image = createImageData(4, 4);
     fillAll(image, WHITE, OPAQUE);
-    await expect(bandIsInked(image)).resolves.toBe(false);
+    await expect(bandIsInked(image, WHOLE_CAPTURE)).resolves.toBe(false);
   });
 
   it('ignores a fully transparent band, so an empty document is not ink', async () => {
     const image = createImageData(4, 4);
     fillAll(image, BLACK, TRANSPARENT);
-    await expect(bandIsInked(image)).resolves.toBe(false);
+    await expect(bandIsInked(image, WHOLE_CAPTURE)).resolves.toBe(false);
   });
 
   it('still counts a single dark pixel, so a half-restored stroke fails the band', async () => {
     const image = createImageData(20, 20);
     fillAll(image, WHITE, OPAQUE);
     setPixel(image, 10, 10, BLACK, OPAQUE);
-    await expect(bandIsInked(image)).resolves.toBe(true);
+    await expect(bandIsInked(image, WHOLE_CAPTURE)).resolves.toBe(true);
   });
 });
 
 describe('bandInkFlags', () => {
   it('reports one flag per band, in band order', async () => {
     // Rows 150 and 250 of a 300-row capture land in bands 1 and 2.
-    await expect(bandInkFlags(stackWithInkOnRows([150, 250]), bands())).resolves.toEqual([false, true, true]);
+    await expect(bandInkFlags(stackWithInkOnRows([150, 250]), bands(), WHOLE_CAPTURE)).resolves.toEqual([
+      false,
+      true,
+      true,
+    ]);
   });
 
   it('reports a clean stack when no band carries ink', async () => {
-    await expect(bandInkFlags(stackWithInkOnRows([]), bands())).resolves.toEqual([false, false, false]);
+    await expect(bandInkFlags(stackWithInkOnRows([]), bands(), WHOLE_CAPTURE)).resolves.toEqual([false, false, false]);
   });
 
   it('reads only the rows its own bands cover, not every row of the capture', async () => {
@@ -404,7 +417,7 @@ describe('bandInkFlags', () => {
     setPixel(gapInk, 1, 15, BLACK, OPAQUE);
     setPixel(gapInk, 1, 5, BLACK, OPAQUE);
 
-    await expect(bandInkFlags(gapInk, gapped)).resolves.toEqual([true, false]);
+    await expect(bandInkFlags(gapInk, gapped, WHOLE_CAPTURE)).resolves.toEqual([true, false]);
   });
 
   it('reads a capture at twice the CSS resolution without shifting the bands', async () => {
@@ -412,14 +425,14 @@ describe('bandInkFlags', () => {
     const image = createImageData(BOX.width * 2, BOX.height * 2);
     fillAll(image, WHITE, OPAQUE);
     setPixel(image, 8, 300, BLACK, OPAQUE);
-    await expect(bandInkFlags(image, bands())).resolves.toEqual([false, true, false]);
+    await expect(bandInkFlags(image, bands(), WHOLE_CAPTURE)).resolves.toEqual([false, true, false]);
   });
 
   it('decodes a PNG buffer, so a real capture takes the same path', async () => {
     const inked = await createTestImage(BLACK, BOX.width, BOX.height);
     const clean = await createTestImage(WHITE, BOX.width, BOX.height);
-    await expect(bandInkFlags(inked, bands())).resolves.toEqual([true, true, true]);
-    await expect(bandInkFlags(clean, bands())).resolves.toEqual([false, false, false]);
+    await expect(bandInkFlags(inked, bands(), WHOLE_CAPTURE)).resolves.toEqual([true, true, true]);
+    await expect(bandInkFlags(clean, bands(), WHOLE_CAPTURE)).resolves.toEqual([false, false, false]);
   });
 });
 
@@ -528,11 +541,13 @@ describe('edge cases: non-finite inputs and empty stacks', () => {
   });
 
   it('reports a 0x0 capture as clean, with no pixels to inspect', async () => {
-    await expect(bandIsInked(createImageData(0, 0))).resolves.toBe(false);
+    await expect(bandIsInked(createImageData(0, 0), WHOLE_CAPTURE)).resolves.toBe(false);
   });
 
   it('refuses an empty band stack before touching the capture', async () => {
-    await expect(bandInkFlags(createImageData(BOX.width, BOX.height), [])).rejects.toThrow(/at least one band/);
+    await expect(bandInkFlags(createImageData(BOX.width, BOX.height), [], WHOLE_CAPTURE)).rejects.toThrow(
+      /at least one band/
+    );
   });
 
   it('gives every band the single available row when the capture is one pixel tall', () => {

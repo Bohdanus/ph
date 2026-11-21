@@ -2,6 +2,7 @@ import { expect, type Page, type TestInfo, test } from './fixtures/extended-test
 import {
   type BoundingBox,
   canvasOffsetToDocument,
+  documentOnlyPixelMask,
   documentToCanvasOffset,
   drawLine,
   getColorAtPoint,
@@ -294,7 +295,7 @@ const dashToggle = (page: Page) => page.locator('#dash-toggle');
 async function measureShape(page: Page, rect: Rect, name: string): Promise<{ width: number; height: number }> {
   const clip = documentClip(await canvasBox(page), rect);
   await waitForCanvasPixels(page, clip, hasPaintedPixel, { description: name });
-  const bounds = await getDarkPixelBounds(await page.screenshot({ clip }));
+  const bounds = await getDarkPixelBounds(await page.screenshot({ clip }), await documentOnlyPixelMask(page, clip));
   expect(bounds, `${name} has to leave something on the canvas`).not.toBeNull();
   return { width: bounds!.width, height: bounds!.height };
 }
@@ -306,12 +307,17 @@ async function rotationCursorInfo(page: Page): Promise<{ angle: number; whiteOut
     if (!encodedSvg) return null;
 
     const svg = decodeURIComponent(encodedSvg);
-    const angle = svg.match(/rotate\((\d+) 16 16\)/)?.[1];
-    if (!angle) return null;
+    // The cursor artwork is centered by nested translate/scale transforms; the rotation may be
+    // centerless or carry an explicit center, so assert the angle rather than one SVG layout.
+    const angle = svg.match(/rotate\(\s*(-?\d+(?:\.\d+)?)(?:\s+[\d.-]+\s+[\d.-]+)?\s*\)/)?.[1];
+    if (angle === undefined) return null;
+
+    const whiteOutline = svg.indexOf('stroke="#fff" stroke-width="23"');
+    const darkStroke = svg.indexOf('stroke="#000" stroke-width="13"');
 
     return {
       angle: Number(angle),
-      whiteOutline: svg.includes('stroke="#fff" stroke-width="6"'),
+      whiteOutline: whiteOutline >= 0 && darkStroke > whiteOutline,
     };
   });
 }
@@ -545,8 +551,8 @@ test.describe('Shape tools', () => {
       const committed = await loadImageData(committedScreenshot);
 
       expect([committed.width, committed.height]).toEqual([preview.width, preview.height]);
-      const previewBounds = await getDarkPixelBounds(previewScreenshot);
-      const committedBounds = await getDarkPixelBounds(committedScreenshot);
+      const previewBounds = await getDarkPixelBounds(previewScreenshot, await documentOnlyPixelMask(page, clip));
+      const committedBounds = await getDarkPixelBounds(committedScreenshot, await documentOnlyPixelMask(page, clip));
       expect(previewBounds, 'the live preview has measurable rectangle edges').not.toBeNull();
       expect(committedBounds, 'the committed shape has measurable rectangle edges').not.toBeNull();
       const previewEdges = {
@@ -625,7 +631,11 @@ test.describe('Shape tools', () => {
     // capture's scale from it. `page.screenshot` defaults to `scale: 'device'`, which is 2x
     // on a HiDPI host, and a threshold authored in CSS pixels would otherwise be compared
     // against twice as many columns.
-    const solidAnalysis = await getStrokeAnalysis(await page.screenshot({ clip: solidClip }), solidClip);
+    const solidAnalysis = await getStrokeAnalysis(await page.screenshot({ clip: solidClip }), {
+      width: solidClip.width,
+      height: solidClip.height,
+      mask: await documentOnlyPixelMask(page, solidClip),
+    });
     expect(solidAnalysis, 'the solid line has to be analysable').not.toBeNull();
     expect(solidAnalysis!.type, 'an undashed line is one segment').toBe('solid');
     expect(solidAnalysis!.segments).toBe(1);
@@ -634,7 +644,11 @@ test.describe('Shape tools', () => {
     await expect(dashToggle(page)).toBeChecked();
     await dragShape(page, dashed, 'the dashed line');
     const dashedClip = documentClip(await canvasBox(page), dashed, 10);
-    const dashedAnalysis = await getStrokeAnalysis(await page.screenshot({ clip: dashedClip }), dashedClip);
+    const dashedAnalysis = await getStrokeAnalysis(await page.screenshot({ clip: dashedClip }), {
+      width: dashedClip.width,
+      height: dashedClip.height,
+      mask: await documentOnlyPixelMask(page, dashedClip),
+    });
     expect(dashedAnalysis, 'the dashed line has to be analysable').not.toBeNull();
     // The dash and gap seed at 10/10, so a 300-unit drag is around fifteen marks.
     expect(dashedAnalysis!.type, 'the gaps are what make it dashed').toBe('dashed');

@@ -285,6 +285,38 @@ alone is how a live worktree gets misfiled as dead.
 only reviewers of them. Their death is **unproven**, so they are case (d) — whatever value they
 hold. Say so by name in the report; the operator decides, not the sweep.
 
+### Codex ownership is separate from Kilo ownership
+
+An empty Kilo query, no Kilo write history, and no board agent do **not** prove a worktree has no
+Codex owner. A Codex chat can start in the primary checkout and drive into a linked worktree, so
+its `cwd` and `git_branch` may name the primary checkout/branch rather than the worktree it used.
+Do not reject a direct owner link because those fields differ.
+
+Inspect the current tip's `Chat:` trailer with
+`git show -s --format='%(trailers:key=Chat,valueonly)' <tip>`. A UUID trailer is an exact Codex
+thread ID; `dispose-worktree.mjs` resolves that tip trailer, walks its ancestor and complete
+descendant family, and refuses if any member is active or its transcript/database evidence is
+unavailable or incomplete. `thread_spawn_edges.status` and `threads.updated_at` are not terminal
+completion evidence. Read each member's rollout: `task_complete` and its legacy serialization alias
+`turn_complete` are terminal markers for a turn, and the newest user/task start must be followed by
+one in that same thread. A later user turn or assistant/tool activity reopens a thread even if an
+older terminal marker is present. The rollout must resolve to a regular file inside the Codex state
+directory; missing rows, parents, rollout files, malformed events, or an incomplete Codex index
+make the family **unproven**. Never bypass that refusal with direct `git worktree remove`.
+
+A missing UUID trailer is **not** proof of no Codex owner. Immediately before each disposal dry-run
+and again immediately before removal, search the four-hour Codex live overlay and full
+root/subagent family by the exact worktree path, worktree name, branch, changed file paths, and
+commit subject, following [Codex Chat History](codex-chat-history.md). Inspect the transcript's
+actual tool calls to distinguish a read-only review from a writer. Any unresolved
+Codex family, or any candidate whose Codex ownership cannot be established, is **unproven**; do
+not let the Kilo-only inventory verdict turn it into a disposal candidate.
+
+After that overlay and history search finds no live writer, pass
+`--codex-owner-audit-complete` to both `dispose --dry-run` and the actual `dispose` command. The
+disposer refuses without this explicit assertion even when the tip trailer is absent or its family
+is complete. The flag records that the required search was done; it does not perform or replace it.
+
 ## 4 — Prove the chat is dead, subagents included
 
 Once you have a session id, walk **both** directions: up to the root chat that owns it, and
@@ -551,7 +583,7 @@ conflict-free merge produces exactly the base tree. Those cases can have `ahead 
 Do not equate patch-id absorption with tree equality or a no-op merge. They are different proofs.
 The current classifier accepts complete patch absorption for **disposal**, not for landing: it
 requires a clean tree, no `mustNotPrune` finding, and the current inventory's `action: dispose`.
-For a non-ancestor patch-absorbed branch, `npm run dispose -- <name> --dry-run` must show that it
+For a non-ancestor patch-absorbed branch, `npm run dispose -- <name> --codex-owner-audit-complete --dry-run` must show that it
 will anchor the exact tip under `refs/keep/disposed/` before using guarded `git branch -D`. That
 anchor preserves the branch tip for recovery even though patch IDs do not prove byte-identical
 trees. The disposal program also rechecks live ownership, claims/locks and other preflight gates.
@@ -566,8 +598,8 @@ Delete the worktree **and** its branch, then regenerate the inventory — throug
 the one program that will do it:
 
 ```bash
-npm run dispose -- <name> --dry-run     # names the signal that refuses, if any
-npm run dispose -- <name>
+npm run dispose -- <name> --codex-owner-audit-complete --dry-run     # after the Codex overlay/history audit
+npm run dispose -- <name> --codex-owner-audit-complete
 node scripts/worktree-inventory.mjs      # the verdict you acted on is now stale
 ```
 
@@ -636,7 +668,7 @@ git log main.."$KEEP" --no-merges --format='%s'        # same commit list
 git branch --contains <drop-sha>                      # only the dropped ref
 ```
 
-Delete the worktree **and** its branch together with `npm run dispose -- <name>`
+Delete the worktree **and** its branch together with `npm run dispose -- <name> --codex-owner-audit-complete`
 — one call per half, never a loop over a list you wrote — and confirm the
 survivor is untouched afterwards. Deleting the _other_ one, or both, destroys the
 only ref holding the content — a salvage commit is frequently the sole holder,
@@ -654,8 +686,8 @@ saying which branch, why it is kept, and what would make it worth revisiting, to
 its entry in `scripts/lib/worktree-inventory/curated.mjs`. Then:
 
 ```bash
-npm run dispose -- <name> --dry-run     # says the branch will be KEPT
-npm run dispose -- <name>
+npm run dispose -- <name> --codex-owner-audit-complete --dry-run     # says the branch will be KEPT
+npm run dispose -- <name> --codex-owner-audit-complete
 node scripts/worktree-inventory.mjs
 ```
 

@@ -2,7 +2,12 @@ import React, { useEffect, useRef, type ChangeEvent } from 'react';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { BRUSH_HARDNESS_MAX, BRUSH_HARDNESS_MIN, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../../util/brush-engine.ts';
 import type { ToolPatch } from '../../../contexts/tool-types.ts';
-import type { CloneStampToolArgs } from '../../../tools/cloneStamp.ts';
+import {
+  CLONE_STAMP_FLOW_MAX,
+  CLONE_STAMP_FLOW_MIN,
+  normalizeCloneStampFlow,
+  type CloneStampToolArgs,
+} from '../../../tools/cloneStamp.ts';
 
 /**
  * Copied from `src/components/ToolbarsRight/Tonal/Tonal.tsx` rather than invented, so
@@ -25,7 +30,7 @@ const OPACITY_MIN = 0;
 const toPercent = (alpha: number): number => Math.round(alpha * 100);
 
 /**
- * The Photoshop Clone Stamp options bar: `Size`, `Hardness`, `Opacity`, `Aligned`.
+ * The Photoshop Clone Stamp options bar: `Size`, `Hardness`, `Opacity`, `Flow`, `Aligned`.
  *
  * Read through `getToolArgs('clone-stamp')` and not `toolArgs`, so the bar renders nothing
  * at all while another tool is active — the same contract `Paint.tsx` and
@@ -36,14 +41,14 @@ const toPercent = (alpha: number): number => Math.round(alpha * 100);
  *
  * A `<label>`'s text content IS the control's accessible name, so nesting "Size 40px" inside
  * the label — as `Paint.tsx` does — makes the range input's name "Size 40px", and the
- * name then changes on every drag. Keeping each readout a sibling gives the four controls the
- * exact, stable names `Size`, `Hardness`, `Opacity` and `Aligned`, which is what a test can
+ * name then changes on every drag. Keeping each readout a sibling gives the five controls the
+ * exact, stable names `Size`, `Hardness`, `Opacity`, `Flow` and `Aligned`, which is what a test can
  * locate by role and name and what a screen reader announces as the user drags. `Tonal.tsx`
  * makes the same choice.
  *
  * ## NOT rendered, and these are real omissions rather than oversights
  *
- * **`Mode`** (Photoshop: Normal / Multiply / Screen / …), **`Flow`**,
+ * **`Mode`** (Photoshop: Normal / Multiply / Screen / …),
  * **`Sample: All Layers / Current & Below / Current Layer`** and **`Brush Preset Picker`**.
  * `CloneStampToolArgs` has no field for any of them, so a control for one would be a switch
  * that reads as set and is silently dropped on the next commit — strictly worse than its
@@ -99,6 +104,8 @@ const CloneStamp: React.FC<{}> = () => {
 
   if (!args) return null;
 
+  const flow = normalizeCloneStampFlow(args.flow);
+
   const handleSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
     publishSlider({ size: Number(event.target.value) });
   };
@@ -109,6 +116,10 @@ const CloneStamp: React.FC<{}> = () => {
 
   const handleOpacityChange = (event: ChangeEvent<HTMLInputElement>) => {
     publishSlider({ alpha: Number(event.target.value) / OPACITY_MAX });
+  };
+
+  const handleFlowChange = (event: ChangeEvent<HTMLInputElement>) => {
+    publishSlider({ flow: Number(event.target.value) });
   };
 
   const handleAlignedChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -165,6 +176,23 @@ const CloneStamp: React.FC<{}> = () => {
           type="range"
           value={toPercent(args.alpha)}
           onChange={handleOpacityChange}
+        />
+      </div>
+
+      <div className={FIELD_CLASS}>
+        <div className={CAPTION_CLASS}>
+          <label htmlFor="clone-stamp-flow">Flow</label>
+          <span className={VALUE_CLASS}>{flow}%</span>
+        </div>
+        <input
+          id="clone-stamp-flow"
+          className={SLIDER_CLASS}
+          max={CLONE_STAMP_FLOW_MAX}
+          min={CLONE_STAMP_FLOW_MIN}
+          step="1"
+          type="range"
+          value={flow}
+          onChange={handleFlowChange}
         />
       </div>
 

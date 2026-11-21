@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
       pos: { x: 0, y: 0, width: 200, height: 200 },
     },
   } as Record<string, { id: string; isBedrock: boolean; pos: Point & Size }>,
+  presentationBounds: null as (Point & Size) | null,
   selections: [
     {
       id: 'sel-1',
@@ -79,7 +80,7 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
 }));
 
 vi.mock('../../../contexts/presentation-evaluator.ts', () => ({
-  processorPresentationBounds: vi.fn((layer) => layer?.pos ?? null),
+  processorPresentationBounds: vi.fn((layer) => state.presentationBounds ?? layer?.pos ?? null),
 }));
 
 const renderArea = () => {
@@ -106,6 +107,7 @@ describe('PatchToolArea', () => {
         pos: { x: 0, y: 0, width: 200, height: 200 },
       },
     };
+    state.presentationBounds = null;
     state.selections = [
       {
         id: 'sel-1',
@@ -280,6 +282,26 @@ describe('PatchToolArea', () => {
         }),
       });
     });
+
+    it('keeps the selection captured at pointer down for the whole drag', () => {
+      const { area, rerender } = renderArea();
+
+      fireEvent.pointerDown(area, { button: 0, pointerId: 1, clientX: 60, clientY: 60 });
+      state.selections = state.selections.map((selection) =>
+        selection.id === 'sel-1' ? { ...selection, pos: { x: 100, y: 100, width: 40, height: 40 } } : selection
+      );
+      rerender(<PatchToolArea className="test-patch" overlayCtxRef={{ current: null }} />);
+      fireEvent.pointerMove(area, { pointerId: 1, clientX: 70, clientY: 80 });
+      fireEvent.pointerUp(area, { button: 0, pointerId: 1, clientX: 70, clientY: 80 });
+
+      expect(state.updateLayerByTool).toHaveBeenCalledWith({
+        id: 'layer-1',
+        toolArgs: expect.objectContaining({
+          sourceRect: { x: 50, y: 50, width: 100, height: 100 },
+          donorPoint: { x: 60, y: 70 },
+        }),
+      });
+    });
   });
 
   describe('buildArgs function', () => {
@@ -312,6 +334,24 @@ describe('PatchToolArea', () => {
         id: 'layer-1',
         toolArgs: expect.objectContaining({
           sourceRect: { x: 45, y: 40, width: 100, height: 100 },
+        }),
+      });
+    });
+
+    it('rebases source and donor coordinates against evaluated presentation bounds', () => {
+      state.layers['layer-1'].pos = { x: 5, y: 10, width: 200, height: 200 };
+      state.presentationBounds = { x: 20, y: 30, width: 200, height: 200 };
+      const { area } = renderArea();
+
+      fireEvent.pointerDown(area, { button: 0, pointerId: 1, clientX: 60, clientY: 60 });
+      fireEvent.pointerMove(area, { pointerId: 1, clientX: 70, clientY: 80 });
+      fireEvent.pointerUp(area, { button: 0, pointerId: 1, clientX: 70, clientY: 80 });
+
+      expect(state.updateLayerByTool).toHaveBeenCalledWith({
+        id: 'layer-1',
+        toolArgs: expect.objectContaining({
+          sourceRect: { x: 30, y: 20, width: 100, height: 100 },
+          donorPoint: { x: 40, y: 40 },
         }),
       });
     });

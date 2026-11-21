@@ -11,7 +11,7 @@ import type { Point } from '@/contexts/general-types.ts';
 // (the real top-left cursor is `nwse-resize`), and falsifiable only against the mock. `useRect.drag.test.ts`
 // already asserts `CURSOR_MAP[edge]` against this same real import; this file is the hover half.
 import { CURSOR_MAP } from '../../util/constants.ts';
-import { viewStateRef } from '../../contexts/view-state.ts';
+import { inverseViewPoint, viewStateRef, viewportCenter } from '../../contexts/view-state.ts';
 
 const usePointerPositionMock = vi.hoisted(() => {
   const mockData = {
@@ -289,6 +289,7 @@ describe('useRect', () => {
       initialRect?: { x1: number; y1: number; x2: number; y2: number } | null;
       isMoveTool?: boolean;
       hideBlend?: boolean;
+      externalOverlay?: boolean;
       incrementalOverlay?: boolean;
       rotationEnabled?: boolean;
       rotation?: number;
@@ -304,6 +305,7 @@ describe('useRect', () => {
       imageSize: { width: 800, height: 600 },
       initialRect: options.initialRect ?? null,
       hideBlend: options.hideBlend ?? false,
+      externalOverlay: options.externalOverlay ?? false,
       incrementalOverlay: options.incrementalOverlay ?? false,
       isMoveTool: options.isMoveTool ?? false,
       rotationEnabled: options.rotationEnabled ?? false,
@@ -408,6 +410,88 @@ describe('useRect', () => {
 
     expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 800, 600);
     expect(ctx.clearRect).toHaveBeenCalledWith(-50, -40, 100, 80);
+  });
+
+  it('clears the shared canvas when an external overlay is mounted for the first time', () => {
+    const initialRect = { x1: 100, y1: 120, x2: 200, y2: 200 };
+    const ctx = testContext.overlayCanvas.getContext('2d') as unknown as ReturnType<typeof createMockCanvasContext>;
+    const { result } = renderUseRect({ initialRect, externalOverlay: true });
+
+    expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    vi.mocked(ctx.clearRect).mockClear();
+    act(() => result.current.rectHandles.redraw());
+
+    expect(ctx.clearRect).not.toHaveBeenCalled();
+  });
+
+  it('restores the dimmed frame before cutting out a rotated crop on a full repaint', () => {
+    const initialRect = { x1: 100, y1: 120, x2: 200, y2: 200 };
+    const ctx = testContext.overlayCanvas.getContext('2d') as unknown as ReturnType<typeof createMockCanvasContext>;
+    const { result } = renderUseRect({ initialRect, rotationEnabled: true, rotation: 30 });
+    const paintOrder: string[] = [];
+    let dimmedFramePainted = false;
+    let cropCutoutPainted = false;
+    let cropRestoreSeen = false;
+
+    vi.mocked(ctx.clearRect).mockClear();
+    vi.mocked(ctx.fillRect).mockClear();
+    vi.mocked(ctx.save).mockClear();
+    vi.mocked(ctx.restore).mockClear();
+    vi.mocked(ctx.translate).mockClear();
+    vi.mocked(ctx.rotate).mockClear();
+    vi.mocked(ctx.clearRect).mockImplementation((x, y, width, height) => {
+      if (x === 0 && y === 0 && width === ctx.canvas.width && height === ctx.canvas.height) {
+        paintOrder.push('backing store clear');
+      }
+      if (x === -50 && y === -40 && width === 100 && height === 80) {
+        paintOrder.push('rotated crop cutout');
+        cropCutoutPainted = true;
+      }
+    });
+    vi.mocked(ctx.fillRect).mockImplementation((x, y, width, height) => {
+      if (x === 0 && y === 0 && width === 800 && height === 600) {
+        paintOrder.push('dimmed frame');
+        dimmedFramePainted = true;
+      }
+    });
+    vi.mocked(ctx.save).mockImplementation(() => {
+      if (dimmedFramePainted && !cropCutoutPainted) paintOrder.push('crop save');
+    });
+    vi.mocked(ctx.restore).mockImplementation(() => {
+      if (cropCutoutPainted && !cropRestoreSeen) {
+        paintOrder.push('crop restore');
+        cropRestoreSeen = true;
+      }
+    });
+    vi.mocked(ctx.translate).mockImplementation((x, y) => {
+      if (cropCutoutPainted && !cropRestoreSeen) {
+        paintOrder.push('handle transform before crop restore');
+      } else if (!cropCutoutPainted && x === 150 && y === 160) {
+        paintOrder.push('crop center');
+      }
+    });
+    vi.mocked(ctx.rotate).mockImplementation((angle) => {
+      if (cropCutoutPainted && !cropRestoreSeen) {
+        paintOrder.push('handle transform before crop restore');
+      } else if (!cropCutoutPainted && angle === Math.PI / 6) {
+        paintOrder.push('crop rotation');
+      }
+    });
+
+    act(() => result.current.rectHandles.redraw());
+
+    expect(ctx.translate).toHaveBeenCalledWith(150, 160);
+    expect(ctx.rotate).toHaveBeenCalledWith(Math.PI / 6);
+    expect(paintOrder).toEqual([
+      'backing store clear',
+      'dimmed frame',
+      'crop save',
+      'crop center',
+      'crop rotation',
+      'rotated crop cutout',
+      'crop restore',
+    ]);
   });
 
   it('returns false for pointer down on non-left button', () => {
@@ -549,7 +633,7 @@ describe('useRect', () => {
           result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 25, target }))
         ).toBe(true);
       });
-      expect(target.style.cursor).toMatch(/url\(.*rotate.*\) 24 24, ew-resize/);
+      expect(target.style.cursor).toMatch(/url\(.*rotate.*\) 32 32, ew-resize/);
 
       act(() => {
         result.current.pointerHandlers.onPointerDown(
@@ -566,15 +650,17 @@ describe('useRect', () => {
 
     it.each([
       [0, 'ew-resize'],
+      [37, 'nwse-resize'],
       [45, 'nwse-resize'],
       [90, 'ns-resize'],
+      [126.87, 'nesw-resize'],
       [135, 'nesw-resize'],
       [180, 'ew-resize'],
       [225, 'nwse-resize'],
       [270, 'ns-resize'],
       [315, 'nesw-resize'],
     ] as const)(
-      'uses the %s-degree rotation cursor for the pointer position around the rect',
+      'uses the normalized tangent angle for the rotation cursor around the rect at %s degrees',
       (cursorAngle, fallback) => {
         const { result } = renderUseRect({
           initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
@@ -594,12 +680,61 @@ describe('useRect', () => {
         const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
         const svg = decodeURIComponent(encodedSvg!);
-        expect(svg).toContain(`rotate(${cursorAngle} 16 16)`);
-        expect(svg).toContain('stroke="#fff" stroke-width="6"');
-        expect(svg).toContain('stroke="#111" stroke-width="2.5"');
-        expect(target.style.cursor).toMatch(new RegExp(`\\) 24 24, ${fallback}$`));
+        expect(svg).toMatch(/^<svg\b[\s\S]*<\/svg>$/);
+        expect(svg).toContain('width="64" height="64" viewBox="0 0 64 64"');
+        const normalizedAngle = ((cursorAngle % 360) + 360) % 360;
+        const angleBucket = Math.round(normalizedAngle * 10) % 3600;
+        const expectedSvgAngle = (angleBucket / 10).toFixed(1);
+        expect(svg).toContain(`rotate(${expectedSvgAngle}) scale(0.2) translate(-64 -64)`);
+        expect(svg).toContain('stroke="#fff" stroke-width="23"');
+        expect(svg).toContain('stroke="#000" stroke-width="13"');
+        expect(svg).toContain('fill="#000" stroke="none"');
+        expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
       }
     );
+
+    it.each([
+      [-158, 'ew-resize'],
+      [-157, 'nwse-resize'],
+      [-113, 'nwse-resize'],
+      [-112, 'ns-resize'],
+      [-68, 'ns-resize'],
+      [-67, 'nesw-resize'],
+      [-23, 'nesw-resize'],
+      [-22, 'ew-resize'],
+      [22, 'ew-resize'],
+      [23, 'nwse-resize'],
+      [67, 'nwse-resize'],
+      [68, 'ns-resize'],
+      [112, 'ns-resize'],
+      [113, 'nesw-resize'],
+      [157, 'nesw-resize'],
+      [158, 'ew-resize'],
+    ] as const)('selects the nearest CSS fallback axis at %s degrees', (tangentAngle, fallback) => {
+      const radians = ((tangentAngle - 90) * Math.PI) / 180;
+      const target = createMockTarget();
+      const pointer = {
+        clientX: 200 + Math.cos(radians) * 150,
+        clientY: 175 + Math.sin(radians) * 150,
+        target,
+      };
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(createPointerEvent(pointer));
+      });
+
+      const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+      expect(encodedSvg).toBeDefined();
+      const normalizedAngle = ((tangentAngle % 360) + 360) % 360;
+      const angleBucket = Math.round(normalizedAngle * 10) % 3600;
+      const expectedSvgAngle = (angleBucket / 10).toFixed(1);
+      expect(decodeURIComponent(encodedSvg!)).toContain(`rotate(${expectedSvgAngle}) scale(0.2)`);
+      expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
+    });
 
     it('includes canvas view rotation when orienting the cursor on screen', () => {
       const originalViewRotation = viewStateRef.current.rotation;
@@ -617,11 +752,277 @@ describe('useRect', () => {
 
         const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
         expect(encodedSvg).toBeDefined();
-        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45 16 16)');
+        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(45.0) scale(0.2)');
       } finally {
         viewStateRef.current.rotation = originalViewRotation;
       }
     });
+
+    it('uses the pointer tangent around the center when the crop is already rotated', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+        rotation: 90,
+      });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 325, clientY: 175, target }));
+      });
+
+      const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+      expect(encodedSvg).toBeDefined();
+      expect(decodeURIComponent(encodedSvg!)).toContain('rotate(90.0) scale(0.2)');
+    });
+
+    it('wraps the rounded cursor angle at 360 degrees', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+      const cursorAtTangent = (tangentAngle: number) => {
+        const radians = ((tangentAngle - 90) * Math.PI) / 180;
+        const target = createMockTarget();
+
+        act(() => {
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({
+              clientX: 200 + Math.cos(radians) * 150,
+              clientY: 175 + Math.sin(radians) * 150,
+              target,
+            })
+          );
+        });
+
+        const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+        expect(encodedSvg).toBeDefined();
+        return decodeURIComponent(encodedSvg!);
+      };
+
+      expect(cursorAtTangent(-0.04)).toContain('rotate(0.0) scale(0.2)');
+      expect(cursorAtTangent(-0.06)).toContain('rotate(359.9) scale(0.2)');
+    });
+
+    it.each([
+      [-45, '315.0', 'nesw-resize'],
+      [405, '45.0', 'nwse-resize'],
+    ] as const)(
+      'keeps the rotation fallback axis valid at %s degrees of canvas rotation',
+      (viewRotation, angle, fallback) => {
+        const originalViewRotation = viewStateRef.current.rotation;
+        viewStateRef.current.rotation = viewRotation;
+        try {
+          const { result } = renderUseRect({
+            initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+            rotationEnabled: true,
+          });
+          const target = createMockTarget();
+
+          act(() => {
+            result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 25, target }));
+          });
+
+          const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+          expect(encodedSvg).toBeDefined();
+          expect(decodeURIComponent(encodedSvg!)).toContain(`rotate(${angle}) scale(0.2)`);
+          expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
+        } finally {
+          viewStateRef.current.rotation = originalViewRotation;
+        }
+      }
+    );
+
+    it('uses the crop diagonal angle instead of a fixed 45-degree step', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 350, clientY: 287.5, target }));
+      });
+
+      const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+      expect(encodedSvg).toBeDefined();
+      expect(decodeURIComponent(encodedSvg!)).toContain('rotate(126.9) scale(0.2)');
+    });
+
+    it('uses the tall crop diagonal instead of a fixed 45-degree step', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 200, y2: 300 },
+        rotationEnabled: true,
+      });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 225, clientY: 350, target }));
+      });
+
+      const encodedSvg = target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+      expect(encodedSvg).toBeDefined();
+      expect(decodeURIComponent(encodedSvg!)).toContain('rotate(153.4) scale(0.2)');
+    });
+
+    it('orients an arbitrary crop tangent after converting a zoomed, panned, rotated screen point to local coordinates', () => {
+      const originalViewState = { ...viewStateRef.current };
+      const viewRotation = 45;
+      const center = viewportCenter(800, 600);
+      const localPoint = { x: 350, y: 287.5 };
+      const relativeX = localPoint.x - center.x;
+      const relativeY = localPoint.y - center.y;
+      const viewScale = 2;
+      const viewRadians = (viewRotation * Math.PI) / 180;
+      const pointer = {
+        clientX: center.x + 80 + viewScale * (relativeX * Math.cos(viewRadians) - relativeY * Math.sin(viewRadians)),
+        clientY: center.y - 25 + viewScale * (relativeX * Math.sin(viewRadians) + relativeY * Math.cos(viewRadians)),
+        target: createMockTarget(),
+      };
+
+      Object.assign(viewStateRef.current, {
+        rotation: viewRotation,
+        zoom: viewScale,
+        panX: 80,
+        panY: -25,
+        fitScaleCompensation: 1,
+      });
+      usePointerPositionMock.mockData.getLocalCoords.mockImplementation((event: PointerEvent) =>
+        inverseViewPoint({ x: event.clientX, y: event.clientY }, viewStateRef.current, center)
+      );
+
+      try {
+        const { result } = renderUseRect({
+          initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+          rotationEnabled: true,
+        });
+
+        act(() => {
+          result.current.pointerHandlers.onPointerMove(createPointerEvent(pointer));
+        });
+
+        const encodedSvg = pointer.target.style.cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+        expect(encodedSvg).toBeDefined();
+        expect(decodeURIComponent(encodedSvg!)).toContain('rotate(171.9) scale(0.2)');
+        expect(pointer.target.style.cursor).toMatch(/\) 32 32, ew-resize$/);
+      } finally {
+        Object.assign(viewStateRef.current, originalViewState);
+        usePointerPositionMock.mockData.getLocalCoords.mockReset();
+        usePointerPositionMock.mockData.getLocalCoords.mockImplementation((event: PointerEvent) => ({
+          x: event.clientX,
+          y: event.clientY,
+        }));
+      }
+    });
+
+    it.each([
+      [22.5, 'nwse-resize'],
+      [67.5, 'ns-resize'],
+      [112.5, 'nesw-resize'],
+      [157.5, 'ew-resize'],
+    ] as const)('uses the upper fallback axis at the exact %s-degree midpoint', (viewRotation, fallback) => {
+      const originalViewRotation = viewStateRef.current.rotation;
+      viewStateRef.current.rotation = viewRotation;
+      try {
+        const { result } = renderUseRect({
+          initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+          rotationEnabled: true,
+        });
+        const target = createMockTarget();
+
+        act(() => {
+          result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 25, target }));
+        });
+
+        expect(target.style.cursor).toMatch(new RegExp(`\\) 32 32, ${fallback}$`));
+      } finally {
+        viewStateRef.current.rotation = originalViewRotation;
+      }
+    });
+
+    it('keeps the CSS fallback consistent with the rounded SVG angle at a midpoint', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+      const cursorAtTangent = (tangentAngle: number) => {
+        const radians = ((tangentAngle - 90) * Math.PI) / 180;
+        const target = createMockTarget();
+
+        act(() => {
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({
+              clientX: 200 + Math.cos(radians) * 150,
+              clientY: 175 + Math.sin(radians) * 150,
+              target,
+            })
+          );
+        });
+
+        return target.style.cursor;
+      };
+
+      const belowMidpoint = cursorAtTangent(22.496);
+      const aboveMidpoint = cursorAtTangent(22.504);
+
+      expect(belowMidpoint).toMatch(/\) 32 32, nwse-resize$/);
+      expect(aboveMidpoint).toMatch(/\) 32 32, nwse-resize$/);
+      expect(decodeURIComponent(belowMidpoint.match(/data:image\/svg\+xml,([^"]+)/)?.[1] ?? '')).toContain(
+        'rotate(22.5) scale(0.2)'
+      );
+      expect(decodeURIComponent(aboveMidpoint.match(/data:image\/svg\+xml,([^"]+)/)?.[1] ?? '')).toContain(
+        'rotate(22.5) scale(0.2)'
+      );
+    });
+
+    it('bounds the rotation cursor cache and promotes recently used cursors', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+      const encode = vi.spyOn(globalThis, 'encodeURIComponent');
+      const cursorAtTangent = (tangentAngle: number) => {
+        const radians = ((tangentAngle - 90) * Math.PI) / 180;
+        const target = createMockTarget();
+        result.current.pointerHandlers.onPointerMove(
+          createPointerEvent({
+            clientX: 200 + Math.cos(radians) * 150,
+            clientY: 175 + Math.sin(radians) * 150,
+            target,
+          })
+        );
+        return target.style.cursor;
+      };
+
+      act(() => {
+        for (let index = 0; index < 512; index += 1) cursorAtTangent(80 + index / 10);
+      });
+      const afterFill = encode.mock.calls.length;
+
+      act(() => {
+        cursorAtTangent(80);
+      });
+      expect(encode).toHaveBeenCalledTimes(afterFill);
+
+      act(() => {
+        cursorAtTangent(132);
+      });
+      const afterEviction = encode.mock.calls.length;
+      expect(afterEviction).toBe(afterFill + 1);
+
+      act(() => {
+        cursorAtTangent(80);
+      });
+      expect(encode).toHaveBeenCalledTimes(afterEviction);
+
+      let evictedCursor = '';
+      act(() => {
+        evictedCursor = cursorAtTangent(80.1);
+      });
+      expect(encode).toHaveBeenCalledTimes(afterEviction + 1);
+      expect(decodeURIComponent(evictedCursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1] ?? '')).toContain(
+        'rotate(80.1) scale(0.2)'
+      );
+    }, 15_000);
 
     it('orients resize cursors along rotated object edges', () => {
       const { result } = renderUseRect({
@@ -1235,6 +1636,13 @@ describe('useRect', () => {
       expect(onRepaint).toHaveBeenLastCalledWith({ ...initialRect, ...refitRectWidthToAspect(initialRect, 16 / 9) });
     });
 
+    it.each([-1, Number.NaN, Infinity, -Infinity])(
+      'treats invalid aspect ratio %s as an unconstrained drag',
+      (ratio) => {
+        const { committed } = dragWithRatio(ratio, { x: 10, y: 20 }, { x: 310, y: 120 });
+        expect(committed).toEqual({ x1: 10, y1: 20, x2: 310, y2: 120 });
+      }
+    );
     it('locks the aspect ratio from a modifier key pressed at drag start', () => {
       // Ctrl/Shift/Command on pointer down pins the ratio to the rect's own, so a free drag then
       // keeps that shape whatever the pointer does. Without a constraint the drag would reshape

@@ -30,10 +30,18 @@ Companion WAL files: `state_N.sqlite-wal`, `state_N.sqlite-shm`.
 Inspect schema first — the store is versioned and columns change between releases:
 
 ```bash
-codex_db="$(printf '%s/state_5.sqlite' "${CODEX_HOME:-$HOME/.codex}")"
+codex_db="$(ls -1t "${CODEX_HOME:-$HOME/.codex}"/state_*.sqlite 2>/dev/null | head -1)"
+if [ -z "$codex_db" ]; then
+  printf 'No Codex state database found under %s\n' "${CODEX_HOME:-$HOME/.codex}" >&2
+  exit 1
+fi
 sqlite3 -readonly "$codex_db" ".tables"
 sqlite3 -readonly "$codex_db" ".schema"
 ```
+
+When several state databases exist, treat the most recently modified file as a candidate. Verify
+that it contains the target native session ID and matching working directory before relying on a
+lookup; if not, inspect the next recent database or check `CODEX_HOME`.
 
 ### Observed Schema (current as of Codex CLI 0.163+)
 

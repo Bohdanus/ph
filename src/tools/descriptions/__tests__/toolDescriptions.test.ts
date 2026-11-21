@@ -117,47 +117,155 @@ describe('toolDescriptions', () => {
     }
   });
 
-  it('does not tell the reader to press a key these selection tools do not read', () => {
-    // A tripwire for named claims, not a general property — nothing in `src/` can decide whether a
-    // row is implemented, since that needs the gesture the row describes. What can be checked is
-    // that the removed rows and the prose that shipped them stay gone, in EVERY surface a reader
-    // sees them: the tooltip summary, the `modifiers` table, and the `options` control detail.
-    //
-    // `PolygonClickToolArea`, which draws the freehand and the polygonal lasso alike, registers
-    // Escape, Enter, Backspace and Delete and reads no `shiftKey`, `altKey`, `metaKey` or
-    // `ctrlKey` anywhere in the file. `QuickSelectionToolArea` and the quick-selection options bar
-    // read no modifier key either. The app's only `Space` keydown that matters to a tool is the
-    // Shape tool's mid-drag pan (`ShapeToolArea.tsx:52`), which pans the shape being drawn
-    // rather than switching to the Hand tool. A user who read any of these rows and tried it got
-    // nothing.
-    const lassoNames: readonly ToolName[] = ['freehand-lasso', 'polygonal-lasso'];
-    const rows = lassoNames.flatMap((name) =>
-      toolDescriptions[name].modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)
+  it('documents Photoshop lasso and Quick Selection modifiers separately from app support', () => {
+    const polygon = toolDescriptions['polygonal-lasso'];
+    const polygonRows = polygon.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`);
+    expect(polygonRows).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Shift:.*45 degrees/i),
+        expect.stringMatching(/Alt:.*drag.*freehand/i),
+        expect.stringMatching(/Shift:.*Add to Selection/i),
+        expect.stringMatching(/Alt:.*Subtract From Selection/i),
+        expect.stringMatching(/Shift\+Alt:.*Intersect With Selection/i),
+        expect.stringMatching(/Ctrl\/Command:.*closes.*away from the starting point/i),
+      ])
     );
-    const unImplemented = /45°|freehand segment|straight segment rather than a magnetic one|Hand tool/;
+    expect(polygonRows).not.toEqual(expect.arrayContaining([expect.stringMatching(/Alt.*double-click/i)]));
+    expect(polygon.summary).toMatch(/double-click.*right-click.*Enter/i);
+    expect(polygon.summary).not.toMatch(/Ctrl\/Command|starting point/i);
+    expect(polygon.summary).not.toMatch(/Return/i);
+    expect(polygon.purpose).toMatch(/Ctrl-clicking on Windows \/ Command-clicking on macOS/i);
+    expect(polygon.purpose).not.toMatch(/Enter|Return/i);
+    expect(polygon.shortcuts.map((shortcut) => shortcut.keys)).not.toContain('Return');
+    expect(polygon.appNotes).toMatch(/modifier keys.*Ctrl\/Command-click closure.*absent/i);
 
-    expect(
-      rows.filter((row) => unImplemented.test(row)),
-      'a lasso modifier row promises a gesture its tool area never reads'
-    ).toEqual([]);
+    const magnetic = toolDescriptions['feather-magnetic-lasso'];
+    expect(magnetic.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
+      expect.arrayContaining([expect.stringMatching(/Alt:.*double-click.*straight segment/i)])
+    );
 
-    // The quick-selection surface is three shapes, and an earlier pass fixed only the first: the
-    // summary said "Alt-drag to subtract" while the same entry's `modifiers` and `options` prose
-    // still described an Alt gesture, so the fix had to be made three times or not at all.
     const quick = toolDescriptions['quick-selection'];
-    expect(quick.summary, 'the quick-selection tooltip names Alt, which is never read').not.toMatch(/\bAlt\b/);
-    expect(
-      quick.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`),
-      'a quick-selection modifier row promises a gesture neither its bar nor its tool area reads'
-    ).toEqual([]);
-    // Matched on the ASSERTION of a binding, not on the bare word `Alt` — the corrected row says
-    // "binds no Alt/Option modifier", which is the truth and must not trip this.
-    expect(
-      quick.options
-        .map((option) => option.detail)
-        .filter((detail) => /holding (?:Alt|Option)\b|with Alt held/i.test(detail)),
-      'a quick-selection control row describes a modifier gesture the app does not bind'
-    ).toEqual([]);
+    expect(quick.modifiers.map((modifier) => modifier.keys)).toEqual(['Shift', 'Alt']);
+    expect(quick.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Shift:.*temporarily adds.*while brushing/i),
+        expect.stringMatching(/Alt:.*temporarily subtracts.*while brushing/i),
+      ])
+    );
+    expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option while brushing to subtract/i);
+    expect(quick.appNotes).toMatch(/Holding Shift temporarily adds, and holding Alt\/Option temporarily subtracts/i);
+    expect(quick.appNotes).toMatch(/Shift\+Alt intersection and bracket-key resizing are not implemented/i);
+    expect(quick.appNotes).toMatch(/bracket-key resizing are not implemented/i);
+    expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
+      /whether its Options bar also offers Intersect is unresolved across Adobe sources/i
+    );
+    const quickShortcutKeys = quick.shortcuts.map((shortcut) => shortcut.keys);
+    expect(quickShortcutKeys).toContain('[');
+    expect(quickShortcutKeys).toContain(']');
+    // The shortcut list records Photoshop behavior; appNotes records that this app does not yet
+    // implement bracket-key resizing. Keep those two claims separate instead of deleting the
+    // source behavior to make the app look more complete.
+    expect(quickShortcutKeys).toEqual(['W', 'Shift+W', '[', ']']);
+    const decreaseBrushShortcut = quick.shortcuts.find((shortcut) => shortcut.keys === '[');
+    const increaseBrushShortcut = quick.shortcuts.find((shortcut) => shortcut.keys === ']');
+    expect(decreaseBrushShortcut?.action).toMatch(/decreases the Quick Selection brush size/i);
+    expect(increaseBrushShortcut?.action).toMatch(/increases the Quick Selection brush size/i);
+    expect(decreaseBrushShortcut?.action).toMatch(/Adobe Learn directly demonstrates this key/i);
+    expect(increaseBrushShortcut?.action).toMatch(/applying it here is an inference/i);
+    expect(quick.sources).toEqual(
+      expect.arrayContaining([
+        'https://www.adobe.com/learn/photoshop/web/compositing',
+        'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html',
+        'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/select-area-intersected-by-other-selections.html',
+        'https://helpx.adobe.com/lt/photoshop/how-to/add-to-subtract-from-selections.html',
+        'https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf?TVGll=wnKKa',
+        'https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html',
+      ])
+    );
+    expect(quick.summary, 'the Quick Selection tooltip must not promise an unimplemented modifier gesture').not.toMatch(
+      /\bAlt\b/i
+    );
+  });
+
+  it('documents the fill-region condition for Clear on shape tools', () => {
+    for (const name of ['shape', 'rectangle', 'ellipse', 'line', 'triangle', 'polygon', 'custom-shape'] as const) {
+      const mode = toolDescriptions[name].options
+        .filter((option) => option.control === 'Mode')
+        .find((option) => /second of the two controls Adobe names Mode/i.test(option.detail));
+      expect(mode?.detail, `${name}: Clear is available only when a fill region is selected`).toMatch(
+        /Clear is available when a fill region is selected/i
+      );
+      expect(mode?.detail, `${name}: Clear requires Lock Transparency to be deselected`).toMatch(
+        /Lock Transparency is deselected/i
+      );
+      expect(toolDescriptions[name].sources).toContain(
+        'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html'
+      );
+    }
+  });
+
+  it('records Adobe’s conflicting 32-bit blend-mode lists without assigning them to each tool', () => {
+    const blendModeGuide =
+      'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html';
+    const hdrSupportGuide =
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/hdr-and-channel-manipulation/features-that-support-32-bpc-hdr-images.html';
+
+    for (const name of ['brush', 'pencil', 'paint-bucket', 'clone-stamp'] as const) {
+      const mode = toolDescriptions[name].options.find((option) => option.control === 'Mode');
+      expect(mode?.detail, `${name}: Adobe's overlapping 32-bit scopes and conflicting counts are attributed`).toMatch(
+        /blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images\. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts/i
+      );
+      expect(toolDescriptions[name].sources).toContain(blendModeGuide);
+      expect(toolDescriptions[name].sources).toContain(hdrSupportGuide);
+
+      if (name === 'paint-bucket') {
+        expect(mode?.detail).toMatch(
+          /HDR page marks Paint Bucket unsupported for 32-bpc HDR, so Clear availability for that tool does not apply in that mode/i
+        );
+        expect(mode?.detail).toMatch(/blending-mode page separately lists Clear for Paint Bucket/i);
+      } else {
+        expect(mode?.detail, `${name}: Adobe's tool and image-mode qualification is retained`).toMatch(
+          /blending-mode page says availability varies by tool and image mode/i
+        );
+      }
+    }
+
+    const sharpenMode = toolDescriptions.sharpen.options.find((option) => option.control === 'Mode');
+    expect(sharpenMode?.detail).toMatch(
+      /blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images\. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts/i
+    );
+    expect(sharpenMode?.detail).toMatch(/October 2026 desktop guide lists this control/i);
+    expect(sharpenMode?.detail).toMatch(/neither page enumerates Sharpen’s tool-specific blend-mode set/i);
+    expect(sharpenMode?.detail).toMatch(/HDR page includes Sharpen among supported tools/i);
+    expect(toolDescriptions.sharpen.sources).toContain(blendModeGuide);
+    expect(toolDescriptions.sharpen.sources).toContain(hdrSupportGuide);
+    expect(toolDescriptions.sharpen.sources).toContain(
+      'https://helpx.adobe.com/photoshop/desktop/effects-filters/blur-sharpen-filters/increase-sharpness-in-selected-image-areas.html'
+    );
+  });
+
+  it('does not infer a Blur Mode from global blend-mode lists while its control is unconfirmed', () => {
+    expect(toolDescriptions.blur.options.find((option) => option.control === 'Mode')).toBeUndefined();
+    expect(toolDescriptions.blur.purpose).toMatch(/Blur-specific control remains unconfirmed/i);
+  });
+
+  it('keeps Color Replacement Tolerance bounds source-qualified', () => {
+    const replacement = toolDescriptions['color-replacement'];
+    const tolerance = replacement.options.find((option) => option.control === 'Tolerance');
+
+    expect(replacement.purpose).toMatch(
+      /Adobe describes Tolerance qualitatively as a percentage.*lower values.*higher values.*does not state numeric bounds/i
+    );
+    expect(replacement.purpose).not.toMatch(/0(?:–|-)?255/i);
+    expect(tolerance?.detail).toMatch(
+      /Adobe's archived 2015 reference does not state numeric bounds.*third-party mirrors says 0–255.*not corroborated by Adobe/i
+    );
+    expect(replacement.appNotes).toMatch(
+      /Adobe does not state numeric bounds.*app uses a 0-100 slider.*exact Photoshop parity is unverified/i
+    );
+    expect(replacement.sources).toContain(
+      'https://helpx.adobe.com/archive/en/photoshop/cc/2015/photoshop_reference.pdf'
+    );
   });
 
   it('resolves a shape figure to its own description rather than the generic one', () => {
@@ -221,6 +329,15 @@ describe('toolDescriptions', () => {
         expect(adobeSources.length, `${name}: no Adobe documentation source found`).toBeGreaterThan(0);
       }
     });
+
+    it('cites Adobe for the temporary Eyedropper modifier on Brush and Pencil', () => {
+      const source =
+        'https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/choose-a-color-while-painting.html';
+
+      for (const name of ['brush', 'pencil'] as const) {
+        expect(toolDescriptions[name].sources).toContain(source);
+      }
+    });
   });
 
   describe('family disjointness', () => {
@@ -243,6 +360,110 @@ describe('toolDescriptions', () => {
         expect(['implemented', 'partial']).toContain(toolDescriptions[name].implementation);
       }
     });
+  });
+
+  it('records the conflicting Adobe Smudge R sources without treating either as conclusive', () => {
+    const smudge = toolDescriptions.smudge;
+    const shortcut = smudge.shortcuts.find((item) => item.keys === 'R');
+
+    expect(shortcut?.action).toMatch(
+      /current desktop Smudge guide says R cycles through retouching tools.*2024 Rotate View guide labels Rotate View as R.*2019 shortcut reference also assigns R to Rotate View.*default binding is unresolved.*Keyboard Shortcuts and Menus dialog/i
+    );
+    expect(smudge.sources).toEqual(
+      expect.arrayContaining([
+        'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html',
+        'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
+        'https://helpx.adobe.com/photoshop/using/tool-techniques/rotate-view-tool.html',
+        'https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html',
+      ])
+    );
+  });
+
+  it('conditions shared tonal-tool cycling on Photoshop preference and preserves the active Exposure setting', () => {
+    const reference = 'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf';
+
+    for (const name of ['dodge', 'burn', 'sponge'] as const) {
+      const description = toolDescriptions[name];
+      const cycle = description.shortcuts.find((item) => item.keys === 'Shift+O');
+
+      expect(cycle?.action).toMatch(
+        /2019 shortcut reference says Shift\+O cycles.*when Use Shift Key for Tool Switch is enabled.*preference disabled, press O repeatedly to cycle/i
+      );
+      expect(description.sources).toContain(reference);
+    }
+
+    for (const name of ['dodge', 'burn'] as const) {
+      const digits = toolDescriptions[name].shortcuts.find((item) => item.keys === '0–9');
+      expect(digits?.action).toMatch(
+        /2019 shortcut reference says number keys 0–9 set Exposure.*With Airbrush enabled, Shift\+number adjusts Exposure/i
+      );
+      expect(digits?.action).not.toMatch(/Shift\+number to set Opacity/i);
+    }
+  });
+
+  it('separates Adobe Dodge/Burn Exposure digits from app shortcut support', () => {
+    const reference = 'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf';
+
+    for (const name of ['dodge', 'burn'] as const) {
+      const description = toolDescriptions[name];
+      const exposureShortcut = description.shortcuts.find((item) => item.keys === '0–9');
+      const tool = name === 'dodge' ? 'Dodge' : 'Burn';
+
+      expect(exposureShortcut?.action).toMatch(
+        /2019 shortcut reference says number keys 0–9 set Exposure.*0 = 100%, 1 = 10%, and two quick digits set an exact percentage.*With Airbrush enabled, Shift\+number adjusts Exposure/i
+      );
+      expect(exposureShortcut?.action).toContain(`This app does not implement ${tool} Exposure digit shortcuts`);
+      expect(description.sources).toContain(reference);
+      expect(description.appNotes).toMatch(/does not implement Exposure digit shortcuts for Dodge or Burn/i);
+    }
+  });
+
+  it('documents current Brush/Pencil digit bindings and their app limits', () => {
+    const currentGuide =
+      'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/brushes-presets/paint-with-brush-or-pencil-tool.html';
+    const reference = 'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf';
+
+    for (const name of ['brush', 'pencil'] as const) {
+      const description = toolDescriptions[name];
+      const opacity = description.shortcuts.find((item) => item.keys === '0–9');
+      const flow = description.shortcuts.find((item) => item.keys === 'Shift+0–9');
+
+      expect(opacity?.action).toMatch(
+        /current Photoshop.*bare number keys 0–9 set (Brush|Pencil) Opacity.*two quick digits set an exact percentage.*only 0 and 1/i
+      );
+      expect(flow?.action).toMatch(
+        /Shift\+number sets Flow.*two quick digits set an exact percentage.*does not implement numeric Flow shortcuts/i
+      );
+      expect(description.sources).toEqual(expect.arrayContaining([currentGuide, reference]));
+      expect(description.appNotes).toMatch(/does not implement digits `2`–`9`, two-digit exact Opacity/i);
+
+      if (name === 'brush') {
+        expect(flow?.action).toMatch(/2019 generic reference.*Airbrush enabled/i);
+        expect(flow?.action).toMatch(/bare numbers set Flow and Shift\+number sets Opacity/i);
+      } else {
+        expect(flow?.action).toMatch(/limits Airbrush mode to the Brush.*does not apply to Pencil/i);
+      }
+    }
+  });
+
+  it("limits Sponge digit documentation to Adobe's generic Flow reference", () => {
+    const sponge = toolDescriptions.sponge;
+    const flow = sponge.shortcuts.find((item) => item.keys === 'Shift+0–9');
+
+    expect(flow?.action).toMatch(
+      /2019 generic painting\/editing shortcut reference says Shift\+number sets Flow.*historical generic evidence rather than a current Sponge-specific confirmation.*Airbrush.*does not establish whether that exception applies to the Sponge/i
+    );
+    expect(sponge.shortcuts.filter((item) => /[0-9]/.test(item.keys))).toEqual([flow]);
+    expect(sponge.purpose).not.toMatch(/bare digit keys step Flow/i);
+    expect(sponge.appNotes).toMatch(
+      /2026 Sponge guide documents Flow but no numeric binding.*2019 generic painting\/editing reference assigns Flow to Shift\+number.*no Shift\+number handler sets Flow/i
+    );
+    expect(sponge.sources).toEqual(
+      expect.arrayContaining([
+        'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/adjust-color-saturation-in-selected-image-areas.html',
+        'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
+      ])
+    );
   });
 
   describe('modifiers and shortcuts consistency', () => {

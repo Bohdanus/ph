@@ -62,6 +62,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { pathIdentityKey, samePath } from './path-identity.mjs';
 
 /**
  * Where git records each operation, and what to call it.
@@ -361,7 +362,7 @@ export function resolveAdminDirFor(commonDir, worktreePath) {
   if (!commonDir) return null;
   const wanted = realpathIfPresent(worktreePath) ?? worktreePath;
   for (const record of adminDirRecords(commonDir).dirs) {
-    if (record.owner !== null && (realpathIfPresent(record.owner) ?? record.owner) === wanted) return record.path;
+    if (record.owner !== null && samePath(realpathIfPresent(record.owner) ?? record.owner, wanted)) return record.path;
   }
   return null;
 }
@@ -514,20 +515,17 @@ function unclaimedAdminDirs(commonDir, entries) {
 
   const scanned = adminDirRecords(commonDir);
 
-  // owner -> every administrative directory claiming it. A MAP, not a Set: two admin
-  // directories naming one worktree are indistinguishable to a Set, and the second
-  // one's state is then read by nothing at all. Measured: a `gitdir` naming an already
-  // claimed worktree produced no finding and its `MERGE_HEAD` was never read — real
-  // merge state, in a directory git does not list, invisible.
+  // Group by filesystem identity, not path spelling: Git and Node can name one
+  // Windows directory through a long path and an 8.3 alias. Keep every admin path in
+  // the group because two admin directories claiming one worktree is still ambiguous.
   const owners = new Map();
   for (const record of scanned.dirs) {
     if (record.owner === null) continue;
     const key = realpathIfPresent(record.owner) ?? record.owner;
-    if (!owners.has(key)) owners.set(key, []);
-    owners.get(key).push(record.path);
+    const identity = pathIdentityKey(key);
+    if (!owners.has(identity)) owners.set(identity, { owner: key, paths: [] });
+    owners.get(identity).paths.push(record.path);
   }
-
-  const claimed = new Set(owners.keys());
 
   const orphans = [];
   for (const record of scanned.dirs) {
@@ -539,29 +537,37 @@ function unclaimedAdminDirs(commonDir, entries) {
     if (record.notAWorktree === true) continue;
 
     const ownerKey = record.owner === null ? null : (realpathIfPresent(record.owner) ?? record.owner);
-    if (ownerKey !== null && claimed.has(ownerKey)) {
-      // Claimed by the roster, or by a sibling directory that is itself an orphan. Either
-      // way this directory's state is reachable through the roster entry, so it is not an
-      // orphan — but TWO directories claiming one worktree is unresolvable state, and it
-      // is reported so the operator can decide which is real.
-      const siblings = owners.get(ownerKey);
-      if (siblings.length > 1 && !entries.some((entry) => (realpathIfPresent(entry.path) ?? entry.path) === ownerKey)) {
-        orphans.push({
-          gitDir: record.path,
-          owner: record.owner,
-          readError: `${siblings.length} administrative directories claim this worktree (${siblings.join(', ')}), so which one is authoritative is unknown`,
-        });
+    const ownerGroup = ownerKey === null ? null : (owners.get(pathIdentityKey(ownerKey)) ?? null);
+    const registeredEntry =
+      ownerKey === null
+        ? null
+        : (entries.find((entry) => samePath(realpathIfPresent(entry.path) ?? entry.path, ownerKey)) ?? null);
+    if (registeredEntry && ownerGroup?.paths.length === 1) continue;
+
+    if (registeredEntry && ownerGroup && ownerGroup.paths.length > 1) {
+      // The roster names worktrees, not their administrative directories. For a
+      // present worktree, its own `.git` link identifies which admin directory is
+      // authoritative; every extra directory claiming it must still be inspected for
+      // operation markers. If the worktree is gone or its link cannot be read, report
+      // every claimant because selecting one would hide state without evidence.
+      if (ownerGroup.canonicalGitDir === undefined) {
+        ownerGroup.canonicalGitDir = existsSync(ownerKey) ? resolveGitDir(ownerKey) : null;
       }
+      const canonicalGitDir = ownerGroup.canonicalGitDir;
+      if (canonicalGitDir && samePath(record.path, canonicalGitDir)) continue;
+      const ambiguity = canonicalGitDir
+        ? `${ownerGroup.paths.length} administrative directories claim this worktree; this directory is not its .git target`
+        : `${ownerGroup.paths.length} administrative directories claim this worktree, but its .git target cannot be established`;
+      orphans.push({ gitDir: record.path, owner: record.owner, readError: ambiguity });
       continue;
     }
 
+    // A single admin directory is accounted for only when its owner appears in the
+    // roster. Merely finding itself in the owners map does not make it registered.
     orphans.push({
       gitDir: record.path,
       owner: record.owner,
-      // The message names the read that ACTUALLY failed. The previous version inferred
-      // readability from `readdirSync`, which throws at mode 0111 while the markers read
-      // perfectly — so the report printed "its git state could not be read" directly above
-      // the `MERGE_HEAD` it had just read. Never assert a read failed that succeeded.
+      // The message names the read that ACTUALLY failed. Never deny a successful read.
       readError:
         record.readError ??
         'git worktree list does not report this administrative directory, so the worktree is not in the roster',
@@ -645,7 +651,7 @@ export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths
   const bareRoot =
     entries.length === 1 &&
     entries[0].bare === true &&
-    (realpathIfPresent(entries[0].path) ?? entries[0].path) === (realpathIfPresent(cwd) ?? cwd);
+    samePath(realpathIfPresent(entries[0].path) ?? entries[0].path, realpathIfPresent(cwd) ?? cwd);
   const commonDir = bareRoot ? entries[0].path : resolveCommonDir(cwd);
 
   // Every admin directory the roster did not account for, read as records below. This

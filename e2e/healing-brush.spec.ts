@@ -5,7 +5,7 @@ import { setForegroundColor } from './helpers/color-helpers';
 import { clickToolButton, openToolFlyout } from './helpers/toolbar-helpers';
 
 // Healing preserves destination luminance, so its output need not equal the sampled color.
-const hasBlueDominantPixel: CanvasPixelPredicate = async (screenshot) => {
+const hasBlueDominantPixel = async (screenshot: Buffer) => {
   const { data } = await loadImageData(screenshot);
   for (let index = 0; index < data.length; index += 4) {
     const red = data[index];

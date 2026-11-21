@@ -9,6 +9,7 @@ import { drawLine, pointsBoundingPosOutward } from '../../util/draw.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { FullArgs } from '../../contexts/tool-types.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { clearCanvasBackingStore } from '../../util/canvas.ts';
 
 type DrawHandlerProps = {
   className?: string;
@@ -84,7 +85,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, totalSize.width, totalSize.height);
+    clearCanvasBackingStore(ctx);
 
     const drawArgs = {
       ...args,
@@ -204,7 +205,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     pointTimesRef.current = [];
     currentPointRef.current = null;
     sprayStartedAtRef.current = null;
-    overlayCtxRef.current?.clearRect(0, 0, totalSize.width, totalSize.height);
+    if (overlayCtxRef.current) clearCanvasBackingStore(overlayCtxRef.current);
   };
 
   const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
@@ -223,7 +224,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     pointTimesRef.current = [];
     currentPointRef.current = null;
     sprayStartedAtRef.current = null;
-    overlayCtxRef.current?.clearRect(0, 0, totalSize.width, totalSize.height);
+    if (overlayCtxRef.current) clearCanvasBackingStore(overlayCtxRef.current);
   };
 
   useEffect(() => {
@@ -256,7 +257,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
       // `ctx.canvas` at call time rather than off `totalSize` for the same reason as in `useRect`:
       // a render-scope size frozen into this cleanup under-clears after a document resize.
       if (ctx) {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        clearCanvasBackingStore(ctx);
       }
     };
   }, [overlayCtxRef]);

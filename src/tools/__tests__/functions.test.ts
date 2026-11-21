@@ -41,12 +41,12 @@ describe('buildColorsFilter', () => {
     );
   });
 
-  it('propagates a non-finite saturation into the emitted string', () => {
+  it('falls back to neutral saturation for non-finite input', () => {
     expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.NaN })).toBe(
-      'grayscale(0%) sepia(0%) saturate(NaN%)'
+      'grayscale(0%) sepia(0%) saturate(100%)'
     );
     expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.POSITIVE_INFINITY })).toBe(
-      'grayscale(0%) sepia(0%) saturate(Infinity%)'
+      'grayscale(0%) sepia(0%) saturate(100%)'
     );
   });
 
@@ -60,25 +60,24 @@ describe('buildColorsFilter', () => {
     expect(factor).toBeLessThan(1);
   });
 
-  it('emits a negative saturate for saturation below the -100 floor', () => {
-    expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -200 }), 'saturate')).toBeLessThan(0);
+  it('clamps saturation to the slider endpoints before building valid CSS', () => {
+    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -200 })).toBe(
+      'grayscale(0%) sepia(0%) saturate(0%)'
+    );
+    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: 200 })).toBe(
+      buildColorsFilter({ grayscale: 0, sepia: 0, saturation: 100 })
+    );
   });
 
-  it('crosses zero exactly at -100, staying positive just above and negative just below', () => {
+  it('clamps grayscale and sepia to their slider ranges', () => {
+    expect(buildColorsFilter({ grayscale: -20, sepia: 140, saturation: 0 })).toBe(
+      'grayscale(0%) sepia(100%) saturate(100%)'
+    );
+  });
+
+  it('crosses zero exactly at -100 and stays non-negative below the slider floor', () => {
     expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -99 }), 'saturate')).toBeGreaterThan(0);
-    expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -101 }), 'saturate')).toBeLessThan(0);
-  });
-
-  it.fails('does not clamp NaN saturation to the neutral 100%', () => {
-    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.NaN })).toBe(
-      'grayscale(0%) sepia(0%) saturate(100%)'
-    );
-  });
-
-  it.fails('does not clamp Infinity saturation to the neutral 100%', () => {
-    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.POSITIVE_INFINITY })).toBe(
-      'grayscale(0%) sepia(0%) saturate(100%)'
-    );
+    expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -101 }), 'saturate')).toBe(0);
   });
 });
 
@@ -125,7 +124,7 @@ describe('buildLevelsFilter', () => {
     ['-1', '99.33', '99.33'],
     ['+50', '133.33', '133.33'],
     ['+150', '200', '200'],
-  ])('maps brightness %s to brightness(%s%), the full Adobe -150..150 travel', (brightness, emitted) => {
+  ])('maps Brightness slider value %s to brightness(%s%)', (brightness, emitted) => {
     const [factor] = parseLevelsFilter(buildLevelsFilter({ brightness: Number(brightness), contrast: 0 }));
     expect(factor).toBe(Number(emitted) / 100);
   });
@@ -136,7 +135,7 @@ describe('buildLevelsFilter', () => {
     ['-1', '99'],
     ['+1', '101'],
     ['+100', '200'],
-  ])('maps contrast %s to contrast(%s%), the full Adobe -50..100 travel', (contrast, emitted) => {
+  ])('maps Contrast slider value %s to contrast(%s%)', (contrast, emitted) => {
     const [, factor] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast: Number(contrast) }));
     expect(factor).toBe(Number(emitted) / 100);
   });
@@ -174,10 +173,10 @@ describe('buildLevelsFilter', () => {
     expect(contrastSteps[0]).toBeGreaterThan(0);
   });
 
-  it('keeps the whole negative half of the Brightness travel non-clipping', () => {
-    // Adobe's normal mode is non-clipping in both directions. Over this half the CSS
-    // multiply is exactly that: `brightness(0%..100%)` maps `[0, 1]` into `[0, factor]` with
-    // the clamp never firing, so no shadow detail is lost to it.
+  it('keeps the whole negative half of the app Brightness travel within the CSS input range', () => {
+    // For these app factors, the ideal CSS multiply maps normalized inputs from `[0, 1]` into
+    // `[0, factor]` without reaching the upper clamp. This formula check does not rasterize the
+    // filter or establish how much detail survives browser quantization.
     for (const brightness of sliderTravel(BRIGHTNESS_SLIDER_RANGE).filter((value) => value <= 0)) {
       const [factor] = parseLevelsFilter(buildLevelsFilter({ brightness, contrast: 0 }));
       const range = cssBrightnessRange(factor);
@@ -187,9 +186,9 @@ describe('buildLevelsFilter', () => {
     }
   });
 
-  it('keeps the whole negative half of the Contrast travel non-clipping', () => {
-    // `contrast(f)` for `f <= 1` contracts the tonal range about the mid-grey pivot without
-    // ever leaving `[0, 1]`, which is precisely what Adobe's contrast minimum does.
+  it('keeps the whole negative half of the app Contrast travel within the CSS output range', () => {
+    // For `contrast(f)` with `0 <= f <= 1`, the ideal affine transform contracts normalized
+    // inputs about mid-grey and stays within `[0, 1]`. This checks the CSS formula, not Photoshop.
     for (const contrast of sliderTravel(CONTRAST_SLIDER_RANGE).filter((value) => value <= 0)) {
       const [, factor] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast }));
       const range = cssContrastRange(factor);
@@ -200,10 +199,9 @@ describe('buildLevelsFilter', () => {
   });
 
   it('flattens Contrast -50 to a half-range rather than collapsing the image to one mid-grey', () => {
-    // The defect this replaced. `expAdjustment(contrast, 2.2)` bottoms out at exactly `0`,
-    // so the old `-100` floor emitted `contrast(0%)` — every pixel became the same grey and
-    // the image carried no information at all. Adobe names that as the Legacy failure:
-    // "this can cause clipping or loss of image detail in highlight or shadow areas".
+    // The previous exponential mapping bottomed out at factor `0`, so this app's minimum
+    // slider value emitted `contrast(0%)`, mapping every ideal input to the same mid-grey.
+    // The current app mapping emits factor `0.5`; this does not claim Photoshop pixel parity.
     const [, factor] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast: CONTRAST_SLIDER_RANGE.min }));
     const range = cssContrastRange(factor);
 
@@ -215,7 +213,7 @@ describe('buildLevelsFilter', () => {
     expect(range.max - range.min).toBeLessThan(1);
   });
 
-  it('keeps the mid-grey pivot fixed at every Contrast value, the pivot Photoshop expands about', () => {
+  it('keeps the CSS Contrast pivot fixed at mid-grey across app slider values', () => {
     for (const contrast of sliderTravel(CONTRAST_SLIDER_RANGE)) {
       const [, factor] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast }));
 
@@ -223,15 +221,15 @@ describe('buildLevelsFilter', () => {
     }
   });
 
-  it('is strictly monotone over both Adobe travels, so no slider step is a no-op', () => {
-    for (const brightness of sliderTravel(BRIGHTNESS_SLIDER_RANGE)) {
+  it('strictly increases both CSS factors at each integer app slider step', () => {
+    for (const brightness of sliderTravel(BRIGHTNESS_SLIDER_RANGE).slice(0, -1)) {
       const [lower] = parseLevelsFilter(buildLevelsFilter({ brightness, contrast: 0 }));
       const [higher] = parseLevelsFilter(buildLevelsFilter({ brightness: brightness + 1, contrast: 0 }));
 
       expect(higher, `brightness ${brightness} does nothing`).toBeGreaterThan(lower);
     }
 
-    for (const contrast of sliderTravel(CONTRAST_SLIDER_RANGE)) {
+    for (const contrast of sliderTravel(CONTRAST_SLIDER_RANGE).slice(0, -1)) {
       const [, lower] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast }));
       const [, higher] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast: contrast + 1 }));
 
@@ -239,83 +237,42 @@ describe('buildLevelsFilter', () => {
     }
   });
 
-  it('clips on the positive half of both controls, which is the boundary this pipeline cannot cross', () => {
-    // Recorded rather than papered over: Adobe's normal mode does NOT clip in either
-    // direction, and its response is nonlinear (`+20` brightness reads `10→11`, `128→145`,
-    // `250→253` — no constant scale and no constant offset produces that). A CSS
-    // `brightness(f)` is a clamped pure multiply and `contrast(f)` a clamped affine pivot,
-    // so every `f > 1` clips some input. Closing this needs a per-channel lookup table
-    // applied per pixel, the mechanism `docs/TOOLS-TOO-HARD.md` records as absent.
-    const [bright] = parseLevelsFilter(buildLevelsFilter({ brightness: BRIGHTNESS_SLIDER_RANGE.max, contrast: 0 }));
-    const [, punch] = parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast: CONTRAST_SLIDER_RANGE.max }));
+  it('derives CSS clipping thresholds for the maximum positive factors', () => {
+    // The app maps both maximum slider values to factor 2. These thresholds follow from the
+    // CSS filter functions and their output clamp; this test does not claim Photoshop parity
+    // or rasterize the filter.
+    const [brightnessFactor] = parseLevelsFilter(
+      buildLevelsFilter({ brightness: BRIGHTNESS_SLIDER_RANGE.max, contrast: 0 })
+    );
+    const [, contrastFactor] = parseLevelsFilter(
+      buildLevelsFilter({ brightness: 0, contrast: CONTRAST_SLIDER_RANGE.max })
+    );
 
-    expect(cssBrightnessRange(bright).max).toBeGreaterThan(1);
-    expect(cssContrastRange(punch).max).toBeGreaterThan(1);
-    // The first positive step is the first clip: the neutral is the largest non-clipping
-    // value on each control.
-    expect(bright).toBeGreaterThan(1);
-    expect(punch).toBeGreaterThan(1);
+    expect(brightnessFactor).toBe(2);
+    expect(contrastFactor).toBe(2);
+    expect(1 / brightnessFactor).toBe(0.5);
+    expect(0.5 - 0.5 / contrastFactor).toBe(0.25);
+    expect(0.5 + 0.5 / contrastFactor).toBe(0.75);
   });
 
-  it('propagates a non-finite adjustment into the emitted string rather than sanitising it', () => {
-    // This low-level builder remains unsanitized: the Levels tool normalizes its inputs before
-    // calling it, while `presentation-evaluator.ts` refuses malformed retained operations.
-    expect(buildLevelsFilter({ brightness: Number.NaN, contrast: 0 })).toBe('brightness(NaN%) contrast(100%)');
-    expect(buildLevelsFilter({ brightness: 0, contrast: Number.NaN })).toBe('brightness(100%) contrast(NaN%)');
-  });
-
-  it('propagates Infinity and -Infinity into the emitted string rather than sanitising them', () => {
-    expect(buildLevelsFilter({ brightness: Number.POSITIVE_INFINITY, contrast: 0 })).toBe(
-      'brightness(Infinity%) contrast(100%)'
-    );
-    expect(buildLevelsFilter({ brightness: Number.NEGATIVE_INFINITY, contrast: 0 })).toBe(
-      'brightness(-Infinity%) contrast(100%)'
-    );
+  it('uses neutral values for non-finite input and clamps finite values to slider travel', () => {
+    expect(buildLevelsFilter({ brightness: Number.NaN, contrast: 0 })).toBe('brightness(100%) contrast(100%)');
     expect(buildLevelsFilter({ brightness: 0, contrast: Number.POSITIVE_INFINITY })).toBe(
-      'brightness(100%) contrast(Infinity%)'
+      'brightness(100%) contrast(100%)'
     );
+    expect(buildLevelsFilter({ brightness: -200, contrast: -200 })).toBe('brightness(0%) contrast(50%)');
+    expect(buildLevelsFilter({ brightness: 200, contrast: 200 })).toBe('brightness(200%) contrast(200%)');
   });
 
-  it('emits a negative factor for values below the slider floor, which invalidates the CSS term', () => {
-    // Outside the slider travel the proportionate factor turns negative. The slider bounds
-    // keep these from reaching the emitted string in practice; this pins the mathematical
-    // behaviour rather than a sanitised result.
-    expect(parseLevelsFilter(buildLevelsFilter({ brightness: -200, contrast: 0 }))[0]).toBeLessThan(0);
-    expect(parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast: -200 }))[1]).toBeLessThan(0);
-  });
-
-  it('crosses zero exactly at the brightness floor, staying positive just above and negative just below', () => {
+  it('crosses zero exactly at the brightness floor and stays valid below it', () => {
     expect(parseLevelsFilter(buildLevelsFilter({ brightness: -149, contrast: 0 }))[0]).toBeGreaterThan(0);
     expect(parseLevelsFilter(buildLevelsFilter({ brightness: -150, contrast: 0 }))[0]).toBe(0);
-    expect(parseLevelsFilter(buildLevelsFilter({ brightness: -151, contrast: 0 }))[0]).toBeLessThan(0);
+    expect(parseLevelsFilter(buildLevelsFilter({ brightness: -151, contrast: 0 }))[0]).toBe(0);
   });
 
-  it.fails('does not clamp NaN brightness to 0', () => {
-    expect(buildLevelsFilter({ brightness: Number.NaN, contrast: 0 })).toBe('brightness(0%) contrast(100%)');
-  });
-
-  it.fails('does not clamp NaN contrast to 50', () => {
-    expect(buildLevelsFilter({ brightness: 0, contrast: Number.NaN })).toBe('brightness(100%) contrast(50%)');
-  });
-
-  it.fails('does not clamp Infinity brightness to 100', () => {
-    expect(buildLevelsFilter({ brightness: Number.POSITIVE_INFINITY, contrast: 0 })).toBe(
-      'brightness(100%) contrast(100%)'
-    );
-  });
-
-  it.fails('does not clamp Infinity contrast to 100', () => {
-    expect(buildLevelsFilter({ brightness: 0, contrast: Number.POSITIVE_INFINITY })).toBe(
-      'brightness(100%) contrast(100%)'
-    );
-  });
-
-  it('emits a negative factor for nothing on either travel, because a negative `brightness()` invalidates the whole string', () => {
-    // A browser DISCARDS an invalid `ctx.filter` assignment outright rather than applying
-    // its valid part, so one negative operand would drop the contrast term with it and the
-    // layer would draw unfiltered with nothing to say so — the failure
-    // `FilterArgumentUnrenderableError` exists to prevent. Dividing by the travel rather
-    // than scaling the slider is what keeps both controls non-negative.
+  it('emits valid non-negative factors throughout slider travel', () => {
+    // A browser discards an invalid filter assignment, so the negative slider endpoints must
+    // map to zero rather than a negative CSS multiplier.
     for (const brightness of sliderTravel(BRIGHTNESS_SLIDER_RANGE)) {
       expect(parseLevelsFilter(buildLevelsFilter({ brightness, contrast: 0 }))[0]).toBeGreaterThanOrEqual(0);
     }
@@ -376,22 +333,6 @@ describe('proportionateFactor', () => {
     expect(proportionateFactor(-150, 150)).toBe(0);
     expect(proportionateFactor(-151, 150)).toBeCloseTo(-1 / 150, 10);
   });
-
-  it.fails('does not clamp NaN to 0', () => {
-    expect(proportionateFactor(Number.NaN, 150)).toBe(0);
-  });
-
-  it.fails('does not clamp NaN to 1', () => {
-    expect(proportionateFactor(Number.NaN, 150)).toBe(1);
-  });
-
-  it.fails('does not clamp Infinity to 1', () => {
-    expect(proportionateFactor(Number.POSITIVE_INFINITY, 150)).toBe(1);
-  });
-
-  it.fails('does not clamp -Infinity to 0', () => {
-    expect(proportionateFactor(Number.NEGATIVE_INFINITY, 150)).toBe(0);
-  });
 });
 
 describe('expAdjustment', () => {
@@ -431,8 +372,7 @@ describe('expAdjustment', () => {
   });
 
   it('propagates a non-finite input rather than silently sanitising it', () => {
-    // This is the low-level math helper. The Colors processor normalizes tool args before it
-    // reaches this function; the raw helper and filter builder stay unsanitized.
+    // The curve remains a pure math helper; the shared CSS builder normalizes before using it.
     expect(expAdjustment(Number.NaN, SATURATION_EXPONENT)).toBeNaN();
   });
 
@@ -452,18 +392,6 @@ describe('expAdjustment', () => {
   it('crosses zero exactly at -100, staying positive just above and negative just below', () => {
     expect(expAdjustment(-99, SATURATION_EXPONENT)).toBeGreaterThan(0);
     expect(expAdjustment(-101, SATURATION_EXPONENT)).toBeLessThan(0);
-  });
-
-  it.fails('does not clamp NaN to 0', () => {
-    expect(expAdjustment(Number.NaN, SATURATION_EXPONENT)).toBe(0);
-  });
-
-  it.fails('does not clamp NaN to 1', () => {
-    expect(expAdjustment(Number.NaN, SATURATION_EXPONENT)).toBe(1);
-  });
-
-  it.fails('does not clamp Infinity to 1', () => {
-    expect(expAdjustment(Number.POSITIVE_INFINITY, SATURATION_EXPONENT)).toBe(1);
   });
 });
 

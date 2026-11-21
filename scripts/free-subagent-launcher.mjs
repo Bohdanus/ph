@@ -2,8 +2,6 @@
 
 import { getFreeModelOptions, validateSubagentConfig, validateSubagentConfigs } from './free-model-validator.mjs';
 
-const DEFAULT_FREE_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
-const DEFAULT_PROVIDER = 'kilo';
 const DEFAULT_READ_ONLY_AGENT = 'read-only-research';
 const MAX_SUBAGENTS = 15;
 
@@ -25,8 +23,10 @@ function assertPrompt(prompt) {
   }
 }
 
-function defaultVariant(model, provider) {
-  return model === DEFAULT_FREE_MODEL && provider === DEFAULT_PROVIDER ? 'high' : undefined;
+function assertExplicitRoute(model, provider) {
+  if (typeof model !== 'string' || model.trim() === '' || typeof provider !== 'string' || provider.trim() === '') {
+    throw new Error('Free subagents require an explicit model and provider from the current free catalog');
+  }
 }
 
 function validationOptions(options) {
@@ -42,8 +42,8 @@ function validationOptions(options) {
 
 export async function launchFreeSubagent({
   prompt,
-  model = DEFAULT_FREE_MODEL,
-  provider = DEFAULT_PROVIDER,
+  model,
+  provider,
   maxSubagents = 1,
   variant,
   worktreePath,
@@ -53,6 +53,7 @@ export async function launchFreeSubagent({
 } = {}) {
   assertPrompt(prompt);
   assertAgentManager(agentManager);
+  assertExplicitRoute(model, provider);
 
   const validated = await validateSubagentConfig({ model, provider, maxSubagents, ...validationOptions(options) });
   const task = {
@@ -62,9 +63,7 @@ export async function launchFreeSubagent({
     agent: DEFAULT_READ_ONLY_AGENT,
     description,
   };
-  if (variant ?? defaultVariant(validated.model, validated.provider)) {
-    task.variant = variant ?? defaultVariant(validated.model, validated.provider);
-  }
+  if (variant !== undefined) task.variant = variant;
   if (worktreePath !== undefined) task.worktreePath = worktreePath;
 
   return agentManager({ mode: 'worktree', versions: false, tasks: [task] });
@@ -82,7 +81,8 @@ function normalizeTask(task, index, defaults) {
   const provider = task.provider ?? defaults.provider;
   const normalizedModel = typeof model === 'string' ? model.trim() : model;
   const normalizedProvider = typeof provider === 'string' ? provider.trim().toLowerCase() : provider;
-  const variant = task.variant ?? defaults.variant ?? defaultVariant(normalizedModel, normalizedProvider);
+  assertExplicitRoute(normalizedModel, normalizedProvider);
+  const variant = task.variant ?? defaults.variant;
   const normalized = {
     prompt: task.prompt,
     model: normalizedModel,
@@ -98,8 +98,8 @@ function normalizeTask(task, index, defaults) {
 
 export async function launchFreeSubagents({
   tasks,
-  model = DEFAULT_FREE_MODEL,
-  provider = DEFAULT_PROVIDER,
+  model,
+  provider,
   maxSubagents,
   variant,
   worktreePath,
@@ -137,8 +137,8 @@ export async function launchFreeSubagents({
 export async function launchFreeResearchSubagents({
   prompts,
   maxSubagents,
-  model = DEFAULT_FREE_MODEL,
-  provider = DEFAULT_PROVIDER,
+  model,
+  provider,
   variant,
   worktreePath,
   agentManager,
@@ -176,8 +176,8 @@ export async function launchFreeResearchSubagents({
 export async function launchFreeReviewSubagents({
   prompts,
   maxSubagents,
-  model = DEFAULT_FREE_MODEL,
-  provider = DEFAULT_PROVIDER,
+  model,
+  provider,
   variant,
   worktreePath,
   agentManager,
@@ -210,10 +210,6 @@ export async function launchFreeReviewSubagents({
     fetchImpl,
     quarantineFile,
   });
-}
-
-export function getDefaultFreeModel() {
-  return { model: DEFAULT_FREE_MODEL, provider: DEFAULT_PROVIDER, variant: 'high' };
 }
 
 export { getFreeModelOptions, validateSubagentConfig };

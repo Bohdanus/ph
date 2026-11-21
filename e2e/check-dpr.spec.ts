@@ -3,6 +3,7 @@ import {
   drawLine,
   getDarkPixelBounds,
   getWorkspaceCanvas,
+  workspaceDocumentPixelMask,
   viewportClip,
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
@@ -69,14 +70,9 @@ test.describe('Device pixel ratio', () => {
     // The precondition, and the reason the rest of this test is not vacuous: if the override
     // above were ever dropped, the page would report 1, every assertion below would still
     // pass, and the file would be the permanently-green test it was.
-    // Read off the page directly rather than through a helper. `getDevicePixelRatio` was
-    // deleted from `cdp-helpers.ts` as a dead export that re-invited the strategy this
-    // file's own history shows is wrong: CDP captures at Chrome's surface scale, so the
-    // emulated ratio is not the capture scale and asserting against it once made this test
-    // red in one mode and green in another. What IS worth asserting here is the
-    // EMULATED ratio, because that is the `test.use` above — and the page property is the
-    // only place that can confirm the override applied. `cdp-helpers.spec.ts`'s 2x block
-    // reads it the same way.
+    // Read the page property directly to prove the `test.use` override above took effect.
+    // The screenshot helper separately pins how that context scale affects captured pixels;
+    // this assertion only verifies the device emulation setting itself.
     const dpr = await page.evaluate(() => window.devicePixelRatio);
     expect(dpr).toBe(2);
     await expectCanvasBackingStoresMatchDocument(page, dpr);
@@ -100,13 +96,116 @@ test.describe('Device pixel ratio', () => {
     // box, never from `devicePixelRatio`, so a 2x capture is read the same way as a 1x one
     // (see e2e/helpers/screenshot-scale.ts).
     const screenshot = await captureCanvasScreenshot(page, box, testInfo, 'dpr-2-line');
-    const bounds = await getDarkPixelBounds(screenshot);
+    const bounds = await getDarkPixelBounds(
+      screenshot,
+      await workspaceDocumentPixelMask(
+        page,
+        box,
+        viewportClip({ x: box.x, y: box.y, width: box.width, height: box.height })
+      )
+    );
     if (!bounds) throw new Error('line not found on screenshot');
     const line = imageBoundsToCss({ width: bounds.imageWidth, height: bounds.imageHeight }, box, bounds);
 
     expect(Math.abs(line.left - start.x), 'line start far from cursor').toBeLessThan(toleranceFor(box));
     expect(Math.abs(line.right - end.x), 'line end far from cursor').toBeLessThan(toleranceFor(box));
     expect(Math.abs((line.top + line.bottom) / 2 - start.y), 'line shifted in Y').toBeLessThan(toleranceFor(box));
+  });
+
+  test('committing a Draw stroke preserves the live HiDPI preview pixels', async ({ page }) => {
+    test.setTimeout(90_000);
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
+
+    const workspace = getWorkspaceCanvas(page);
+    const box = await workspace.boundingBox();
+    if (!box) throw new Error('canvas not found');
+    const initialCursor = await workspace.getAttribute('data-presentation-paint-cursor');
+
+    await clickToolButton(page, 'draw');
+    const start = { x: box.x + box.width * 0.25, y: box.y + box.height * 0.3 };
+    const end = { x: box.x + box.width * 0.7, y: box.y + box.height * 0.63 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 3 });
+    await page.waitForTimeout(100);
+
+    await page.evaluate(() => {
+      const workspaceCanvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+      const overlayCanvas = document.querySelector<HTMLCanvasElement>('[data-testid="tool-overlay-canvas"]');
+      if (!workspaceCanvas || !overlayCanvas) throw new Error('Workspace canvas stack is incomplete');
+      if (workspaceCanvas.width !== overlayCanvas.width || workspaceCanvas.height !== overlayCanvas.height) {
+        throw new Error('Workspace and tool overlay backing stores differ');
+      }
+
+      const snapshot = document.createElement('canvas');
+      snapshot.width = workspaceCanvas.width;
+      snapshot.height = workspaceCanvas.height;
+      const context = snapshot.getContext('2d');
+      if (!context) throw new Error('Could not create the Draw preview snapshot');
+      context.drawImage(workspaceCanvas, 0, 0);
+      context.drawImage(overlayCanvas, 0, 0);
+      (window as Window & { __drawPreviewPixels?: Uint8ClampedArray }).__drawPreviewPixels = context.getImageData(
+        0,
+        0,
+        snapshot.width,
+        snapshot.height
+      ).data;
+    });
+
+    await page.mouse.up();
+    await expect.poll(() => workspace.getAttribute('data-presentation-paint-cursor')).not.toBe(initialCursor);
+
+    const comparison = await page.evaluate(() => {
+      const preview = (window as Window & { __drawPreviewPixels?: Uint8ClampedArray }).__drawPreviewPixels;
+      const workspaceCanvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+      const overlayCanvas = document.querySelector<HTMLCanvasElement>('[data-testid="tool-overlay-canvas"]');
+      if (!preview || !workspaceCanvas || !overlayCanvas) throw new Error('Draw pixel comparison inputs are missing');
+      const context = workspaceCanvas.getContext('2d');
+      if (!context) throw new Error('Workspace canvas has no 2D context');
+      const committed = context.getImageData(0, 0, workspaceCanvas.width, workspaceCanvas.height).data;
+      let differingPixels = 0;
+      let maxChannelDelta = 0;
+      let left = workspaceCanvas.width;
+      let top = workspaceCanvas.height;
+      let right = -1;
+      let bottom = -1;
+      for (let offset = 0; offset < committed.length; offset += 4) {
+        let differs = false;
+        for (let channel = 0; channel < 4; channel += 1) {
+          const delta = Math.abs(committed[offset + channel]! - preview[offset + channel]!);
+          maxChannelDelta = Math.max(maxChannelDelta, delta);
+          if (delta !== 0) differs = true;
+        }
+        if (differs) {
+          differingPixels += 1;
+          const pixel = offset / 4;
+          const x = pixel % workspaceCanvas.width;
+          const y = Math.floor(pixel / workspaceCanvas.width);
+          left = Math.min(left, x);
+          top = Math.min(top, y);
+          right = Math.max(right, x);
+          bottom = Math.max(bottom, y);
+        }
+      }
+      return {
+        differingPixels,
+        maxChannelDelta,
+        bounds: differingPixels === 0 ? null : { left, top, right, bottom },
+        presentationSource: workspaceCanvas.dataset.presentationPaintSource,
+      };
+    });
+
+    expect(
+      comparison,
+      'commit should render the same device pixels as the live preview; presentation source: ' +
+        comparison.presentationSource
+    ).toMatchObject({
+      differingPixels: 0,
+      maxChannelDelta: 0,
+      bounds: null,
+    });
   });
 });
 

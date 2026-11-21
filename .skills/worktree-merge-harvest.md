@@ -336,9 +336,11 @@ of the chat that wrote it.
   copy a provider/model from an old transcript. Reviewers are read-only and receive
   the branch's absolute worktree path. They review the pinned candidate SHA, not a
   moving branch name, and do not use the main checkout as their working directory.
-- **Tell them what to return:** `file:line` for every finding, with the evidence
-  they got it from. A claim without a line number is not a review, it is an
-  opinion. Ask for candidate results _and_ how they obtained them.
+- **Tell them what to return:** the file path and a symbol, test name, or heading for every
+  finding, plus the evidence. A claim without a specific identifier and evidence is an opinion.
+  For files without a named symbol, test, or heading, include a short unique matched phrase,
+  property, or selector. Do not use a source line number. Ask for candidate results _and_ how they
+  obtained them.
 - **What to ask for, in this order of value:** (a) does it do what step 2 said it
   was for, including the parts nobody committed; (b) what did it break that the
   diff does not show — silent revert candidates from step 3, a gate that now
@@ -347,8 +349,8 @@ of the chat that wrote it.
   coverage); (d) platform fidelity, for anything user-visible.
 
 **When reviewers disagree:** do not average them, and do not let the louder one
-win. Take the specific, reproducible claim — a `file:line` with a failure you can
-reproduce — over the general one, and reproduce it yourself before acting. If both
+win. Take the specific, reproducible claim — identify the file and symbol, test, or heading,
+with a failure you can reproduce — over the general one, and reproduce it yourself before acting. If both
 claims survive reproduction, that is a decision about intent, and intent belongs
 to the operator: write the question into a file and say so in your final message,
 rather than deciding it silently in a commit.
@@ -453,6 +455,10 @@ REVIEWED_TREE=$(git -C "$WORKTREE" rev-parse 'HEAD^{tree}')
 git -C "$WORKTREE" status --short
 ```
 
+The sync-merge commit is checked by `merge-takeover-guard` through the Git hooks. If it refuses,
+inspect the reported paths and resolve the actual conflict in this candidate worktree; never bypass
+the guard with `--no-verify`.
+
 Follow `docs/CHAT-ID.md` for the current host. Verify the selected session is this current
 conversation. Copy a phrase from the current user's request, not a branch name or generic project
 phrase; if the ID does not identify this chat, stop rather than recording a sibling session's
@@ -474,22 +480,33 @@ test "$MERGE_TREE" = "$REVIEWED_TREE"
 test "$MAIN_TREE" != "$MERGE_TREE"
 ```
 
-Immediately before the landing, run the fresh gates from the coordinator worktree and inspect every
-reported operation, claim, and owner. Leave unrelated operations untouched; an operation or dirty
-state in `MAIN` or `WORKTREE` is a stop. Re-read the main ref and occupancy:
+Immediately before the landing, run the scoped repository-wide report from the coordinator worktree.
+It still lists every operation, but only state in the registered main checkout, the selected source
+branch, or an unreadable/unknown worktree blocks this landing. An operation in another known branch
+remains visible and untouched: `main:landing` operates on a private worktree index and verifies the
+reviewed refs and tree, so a feature-branch operation cannot veto an independent landing. A
+designated-main orphan `AUTO_MERGE` with no unmerged paths is handed to the pinned wrapper, which
+revalidates it and uses the 30-minute preserved-checkout failover only when its full safety checks
+pass. The candidate itself must still be clean, reviewed, and pinned. Re-read the main ref and
+occupancy:
 
 ```bash
-(cd "$TASK_WORKTREE" && npm run repo:state)
+(cd "$TASK_WORKTREE" && npm run repo:state -- --for-landing "$BRANCH")
 (cd "$TASK_WORKTREE" && node scripts/worktree-inventory.mjs)
 (cd "$TASK_WORKTREE" && npm run branches:orphan)
-(cd "$TASK_WORKTREE" && npm run swarm -- status)
-(cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
+  (cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
 test "$(git -C "$MAIN" rev-parse HEAD)" = "$REVIEWED_MAIN_SHA"
 node "$TASK_WORKTREE/scripts/main-landing.mjs" status
 ```
 
-The status must say the landing worktree is free. If another landing is active, report its owner in
-your current chat and continue unrelated work; do not wait or edit `MAIN`. The landing wrapper
+The scoped report is a point-in-time operation check, not full landing readiness or a lease. A
+nonzero result is a hold: inspect the listed source/main operations and resolve unreadable or
+unknown-state findings before proceeding. Do not waive unknown state or alter an unrelated
+worktree.
+
+The status must say the landing worktree is free, except when its only Git operation is the exact
+orphan `AUTO_MERGE` case above. If another landing is active, report its owner in your current chat
+and continue unrelated work; do not wait or edit `MAIN`. The landing wrapper
 rechecks the pins and cleanliness, takes an exclusive lease, prepares the merge, refreshes shared
 Git hook dispatchers, and creates the reviewed commit. If the source candidate conflicts, the
 wrapper refuses before merging; if Git state changes unexpectedly after it starts, it preserves
@@ -506,6 +523,10 @@ the worktree and lease for recovery. Never resolve a conflict in `MAIN`.
     --chat "$CHAT_ID"
 )
 ```
+
+If this command prints `landing pending` and exits 75, stop the post-merge checks here. The detached
+watcher owns the 30-minute observation and pinned retry; resume parent/tree/trailer verification only
+after `main:landing status` shows the lease released and `main` contains the reviewed merge.
 
 This command uses the candidate's wrapper because the feature branch may be the first one to add
 it to `main`. After it lands, `npm run main:landing -- land ...` is the shorter equivalent. The
@@ -525,9 +546,11 @@ git -C "$MAIN" show -s --format=%B HEAD
 
 The first parent must be `REVIEWED_MAIN_SHA`, the second `REVIEWED_CANDIDATE_SHA`, and the tree
 must equal `REVIEWED_TREE`; the message must contain both `Branch: $BRANCH` and `Chat: $CHAT_ID`.
-If the wrapper or a guard refuses, inspect `repo:state` and `main:landing status`, then preserve the
-owner lease and Git state for the recovery procedure. Do not abort or resolve the operation in
-`main`.
+If the wrapper or a guard refuses, inspect the full `repo:state` report and `main:landing status`,
+then preserve the owner lease and Git state. The exact designated-main orphan `AUTO_MERGE` case is
+retried by the watcher after 30 continuous minutes; an operation in the candidate branch blocks this
+landing, while operations in other known branches remain untouched. Do not abort or resolve an
+operation in `main`.
 
 - **Re-read `git status` and `git log --oneline -10` immediately before staging,
   every time.** Other sessions commit into `main` concurrently, and `git add -A`
@@ -569,13 +592,15 @@ coordinator's verified task worktree:
 (cd "$TASK_WORKTREE" && node scripts/worktree-inventory.mjs)
 (cd "$TASK_WORKTREE" && npm run branches:orphan)
 (cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
-(cd "$TASK_WORKTREE" && npm run dispose -- "<worktree-name>" --dry-run)
-(cd "$TASK_WORKTREE" && npm run dispose -- "<worktree-name>")
+(cd "$TASK_WORKTREE" && npm run dispose -- "<worktree-name>" --codex-owner-audit-complete --dry-run)
+(cd "$TASK_WORKTREE" && npm run dispose -- "<worktree-name>" --codex-owner-audit-complete)
 ```
 
 Before actual disposal, verify the exact target path and branch from the fresh inventory; read its
 curated entry; prove the owning root and every transitive child session are finished; and confirm
-the live board/session overlay has no owner or lock for the target. A repo-state operation in the
+the live board/session overlay has no owner or lock for the target. Complete the Codex path/branch/
+file/commit search and pass `--codex-owner-audit-complete` to both disposer runs; the flag asserts
+that manual evidence and does not replace it. A repo-state operation in the
 target, an unreadable signal, an unknown descendant, or a live overlay means leave it. Classify
 unrelated operations on their own worktrees and never touch them. `dispose --dry-run` must name the
 same target and allow removal before the non-dry-run command. The active harvester may itself make

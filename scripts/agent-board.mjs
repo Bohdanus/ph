@@ -874,8 +874,18 @@ export async function run(
           force: Boolean(flags.force),
           reason: flags.reason ? String(flags.reason) : null,
         });
-        emit(result, result.released ? `${id} released, its file locks with it` : `${id}: ${result.reason}`);
-        return 0;
+        const retained = result.files_retained ?? [];
+        emit(
+          result,
+          result.released
+            ? retained.length > 0
+              ? `${id} released; live file locks remain held: ${retained
+                  .map((lock) => `${lock.path} by ${lock.agent_id}`)
+                  .join(', ')}`
+              : `${id} released`
+            : `${id}: ${result.reason}`
+        );
+        return retained.length > 0 ? 4 : 0;
       }
 
       case 'hold': {
@@ -1056,9 +1066,20 @@ export async function run(
       case 'reopen': {
         const id = args[0];
         if (!id) throw new BoardError('reopen needs an issue id', { code: 1 });
-        board.reopenIssue(id, { reason: flags.reason ? String(flags.reason) : null, force: Boolean(flags.force) });
-        emit({ id, status: 'open' }, `${id} reopened`);
-        return 0;
+        const result = board.reopenIssue(id, {
+          reason: flags.reason ? String(flags.reason) : null,
+          force: Boolean(flags.force),
+        });
+        const retained = result.files_retained ?? [];
+        emit(
+          result,
+          retained.length > 0
+            ? `${id} reopened; live file locks remain held: ${retained
+                .map((lock) => `${lock.path} by ${lock.agent_id}`)
+                .join(', ')}`
+            : `${id} reopened`
+        );
+        return retained.length > 0 ? 4 : 0;
       }
 
       case 'dep': {
@@ -1299,21 +1320,37 @@ export async function run(
 
       case 'doctor': {
         const findings = board.doctor({ dryRun: Boolean(flags.dry_run) });
-        emit(
-          { findings },
+        const anomalies = board.unreadableLeaseDeadlines();
+        const output = [
           findings.length === 0
-            ? 'nothing stale: every claim and lock is live'
-            : [
-                `${flags.dry_run ? 'would release' : 'released'} ${findings.length} stale holding(s):`,
-                ...findings.map(
-                  (finding) =>
-                    `  ${finding.kind} ${finding.issue ?? finding.path} — ${finding.agent}${
-                      finding.worktree ? ` (${finding.worktree} is gone)` : ''
-                    }`
-                ),
-              ].join('\n')
-        );
-        return 0;
+            ? 'nothing stale: no expired or missing-worktree holdings'
+            : `${flags.dry_run ? 'found' : 'released'} ${findings.length} ${flags.dry_run ? 'stale release candidate(s)' : 'stale holding(s)'}${
+                flags.dry_run ? ' (rechecked before release)' : ''
+              }:`,
+          ...findings.map(
+            (finding) =>
+              `  ${finding.kind} ${finding.issue ?? finding.path} — ${finding.agent}${
+                finding.worktree ? ` (${finding.worktree} is gone)` : ''
+              }${
+                finding.files_retained?.length
+                  ? `; live file locks remain held: ${finding.files_retained
+                      .map((lock) => `${lock.path} by ${lock.agent_id}`)
+                      .join(', ')}`
+                  : ''
+              }`
+          ),
+        ];
+        if (anomalies.length > 0) {
+          output.push(
+            `${anomalies.length} unreadable lease deadline(s); the deadline alone is treated as live and is not reclaim evidence:`,
+            ...anomalies.map(
+              (anomaly) =>
+                `  ${anomaly.kind} ${anomaly.issue ?? anomaly.path} — ${anomaly.agent} (deadline ${JSON.stringify(anomaly.deadline)})`
+            )
+          );
+        }
+        emit({ findings, anomalies }, output.join('\n'));
+        return findings.some((finding) => finding.files_retained?.length) ? 4 : 0;
       }
 
       case 'import': {

@@ -1,5 +1,5 @@
 import { type PointerEvent, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import { type EraserToolArgs } from '../../tools/eraser.ts';
+import { ERASER_FLOW_DEFAULT, type EraserToolArgs } from '../../tools/eraser.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -29,8 +29,9 @@ type EraserToolAreaProps = {
  * `destination-out` computes `da' = da * (1 - sa)`; with `da = 0` that is `0` for every pixel, so an
  * overlay preview is arithmetically incapable of drawing anything and the stroke only appeared on
  * pointer-up. That shipped, and no assertion on `globalCompositeOperation` could see it.
- * Previewing by mutating the layer makes the preview and the commit the same operation, which is
- * why they cannot drift.
+ * Flow-aware previews reprocess the whole accumulated path against the pre-stroke raster; the
+ * per-stroke coverage budget cannot be reconstructed from a prior preview after alpha is lost.
+ * Previewing by mutating the layer still makes the preview and commit use the same processor.
  */
 export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
   const [
@@ -121,6 +122,9 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
 
   const argsWithSelection = (points: Point[]) => ({
     ...args,
+    // Missing means a pre-Flow settings snapshot; apply the current default to this new gesture.
+    // Historical commit args are never normalized here and continue through the legacy renderer.
+    flow: args.flow ?? ERASER_FLOW_DEFAULT,
     points: toLayerPoints(points),
     ...(selectionSnapshotRef.current ? { selection: selectionSnapshotRef.current } : {}),
   });

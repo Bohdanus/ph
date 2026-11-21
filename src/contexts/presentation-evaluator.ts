@@ -11,7 +11,7 @@ import type { BitmapSource, Pos, Size } from './general-types.ts';
 import type { Layer, LayerOperation } from './layer-types.ts';
 import type { ToolProcessorDefinition } from '../tools/toolProcessors.ts';
 import { FilterArgumentUnrenderableError } from '../util/canvas-filter.ts';
-import { buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
+import { buildBlurFilter, buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
 
 export type PresentationFilterToolName = 'blur' | 'color' | 'levels';
 
@@ -143,7 +143,7 @@ function numericFilterArg(operation: PresentationFilterOperation, field: string)
 function filterForOperation(operation: PresentationFilterOperation): string {
   switch (operation.toolName) {
     case 'blur':
-      return `blur(${numericFilterArg(operation, 'radius')}px)`;
+      return buildBlurFilter(numericFilterArg(operation, 'radius'));
     case 'color':
       // The builders consume exactly these fields, so exactly these are coerced — and naming
       // them is what removes the `as never` the whole-args spread needed.

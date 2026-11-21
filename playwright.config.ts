@@ -1,4 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
+import { normalizeOwnServerBaseUrl } from './e2e/global-setup/foreign-origin.ts';
+import { playwrightWorkerCount } from './e2e/global-setup/worker-policy.ts';
 
 /**
  * See https://playwright.dev/docs/test-configuration.
@@ -19,19 +21,7 @@ import { defineConfig, devices } from '@playwright/test';
 const port = process.env.PLAYWRIGHT_PORT ?? '5173';
 const baseUrl = `http://127.0.0.1:${port}`;
 const configuredBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
-const testBaseUrl = (() => {
-  if (!configuredBaseUrl) return baseUrl;
-  try {
-    const url = new URL(configuredBaseUrl);
-    if (url.protocol === 'http:' && url.hostname === 'localhost' && url.port === port) {
-      url.hostname = '127.0.0.1';
-      return url.toString();
-    }
-  } catch {
-    // Leave malformed values for the existing own-server guard to refuse.
-  }
-  return configuredBaseUrl;
-})();
+const testBaseUrl = normalizeOwnServerBaseUrl(configuredBaseUrl, baseUrl);
 
 export default defineConfig({
   testDir: './e2e',
@@ -92,18 +82,19 @@ export default defineConfig({
   // out, and that is the whole reason this number is not 1800 or more.
   //
   // The macOS two-way shard reached the 20-minute limit after 280 tests, leaving
-  // 11 assigned tests unrun. Give macOS 30 minutes while preserving 10 minutes
-  // before its 40-minute job timeout for report upload. Linux and Windows keep
-  // 20 minutes because this run had no timeout there (jobs 35/40 minutes).
+  // 11 assigned tests unrun. Give macOS 30 minutes, leaving a nominal 10-minute
+  // gap before its 40-minute job timeout. The job clock also covers checkout and
+  // browser setup, so that gap must cover setup plus report upload. Linux and Windows
+  // keep 20 minutes because this run had no timeout there (jobs 35/40 minutes).
+  // The E2E timeout contract test checks every Playwright workflow against these budgets.
   // Local diagnostics retain the longer limit, and --debug disables it.
   globalTimeout: process.env.CI ? (process.platform === 'darwin' ? 30 : 20) * 60_000 : 45 * 60_000,
-  // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
-  // local runs stay sequential so a failure is readable one test at a time and the
-  // machine is not running two browsers per core. The port argument that used to sit
-  // here is gone with the old reuse default: each run owns its port, so two runs no
-  // longer fight over one app instance. The readability argument for `workers: 1` is
-  // gone with headed mode: the local report is the same `list` output either way.
-  workers: process.env.CI ? undefined : 1,
+  // Windows CI shards run one worker. Repeated Windows flakes across unrelated specs
+  // logged `ERR_NO_BUFFER_SPACE` on Vite's React Refresh/HMR requests; reducing the
+  // number of concurrent pages limits pressure on the browser/server connections while
+  // preserving the strict console and flaky-test gates. Linux and macOS keep Playwright's
+  // CPU-based parallelism. Local runs stay sequential so failures are easier to inspect.
+  workers: playwrightWorkerCount(Boolean(process.env.CI), process.platform),
   // Three refusals, and all three run for every `playwright test` invocation whatever
   // started it: a visible browser, a base URL this run's own dev server is not
   // serving, and an HTML report that would open itself and never let the run exit.

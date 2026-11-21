@@ -1,5 +1,8 @@
 import type { ToolControl, ToolDescription, ToolModifier, ToolShortcut } from './types.ts';
 
+const blendingModeGuide =
+  'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html';
+
 /**
  * The FIRST of the two rows in this file whose `control` is `Mode`.
  *
@@ -16,60 +19,54 @@ const modeControl: ToolControl = {
   detail:
     'The first of the two controls Adobe names Mode, and the one at the left of the bar: the three-button drawing-mode group, where Shape creates a filled shape layer, Path creates a vector path with no pixels, and Pixels rasterizes the shape straight into the current layer. Shape is the default.',
   status: 'partial',
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:215',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:272',
 };
 
 const fillControl: ToolControl = {
   control: 'Fill',
   detail:
-    'The interior colour of the shape, as a swatch offering None, Solid Color, Gradient or Pattern. Fill and Stroke are independent: a shape can have a fill and no stroke, or the reverse.',
+    'The interior colour of the shape, as a swatch offering None, Solid Color, Gradient or Pattern. Fill and Stroke are independent: a shape can have a fill and no stroke, or the reverse. THIS APP DIVERGES: No separate Fill swatch with None/Solid/Gradient/Pattern menu. Only a single wired "Filled" checkbox over one shared app colour — the fill is whatever the global background colour currently is, and there is no way to choose None, Gradient, or Pattern fill independently.',
   status: 'partial',
-  // The bar's one `Filled` checkbox, which is this control's whole rendering here. The
-  // processor lines it used to cite (`setShapeCtx`) read `hasFill`; they are where the
-  // value is consumed, not where the control is drawn.
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:329',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:409',
 };
 
 const strokeControl: ToolControl = {
   control: 'Stroke',
   detail:
-    'The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline.',
+    'The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline. THIS APP DIVERGES: no separate Stroke swatch or stroke-off control. Its single "Filled" checkbox controls fill only; stroke is always drawn using the app stroke color and width. The app seeds a 5 px stroke where Photoshop seeds 1 px, so an untouched shape is drawn five times as heavy as Photoshop would draw it.',
   status: 'partial',
-  // The same checkbox as `Fill`, which is the point: one rendering backs both rows, and
-  // what it cannot express is either swatch's own menu.
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:329',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:290',
 };
 
 const strokeWidthControl: ToolControl = {
   control: 'Stroke width',
-  detail: 'Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default.',
+  detail:
+    'Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default. THIS APP DIVERGES: the app exposes a 0.5–500 px Thickness slider and seeds it at 5 px, so a new shape starts with a stroke five times as heavy.',
   status: 'partial',
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:239',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:290',
 };
 
 const strokeTypeControl: ToolControl = {
   control: 'Stroke type',
   detail:
-    'Opens the Stroke Options panel, which sets the line style (Solid, Dashed or Dotted, plus a custom dash array under More Options), the stroke Align (Inside, Center or Outside), the end Caps (Butt, Round, Square) and the corner joins (Miter, Round, Bevel), which Adobe qualifies as "not applicable to the Line tool" because a line has no corners. Centered alignment, a solid line and a Butt cap are the defaults.',
+    'Opens Photoshop’s Stroke Options panel, which sets line style (Solid, Dashed or Dotted, with a custom dash array under More Options), stroke alignment (Inside, Center or Outside), end Caps (Butt, Round, Square) and corner joins (Miter, Round, Bevel; not applicable to the Line tool). Centered alignment, solid style and Butt cap are defaults. THIS APP DIVERGES: no Stroke Options panel, alignment selector or corner-join selector. The app has its own Dashed checkbox and Dash/Gap sliders; a Cap dropdown is available for the Line figure only, rather than for any stroked path.',
   status: 'partial',
-  // The app's own line-style rendering, not a Stroke Options panel: the `Dashed`
-  // checkbox and the Dash and Gap sliders it reveals.
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:344',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:424',
 };
 
 const weightControl: ToolControl = {
   control: 'Weight',
   detail:
-    'Thickness of the path, and it means two different things by mode. In Path mode — and in Shape mode for every figure except the Line tool — Adobe documents it as "Set the width of the path in pixels (visual reference only)": a display aid for the on-screen outline, which never prints and never appears in a saved image. In Pixel mode it is the width that actually paints, "Set the width of the line or shape edge in pixels". The Line tool is the exception in Shape mode, where Adobe\'s own instruction is to "choose Shape mode in the Options bar and then set the Stroke and Weight": a line has no filled area, so there the weight is the stroke itself.',
+    'Thickness of the path, and it means two different things by mode. In Path mode — and in Shape mode for every figure except the Line tool — Adobe documents it as "Set the width of the path in pixels (visual reference only)": a display aid for the on-screen outline, which never prints and never appears in a saved image. In Pixel mode it is the width that actually paints, "Set the width of the line or shape edge in pixels". The Line tool is the exception in Shape mode, where Adobe\'s own instruction is to "choose Shape mode in the Options bar and then set the Stroke and Weight": a line has no filled area, so there the weight is the stroke itself. THIS APP DIVERGES: No Weight control at all. The app has a single stroke width slider shared across all modes, but no distinction between Path-mode visual weight and Pixel-mode paint width.',
   status: 'missing',
 };
 
 const opacityControl: ToolControl = {
   control: 'Opacity',
   detail:
-    'Pixel mode only: transparency of the rasterized shape, 1–100%. Shape and Path modes expose no Opacity slider, because a shape layer and a path have no opacity of their own.',
+    'Pixel mode only in Photoshop: opacity of the rasterized shape, 1–100%. Shape and Path modes expose no Opacity slider. THIS APP DIVERGES: Opacity is present in all three app modes; it affects fill and stroke in Shape/Pixels modes and stroke only in Path mode, where fill is suppressed. The app rasterizes this Path-mode stroke rather than producing a true vector path.',
   status: 'partial',
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:409',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:489',
 };
 
 /**
@@ -84,7 +81,7 @@ const opacityControl: ToolControl = {
 const pixelBlendModeControl: ToolControl = {
   control: 'Mode',
   detail:
-    'The second of the two controls Adobe names Mode, and a different control from the three-button drawing-mode group at the left of the bar: the blend mode the rasterized shape composites with, chosen from the full layer blend-mode list. Pixel mode only, and it sits at the right-hand end of the bar in the group with Opacity and Anti-alias, which Shape and Path modes do not have either.',
+    'The second of the two controls Adobe names Mode, and a different control from the three-button drawing-mode group at the left of the bar: the blend mode the rasterized shape composites with, chosen from the full layer blend-mode list. Clear is available when a fill region is selected and Lock Transparency is deselected. Pixel mode only, and it sits at the right-hand end of the bar in the group with Opacity and Anti-alias, which Shape and Path modes do not have either.',
   status: 'missing',
 };
 
@@ -189,7 +186,7 @@ const radiusControl: ToolControl = {
   // this is the `figure === 'rectangle'` gate and the Radius slider it wraps. The
   // processor line `src/tools/shape.ts:240` is `const radius = args.cornerRadius ?? 0`,
   // which is where the value is consumed, not where the control is drawn.
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:253',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:317',
 };
 
 const missingRadiusControl: ToolControl = {
@@ -202,7 +199,7 @@ const starPointsControl: ToolControl = {
   control: 'Number of Points',
   detail: 'Number of outer points in the star. This app reuses the Polygon bounds of 3–100 points and defaults to 5.',
   status: 'present',
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:330',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:353',
 };
 
 const starRatioControl: ToolControl = {
@@ -210,7 +207,7 @@ const starRatioControl: ToolControl = {
   detail:
     'Percentage of the outer radius used by each inner vertex, controlling the depth of the star indents. Adobe documents Inner Radius and Outer Radius, but not an exact default; this app represents their ratio as 1–99% and chooses 50% as an app-side default.',
   status: 'present',
-  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:357',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:377',
 };
 
 const shiftSquareModifier: ToolModifier = {
@@ -288,7 +285,7 @@ export const shapeDescriptions: Record<
     purpose:
       'Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photoshop tool behind this one: the panel groups seven separate tools — Rectangle, Ellipse, Triangle, Polygon, Star, Line and Custom Shape — behind a single group icon, and the Star arrived as a tool of its own in 26.10. Whichever of the seven is active, the three-button Mode group at the left of the options bar decides what a drag commits — a filled shape layer with a vector mask, a work path with no pixels at all, or a rasterized region painted straight into the active layer. Fill and Stroke are set independently of each other and of the drawing mode, so the same rectangle can be a solid block, a hairline outline, or an outline over a gradient. The drawn shape stays a Live Shape, so its fill, stroke, corner radius and dimensions remain editable from the Properties panel long after the drag.',
     options: sharedFigureOptions,
-    modifiers: [shiftSquareModifier, altFromCenterModifier, spaceRepositionModifier],
+    modifiers: [],
     shortcuts: shapeToolShortcuts,
     implementation: 'partial',
     implementationRefs: [
@@ -301,6 +298,7 @@ export const shapeDescriptions: Record<
     appNotes:
       'The Star entry is now present in the app’s seven-entry shapes fly-out (`toolbar-mapping.ts`), and the `shape` registry entry this description hangs off remains the group container rather than a tool the rail displays by itself. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag is the group’s one place where the app meets Adobe head-on: Adobe documents the click dialog in a single sentence, for the rectangle — "Click on the canvas to bring up the Create Rectangle dialog" — and the app opens a `CreateShapeDialog` modal for every figure except the Line, titled per figure, offering Width, Height and From Center, plus a Corner Radius field on the rectangle that is seeded from that figure’s live Radius slider and applied to the layer being created rather than to the bar. The click itself commits nothing: OK is the only commit, Cancel, the backdrop, the header × and Escape all close without one, and OK is disabled outright while a dimension is under 1 px. The Line is the exception and is excluded by contract rather than by taste — Adobe documents the drag and the release for it and never names a Create Line dialog, so a click there refuses on the console instead of inventing a dialog Adobe has not got. What the dialog still leaves out is per-figure rather than shared, and the triangle and polygon entries below each name their own figure’s gaps against what this renderer can honour.',
     sources: [
+      blendingModeGuide,
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html',
       'https://community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207',
       'https://helpx.adobe.com/photoshop/using/modify-shapes.html',
@@ -334,6 +332,7 @@ export const shapeDescriptions: Record<
     appNotes:
       'The drag geometry, Shift, Alt and the corner radius all behave as they do in Photoshop, and the radius is clamped to half the shorter side exactly as a rounded rectangle must be. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Rectangle verbatim: Path mode does not create a path, Pixels mode rasterizes onto a new layer exactly as Shape mode does rather than painting into the active one, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Rectangle adds two divergences of its own, and the first is a default rather than a gap: it seeds a 5 px stroke where Photoshop seeds 1 px, so an untouched rectangle is drawn five times as heavy as Photoshop would draw it. The Radius slider runs 0–250 px with no numeric entry on the bar, and only the rectangle gets a radius — the app gates the whole control on this figure. Fill and Stroke are on the bar, then, and `partial` in the table above is the honest reading of them: what the app renders is a single wired `Filled` checkbox over its one shared colour, and it is the separate swatches with their None / Solid / Gradient / Pattern menu that are missing, not the controls. The mode group, the stroke width, the stroke type and the opacity each diverge from Photoshop’s control in the same way, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A bare click is where this figure is at its closest: Adobe’s one documented sentence is this figure’s own, and all four of the fields it names — Width, Height, corner radii and align from centre — are in the app’s Create Rectangle dialog, so nothing is left over on this figure. The corner radius is seeded from the bar’s live slider and applied to the layer being created, so a radius typed in the dialog does not rewrite the slider behind the user’s back. What diverges is the entry point rather than the fields: `Shape W&H` is a control on Photoshop’s bar and this app’s bar has none, so here the exact geometry is reachable only by opening the dialog with a click.',
     sources: [
+      blendingModeGuide,
       'https://helpx.adobe.com/photoshop/using/modify-shapes.html',
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html',
@@ -362,6 +361,7 @@ export const shapeDescriptions: Record<
     appNotes:
       'The geometry matches: the ellipse is drawn as a real ctx.ellipse from the half-extents of the drag box, and Shift produces a true circle rather than a square-boxed oval. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Ellipse verbatim: Path mode does not create a path, Pixels mode rasterizes onto a new layer exactly as Shape mode does rather than painting into the active one, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Ellipse then carries the same wrong default as every other figure, a 5 px stroke where Photoshop seeds 1 px, and keeps a cornerRadius: 0 key in its persisted defaults for a control its own bar withholds. Withholding Radius is the app’s rectangle-only gate, and that is a judgment about Photoshop rather than a documented match, since the only evidence for it is a third-party page and no desktop Adobe page enumerating the Ellipse tool’s bar was found. The bar itself is the shared one — the Ellipse gets no control of its own, so the options bar names it and shows the same controls every figure gets: the tool-mode select, the thickness slider, the Filled checkbox, the dashed toggle with its dash and gap sliders, the opacity slider and the live preview. That is the same set the rectangle has minus the radius, so the same reading applies to each: fill and stroke are on the bar as a wired Filled checkbox over one shared colour rather than as Photoshop’s two swatches, the mode group, the stroke type and the opacity each diverge from Photoshop’s control, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A bare click opens the app’s Create Ellipse dialog, titled per figure, with Width, Height and From Center and no corner radius — the same gate as the bar’s, on a figure whose corners are not rounded anywhere on either side. Adobe’s own documentation of a click dialog is the rectangle’s, so this figure’s dialog is the app’s field set rather than a documented one.',
     sources: [
+      blendingModeGuide,
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/create-shapes.html',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/drawing-tools-overview.html',
@@ -381,9 +381,9 @@ export const shapeDescriptions: Record<
       {
         control: 'Caps',
         detail:
-          'Appearance of the two ends of the segment: Butt, Round or Square. Offered for any stroked path, and prominent for the Line tool.',
+          'Appearance of the two ends of a segment: Butt, Round or Square. Photoshop exposes these through Stroke Options for stroked paths. THIS APP DIVERGES: its Cap dropdown is restricted to the Line figure.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:314',
+        appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:392',
       },
       {
         control: 'Arrowheads',
@@ -399,12 +399,13 @@ export const shapeDescriptions: Record<
       'src/tools/toolProcessors.ts:373',
       'src/tools/shape.ts:237',
       'src/tools/shape.ts:117',
-      'src/components/ToolbarsRight/Figures/Shape.tsx:314',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:392',
       'src/tools/settings.ts:52',
     ],
     appNotes:
       'The drag is the tool, and the drag is right: `normalizeShapeGeometry` routes the line figure to `snapLineGeometry`, which quantizes the drag angle to `LINE_ANGLE_STEP` — `Math.PI / 4` — so a Shift-drag snaps to a multiple of 45 degrees exactly as Adobe specifies, and unlike every other figure the line is not squared by Shift. The two things that are missing are the arrowheads and the shape of the bar. Arrowheads are absent outright — `drawShape` strokes a bare moveTo/lineTo pair, with no start or end cap geometry — which is why a line here can never become an arrow, and that is what keeps the verdict at `partial` rather than `implemented`: the tool that draws arrows does not draw them. The Cap select the app renders for this figure offers Photoshop’s three cap styles but only the Line figure gets one, where Photoshop offers caps for any stroked path, through the Stroke Options panel rather than a bar-level select. A bare click gets no dialog at all on this figure, and that is the contract rather than a gap: Adobe documents the Line tool as a drag and a release and never names a Create Line dialog, so the click refuses on the console instead of opening a dialog Adobe has not got. A line has no Width and Height on Adobe’s side either, so the drag is the only place either can give it a length.',
     sources: [
+      blendingModeGuide,
       'https://helpx.adobe.com/photoshop/using/tool-techniques/line-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/draw-an-arrow.html',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html',
@@ -424,7 +425,8 @@ export const shapeDescriptions: Record<
     modifiers: [
       {
         keys: 'Shift',
-        action: 'Constrains the triangle to equilateral, forcing the height to √3⁄2 of the width.',
+        action:
+          'Constrains the triangle to equilateral, forcing the height to √3⁄2 of the width. THIS APP DIVERGES: Shift squares the drag box instead of forcing equilateral — for a 3-gon inscribed in a square box, that is not h = √3⁄2 · w.',
       },
       altFromCenterModifier,
       spaceRepositionModifier,
@@ -441,6 +443,7 @@ export const shapeDescriptions: Record<
     appNotes:
       'The geometry is wrong in the specific way the premise correction warns about. The app inscribes a regular three-sided polygon in the drag box, so a wide drag yields a squat isosceles-looking triangle only by accident, and Shift squares the drag box instead of forcing equilateral — for a 3-gon inscribed in a square box, that is not h = √3⁄2 · w. Because the figure is built by the shared triangle/polygon branch, its Radius field is both absent from the bar and unimplemented in the renderer, so its corners can never be rounded. The Shift behaviour is version-dependent in wording only: the equilateral constraint has been the tool’s Shift since 2021 (v22), and later versions add the persistent Equilateral checkbox to the gear menu. A bare click opens the app’s Create Triangle dialog with Width, Height and From Center, so of the five things Adobe documents for this figure’s click dialog — Width, Height, Corner Radius, Equilateral and From Center — three can be typed here and two are gaps. Equilateral is absent outright, and it is the same gap the Shift row above reaches from the other direction. Corner Radius is withheld rather than absent: `drawShape` reads `cornerRadius` in its rectangle branch only, so a triangle field would take a value and round nothing, and this figure’s corners cannot be rounded here either way.',
     sources: [
+      blendingModeGuide,
       'https://helpx.adobe.com/photoshop/using/tool-techniques/triangle-tool.html',
       'https://jkost.com/blog/2020/10/adobe-announces-updates-to-photoshop-2021-v22.html',
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
@@ -456,7 +459,7 @@ export const shapeDescriptions: Record<
     summary:
       'Drag-defined polygon of any number of sides, with the side count set before the draw; the star of a given point count is a separate tool.',
     purpose:
-      'The Polygon tool is drag-defined, not a click-to-place-vertices tool: Adobe says to click and drag on the canvas, and the ordinary reading of that is a regular n-gon inscribed in the drag box — the regularity is this description’s inference, not Adobe’s wording. Sides sets the n before the draw and defaults to 5. The star is not this tool’s to draw in the current release: Adobe’s tools list puts a separate Star tool in the same shapes group, and the star attributes — the number of points, the Inner Radius that sets the depth of the indents and the Outer Radius that sets the length of the spikes — are documented on that tool, in the Contextual Task Bar and the Properties panel. Shift constrains proportions, Alt/Option draws from the centre — though a polygon is already centred in its drag box — and Control/Cmd while dragging rotates it. A single Radius control rounds every corner at once. The result is a Live Shape whose side count stays editable in the Properties panel.',
+      'The Polygon tool is drag-defined, not a click-to-place-vertices tool: Adobe says to click and drag on the canvas, and the ordinary reading of that is a regular n-gon inscribed in the drag box — the regularity is this description’s inference, not Adobe’s wording. Sides sets the n before the draw and defaults to 5. The star is not this tool’s to draw in the current release: Adobe’s tools list puts a separate Star tool in the same shapes group, and the star attributes — the number of points, the Inner Radius that sets the depth of the indents and the Outer Radius that sets the length of the spikes — are documented on that tool, in the Contextual Task Bar and the Properties panel. Shift constrains proportions, Alt/Option draws from the centre — though a polygon is already centred in its drag box — and third-party reports say Control/Cmd-drag rotates it; the Adobe pages reviewed here do not confirm that gesture. A single Radius control rounds every corner at once. The result is a Live Shape whose side count stays editable in the Properties panel.',
     options: [
       ...sharedFigureOptions,
       {
@@ -475,7 +478,7 @@ export const shapeDescriptions: Record<
       {
         keys: 'Shift',
         action:
-          'Constrains the drag to a box whose sides match, so the polygon comes out symmetrical; reported to be off by default in the gear menu, which is a third-party account rather than an Adobe sentence.',
+          "Constrains the drag to a box whose sides match, so the polygon comes out symmetrical; reported to be off by default in the gear menu, which is a third-party account rather than an Adobe sentence. THIS APP DIVERGES: Shift squares the drag box rather than constraining the polygon's own proportions.",
       },
       altFromCenterModifier,
       spaceRepositionModifier,
@@ -490,12 +493,13 @@ export const shapeDescriptions: Record<
       'src/tools/toolProcessors.ts:372',
       'src/tools/shape.ts:218',
       'src/tools/shape.ts:247',
-      'src/components/ToolbarsRight/Figures/Shape.tsx:295',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:353',
       'src/tools/settings.ts:52',
     ],
     appNotes:
       "The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct, and the side count is a real setting seeded at 5, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Sides is on the bar for this figure, takes the integers 3 through 100 — Adobe's own floor and ceiling — and persists per figure. The separate Star figure now owns its points and Star Ratio controls, so Polygon does not claim those controls. The `[` and `]` rows Photoshop gives this tool are still absent from the table above, but the reason has changed and the old one would now be a falsehood: the side count does exist at runtime, and the gap is that the app's bracket keys reach only the eight tools that carry a tip Size, so they have nothing to act on. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented — which is why `Control` is absent from the `modifiers` table above: in this app holding it while drawing a polygon changes nothing. A bare click opens the app's Create Polygon dialog with Width, Height and From Center, and no field of this figure's own geometry is in it: the dialog commits the bar's current Sides rather than taking one of its own. The polygon is the one figure whose full click-dialog list Adobe published and then stopped publishing: a January 2021 archive of `drawing-shapes.html` names Symmetric, Number of Sides, Corner Radius, Star Ratio and Smooth Star Indents beside Width & Height and From Center, and the current page carries none of them — and of those the renderer reads only Number of Sides, from the bar rather than from the dialog, because no star or indent argument is read at all. Those are gaps rather than withheld fields, and the dialog is not where any of them can be closed.",
     sources: [
+      blendingModeGuide,
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
       'https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html',
@@ -510,21 +514,31 @@ export const shapeDescriptions: Record<
     photoshopName: 'Star Tool',
     summary: 'Drag-defined star with a configurable number of points and alternating outer and inner radii.',
     purpose:
-      'The Star tool draws a customizable star from the Shapes tool group. Adobe documents Number of Points, Outer Radius, Inner Radius and Corner Radius, plus Fill and Stroke; Shift constrains proportions and Alt/Option draws from the centre. The app exposes points through the existing 3–100 Polygon bounds and represents the two radii as a Star Ratio / Indent percentage.',
+      'The Star tool draws a customizable star from the Shapes tool group. Adobe documents Number of Points, Outer Radius, Inner Radius and Corner Radius, plus Fill and Stroke. Third-party reports say Shift constrains proportions, but the Adobe pages reviewed here do not specify this gesture. Alt/Option draws from the centre. The app exposes points through the existing 3–100 Polygon bounds and represents the two radii as a Star Ratio / Indent percentage.',
     options: [...sharedFigureOptions, starPointsControl, starRatioControl, missingRadiusControl],
-    modifiers: [shiftSquareModifier, altFromCenterModifier, spaceRepositionModifier],
+    modifiers: [
+      {
+        keys: 'Shift',
+        action:
+          'Third-party reports say Photoshop Shift constrains star proportions; the Adobe pages reviewed here do not specify this gesture. THIS APP DIVERGES: its shared shape handler squares the drag box and has no Star-specific proportion constraint.',
+      },
+      altFromCenterModifier,
+      spaceRepositionModifier,
+    ],
     shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/toolProcessors.ts:191',
       'src/tools/shape.ts:242',
       'src/tools/shape.ts:107',
-      'src/components/ToolbarsRight/Figures/Shape.tsx:330',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:353',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:377',
       'src/tools/settings.ts:67',
     ],
     appNotes:
       'The Star is implemented as another figure in the shared shape processor. Its path alternates outer and inner vertices, points default to 5, and the Star Ratio / Indent control reaches the renderer. Shape, Path and Pixels modes, Fill/Stroke behaviour, Shift constraint and Alt-from-center are inherited from the existing family. Adobe does not publish exact inner/outer defaults or all min/max bounds, so the 50% ratio default and 1–99% app range are explicit app decisions, not Adobe defaults. Corner Radius, Photoshop’s separate Inner Radius and Outer Radius fields, and true vector/path-mode commits remain limitations of the shared app architecture.',
     sources: [
+      blendingModeGuide,
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html',
       'https://helpx.adobe.com/photoshop/using/create-star-shape.html',
     ],
@@ -604,6 +618,7 @@ export const shapeDescriptions: Record<
     appNotes:
       "Registered, selectable, and a dead button. The processor row declares commit: 'unimplemented' and wires the shared unimplemented rasterizer, the tools map renders PlaceholderTool with a TODO badge, and the only state the settings hold is the tool name — no shape preset, no fill, no geometry. The placeholder panel does list Photoshop’s real control names for this bar, so the six chips a user sees are the genuine Photoshop set rather than placeholders for placeholders: Tool Mode, Fill, Stroke, W/H, Shape Picker, Path Operations. That is why those six rows read `inert` and not `missing` — the names are on screen and nothing is wired behind any of them, which is the exact shape the `inert` status exists for. The three rows that were `partial` above are also `missing` rather than partial, but for the opposite reason: Stroke width, Stroke type and Opacity have no chip in this tool's list at all, and the real shape bar that carries them never renders here, because this tool is absent from the canvas dispatch that gives the other five figures their gesture surface. It is a `display: none` area, so the three modifiers named above — Shift, Alt and Space — are bound to nothing either, and the app’s Shift constraint, which squares the drag box for every figure except the line, has no drag to apply to. That is also the whole of the app side of the Shape W&H row: a bare click opens a Create <Figure> dialog on the five figures that mount `ShapeToolArea`, and this tool mounts `DummyToolArea` instead, so none of that runs here and a click with no drag does nothing rather than opening a sized dialog. Subtract needs a multi-subpath model with a fill rule, which a single convex outline cannot express, so the boolean operations are not a bar toggle away; they are a data-model decision first.",
     sources: [
+      blendingModeGuide,
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-custom-shapes.html',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html',
       'https://community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207',

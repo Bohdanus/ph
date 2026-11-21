@@ -268,6 +268,7 @@ function durableEntryShapeProblem(value: unknown): string | null {
   switch (kindDescriptor.value) {
     case 'create-layer':
       requiredOperationKeys = ['kind', 'layer'];
+      optionalOperationKeys = ['insertAfterLayerId'];
       operationShapeReason = 'the durable create-layer operation does not have the canonical shape';
       break;
     case 'remove-layer':
@@ -324,6 +325,13 @@ function durableEntryShapeProblem(value: unknown): string | null {
   }
   if (!hasCanonicalDataKeys(operation, requiredOperationKeys, optionalOperationKeys)) return operationShapeReason;
 
+  if (
+    operation.kind === 'create-layer' &&
+    operation.insertAfterLayerId !== undefined &&
+    typeof operation.insertAfterLayerId !== 'string'
+  ) {
+    return operationShapeReason;
+  }
   if (
     operation.kind === 'reposition-layer' &&
     ((operation.move !== undefined && !hasCanonicalFiniteNumberKeys(operation.move, ['x', 'y'])) ||
@@ -876,7 +884,12 @@ export type SourceBackedEntryContext = Readonly<{
 function durableLayerForSource(item: HistoryItem, context: SourceBackedEntryContext): DurableLayerSnapshot | null {
   const source = sourceFromEntry(item);
   if (!source) return null;
-  const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, context.liveLayers ?? new Map(context.preLayers));
+  const runtimeLayer = sourceToRuntimeLayer(
+    item.layerId,
+    source,
+    context.liveLayers ?? new Map(context.preLayers),
+    item.insertAfterLayerId
+  );
   const layer = convertLayer(runtimeLayer, context.documentId, context.registry);
   if (layer.source.kind === 'legacy-tool') {
     throw new UnsupportedHistoryFeatureError(
@@ -900,7 +913,14 @@ export function deriveCreateLayerEntry(
   }
   const layer = durableLayerForSource(item, context);
   if (!layer) return null;
-  return durableEntryForOperation(item, Object.freeze({ kind: 'create-layer', layer }));
+  return durableEntryForOperation(
+    item,
+    Object.freeze({
+      kind: 'create-layer',
+      layer,
+      ...(item.insertAfterLayerId !== undefined ? { insertAfterLayerId: item.insertAfterLayerId } : {}),
+    })
+  );
 }
 
 /** Store-boundary planner for an atomic `MERGE_ACTION` append. */
@@ -1894,13 +1914,18 @@ function validatePlannedDurableEntryUnchecked(
           : null;
     if (!snapshot) return 'the durable source-backed operation has no result layer';
     const operationKeys = Object.keys(operation);
-    const expectedKeys = isCreate ? ['kind', 'layer'] : ['kind', 'result', 'removedLayerIds'];
+    const expectedKeys = isCreate
+      ? ['kind', 'layer', ...(entry.insertAfterLayerId !== undefined ? ['insertAfterLayerId'] : [])]
+      : ['kind', 'result', 'removedLayerIds'];
     if (operationKeys.length !== expectedKeys.length || expectedKeys.some((key) => !operationKeys.includes(key))) {
       return isCreate
         ? 'the durable create-layer operation does not have the canonical shape'
         : 'the durable merge-document operation does not have the canonical shape';
     }
     if (snapshot.id !== entry.layerId) return 'the durable result layer id does not match the legacy entry';
+    if (isCreate && operation.kind === 'create-layer' && operation.insertAfterLayerId !== entry.insertAfterLayerId) {
+      return 'the durable create-layer insertion anchor does not match the legacy entry';
+    }
 
     // Source-backed validation needs pre-state to prove canonical order and removals.
     if (!preLayers) {
@@ -1911,7 +1936,7 @@ function validatePlannedDurableEntryUnchecked(
     // The adapter's source-to-runtime rule determines the canonical layer metadata.
     let runtime: Layer;
     try {
-      runtime = sourceToRuntimeLayer(entry.layerId, source, liveLayers ?? new Map(preLayers));
+      runtime = sourceToRuntimeLayer(entry.layerId, source, liveLayers ?? new Map(preLayers), entry.insertAfterLayerId);
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }

@@ -14,12 +14,6 @@ vi.mock('../../Icons/TrashIcon.tsx', () => ({
   TrashIcon: () => <span data-testid="trash-icon" />,
 }));
 
-vi.mock('../../Icons/DragHandleIcon.tsx', () => ({
-  DragHandleIcon: ({ disabled }: { disabled?: boolean }) => (
-    <span data-testid="drag-handle" data-disabled={disabled ?? false} />
-  ),
-}));
-
 const mockLayers: LayersRecord = {
   'layer-1': createMockLayer({ id: 'layer-1', name: 'Background', order: 0, isBedrock: true }),
   'layer-2': createMockLayer({ id: 'layer-2', name: 'Layer 2', order: 1 }),
@@ -356,6 +350,21 @@ describe('LayersTab', () => {
     expect(layerMocks.updateLayer).not.toHaveBeenCalled();
   });
 
+  it('shows all four Photoshop lock slots and disables unsupported partial locks', () => {
+    render(<LayersTab />);
+
+    const protectionControls = screen.getByRole('group', { name: 'Layer protection controls' });
+    const lockButton = screen.getByRole('button', { name: 'Lock Layer 2' });
+
+    expect(protectionControls).toHaveClass('grid', 'w-[7.5rem]', 'grid-cols-4');
+    expect(protectionControls.querySelectorAll('button')).toHaveLength(4);
+    expect(screen.getByRole('button', { name: 'Lock Transparent Pixels (unavailable)' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Lock Image Pixels (unavailable)' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Lock Position (unavailable)' })).toBeDisabled();
+    expect(lockButton).toBeEnabled();
+    expect(lockButton).toHaveClass('col-start-4');
+  });
+
   it('disables Lock All while a text edit is active', () => {
     currentToolState.toolArgs = {
       toolName: 'text',
@@ -379,12 +388,9 @@ describe('LayersTab', () => {
     };
     render(<LayersTab />);
 
-    const removeButton = getListItemFor('Layer 2').querySelector<HTMLButtonElement>(
-      'button[aria-label="Remove layer"]'
-    );
-    if (!removeButton) throw new Error('no remove button for Layer 2');
+    const removeButton = screen.getByTestId('layers-delete-active-button');
     expect(removeButton).toBeDisabled();
-    expect(removeButton).toHaveAttribute('title', 'Finish text editing before removing this layer');
+    expect(removeButton).toHaveAttribute('title', 'Finish text editing before deleting this layer');
     fireEvent.click(removeButton);
 
     expect(layerMocks.removeLayer).not.toHaveBeenCalled();
@@ -515,7 +521,82 @@ describe('LayersTab', () => {
     expect(layerMocks.beginTextLayerEdit).toHaveBeenCalledWith('text');
   });
 
-  it('commits and focuses once during the real row double-click sequence, even when text is unchanged', () => {
+  it('refocuses an already editing text layer when its thumbnail is double-clicked', () => {
+    const args: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'Editable text',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+      editingLayerId: 'text',
+    };
+    seed(
+      {
+        text: createMockLayer({
+          id: 'text',
+          name: 'Text layer',
+          source: { kind: 'tool', args } as ToolLayerSource,
+        }),
+      },
+      'text'
+    );
+    currentToolState.toolArgs = args;
+    render(<LayersTab />);
+
+    fireEvent.doubleClick(screen.getByTestId('layer-thumbnail'));
+
+    expect(layerMocks.beginTextLayerEdit).not.toHaveBeenCalled();
+    expect(currentToolState.setToolArgs).not.toHaveBeenCalled();
+    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledExactlyOnceWith({
+      kind: 'select-all',
+      layerId: 'text',
+    });
+  });
+
+  it('renames a text layer from its name without entering text editing', () => {
+    const args: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'Editable text',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+    };
+    seed(
+      {
+        text: createMockLayer({
+          id: 'text',
+          name: 'Text layer',
+          source: { kind: 'tool', args } as ToolLayerSource,
+        }),
+      },
+      null
+    );
+    currentToolState.toolArgs = { toolName: 'text' };
+    render(<LayersTab />);
+    const name = getNameSpan('Text layer');
+
+    act(() => {
+      fireEvent.click(name);
+      fireEvent.click(name);
+      fireEvent.doubleClick(name);
+    });
+
+    expect(name).toHaveAttribute('contenteditable', 'true');
+    expect(layerMocks.beginTextLayerEdit).not.toHaveBeenCalled();
+    expect(currentToolState.setToolArgs).not.toHaveBeenCalled();
+  });
+
+  it('commits and keeps focus through the thumbnail double-click sequence when text is unchanged', () => {
     const args: TextToolArgs = {
       toolName: 'text',
       align: 'left',
@@ -570,16 +651,18 @@ describe('LayersTab', () => {
 
     render(<LayersTab />);
     const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
-    if (!row) throw new Error('no row for Target text');
+    const thumbnail = getListItemFor('Target text').querySelector<HTMLElement>('[data-testid="layer-thumbnail"]');
+    if (!row || !thumbnail) throw new Error('no row or thumbnail for Target text');
     act(() => {
       fireEvent.click(row);
       fireEvent.click(row);
-      fireEvent.doubleClick(row);
+      fireEvent.doubleClick(thumbnail);
     });
 
     expect(order).toEqual(['commit', 'active', 'begin-edit', 'hydrate', 'focus']);
     expect(layerMocks.commitDirtyTool).toHaveBeenCalledOnce();
-    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledExactlyOnceWith({
+    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledTimes(2);
+    expect(currentToolState.requestTextEditFocus).toHaveBeenLastCalledWith({
       kind: 'select-all',
       layerId: 'target',
     });
@@ -641,10 +724,10 @@ describe('LayersTab', () => {
     });
 
     render(<LayersTab />);
-    const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
-    if (!row) throw new Error('no row for Target text');
+    const thumbnail = getListItemFor('Target text').querySelector<HTMLElement>('[data-testid="layer-thumbnail"]');
+    if (!thumbnail) throw new Error('no thumbnail for Target text');
     act(() => {
-      fireEvent.doubleClick(row);
+      fireEvent.doubleClick(thumbnail);
     });
 
     expect(order).toEqual(['commit', 'active', 'begin-edit', 'hydrate', 'focus']);
@@ -658,7 +741,7 @@ describe('LayersTab', () => {
     });
   });
 
-  it('preserves the current edit when commit fails during a row double-click', () => {
+  it('preserves the current edit when commit fails during a thumbnail double-click', () => {
     const args: TextToolArgs = {
       toolName: 'text',
       align: 'left',
@@ -694,11 +777,12 @@ describe('LayersTab', () => {
     render(<LayersTab />);
 
     const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
-    if (!row) throw new Error('no row for Target text');
+    const thumbnail = getListItemFor('Target text').querySelector<HTMLElement>('[data-testid="layer-thumbnail"]');
+    if (!row || !thumbnail) throw new Error('no row or thumbnail for Target text');
     act(() => {
       fireEvent.click(row);
       fireEvent.click(row);
-      fireEvent.doubleClick(row);
+      fireEvent.doubleClick(thumbnail);
     });
 
     expect(layerMocks.commitDirtyTool).toHaveBeenCalled();
@@ -709,13 +793,23 @@ describe('LayersTab', () => {
     expect(currentToolState.toolArgs).toMatchObject({ editingLayerId: 'current', text: 'current draft' });
   });
 
-  it('removes layer on trash click', () => {
+  it('confirms before removing the selected layer from the action bar', async () => {
     render(<LayersTab />);
-    const layerDivs = getLayerDivs();
-    const trashButton = layerDivs[0].querySelector('button[aria-label="Remove layer"]');
+    const row = getListItemFor('Top Layer').querySelector<HTMLElement>('[data-testid="layer-row-content"]');
+    if (!row) throw new Error('no row for Top Layer');
+    fireEvent.click(row);
+    const removeButton = screen.getByTestId('layers-delete-active-button');
+    removeButton.focus();
     act(() => {
-      fireEvent.click(trashButton!);
+      fireEvent.click(removeButton);
     });
+
+    expect(screen.getByTestId('confirm-dialog')).toBeInTheDocument();
+    expect(layerMocks.removeLayer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
+    await Promise.resolve();
+    expect(document.activeElement).toBe(removeButton);
+
     expect(layerMocks.removeLayer).toHaveBeenCalledTimes(1);
     expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
 
@@ -724,19 +818,68 @@ describe('LayersTab', () => {
     expect('layer-3' in liveStore.snapshot.layers).toBe(false);
   });
 
-  it('stops propagation on trash click', () => {
+  it('disables removal of a full-locked active layer in the action bar', () => {
+    const lockedLayers = {
+      ...mockLayers,
+      'layer-2': createMockLayer({ id: 'layer-2', name: 'Layer 2', order: 1, locked: true }),
+    };
+    seed(lockedLayers, 'layer-2');
     render(<LayersTab />);
-    const layerDivs = getLayerDivs();
-    const trashButton = layerDivs[0].querySelector('button[aria-label="Remove layer"]');
-    act(() => {
-      fireEvent.click(trashButton!);
-    });
-    expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
-    expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
 
-    expect(screen.queryByText('Top Layer')).toBeNull();
-    expect(getLayerDivs()[0]).toHaveTextContent('Layer 2');
-    expect(getLayerDivs()[0]).toHaveClass('bg-white');
+    const activeDelete = screen.getByTestId('layers-delete-active-button');
+
+    expect(activeDelete).toBeDisabled();
+    expect(activeDelete).toHaveAttribute('title', 'Unlock layer before deleting it');
+    fireEvent.click(activeDelete);
+
+    expect(layerMocks.removeLayer).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+  });
+
+  it('closes deletion confirmation if the layer disappears externally', async () => {
+    render(<LayersTab />);
+    fireEvent.click(getListItemFor('Top Layer').querySelector<HTMLElement>('[data-testid="layer-row-content"]')!);
+    fireEvent.click(screen.getByTestId('layers-delete-active-button'));
+    expect(screen.getByTestId('confirm-dialog')).toBeInTheDocument();
+
+    act(() => {
+      updateStore((snapshot) => {
+        const layers = { ...snapshot.layers };
+        delete layers['layer-3'];
+        return { ...snapshot, layers };
+      });
+    });
+
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+  });
+
+  it('leaves a layer unchanged when deletion is cancelled', () => {
+    render(<LayersTab />);
+    fireEvent.click(getListItemFor('Top Layer').querySelector<HTMLElement>('[data-testid="layer-row-content"]')!);
+    fireEvent.click(screen.getByTestId('layers-delete-active-button'));
+
+    fireEvent.click(screen.getByTestId('confirm-dialog-cancel-button'));
+
+    expect(layerMocks.removeLayer).not.toHaveBeenCalled();
+    expect(screen.getByText('Top Layer')).toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+  });
+
+  it('deletes immediately on Alt/Option-click', () => {
+    render(<LayersTab />);
+
+    fireEvent.click(screen.getByTestId('layers-delete-active-button'), { altKey: true });
+
+    expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-2');
+    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+  });
+
+  it('keeps delete in the action bar instead of individual rows', () => {
+    render(<LayersTab />);
+    for (const row of getLayerDivs()) {
+      expect(row.querySelector('button[aria-label="Remove layer"]')).toBeNull();
+    }
+    expect(screen.getByTestId('layers-delete-active-button')).toBeInTheDocument();
   });
 
   it('stops propagation on eye button click', () => {
@@ -773,30 +916,19 @@ describe('LayersTab', () => {
     expect(container.classList.contains('h-full')).toBe(true);
   });
 
-  it('keeps remove control available for a bedrock layer', () => {
-    seed({ bedrock: createMockLayer({ id: 'bedrock', name: 'Background', isBedrock: true }) }, null);
+  it('keeps the action-bar delete control available for a selected bedrock layer', () => {
+    seed({ bedrock: createMockLayer({ id: 'bedrock', name: 'Background', isBedrock: true }) }, 'bedrock');
     render(<LayersTab />);
     const [bedrockRow] = getLayerDivs();
     expect(bedrockRow).toHaveTextContent('Background');
-    expect(bedrockRow.querySelector('button[aria-label="Remove layer"]')).toBeInTheDocument();
+    expect(screen.getByTestId('layers-delete-active-button')).toBeEnabled();
   });
 
-  it('shows drag handle icon', () => {
+  it('uses the row itself as the drag target without an extra handle glyph', () => {
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
-    const dragHandles = layerDivs.map((div) => div.querySelector('[data-testid="drag-handle"]'));
-    expect(dragHandles[0]).toBeInTheDocument();
-    expect(dragHandles[1]).toBeInTheDocument();
-    expect(dragHandles[2]).toBeInTheDocument();
-  });
-
-  it('shows trash icon for each layer', () => {
-    render(<LayersTab />);
-    const layerDivs = getLayerDivs();
-    const trashButtons = layerDivs.map((div) => div.querySelector('button[aria-label="Remove layer"]'));
-    expect(trashButtons[0]).toBeInTheDocument();
-    expect(trashButtons[1]).toBeInTheDocument();
-    expect(trashButtons[2]).toBeInTheDocument();
+    expect(layerDivs.map((div) => div.getAttribute('draggable'))).toEqual(['true', 'true', 'false']);
+    expect(layerDivs.every((div) => !div.querySelector('[data-testid="drag-handle"]'))).toBe(true);
   });
 });
 
@@ -821,7 +953,19 @@ describe('LayersTab inline rename', () => {
     expect(getLayerDivs()[0]).toHaveAttribute('draggable', 'true');
   });
 
-  it('turns the name span into an editable region on mouse down', () => {
+  it('selects a layer on a single click without entering rename mode', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+
+    act(() => {
+      fireEvent.click(span);
+    });
+
+    expect(layerMocks.setActiveLayer).toHaveBeenCalledWith('layer-3');
+    expect(span).toHaveAttribute('contenteditable', 'false');
+  });
+
+  it('does not enter rename mode on a single mouse press', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
 
@@ -829,11 +973,24 @@ describe('LayersTab inline rename', () => {
       fireEvent.mouseDown(span);
     });
 
-    expect(span).toHaveAttribute('contenteditable', 'true');
-    expect(span).toHaveStyle({ background: '#fff' });
+    expect(span).toHaveAttribute('contenteditable', 'false');
   });
 
-  it('turns the name span into an editable region on a touch press', () => {
+  it('turns the name span into an editable region on double-click and selects its text', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+
+    act(() => {
+      fireEvent.doubleClick(span);
+    });
+
+    expect(span).toHaveAttribute('contenteditable', 'true');
+    expect(span).toHaveStyle({ background: '#fff' });
+    expect(span).toHaveFocus();
+    expect(span.ownerDocument.getSelection()?.toString()).toBe('Top Layer');
+  });
+
+  it('requires a double-click on the name to enter rename mode on touch', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
 
@@ -841,7 +998,20 @@ describe('LayersTab inline rename', () => {
       fireEvent.pointerDown(span, { pointerId: 9, pointerType: 'touch' });
     });
 
+    expect(span).toHaveAttribute('contenteditable', 'false');
+    expect(span).not.toHaveFocus();
+
+    act(() => {
+      fireEvent.click(span);
+    });
+    expect(liveStore.snapshot.activeLayerId).toBe('layer-3');
+    expect(span).toHaveAttribute('contenteditable', 'false');
+
+    act(() => {
+      fireEvent.doubleClick(span);
+    });
     expect(span).toHaveAttribute('contenteditable', 'true');
+    expect(span).toHaveFocus();
   });
 
   it('suspends dragging for the layer that is being renamed', () => {
@@ -849,7 +1019,7 @@ describe('LayersTab inline rename', () => {
     const span = getNameSpan('Top Layer');
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
 
     expect(getLayerDivs()[0]).toHaveAttribute('draggable', 'false');
@@ -859,7 +1029,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
 
     const row = getLayerDivs()[0];
@@ -872,15 +1042,15 @@ describe('LayersTab inline rename', () => {
     expect(document.body).not.toHaveClass('cursor-grabbing');
   });
 
-  it('stays in rename mode when the name is pressed again', () => {
+  it('stays in rename mode when the name is double-clicked again', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
 
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
 
     expect(span).toHaveAttribute('contenteditable', 'true');
@@ -890,7 +1060,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = '  Sky  ';
@@ -913,7 +1083,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
 
     act(() => {
@@ -931,7 +1101,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = 'Sky';
@@ -960,7 +1130,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = 'Discarded';
@@ -981,7 +1151,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = 'Sky';
@@ -1003,7 +1173,7 @@ describe('LayersTab inline rename', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = nextName;
@@ -1015,17 +1185,17 @@ describe('LayersTab inline rename', () => {
     expect(liveStore.snapshot.layers['layer-3'].name).toBe('Top Layer');
   });
 
-  // Regression — src/components/SidebarRight/LayersTab.tsx:90-104.
+  // Regression — `handleNameChange` must write the stored label back when it refuses a blank rename.
   // `handleNameChange` refuses to commit a blank name, and because the span is no longer
   // editable the DOM text is no longer owned by React, so the refused path has to write the
-  // stored name back itself — exactly as the Escape branch at LayersTab.tsx:231 does. Without
+  // stored name back itself — exactly as the Escape handler does. Without
   // that write React re-renders with the same text child, changes nothing, and the row keeps
   // showing the blank label: a nameless layer that still exists.
   it('restores the previous label in the row when a blank rename is rejected', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
-      fireEvent.mouseDown(span);
+      fireEvent.doubleClick(span);
     });
     act(() => {
       span.textContent = '   ';
@@ -1186,7 +1356,7 @@ describe('LayersTab drag and drop guards', () => {
     expect(lockedThumbnail).not.toHaveClass('touch-none');
     expect(bedrockThumbnail).not.toHaveClass('touch-none');
     expect(editingThumbnail).toHaveClass('touch-none');
-    fireEvent.mouseDown(getNameSpan('Layer 2'));
+    fireEvent.doubleClick(getNameSpan('Layer 2'));
     expect(editingThumbnail).not.toHaveClass('touch-none');
 
     const layersList = screen.getByTestId('layers-list');
@@ -1202,6 +1372,29 @@ describe('LayersTab drag and drop guards', () => {
       clientY: 10,
     });
     expect(capture.setPointerCapture).not.toHaveBeenCalled();
+  });
+
+  it('keeps pen double-click rename available on a layer name', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[2]!;
+    const name = getNameSpan('Top Layer');
+    const capture = mockPointerCapture(source);
+
+    act(() => {
+      fireEvent.pointerDown(name, {
+        pointerId: 12,
+        pointerType: 'pen',
+        isPrimary: true,
+        clientX: 10,
+        clientY: 10,
+      });
+    });
+
+    expect(capture.setPointerCapture).not.toHaveBeenCalled();
+    act(() => {
+      fireEvent.doubleClick(name);
+    });
+    expect(name).toHaveAttribute('contenteditable', 'true');
   });
 
   it('uses the exact 250ms thumbnail hold contract', () => {
@@ -1261,6 +1454,50 @@ describe('LayersTab drag and drop guards', () => {
       fireEvent.pointerUp(nextTap, { pointerId: 17, pointerType: 'touch', isPrimary: true });
       fireEvent.click(nextTap, { detail: 1 });
       expect(layerMocks.setActiveLayer).toHaveBeenCalledWith('layer-2');
+    } finally {
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
+    }
+  });
+
+  it('supports dropping a touch drag on the trash action', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const thumbnail = screen.getAllByTestId('layer-thumbnail')[0]!;
+    const target = screen.getByTestId('layers-delete-active-button');
+    mockPointerCapture(source);
+    const elementFromPoint = vi.fn(() => target);
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: elementFromPoint });
+
+    try {
+      act(() => {
+        fireEvent.pointerDown(thumbnail, {
+          pointerId: 21,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 10,
+          clientY: 10,
+        });
+        vi.advanceTimersByTime(LAYER_REORDER_LONG_PRESS_MS);
+        fireEvent.pointerMove(source, {
+          pointerId: 21,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
+        fireEvent.pointerUp(source, {
+          pointerId: 21,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
+      });
+
+      expect(elementFromPoint).toHaveBeenCalledWith(20, 20);
+      expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
+      expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
     }
@@ -1429,7 +1666,7 @@ describe('LayersTab drag and drop guards', () => {
     Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
 
     expect(backingRow).toHaveAttribute('draggable', 'false');
-    expect(backingRow.querySelector('[data-testid="drag-handle"]')).toHaveAttribute('data-disabled', 'true');
+    expect(backingRow.querySelector('[data-testid="drag-handle"]')).toBeNull();
 
     act(() => {
       fireEvent(backingRow, event);
@@ -1455,7 +1692,7 @@ describe('LayersTab drag and drop guards', () => {
     Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
 
     expect(lockedRow).toHaveAttribute('draggable', 'false');
-    expect(lockedRow.querySelector('[data-testid="drag-handle"]')).toHaveAttribute('data-disabled', 'true');
+    expect(lockedRow.querySelector('[data-testid="drag-handle"]')).toBeNull();
 
     act(() => {
       fireEvent(lockedRow, event);

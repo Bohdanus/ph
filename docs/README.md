@@ -48,11 +48,12 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 ## System
 
-| Document                                       | Its one job                                                                   |
-| ---------------------------------------------- | ----------------------------------------------------------------------------- |
-| [`FEATURES.md`](FEATURES.md)                   | Capability inventory against Photoshop, including what the platform cannot do |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)           | The store, the layer model, both history systems, rendering, file I/O         |
-| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md) | The durable-history migration contract and cutover sequence                   |
+| Document                                                                     | Its one job                                                                   |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [`FEATURES.md`](FEATURES.md)                                                 | Capability inventory against Photoshop, including what the platform cannot do |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                                         | The store, the layer model, both history systems, rendering, file I/O         |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)                               | The durable-history migration contract and cutover sequence                   |
+| [`HISTORY-MIGRATION-AUDIT-20261107.md`](HISTORY-MIGRATION-AUDIT-20261107.md) | Dated audit of durable-history parity gates and open export findings          |
 
 ## Working practice
 
@@ -83,12 +84,22 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 ### Skills
 
 This is the entrypoint for repository procedures. Codex must open the selected `.skills/*.md`
-playbook explicitly; Kilo runtime copies live under `.kilo/skills/*/SKILL.md`. Tool permission
-profiles live under `.kilo/agent/`.
+playbook explicitly; applicable Codex runtime skills live at
+`$CODEX_HOME/skills/<skill-name>/SKILL.md` (default `~/.codex/skills/`). Kilo runtime copies live
+under `.kilo/skills/*/SKILL.md`. Tool permission profiles live under `.kilo/agent/`.
 
-The agent procedures live outside this directory, under `.skills/`, one file per
-procedure. `AGENTS.md` states the rules, a skill states a procedure, and an agent profile defines
-its tool permissions.
+The tracked `.skills/` files are canonical for every procedure and its supporting files. General
+skills must be complete, byte-identical copies across `.skills/`, `.kilo/skills/`, and the Codex
+skill directory. Keep Kilo-only skills out of Codex, Codex-only skills out of Kilo, and track every
+host-specific skill in `.skills/` so it survives independently of ignored runtime copies. Kilo
+runtime skills are full copies, not abbreviated loaders. `AGENTS.md` states repository rules, a
+skill states a procedure, and an agent profile defines its tool permissions.
+
+Kilo-only skills, excluded from Codex, are `chat-loose-end-scan`, `e2e-hardening-cron`,
+`free-model-agent-rotation`, `free-model-chat-sweep`, `kilo-chat-history`, `overnight-sweep`, and
+`parallel-test-hardening`. `codex-chat-history` is Codex-only and must not be installed in Kilo.
+The Copilot-specific `copilot-chat-history` and `copilot-subagent-launch` remain tracked and
+available in Kilo for Copilot workflows, but are not Codex skills.
 
 | Skill                                                                                  | Its one job                                                                                                                                                                                                                                                               |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -100,6 +111,7 @@ its tool permissions.
 | [`../.skills/chat-loose-end-scan.md`](../.skills/chat-loose-end-scan.md)               | Find loose ends in recent top-level Kilo chats — chats that died on a network loss, a token wall or a tool error, and reviews whose findings nobody answered                                                                                                              |
 | [`../.skills/codex-chat-history.md`](../.skills/codex-chat-history.md)                 | Locate and query OpenAI Codex CLI session history from local SQLite state database and JSONL rollout files. Read-only, local-first                                                                                                                                        |
 | [`../.skills/copilot-chat-history.md`](../.skills/copilot-chat-history.md)             | Locate and query GitHub Copilot Chat panel and Agent sessions from Chronicle, agent-host, and JSONL stores. Read-only, local-first                                                                                                                                        |
+| [`../.skills/copilot-subagent-launch.md`](../.skills/copilot-subagent-launch.md)       | Launch and troubleshoot task-scoped subagents in GitHub Copilot Chat for VS Code                                                                                                                                                                                          |
 | [`../.skills/free-model-agent-rotation.md`](../.skills/free-model-agent-rotation.md)   | Route bounded research, text-sweep, and simple review subtasks through currently free model providers without paid fallback                                                                                                                                               |
 | [`../.skills/free-model-chat-sweep.md`](../.skills/free-model-chat-sweep.md)           | Review Kilo and Codex history for free-model failure patterns, then apply evidence-backed expiring quarantine actions                                                                                                                                                     |
 | [`../.skills/hard-merge.md`](../.skills/hard-merge.md)                                 | Merge two branches with overlapping features, recovering requirements from chat history and arbitrating conflicts against Photoshop                                                                                                                                       |
@@ -129,13 +141,14 @@ and remaining unproven work.
 Three homes for an open defect, split by what broke. A defect goes in one of them, not in two —
 `handoffs/` is not one of them; it records a finished review.
 
-| Document                                                                                                           | Its one job                                                                |
-| ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| [`../HANDOFF.md`](../HANDOFF.md)                                                                                   | Open defects in the code                                                   |
-| [`../TEST-FLAKES.md`](../TEST-FLAKES.md)                                                                           | Intermittent and unreliable test behaviour                                 |
-| [`../e2e/OPEN_PROBLEMS.md`](../e2e/OPEN_PROBLEMS.md)                                                               | Latent defects in the e2e suite's own code — none fails a current run      |
-| [`handoffs/`](handoffs/)                                                                                           | One per branch review-and-merge, named `docs/handoffs/<branch>-<topic>.md` |
-| [`handoffs/docs-orchestration-review-gotchas-20261102.md`](handoffs/docs-orchestration-review-gotchas-20261102.md) | Review record for orchestration and code-review guidance                   |
+| Document                                                                                                                                           | Its one job                                                                           |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [`../HANDOFF.md`](../HANDOFF.md)                                                                                                                   | Open defects in the code                                                              |
+| [`../TEST-FLAKES.md`](../TEST-FLAKES.md)                                                                                                           | Intermittent and unreliable test behaviour                                            |
+| [`../e2e/OPEN_PROBLEMS.md`](../e2e/OPEN_PROBLEMS.md)                                                                                               | Latent defects in the e2e suite's own code — none fails a current run                 |
+| [`handoffs/`](handoffs/)                                                                                                                           | One per branch review-and-merge, named `docs/handoffs/<branch>-<topic>.md`            |
+| [`handoffs/docs-orchestration-review-gotchas-20261102.md`](handoffs/docs-orchestration-review-gotchas-20261102.md)                                 | Review record for orchestration and code-review guidance                              |
+| [`handoffs/task-test-unit-hardening-salvage-20261107-review-and-merge.md`](handoffs/task-test-unit-hardening-salvage-20261107-review-and-merge.md) | Review record and verified landing result for the salvaged unit-test hardening branch |
 
 ## Not maintained here
 
@@ -146,17 +159,18 @@ point-in-time reports. These documents are **not
 current**, nothing in the live set depends on them, and they are not part of this
 hierarchy.
 
-| File                                     | What it is                                                                                                   |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `../RECOVERY.md`                         | Preserves recovery instructions for an unreviewed inventory patch; do not apply wholesale                    |
-| `../AUDIT-STASHED-DOCS.md`               | Disposition record for three recovered stashed documents. Its two `docs/*.md` subjects are itself obsolete   |
-| `../FOCUSED-REVIEW-2026-09-28.md`        | A dated four-subsystem review, recorded rather than fixed                                                    |
-| `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them               |
-| `HISTORY-MIGRATION-AUDIT-20261107.md`    | Read-only history migration audit at main `659ca8e`; findings are a dated snapshot, not current contract     |
-| `../MERGE-INTEGRITY-AUDIT.md`            | What concurrent-branch work left unresolved: open merges, colliding handoff numbers, gates that miss a class |
-| `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
-| `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
-| `HARDENING-HARVEST-HANDOFF-20261017.md`  | Dated handoff for the October 17 hardening sweep; its inventory and worktree dispositions are historical     |
+| File                                     | What it is                                                                                                                   |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `../RECOVERY.md`                         | Preserves recovery instructions for an unreviewed inventory patch; do not apply wholesale                                    |
+| `../AUDIT-STASHED-DOCS.md`               | Disposition record for three recovered stashed documents. Its two `docs/*.md` subjects are itself obsolete                   |
+| `../FOCUSED-REVIEW-2026-09-28.md`        | A dated four-subsystem review, recorded rather than fixed                                                                    |
+| `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them                               |
+| `HISTORY-MIGRATION-AUDIT-20261107.md`    | Read-only history migration audit at main `659ca8e`; findings are a dated snapshot, not current contract                     |
+| `../MERGE-INTEGRITY-AUDIT.md`            | What concurrent-branch work left unresolved: open merges, colliding handoff numbers, gates that miss a class                 |
+| `../ORCHESTRATION_GOTCHAS_RESEARCH.md`   | Dated, point-in-time evidence audit of parallel-agent coordination research and safeguards; revalidate before policy changes |
+| `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                                     |
+| `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                                             |
+| `HARDENING-HARVEST-HANDOFF-20261017.md`  | Dated handoff for the October 17 hardening sweep; its inventory and worktree dispositions are historical                     |
 
 `scripts/lib/worktree-inventory/curated.mjs` no longer carries `ref:` entries
 pointing to `TEST_ISSUES.md` (they were replaced with `AUDIT-STASHED-DOCS.md` refs

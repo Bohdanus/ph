@@ -608,16 +608,18 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     // of snapping back to the frame edge.
     allowOutsideCanvas: true,
     // The frame-sized overlay canvas clips crop chrome at the document edge. At angle zero the
-    // overflow-safe surface below owns the shade, guides and handles across the full crop rect;
-    // rotated crops keep the canvas painter, which repaints only the previous crop's dirty bounds.
+    // overflow-safe surface below owns the shade, guides and handles across the full crop rect.
+    // Rotated crops use the canvas painter and repaint its full backing store on each frame so
+    // rotation and same-angle moves cannot leave stale rasterized pixels outside the crop.
     hideBlend: angle === 0,
     externalOverlay: angle === 0,
-    incrementalOverlay: angle !== 0,
+    incrementalOverlay: false,
     hideBorder: angle === 0,
     hideHandles: angle === 0,
     hideRotationHandle: angle === 0,
     rotationEnabled: true,
     rotation: angle,
+    resetRotationOnNewRect: true,
     onRotationChange: (nextAngle: number) => setCurrentCropArgs({ ...overlayKeysRef.current.args, angle: nextAngle }),
     overlayType: angle === 0 ? undefined : overlayType,
     overlayColorForRect: angle === 0 ? undefined : sampleCropOverlayColor,
@@ -686,10 +688,10 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
       )
     : [];
   const cropChromeRect = paintedCropRect && angle === 0 ? paintedCropRect : null;
-  const inFrameDimPieces =
-    paintedCropRect && angle === 0
-      ? subtractRect({ x: 0, y: 0, width: totalSize.width, height: totalSize.height }, paintedCropRect)
-      : [];
+  // A compound mask shades the frame without seams where separately transformed bands meet.
+  const inFrameDimPath = cropChromeRect
+    ? `M0 0 H${totalSize.width} V${totalSize.height} H0 Z M${cropChromeRect.x} ${cropChromeRect.y} h${cropChromeRect.width} v${cropChromeRect.height} h-${cropChromeRect.width} Z`
+    : null;
   const cropOutlineWidth = painted ? OUTLINE_WIDTH / painted.fit.scale : 0;
   const cropOutlineDash = painted ? OUTLINE_DASH / painted.fit.scale : 0;
   const cropHandleSize = painted ? HANDLE_SIZE / painted.fit.scale : 0;
@@ -798,21 +800,17 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
                   }}
                 />
               ))}
-              {inFrameDimPieces.map((piece) => (
-                <div
-                  key={`crop-frame-dim-${piece.x}-${piece.y}-${piece.width}-${piece.height}`}
+              {inFrameDimPath && (
+                <svg
                   data-testid="crop-frame-dim"
                   aria-hidden="true"
                   className="pointer-events-none absolute"
-                  style={{
-                    left: piece.x,
-                    top: piece.y,
-                    width: piece.width,
-                    height: piece.height,
-                    backgroundColor: DIM,
-                  }}
-                />
-              ))}
+                  viewBox={`0 0 ${totalSize.width} ${totalSize.height}`}
+                  style={{ left: 0, top: 0, width: totalSize.width, height: totalSize.height }}
+                >
+                  <path d={inFrameDimPath} fill={DIM} fillRule="evenodd" />
+                </svg>
+              )}
               {cropChromeRect && (
                 <>
                   <svg

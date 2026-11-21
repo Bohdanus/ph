@@ -19,6 +19,20 @@ const eraserArgs = (overrides: Partial<EraserToolArgs> = {}): EraserToolArgs => 
 });
 
 describe('getIncrementalEraserArgs selection snapshots', () => {
+  it('uses a full preview for Flow-aware strokes to preserve the original Opacity budget', () => {
+    const previous = eraserArgs({ flow: 25 });
+    const current = eraserArgs({ flow: 25, points: [...previous.points, { x: 14, y: 15 }] });
+
+    expect(getIncrementalEraserArgs(current, previous)).toBeNull();
+  });
+
+  it('falls back to full processing when Flow changes between previews', () => {
+    const previous = eraserArgs({ flow: 25 });
+    const current = eraserArgs({ flow: 50, points: [...previous.points, { x: 14, y: 15 }] });
+
+    expect(getIncrementalEraserArgs(current, previous)).toBeNull();
+  });
+
   it('treats a legacy flat contour and an equivalent nested contour as the same selection', () => {
     const contour = [
       { x: 1, y: 1 },

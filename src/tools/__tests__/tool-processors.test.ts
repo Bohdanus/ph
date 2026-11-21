@@ -726,7 +726,10 @@ const realBarControlIds: readonly (readonly [ToolName, readonly string[]])[] = [
   ['elliptical-selection', ['elliptical-selection-style']],
   ['quick-selection', ['quick-selection-mode', 'quick-selection-size', 'quick-selection-tolerance']],
   ['eraser', ['eraser-flow', 'eraser-hardness', 'eraser-mode', 'eraser-opacity', 'eraser-size', 'eraser-spacing']],
-  ['clone-stamp', ['clone-stamp-aligned', 'clone-stamp-hardness', 'clone-stamp-opacity', 'clone-stamp-size']],
+  [
+    'clone-stamp',
+    ['clone-stamp-aligned', 'clone-stamp-flow', 'clone-stamp-hardness', 'clone-stamp-opacity', 'clone-stamp-size'],
+  ],
   ['red-eye', ['red-eye-darken-amount', 'red-eye-pupil-size']],
   [
     'paint-bucket',
@@ -1016,66 +1019,35 @@ describe('toolProcessors processor identity', () => {
 });
 
 /**
- * Runtime proxy for the `@ts-expect-error` entries: a processor that publishes a
- * `ToolArgs` type but is declared with zero parameters cannot be handed the
- * registry's `ToolArgs` without a cast, and `fn.length` reports exactly that
- * arity. The unimplemented processors are also zero-arity but need no cast,
- * because a function with fewer parameters is assignable to a wider signature.
+ * Runtime proxy for zero-arity processors: unimplemented stubs and selection
+ * processors that intentionally leave geometry work to their gesture handlers.
  */
 describe('toolProcessors declared inner-processor arity', () => {
   const params = { size: { width: 4, height: 4 }, bitmap: createMockImageBitmap(4, 4) };
+  const argFreeSelectionTools = [
+    'elliptical-selection',
+    'feather-magnetic-lasso',
+    'magic-wand',
+    'quick-selection',
+    'rectangular-selection',
+  ];
 
   it('accepts one params argument on every registry entry except the shared unimplemented stub', () => {
     // `unimplemented` is declared `() => () => [null]`, which is still assignable to the
-    // registry signature because a function with fewer parameters is assignable to a
-    // wider one — so unlike the three type lies it needs no cast.
+    // registry signature because a function with fewer parameters is assignable to a wider one.
     for (const toolName of processorNames) {
       const expected = unimplementedTools.includes(toolName) ? 0 : 1;
       expect(findToolProcessor(toolName)!.imageProcessor.length, toolName).toBe(expected);
     }
   });
 
-  it('declares zero inner parameters only for the three type lies and the unimplemented set', () => {
+  it('declares zero inner parameters only for arg-free selection processors and stubs', () => {
     const zeroArity = processorNames.filter(
       (toolName) => findToolProcessor(toolName)!.imageProcessor(params).length === 0
     );
 
     expect(zeroArity.sort()).toEqual(
-      [
-        ...unimplementedTools,
-        'feather-magnetic-lasso',
-        'magic-wand',
-        'rectangular-selection',
-        'elliptical-selection',
-        'quick-selection',
-        'single-row-marquee',
-        'single-column-marquee',
-      ].sort()
-    );
-  });
-
-  it('makes the zero-arity non-unimplemented processors the exact set needing a registry cast', () => {
-    // These are the entries the registry has to silence with @ts-expect-error
-    // (src/tools/toolProcessors.ts) because their published args type is not reachable
-    // from the generic `(args: ToolArgs) => ToolResult` signature. The raster tools that
-    // used to sit here now declare their args parameter, so they join the casted set's
-    // complement and are asserted by the arity test above instead.
-    const casted = processorNames.filter(
-      (toolName) =>
-        findToolProcessor(toolName)!.commit !== 'unimplemented' &&
-        findToolProcessor(toolName)!.imageProcessor(params).length === 0
-    );
-
-    expect(casted.sort()).toEqual(
-      [
-        'feather-magnetic-lasso',
-        'magic-wand',
-        'rectangular-selection',
-        'elliptical-selection',
-        'quick-selection',
-        'single-row-marquee',
-        'single-column-marquee',
-      ].sort()
+      [...unimplementedTools, ...argFreeSelectionTools, 'single-column-marquee', 'single-row-marquee'].sort()
     );
   });
 });

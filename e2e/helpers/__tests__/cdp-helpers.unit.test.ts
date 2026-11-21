@@ -1,8 +1,8 @@
 import { afterEach, describe, it, expect, vi, type Mock } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { BrowserContext, CDPSession, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { captureCanvasScreenshot } from '../cdp-helpers';
 import {
   cleanupTempDirs,
@@ -12,99 +12,60 @@ import {
   type AttachOptions,
 } from './canvas-helpers.fixtures';
 
-/**
- * CSS geometry of a canvas region. Deliberately all non-zero: a box full of zeros
- * cannot tell "used the clip" from "fell back to the box".
- */
 const BOX = { x: 40, y: 60, width: 240, height: 160 };
-
-/**
- * A real PNG signature plus bytes that are not valid UTF-8, base64-encoded. The
- * payload is deliberately not text, so a decode that forgets `'base64'` (or decodes
- * with the default utf8) produces different bytes and fails here.
- */
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0xfe, 0x7f]);
-const PNG_BASE64 = PNG_BYTES.toString('base64');
 
-interface CaptureParams {
-  format: string;
-  clip: { x: number; y: number; width: number; height: number; scale: number };
-  /**
-   * The capture scope, declared explicitly. Present here because the helper now sends it and
-   * the payload assertions pin it, not because it was ever optional on the helper's part —
-   * CDP's own default is to capture beyond the viewport.
-   */
-  captureBeyondViewport: boolean;
+interface PageState {
+  innerWidth: number;
+  innerHeight: number;
+  scrollX: number;
+  scrollY: number;
 }
 
-type SendSpy = Mock<(method: string, params: CaptureParams) => Promise<{ data?: string }>>;
-type DetachSpy = Mock<() => Promise<void>>;
-type NewSessionSpy = Mock<(page: Page) => Promise<CDPSession>>;
+interface ScreenshotOptions {
+  clip: { x: number; y: number; width: number; height: number };
+  scale: 'device';
+  type: 'png';
+}
+
+type ScreenshotSpy = Mock<(options: ScreenshotOptions) => Promise<Buffer>>;
 
 interface HarnessOptions {
-  /** The CDP return value. `{}` models a response that omits `data`. */
-  response?: { data?: string };
-  sendError?: Error;
-  detachError?: Error;
-  /** The window offset `captureCanvasScreenshot` reads before it builds its clip. */
+  result?: Buffer;
+  screenshotError?: Error;
   scroll?: { x: number; y: number };
+  viewport?: { width: number; height: number };
+  pageStateAfterCapture?: Partial<PageState>;
 }
 
-interface CdpHarness {
+interface ScreenshotHarness {
   page: Page;
-  send: SendSpy;
-  detach: DetachSpy;
-  newCDPSession: NewSessionSpy;
-  /**
-   * Whether the output directory already existed when the test harness opened the CDP
-   * session. Tests use this observation to assert that directory creation happened first,
-   * without intercepting filesystem calls.
-   */
-  outputDirExistedAtSession: () => boolean;
+  screenshot: ScreenshotSpy;
+  evaluate: Mock<Page['evaluate']>;
 }
 
-function createCdpHarness(outputDir: string, options: HarnessOptions = {}): CdpHarness {
-  const send = vi.fn<(method: string, params: CaptureParams) => Promise<{ data?: string }>>();
-  if (options.sendError) {
-    send.mockRejectedValue(options.sendError);
-  } else {
-    send.mockResolvedValue(options.response ?? { data: PNG_BASE64 });
-  }
-
-  const detach = vi.fn<() => Promise<void>>();
-  if (options.detachError) {
-    detach.mockRejectedValue(options.detachError);
-  } else {
-    detach.mockResolvedValue(undefined);
-  }
-
-  let outputDirExistedAtSession = false;
-  const newCDPSession = vi.fn<(page: Page) => Promise<CDPSession>>(async () => {
-    outputDirExistedAtSession = existsSync(outputDir);
-    return { send, detach } as unknown as CDPSession;
+function createScreenshotHarness(options: HarnessOptions = {}): ScreenshotHarness {
+  const pageState: PageState = {
+    innerWidth: options.viewport?.width ?? 1280,
+    innerHeight: options.viewport?.height ?? 720,
+    scrollX: options.scroll?.x ?? 0,
+    scrollY: options.scroll?.y ?? 0,
+  };
+  const screenshot = vi.fn<(parameters: ScreenshotOptions) => Promise<Buffer>>().mockImplementation(async () => {
+    if (options.screenshotError) throw options.screenshotError;
+    Object.assign(pageState, options.pageStateAfterCapture);
+    return options.result ?? PNG_BYTES;
   });
-  const context = vi.fn<() => BrowserContext>().mockReturnValue({ newCDPSession } as unknown as BrowserContext);
-  const scroll = options.scroll ?? { x: 0, y: 0 };
   const evaluate = vi.fn(async (pageFunction: () => unknown) => pageFunction()) as unknown as Mock<Page['evaluate']>;
-  vi.stubGlobal('window', { scrollX: scroll.x, scrollY: scroll.y });
+  vi.stubGlobal('window', pageState);
 
   return {
-    page: createPageMock({ context, evaluate }),
-    send,
-    detach,
-    newCDPSession,
-    outputDirExistedAtSession: () => outputDirExistedAtSession,
+    page: createPageMock({ evaluate, screenshot: screenshot as unknown as Page['screenshot'] }),
+    screenshot,
+    evaluate,
   };
 }
 
-/**
- * The reason a promise rejected, as an `Error`.
- *
- * `expect(p).rejects.toThrow(...)` matches a message and cannot reach an identity, and
- * two of the cases below are about WHICH error the caller is handed and what is attached
- * underneath it. A resolution is a failure of the case, not a `undefined` reason to assert
- * on: the old `toolbar-helpers.unit.test.ts` idiom rejects with a message naming both.
- */
 async function rejectionOf(promise: Promise<unknown>): Promise<Error> {
   const reason: unknown = await promise.then(
     () => {
@@ -116,184 +77,202 @@ async function rejectionOf(promise: Promise<unknown>): Promise<Error> {
   return reason as Error;
 }
 
-describe('CDP Helpers', () => {
+describe('Canvas screenshot helper', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  /**
-   * PINS for the module's own contract. Two of the three transferred findings in this
-   * file group are a comment and a deletion, so neither is visible to any assertion made
-   * *through* the helper: a wrong comment and a re-added export both pass the whole
-   * `captureCanvasScreenshot` suite. These read the module the way the next agent will —
-   * its text and its exported surface — so a regression fails as a named test instead of
-   * as a silently wrong file.
-   */
-  describe('the capture scale contract as written down', () => {
-    const SOURCE = readFileSync(new URL('../cdp-helpers.ts', import.meta.url), 'utf8');
-    const COMMENTS = SOURCE.split('\n')
-      .filter((line) => /^\s*\/\//.test(line))
-      .join('\n');
-
-    it('does not restate the deviceScaleFactor multiplication the sibling spec disproved', () => {
-      // FINDING, pinned: the comment used to assert that a capture comes back at the clip
-      // extent x clip scale x deviceScaleFactor, that this is "the same as
-      // `page.screenshot()`", and that a 120x80 CSS clip decodes to 240x160 at
-      // deviceScaleFactor 2. `cdp-helpers.spec.ts` measured all three false: CDP captures
-      // at Chrome's surface scale, which the emulated ratio does not change, while
-      // `page.screenshot({clip})` does scale with it. None of the three is reproduced in
-      // the corrected comment even in order to refute it, so a re-introduction cannot hide
-      // inside its own negation.
-      expect(SOURCE).not.toMatch(/clip[ _]size\s*[x×]\s*clip\.scale\s*[x×]\s*deviceScaleFactor/i);
-      expect(SOURCE).not.toMatch(/same as\s+`?page\.screenshot\(\)`?/i);
-      expect(SOURCE).not.toMatch(/120x80[\s\S]{0,120}240x160/);
-    });
-
-    it('states the mechanism the sibling spec measured instead', () => {
-      // The replacement has to be assertable too, or the test above only forbids the old
-      // wording and says nothing about the new. `surface scale` is Chrome's own capture
-      // scale; the second assertion is the part a reword is most likely to drop — that the
-      // emulated ratio is not what determines the capture.
-      expect(COMMENTS).toMatch(/surface scale/i);
-      expect(COMMENTS).toMatch(/deviceScaleFactor` does not change it/i);
-    });
-
-    it('does not export getDevicePixelRatio', async () => {
-      // FINDING, pinned: the export had no caller outside this file and its spec, and
-      // existed only to keep "divide by devicePixelRatio" one import away — the strategy
-      // `screenshot-scale.ts` rejects by design. Asserted on the runtime surface rather
-      // than on the text, so a re-export under any spelling of the source fails.
+  describe('module surface', () => {
+    it('exports only captureCanvasScreenshot', async () => {
       const exported = await import('../cdp-helpers');
       expect(Object.keys(exported).sort()).toEqual(['captureCanvasScreenshot']);
-      expect(exported).not.toHaveProperty('getDevicePixelRatio');
-    });
-
-    it('does not name getDevicePixelRatio in the helper or its spec', () => {
-      // Complements the surface check, and catches the other half of a re-invitation:
-      // re-declaring the identifier in the helper (unexported, or exported by re-export),
-      // or importing it into the spec again. Deliberately scoped to the two files this
-      // finding names — `canvas-helpers.ts` and `.skills/photoshop-tool-creation.md` also
-      // mention the identifier in prose under other owners, and widening the scope would
-      // make this test permanently red for something it cannot fix.
-      for (const file of ['../cdp-helpers.ts', '../cdp-helpers.spec.ts']) {
-        expect(readFileSync(new URL(file, import.meta.url), 'utf8'), file).not.toMatch(/getDevicePixelRatio/);
-      }
     });
   });
 
   describe('captureCanvasScreenshot', () => {
     afterEach(cleanupTempDirs);
 
-    it('names the helper and the missing field when testInfo has no output directory', async () => {
-      // The guard is the second statement of the function, and nothing failed when it was
-      // deleted, while the sibling guard in `takeLineScreenshot()` IS pinned by the test of
-      // this name in `canvas-interaction.unit.test.ts`. Without it the failure came from
-      // `path.join` as `The "path" argument must be of type string. Received undefined`,
-      // naming neither this helper nor the field to fix. `createTestInfoMock()` with no
-      // argument is the double that has no `outputDir`; every other pre-existing case in this
-      // file passes a real directory, which is why no earlier test could reach this branch.
-      const outputDir = await makeOutputDir('absent-output-dir');
-      const { page, newCDPSession, send } = createCdpHarness(outputDir);
+    it('rejects a missing output directory before inspecting the page', async () => {
+      const { page, screenshot, evaluate } = createScreenshotHarness();
       const { testInfo, attach } = createTestInfoMock();
-
-      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'absent'));
+      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'missing-output'));
 
       expect(error.message).toContain('captureCanvasScreenshot');
       expect(error.message).toContain('outputDir');
       expect(error.message).toContain('required');
-      // Asserted rather than assumed: the guard is the FIRST thing the helper reads, so a
-      // TestInfo it cannot use costs no CDP session and no directory. A guard placed after
-      // the session was opened would leak the session on this path.
-      expect(newCDPSession).not.toHaveBeenCalled();
-      expect(send).not.toHaveBeenCalled();
+      expect(evaluate).not.toHaveBeenCalled();
+      expect(screenshot).not.toHaveBeenCalled();
       expect(attach).not.toHaveBeenCalled();
-      expect(existsSync(outputDir)).toBe(false);
     });
 
-    it('rejects an empty output directory as the unusable field it is', async () => {
-      // The second clause of the same guard. An empty string is not a usable directory, and
-      // the two ways it is unusable are both silent: `path.join('', 'empty.png')` is the
-      // RELATIVE path `empty.png`, so the artifact path would name the process working
-      // directory rather than any output directory, and `fs.mkdir('')` — which runs first —
-      // fails as `ENOENT: no such file or directory, mkdir ''`, naming neither this helper
-      // nor the field to fix. The reader is left deciding whether the directory or the field
-      // is wrong. The sibling case above is the same fault with `undefined` in place of `''`.
-      const { page, newCDPSession, send } = createCdpHarness('');
+    it('rejects an empty output directory before inspecting the page', async () => {
+      const { page, screenshot, evaluate } = createScreenshotHarness();
       const { testInfo, attach } = createTestInfoMock('');
-
-      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'empty-dir'));
+      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'empty-output'));
 
       expect(error.message).toContain('captureCanvasScreenshot');
       expect(error.message).toContain('outputDir');
       expect(error.message).toContain('required');
-      expect(newCDPSession).not.toHaveBeenCalled();
-      expect(send).not.toHaveBeenCalled();
+      expect(evaluate).not.toHaveBeenCalled();
+      expect(screenshot).not.toHaveBeenCalled();
       expect(attach).not.toHaveBeenCalled();
     });
 
-    it('sends Page.captureScreenshot with the box as the clip, at scale 1 and png format', async () => {
-      const outputDir = await makeOutputDir('exact-params');
-      const { page, send, newCDPSession } = createCdpHarness(outputDir);
+    it('passes the viewport clip to Playwright at device scale as PNG', async () => {
+      const outputDir = await makeOutputDir('exact-options');
+      const { page, screenshot } = createScreenshotHarness();
       const { testInfo } = createTestInfoMock(outputDir);
 
       await captureCanvasScreenshot(page, BOX, testInfo, 'exact');
 
-      // The session is opened on the page that was passed in, once.
-      expect(newCDPSession).toHaveBeenCalledTimes(1);
-      expect(newCDPSession.mock.calls[0][0]).toBe(page);
-      // Exact parameters, so a `format: 'jpeg'`, a dropped `scale`, a
-      // `scale: devicePixelRatio` variant, or DPR math layered on top of the clip all
-      // fail here. The helper's own comment states it does no DPR conversion; this is
-      // what makes that statement executable without a browser.
-      expect(send).toHaveBeenCalledTimes(1);
-      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
-        format: 'png',
-        captureBeyondViewport: false,
-        clip: { ...BOX, scale: 1 },
-      });
+      expect(screenshot).toHaveBeenCalledTimes(1);
+      expect(screenshot).toHaveBeenCalledWith({ clip: BOX, scale: 'device', type: 'png' });
     });
 
-    it('declares the capture scope explicitly, rather than inheriting Chrome’s default', async () => {
-      const outputDir = await makeOutputDir('capture-scope');
-      const { page, send } = createCdpHarness(outputDir);
+    it.each([
+      ['partial clip', { x: 10 }, { x: 10, y: BOX.y, width: BOX.width, height: BOX.height }],
+      ['zero values', { x: 0, y: 0, width: 0, height: 0 }, { x: 0, y: 0, width: 0, height: 0 }],
+    ] as const)('forwards %s without changing the requested clip', async (_label, clip, expectedClip) => {
+      const outputDir = await makeOutputDir('clip-options');
+      const { page, screenshot } = createScreenshotHarness();
       const { testInfo } = createTestInfoMock(outputDir);
 
-      await captureCanvasScreenshot(page, BOX, testInfo, 'scope');
+      await captureCanvasScreenshot(page, BOX, testInfo, 'clip', clip);
 
-      // The seven payload assertions above already carry it, so this is not a new claim —
-      // it is a claim that the flag is a DECISION rather than a field that happens to be in
-      // the object, and the difference matters because the drift this addresses is still
-      // open (`e2e/OPEN_PROBLEMS.md`, the 87px capture). A later edit that drops the flag to
-      // "tidy up" passes every other test here, because `toHaveBeenCalledWith` with an exact
-      // object would fail loudly — so this one exists to say the flag is load-bearing even
-      // though the failure it was added for is not fixed.
-      const [, params] = send.mock.calls[0];
-      expect(params).toMatchObject({ captureBeyondViewport: false });
-      // Not merely present: `true` is the value that captures beyond the viewport, and a
-      // future reader who reads it as "capture more" would be right about the API and wrong
-      // about the intent.
-      expect(params.captureBeyondViewport).toBe(false);
+      expect(screenshot).toHaveBeenCalledWith({ clip: expectedClip, scale: 'device', type: 'png' });
     });
 
-    it('decodes the base64 payload, returns those bytes, and writes them to outputDir/<name>.png', async () => {
-      const outputDir = await makeOutputDir('payload');
-      const { page } = createCdpHarness(outputDir);
+    it.each([
+      ['negative origin', { x: -20, y: 10, width: 30, height: 40 }],
+      ['right edge', { x: 1270, y: 10, width: 30, height: 40 }],
+      ['bottom edge', { x: 10, y: 700, width: 30, height: 40 }],
+      ['wider than the viewport at its origin', { x: 0, y: 10, width: 1281, height: 40 }],
+      ['taller than the viewport at its origin', { x: 10, y: 0, width: 30, height: 721 }],
+    ] as const)('rejects a clip that crosses the viewport %s before taking a screenshot', async (_label, clip) => {
+      const outputDir = await makeOutputDir('offscreen-clip');
+      const { page, screenshot } = createScreenshotHarness();
+      const { testInfo, attach } = createTestInfoMock(outputDir);
+
+      await expect(captureCanvasScreenshot(page, BOX, testInfo, 'offscreen', clip)).rejects.toThrow(
+        'extends outside the current viewport'
+      );
+
+      expect(screenshot).not.toHaveBeenCalled();
+      expect(existsSync(path.join(outputDir, 'offscreen.png'))).toBe(false);
+      expect(attach).not.toHaveBeenCalled();
+    });
+
+    it('preserves fractional clip coordinates for Playwright to rasterize', async () => {
+      const outputDir = await makeOutputDir('fractional-clip');
+      const { page, screenshot } = createScreenshotHarness();
+      const { testInfo } = createTestInfoMock(outputDir);
+      const clip = { x: 40.25, y: 60.5, width: 119.75, height: 79.5 };
+
+      await captureCanvasScreenshot(page, BOX, testInfo, 'fractional', clip);
+
+      expect(screenshot).toHaveBeenCalledWith({ clip, scale: 'device', type: 'png' });
+    });
+
+    it('keeps viewport-relative clip coordinates unchanged when the page is scrolled', async () => {
+      const outputDir = await makeOutputDir('scroll-coordinates');
+      const { page, screenshot } = createScreenshotHarness({ scroll: { x: 30, y: 440 } });
+      const { testInfo } = createTestInfoMock(outputDir);
+      const clip = { x: 56, y: 40, width: 100, height: 60 };
+
+      await captureCanvasScreenshot(page, BOX, testInfo, 'scrolled', clip);
+
+      expect(screenshot).toHaveBeenCalledWith({ clip, scale: 'device', type: 'png' });
+    });
+
+    it('reads page geometry around the screenshot and rejects any viewport or scroll drift', async () => {
+      const cases = [
+        [{ innerHeight: 633 }, '1280x720 at 0,0 -> 1280x633 at 0,0'],
+        [{ innerWidth: 1193 }, '1280x720 at 0,0 -> 1193x720 at 0,0'],
+        [{ scrollX: 87 }, '1280x720 at 0,0 -> 1280x720 at 87,0'],
+        [{ scrollY: 87 }, '1280x720 at 0,0 -> 1280x720 at 0,87'],
+      ] as const;
+
+      for (const [pageStateAfterCapture, geometry] of cases) {
+        const outputDir = await makeOutputDir(`geometry-${geometry.replaceAll(/[^a-z0-9]/gi, '-')}`);
+        const { page, screenshot, evaluate } = createScreenshotHarness({ pageStateAfterCapture });
+        const { testInfo, attach } = createTestInfoMock(outputDir);
+        const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'drift'));
+
+        expect(error.message).toContain('page geometry changed during Playwright screenshot');
+        expect(error.message).toContain(geometry);
+        expect(screenshot).toHaveBeenCalledTimes(1);
+        expect(evaluate).toHaveBeenCalledTimes(2);
+        expect(evaluate.mock.invocationCallOrder[0]).toBeLessThan(screenshot.mock.invocationCallOrder[0]);
+        expect(screenshot.mock.invocationCallOrder[0]).toBeLessThan(evaluate.mock.invocationCallOrder[1]);
+        expect(existsSync(path.join(outputDir, 'drift.png'))).toBe(false);
+        expect(attach).not.toHaveBeenCalled();
+      }
+    });
+
+    it('returns and writes the screenshot bytes unchanged', async () => {
+      const outputDir = await makeOutputDir('bytes');
+      const { page } = createScreenshotHarness();
       const { testInfo } = createTestInfoMock(outputDir);
 
-      const result = await captureCanvasScreenshot(page, BOX, testInfo, 'payload');
+      const result = await captureCanvasScreenshot(page, BOX, testInfo, 'bytes');
 
-      const expectedPath = path.join(outputDir, 'payload.png');
       expect(result).toBeInstanceOf(Buffer);
       expect(result).toEqual(PNG_BYTES);
-      expect(path.dirname(expectedPath)).toBe(outputDir);
-      expect(path.basename(expectedPath)).toBe('payload.png');
-      expect(await fs.readFile(expectedPath)).toEqual(PNG_BYTES);
+      expect(await fs.readFile(path.join(outputDir, 'bytes.png'))).toEqual(PNG_BYTES);
     });
 
-    it('attaches the file it wrote, under the given name and as image/png, once the file exists', async () => {
-      const outputDir = await makeOutputDir('attach');
-      const { page } = createCdpHarness(outputDir);
+    it('waits for the screenshot before validating geometry or writing the artifact', async () => {
+      const outputDir = await makeOutputDir('screenshot-gate');
+      const { page, screenshot, evaluate } = createScreenshotHarness();
+      const { testInfo, attach } = createTestInfoMock(outputDir);
+      let finishScreenshot: (buffer: Buffer) => void = () => {};
+      screenshot.mockReturnValue(
+        new Promise<Buffer>((resolve) => {
+          finishScreenshot = resolve;
+        })
+      );
+      let settled = false;
+      const capture = captureCanvasScreenshot(page, BOX, testInfo, 'gated').then((result) => {
+        settled = true;
+        return result;
+      });
+
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      expect(settled).toBe(false);
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      expect(existsSync(outputDir)).toBe(false);
+      expect(attach).not.toHaveBeenCalled();
+
+      finishScreenshot(PNG_BYTES);
+      await expect(capture).resolves.toEqual(PNG_BYTES);
+      expect(evaluate).toHaveBeenCalledTimes(2);
+      expect(existsSync(path.join(outputDir, 'gated.png'))).toBe(true);
+      expect(attach).toHaveBeenCalledTimes(1);
+    });
+
+    it('creates nested output directories and reuses existing ones', async () => {
+      const nestedOutputDir = await makeOutputDir(path.join('nested', 'deep', 'playwright'));
+      await expect(fs.stat(nestedOutputDir)).rejects.toThrow();
+      const first = createScreenshotHarness();
+      const firstTestInfo = createTestInfoMock(nestedOutputDir).testInfo;
+
+      await captureCanvasScreenshot(first.page, BOX, firstTestInfo, 'nested');
+
+      expect((await fs.stat(nestedOutputDir)).isDirectory()).toBe(true);
+      expect(existsSync(path.join(nestedOutputDir, 'nested.png'))).toBe(true);
+
+      const second = createScreenshotHarness();
+      const secondTestInfo = createTestInfoMock(nestedOutputDir).testInfo;
+      await expect(captureCanvasScreenshot(second.page, BOX, secondTestInfo, 'reused')).resolves.toEqual(PNG_BYTES);
+      expect(existsSync(path.join(nestedOutputDir, 'reused.png'))).toBe(true);
+    });
+
+    it('attaches the written file once under its name and as image/png', async () => {
+      const outputDir = await makeOutputDir('attachment');
+      const { page } = createScreenshotHarness();
       const { testInfo, attach } = createTestInfoMock(outputDir);
       const fileExistedAtAttach: boolean[] = [];
       attach.mockImplementation(async (_name: string, options: AttachOptions) => {
@@ -303,423 +282,98 @@ describe('CDP Helpers', () => {
       await captureCanvasScreenshot(page, BOX, testInfo, 'attached');
 
       expect(attach).toHaveBeenCalledTimes(1);
-      expect(attach.mock.calls[0][0]).toBe('attached');
-      // Exactly these two options: an extra `body` alongside `path` would attach the
-      // bytes twice, and a missing `contentType` renders as a binary blob.
-      expect(attach.mock.calls[0][1]).toEqual({
-        path: path.join(outputDir, 'attached.png'),
-        contentType: 'image/png',
-      });
-      // Attachment cannot precede the write: a reporter handed a path that does not
-      // exist yet records a broken link and no screenshot.
+      expect(attach.mock.calls[0]).toEqual([
+        'attached',
+        { path: path.join(outputDir, 'attached.png'), contentType: 'image/png' },
+      ]);
       expect(fileExistedAtAttach).toEqual([true]);
     });
 
-    it('keeps the box value for every field a partial clip leaves out', async () => {
-      const outputDir = await makeOutputDir('partial-clip');
-      const { page, send } = createCdpHarness(outputDir);
-      const { testInfo } = createTestInfoMock(outputDir);
-
-      await captureCanvasScreenshot(page, BOX, testInfo, 'partial', { x: 10 });
-
-      // The four `??` defaults are per field. An all-or-nothing merge
-      // (`clip ? { ...clip, scale: 1 } : { ...box, scale: 1 }`) would send a clip with
-      // no width or height, which CDP rejects — and the browser specs, which always
-      // pass a complete clip, would not notice.
-      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
-        format: 'png',
-        captureBeyondViewport: false,
-        clip: { x: 10, y: BOX.y, width: BOX.width, height: BOX.height, scale: 1 },
-      });
-    });
-
-    it('keeps zeros in the clip instead of substituting the box value for them', async () => {
-      // PIN: the merge is `clip?.x ?? box.x`, so a zero is a value, not an absence.
-      // Rewriting it as `||` sends the box and captures the whole canvas region while
-      // the caller asked for a zero-sized one; this fails the moment that happens.
-      const outputDir = await makeOutputDir('zero-clip');
-      const { page, send } = createCdpHarness(outputDir);
-      const { testInfo } = createTestInfoMock(outputDir);
-
-      await captureCanvasScreenshot(page, BOX, testInfo, 'zero', { x: 0, y: 0, width: 0, height: 0 });
-
-      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
-        format: 'png',
-        captureBeyondViewport: false,
-        clip: { x: 0, y: 0, width: 0, height: 0, scale: 1 },
-      });
-    });
-
-    it('forwards a negative clip origin to CDP unchanged instead of clamping it', async () => {
-      // A canvas scrolled partly out of the viewport has a negative origin. Clamping
-      // it to 0 would capture a different region than the caller measured. At scroll 0
-      // a negative origin is already a document origin, so the translation below is the
-      // identity and this still holds.
-      const outputDir = await makeOutputDir('negative-clip');
-      const { page, send } = createCdpHarness(outputDir);
-      const { testInfo } = createTestInfoMock(outputDir);
-
-      await captureCanvasScreenshot(page, BOX, testInfo, 'negative', { x: -20, y: -10, width: 30, height: 40 });
-
-      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
-        format: 'png',
-        captureBeyondViewport: false,
-        clip: { x: -20, y: -10, width: 30, height: 40, scale: 1 },
-      });
-    });
-
-    // This fixture pins the coordinate conversion, not screenshot pixels: with the
-    // synthetic window offset at y=440 and a viewport-relative box at y=-340, the CDP
-    // command must receive page y=100. Sending the viewport y unchanged would target a
-    // region 440px away; unlike `page.screenshot({ clip })`, raw CDP does not add scroll.
-    it('translates a viewport-relative clip into the page coordinates CDP wants', async () => {
-      const outputDir = await makeOutputDir('scrolled-clip');
-      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 0, y: 440 } });
-      const { testInfo } = createTestInfoMock(outputDir);
-
-      await captureCanvasScreenshot(page, { ...BOX, y: -340 }, testInfo, 'scrolled');
-
-      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
-        format: 'png',
-        captureBeyondViewport: false,
-        clip: { x: BOX.x, y: 100, width: BOX.width, height: BOX.height, scale: 1 },
-      });
-    });
-
-    it('translates an explicit clip, not just the fallback box', async () => {
-      const outputDir = await makeOutputDir('scrolled-explicit-clip');
-      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 30, y: 440 } });
-      const { testInfo } = createTestInfoMock(outputDir);
-
-      await captureCanvasScreenshot(page, BOX, testInfo, 'scrolled-clip', {
-        x: BOX.x + 20,
-        y: -190,
-        width: 100,
-        height: 60,
-      });
-
-      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
-        format: 'png',
-        captureBeyondViewport: false,
-        clip: { x: BOX.x + 50, y: 250, width: 100, height: 60, scale: 1 },
-      });
-    });
-
-    it('reads the window offset once per capture, not once per module', async () => {
-      // The offset is read at the call site on purpose: `clickToolButton` scrolls the
-      // window, so an offset cached at import time is a different number before and after
-      // any tool click.
-      const outputDir = await makeOutputDir('scroll-read-per-capture');
-      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 0, y: 440 } });
-      const { testInfo } = createTestInfoMock(outputDir);
-
-      await captureCanvasScreenshot(page, BOX, testInfo, 'first');
-      await captureCanvasScreenshot(page, BOX, testInfo, 'second');
-
-      expect((page.evaluate as unknown as Mock).mock.calls.length).toBe(2);
-      for (const call of send.mock.calls) {
-        expect(call[1].clip.y).toBe(BOX.y + 440);
-      }
-    });
-
-    it('sends the untranslated clip at scroll 0, so nothing moves when the page does not', async () => {
-      const outputDir = await makeOutputDir('unscrolled-clip');
-      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 0, y: 0 } });
-      const { testInfo } = createTestInfoMock(outputDir);
-
-      await captureCanvasScreenshot(page, BOX, testInfo, 'unscrolled', { x: 10, y: 20, width: 30, height: 40 });
-
-      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
-        format: 'png',
-        captureBeyondViewport: false,
-        clip: { x: 10, y: 20, width: 30, height: 40, scale: 1 },
-      });
-    });
-
-    it('creates the whole output directory path before the CDP session is opened', async () => {
-      const outputDir = await makeOutputDir(path.join('nested', 'deep', 'cdp'));
-      await expect(fs.stat(outputDir)).rejects.toThrow();
-      const { page, outputDirExistedAtSession } = createCdpHarness(outputDir);
-      const { testInfo } = createTestInfoMock(outputDir);
-
-      await captureCanvasScreenshot(page, BOX, testInfo, 'nested');
-
-      // Playwright guarantees `testInfo.outputDir` exists in a real run, so the
-      // browser specs never exercise this. Asserting it from the CDP side catches a
-      // `mkdir` that moved after the capture, or lost its `recursive`.
-      expect(outputDirExistedAtSession()).toBe(true);
-      expect((await fs.stat(outputDir)).isDirectory()).toBe(true);
-      expect(existsSync(path.join(outputDir, 'nested.png'))).toBe(true);
-    });
-
-    it('reuses an output directory that already exists instead of failing on it', async () => {
-      const outputDir = await makeOutputDir('existing');
-      await fs.mkdir(outputDir, { recursive: true });
-      const { page } = createCdpHarness(outputDir);
-      const { testInfo } = createTestInfoMock(outputDir);
-
-      await expect(captureCanvasScreenshot(page, BOX, testInfo, 'existing')).resolves.toEqual(PNG_BYTES);
-
-      expect(existsSync(path.join(outputDir, 'existing.png'))).toBe(true);
-    });
-
-    it('propagates a capture failure, writes no file, attaches nothing, and still detaches', async () => {
-      const outputDir = await makeOutputDir('capture-failure');
-      const { page, send, detach } = createCdpHarness(outputDir, { sendError: new Error('Target closed') });
+    it('rejects an empty screenshot before writing or attaching it', async () => {
+      const outputDir = await makeOutputDir('empty-screenshot');
+      const { page, screenshot } = createScreenshotHarness({ result: Buffer.alloc(0) });
       const { testInfo, attach } = createTestInfoMock(outputDir);
-
-      await expect(captureCanvasScreenshot(page, BOX, testInfo, 'failed')).rejects.toThrow('Target closed');
-
-      expect(send).toHaveBeenCalledTimes(1);
-      expect(attach).not.toHaveBeenCalled();
-      expect(existsSync(path.join(outputDir, 'failed.png'))).toBe(false);
-      // The `finally` is what keeps a dead page from leaking CDP sessions, which is the
-      // failure mode the helper exists to avoid in the first place.
-      expect(detach).toHaveBeenCalledTimes(1);
-    });
-
-    it('names the helper and the CDP request when the response carries no data, and detaches', async () => {
-      // The fix this replaced: `Buffer.from(undefined, 'base64')` answered with Node's
-      // `The first argument must be of type string or an instance of Buffer, ...`, which
-      // names neither CDP nor this helper nor the test. So the MESSAGE is the fix, not
-      // the error class: naming the helper and the request that produced the response is
-      // what lets a reader act on the failure without first finding the call site, and an
-      // assertion of the form `rejects.toThrow(Error)` would pass a fix that replaced the
-      // TypeError with an equally opaque message.
-      const outputDir = await makeOutputDir('missing-data');
-      const { page, send, detach } = createCdpHarness(outputDir, { response: {} });
-      const { testInfo, attach } = createTestInfoMock(outputDir);
-
-      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'missing'));
-
-      expect(error.message).toContain('captureCanvasScreenshot');
-      expect(error.message).toContain('Page.captureScreenshot');
-      // Absent and empty are different faults with the same call site, so the message has
-      // to tell them apart — and neither may be the raw Node text any more.
-      expect(error.message).toMatch(/no base64 `data` to decode \(received undefined\)/);
-      expect(error.message).not.toMatch(/first argument must be of type string/);
-      // A malformed response costs the capture, never the cleanup: the write and the
-      // attach are both still ahead of the failure, and the session is still detached.
-      expect(send).toHaveBeenCalledTimes(1);
-      expect(attach).not.toHaveBeenCalled();
-      expect(existsSync(path.join(outputDir, 'missing.png'))).toBe(false);
-      expect(detach).toHaveBeenCalledTimes(1);
-    });
-
-    it('rejects a capture that decodes to no bytes, instead of reporting success, and detaches', async () => {
-      // `{ data: '' }` is a PRESENT, correctly-typed response, which is exactly why a
-      // `typeof data === 'string'` guard alone is not the fix: it lets this through, and
-      // the helper then wrote, attached and RETURNED a 0-byte PNG as a successful capture.
-      // The subject asserted here is therefore the DECODED LENGTH, so this case fails
-      // against a type-only guard and against one that checks the string's length rather
-      // than the payload's. The fault it used to produce surfaced later in the pipeline,
-      // in `loadImageData`, naming the consumer instead.
-      const outputDir = await makeOutputDir('empty-data');
-      const { page, detach } = createCdpHarness(outputDir, { response: { data: '' } });
-      const { testInfo, attach } = createTestInfoMock(outputDir);
-
       const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'empty'));
 
-      expect(error.message).toContain('captureCanvasScreenshot');
-      expect(error.message).toContain('Page.captureScreenshot');
-      expect(error.message).toMatch(/decoded to 0 bytes/);
-      // Before the write and before the attach, which were the two observable halves of
-      // the old success: a 0-byte file in outputDir, and a non-image attached to the report.
+      expect(error.message).toContain('Playwright returned an empty screenshot');
+      expect(screenshot).toHaveBeenCalledTimes(1);
       expect(existsSync(path.join(outputDir, 'empty.png'))).toBe(false);
       expect(attach).not.toHaveBeenCalled();
-      expect(detach).toHaveBeenCalledTimes(1);
     });
 
-    it('propagates an attachment failure after the file is written, and still detaches', async () => {
-      const outputDir = await makeOutputDir('attach-failure');
-      const { page, detach } = createCdpHarness(outputDir);
-      const { testInfo, attach } = createTestInfoMock(outputDir);
-      attach.mockRejectedValue(new Error('reporter offline'));
-
-      await expect(captureCanvasScreenshot(page, BOX, testInfo, 'offline')).rejects.toThrow('reporter offline');
-
-      // The artifact survives on disk, so a reporter that recovers still finds it.
-      expect(existsSync(path.join(outputDir, 'offline.png'))).toBe(true);
-      expect(detach).toHaveBeenCalledTimes(1);
-    });
-
-    it('reports the capture failure when the detach also fails, hanging the detach off it as cause', async () => {
-      // The fix this replaced: `finally { await cdp.detach() }` means a rejecting detach
-      // REPLACES the in-flight error, so the caller was handed the detach's message and
-      // never learned the capture had failed at all. This is the likely pairing rather
-      // than a corner — a capture fails most often when the page or the target is already
-      // gone, which is precisely when the detach fails too. So the capture's error is the
-      // rejection, by identity and by message, and the detach's is REACHABLE underneath
-      // it rather than discarded: replacing the one with the other loses the cause, and
-      // swallowing the detach loses the session.
-      const outputDir = await makeOutputDir('both-fail');
-      const captureError = new Error('capture exploded');
-      const detachError = new Error('detach exploded');
-      const { page, detach } = createCdpHarness(outputDir, { sendError: captureError, detachError });
+    it('propagates a screenshot failure without writing or attaching an artifact', async () => {
+      const outputDir = await makeOutputDir('screenshot-failure');
+      const screenshotError = new Error('page closed');
+      const { page, screenshot } = createScreenshotHarness({ screenshotError });
       const { testInfo, attach } = createTestInfoMock(outputDir);
 
-      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'both'));
+      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'failed'));
 
-      expect(error).toBe(captureError);
-      expect(error.message).toBe('capture exploded');
-      expect(error.cause).toBe(detachError);
-      // The detach is still ATTEMPTED on this path: once, not twice, and not zero.
-      expect(detach).toHaveBeenCalledTimes(1);
+      expect(error).toBe(screenshotError);
+      expect(screenshot).toHaveBeenCalledTimes(1);
+      expect(existsSync(path.join(outputDir, 'failed.png'))).toBe(false);
       expect(attach).not.toHaveBeenCalled();
-      expect(existsSync(path.join(outputDir, 'both.png'))).toBe(false);
     });
 
-    it('reports a detach failure on its own when the capture succeeded, rather than swallowing it', async () => {
-      // The other half of the fix, and the half a "just log the detach error" patch drops:
-      // with nothing already failing there is no cause to preserve, and a session that
-      // cannot be closed is the leak this helper exists to prevent — see 'waits for the
-      // session to detach before it resolves'. So the detach's error is the rejection here,
-      // unchanged, and a fix that made the detach quiet unconditionally fails this case.
-      const outputDir = await makeOutputDir('detach-only-failure');
-      const detachError = new Error('detach exploded');
-      const { page, detach } = createCdpHarness(outputDir, { detachError });
+    it('propagates an attachment failure while keeping the written screenshot', async () => {
+      const outputDir = await makeOutputDir('attachment-failure');
+      const { page } = createScreenshotHarness();
       const { testInfo, attach } = createTestInfoMock(outputDir);
+      const attachError = new Error('reporter offline');
+      attach.mockRejectedValue(attachError);
 
-      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'detach-only'));
+      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'offline'));
 
-      expect(error).toBe(detachError);
-      expect(error.message).toBe('detach exploded');
-      // No capture failure to point at, so nothing is attached to the detach's error —
-      // the success path does not invent a cause.
-      expect(error.cause).toBeUndefined();
-      // The capture itself succeeded, and it ran before the detach, so its artifact is on
-      // disk and attached: the detach failure does not retroactively unwrite it.
-      expect(existsSync(path.join(outputDir, 'detach-only.png'))).toBe(true);
+      expect(error).toBe(attachError);
+      expect(existsSync(path.join(outputDir, 'offline.png'))).toBe(true);
       expect(attach).toHaveBeenCalledTimes(1);
-      expect(detach).toHaveBeenCalledTimes(1);
     });
 
-    it('waits for the session to detach before it resolves', async () => {
-      // `cdp.detach()` unawaited inside the `finally` would let the helper resolve
-      // while the session was still open — the helper's whole reason for existing is
-      // that this capture path hangs a headed browser, and a session that outlives the
-      // call is the leak. Gated on the attach first, so the helper is provably already
-      // inside its `finally` when the assertion runs.
-      const outputDir = await makeOutputDir('detach-gate');
-      const { page, detach } = createCdpHarness(outputDir);
-      const { testInfo, attach } = createTestInfoMock(outputDir);
-      let signalAttached: () => void = () => {};
-      const attached = new Promise<void>((resolve) => {
-        signalAttached = resolve;
-      });
-      attach.mockImplementation(async () => {
-        signalAttached();
-      });
-      let releaseDetach: () => void = () => {};
-      const detached = new Promise<void>((resolve) => {
-        releaseDetach = resolve;
-      });
-      detach.mockImplementation(() => detached);
-
-      let settled = false;
-      const capture = captureCanvasScreenshot(page, BOX, testInfo, 'gated').then((result) => {
-        settled = true;
-        return result;
-      });
-
-      await attached;
-      // Drain every pending microtask, so a helper that does not await the detach has
-      // had its chance to resolve before the assertion reads the flag.
-      await new Promise((resolve) => {
-        setImmediate(resolve);
-      });
-      expect(settled).toBe(false);
-
-      releaseDetach();
-      await expect(capture).resolves.toEqual(PNG_BYTES);
-      expect(detach).toHaveBeenCalledTimes(1);
-    });
-
-    it('detaches the session once, after the attachment', async () => {
-      const outputDir = await makeOutputDir('detach-order');
-      const { page, detach } = createCdpHarness(outputDir);
-      const { testInfo, attach } = createTestInfoMock(outputDir);
-
-      await captureCanvasScreenshot(page, BOX, testInfo, 'order');
-
-      expect(detach).toHaveBeenCalledTimes(1);
-      // Detaching before the attachment reads the path off a session-less page, and
-      // detaching twice throws on the second call.
-      expect(attach.mock.invocationCallOrder[0]).toBeLessThan(detach.mock.invocationCallOrder[0]);
-    });
-
-    it('uses an empty name verbatim, writing a hidden .png file', async () => {
+    it('allows an empty artifact name as a file inside outputDir', async () => {
       const outputDir = await makeOutputDir('empty-name');
-      const { page } = createCdpHarness(outputDir);
+      const { page } = createScreenshotHarness();
       const { testInfo, attach } = createTestInfoMock(outputDir);
 
-      const result = await captureCanvasScreenshot(page, BOX, testInfo, '');
+      await captureCanvasScreenshot(page, BOX, testInfo, '');
 
-      expect(result).toEqual(PNG_BYTES);
       expect(existsSync(path.join(outputDir, '.png'))).toBe(true);
       expect(attach.mock.calls[0][0]).toBe('');
     });
 
-    it('rejects a name containing a path separator instead of writing it as a path', async () => {
-      // The pin this replaces ASSERTED THE DEFECT: `path.join(outputDir, 'nested/thing.png')`
-      // names a parent directory that nothing creates, so the capture died with `ENOENT` on a
-      // file the caller never named, and the pin's own comment made sanitisation a fix it
-      // forbade. `name` is caller data interpolated into a path, so a separator in it became a
-      // path whether or not the caller meant one — the artifact path and the name the caller
-      // passed stopped being the same string. Rejected now, for the reason the `outputDir`
-      // guard throws: silently rewriting it would attach the report under a name the test
-      // never asked for, and two rewritten names would collide into one artifact.
-      const outputDir = await makeOutputDir('name-with-separator');
-      // Pre-created so the assertion below is about what the helper WROTE. Whether it creates
-      // the directory is 'creates the whole output directory path before the CDP session is
-      // opened', and a rejected name must not need it to have been created at all.
+    it('rejects POSIX and Windows separators before inspecting the page or writing files', async () => {
+      const outputDir = await makeOutputDir('separators');
       await fs.mkdir(outputDir, { recursive: true });
-      const { page, newCDPSession, send, detach } = createCdpHarness(outputDir);
+      const { page, screenshot, evaluate } = createScreenshotHarness();
       const { testInfo, attach } = createTestInfoMock(outputDir);
 
-      const separator = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'nested/thing'));
+      for (const name of ['nested/thing', 'nested\\thing']) {
+        const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, name));
+        expect(error.message).toContain('captureCanvasScreenshot');
+        expect(error.message).toContain(JSON.stringify(name));
+      }
 
-      expect(separator.message).toContain('captureCanvasScreenshot');
-      expect(separator.message).toContain('nested/thing');
-      // The other separator, which is an ordinary character in a POSIX filename and a path
-      // separator on Windows: the artifact path has to mean one thing on every host.
-      const windows = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'nested\\thing'));
-      expect(windows.message).toContain(JSON.stringify('nested\\thing'));
-      // Rejected before anything was opened or created, so there is no session left to
-      // detach and no `ENOENT` standing in for the message that says what is wrong.
-      expect(newCDPSession).not.toHaveBeenCalled();
-      expect(send).not.toHaveBeenCalled();
-      expect(detach).not.toHaveBeenCalled();
+      expect(evaluate).not.toHaveBeenCalled();
+      expect(screenshot).not.toHaveBeenCalled();
       expect(attach).not.toHaveBeenCalled();
       expect(await fs.readdir(outputDir)).toEqual([]);
     });
 
-    it('never writes outside the output directory when the name traverses out of it', async () => {
-      // The pin this replaces ASSERTED THE DEFECT AS FACT: the name was interpolated into a
-      // path with no sanitisation, so `..` resolved, `escaped.png` was written one level ABOVE
-      // `outputDir`, and that outside path was the one handed to `attach` — so the report
-      // carried an artifact that no cleanup of the output directory would ever reach, and a
-      // caller assuming the written path is confined to `outputDir` was wrong.
-      const outputDir = await makeOutputDir('name-traversal');
+    it('rejects traversal and directory references before any screenshot work', async () => {
+      const outputDir = await makeOutputDir('traversal');
       await fs.mkdir(outputDir, { recursive: true });
-      const { page, newCDPSession } = createCdpHarness(outputDir);
+      const { page, screenshot, evaluate } = createScreenshotHarness();
       const { testInfo, attach } = createTestInfoMock(outputDir);
 
-      const traversal = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, '../escaped'));
+      for (const name of ['../escaped', '.', '..']) {
+        const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, name));
+        expect(error.message).toContain('captureCanvasScreenshot');
+        expect(error.message).toContain(JSON.stringify(name));
+      }
 
-      expect(traversal.message).toContain('captureCanvasScreenshot');
-      expect(traversal.message).toContain('../escaped');
-      // `..` alone is a directory reference rather than a filename, and the appended `.png`
-      // turns it into `...png`, which looks enough like an ordinary name to pass unnoticed.
-      const dotDot = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, '..'));
-      expect(dotDot.message).toContain('captureCanvasScreenshot');
-      expect(dotDot.message).toContain(JSON.stringify('..'));
-      // The file the old pin watched for is never written...
       expect(existsSync(path.join(path.dirname(outputDir), 'escaped.png'))).toBe(false);
-      // ...nothing takes its place inside the directory either, and nothing is attached, so
-      // the rejection cannot be mistaken for a capture that produced a report entry.
       expect(await fs.readdir(outputDir)).toEqual([]);
-      expect(newCDPSession).not.toHaveBeenCalled();
+      expect(evaluate).not.toHaveBeenCalled();
+      expect(screenshot).not.toHaveBeenCalled();
       expect(attach).not.toHaveBeenCalled();
     });
   });

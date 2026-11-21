@@ -46,6 +46,13 @@ const TEXT_TOOL_MOUNTED_PROOF = '#font-size-input';
 /** The overlay, addressed by the id the component publishes. */
 const overlay = (page: Page): Locator => page.locator('#text-edit-overlay');
 
+/** The text box's viewport origin, saved before commit so references share its screen-pixel phase. */
+async function textEditorOrigin(page: Page): Promise<{ x: number; y: number }> {
+  const bounds = await overlay(page).boundingBox();
+  if (!bounds) throw new Error('text-edit: the open editor has no visible bounds');
+  return { x: bounds.x, y: bounds.y };
+}
+
 /**
  * Adobe's placeholder, `PLACEHOLDER_TEXT` in `src/tools/text.ts`. Written out rather than imported
  * because nothing under `e2e/` imports app source — `vitest.e2e.config.ts` records that boundary —
@@ -407,9 +414,8 @@ const TEXT_COLOR = '#ff0000';
 
 /** `HANDLE_SIZE` from `src/util/constants.ts`; see {@link TEXT_PADDING_DOC_PX} for why it is a copy. */
 const HANDLE_SIZE_DOC_PX = 12;
-
 /**
- * How far outside the box the draft frame reaches, in CSS px, on every side.
+ * How far the corner grips reach outside the box, in CSS px.
  *
  * The outline is centred on the box edge, but the corner handles are deliberately drawn OUTSIDE the
  * contenteditable box so their hit area is not covered by the editor. `useRect`'s `drawMask` fills
@@ -541,8 +547,8 @@ async function regionInk(page: Page, region: PageRegion): Promise<RegionInk> {
 }
 
 /**
- * How wide each candidate string's ink is, measured by THIS page's own canvas and reported in the
- * same CSS px the screenshot measurement above reports.
+ * How wide each candidate string's ink is, reported in the same CSS px and through the same browser
+ * screenshot pipeline as {@link inkWidthIn}.
  *
  * This is how a committed text layer's string is read, and it is worth being explicit about why
  * nothing simpler was available: a text layer's content lives in `layer.source.args`, which no
@@ -550,8 +556,12 @@ async function regionInk(page: Page, region: PageRegion): Promise<RegionInk> {
  * and the History panel shows a history entry's name. So the ink is the only observable, and it is a
  * good one: rendered by the app's own `renderText` in the app's own face, over a canvas that IS the
  * layer, composited into the document. Measuring it against a reference this page drew with the same
- * `fillText`, the same font shorthand and the same pixel predicate turns "some red pixels appeared"
- * into a statement about WHICH string.
+ * `fillText`, the same font shorthand and the same screenshot path turns "some red pixels appeared"
+ * into a statement about WHICH string. The temporary white overlay isolates the reference from the
+ * app; its canvas uses document-pixel backing dimensions and the app's exact CSS fit. Its screen
+ * origin is captured from the open editor before commit, so the reference glyphs share the committed
+ * text's subpixel placement. The fresh page's `DEFAULT_BLANK_IMAGE` is an opaque white bedrock, so
+ * this backdrop matches committed ink while keeping other committed text layers out of the reference.
  *
  * The predicate crosses the boundary as three numbers rather than as a function, because
  * `page.evaluate` serialises the callback and cannot carry a closure.
@@ -559,78 +569,83 @@ async function regionInk(page: Page, region: PageRegion): Promise<RegionInk> {
 async function referenceInkWidths(
   page: Page,
   strings: string[],
-  options: { fontSize: number; fontFamily: string; scale: number }
+  options: { fontSize: number; fontFamily: string; box: BoundingBox; fit: Fit; origin: { x: number; y: number } }
 ): Promise<Record<string, number>> {
-  const { fontSize, fontFamily, scale } = options;
-  return await page.evaluate(
-    ({ texts, size, family, fit, thresholds, padding }) => {
-      const longest = texts.reduce((widest, text) => Math.max(widest, text.length), 1);
-      const width = Math.ceil(size * 1.2 * longest) + 4 * padding;
-      const height = Math.ceil(size * 2.5);
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      // `willReadFrequently` is what keeps this context from logging Chromium's "multiple readback
-      // operations using getImageData" console warning: the ink scan below reads this same context
-      // once per candidate string, which is exactly the pattern the warning is about, and the suite's
-      // `consolePolice` fixture surfaces stray console output.
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) throw new Error('referenceInkWidths: no 2d context');
-      ctx.font = `${size}px ${family}`;
-      ctx.textBaseline = 'alphabetic';
-      ctx.fillStyle = '#ff0000';
-      // `renderText` puts a line's baseline at `rect.y1 + TEXT_PADDING + ascent`, so the reference
-      // is drawn at the same baseline the app drew its layer at. The baseline only has to be INSIDE
-      // the canvas for the bounds to come out whole; it is reproduced so the reference is the app's
-      // own placement and not a convenient one.
-      const ascent = ctx.measureText('').fontBoundingBoxAscent ?? size * 0.8;
-      ctx.fillText(texts[0] ?? '', padding, padding + ascent);
+  const { fontSize, fontFamily, box, fit, origin } = options;
+  const region = {
+    left: box.x + fit.offsetX,
+    top: box.y + fit.offsetY,
+    right: box.x + fit.offsetX + fit.documentWidth * fit.scale,
+    bottom: box.y + fit.offsetY + fit.documentHeight * fit.scale,
+  };
+  const referenceWidth = fit.documentWidth * fit.scale;
+  const referenceHeight = fit.documentHeight * fit.scale;
 
-      const out: Record<string, number> = {};
-      for (const text of texts) {
-        ctx.clearRect(0, 0, width, height);
-        ctx.fillText(text, padding, padding + ascent);
-        const data = ctx.getImageData(0, 0, width, height).data;
-        let left = -1;
-        let right = -1;
-        // EVERY ROW, and that is the half this got wrong first: a scan of row 0 alone reads an empty
-        // strip above the first baseline and finds no ink at all, because the reference draws its
-        // text at `TEXT_PADDING + ascent`, not in the top scanline.
-        for (let y = 0; y < height; y++) {
-          for (let x = 0; x < width; x++) {
-            const i = (y * width + x) * 4;
-            const alpha = data[i + 3];
-            const isInk =
-              alpha !== 0 &&
-              data[i] > thresholds.redMin &&
-              data[i + 1] < thresholds.greenMax &&
-              data[i + 2] < thresholds.blueMax;
-            if (!isInk) continue;
-            if (left < 0 || x < left) left = x;
-            if (x > right) right = x;
-          }
-        }
-        if (left < 0) throw new Error(`referenceInkWidths: the reference drew no ink for ${JSON.stringify(text)}`);
-        // Reported in CSS px, which is the space `inkWidthIn` reports in: the layer is rendered at
-        // DOCUMENT px and the document is displayed at the contain fit, so the same ink is `fit`
-        // times narrower on screen.
-        out[text] = (right - left + 1) * fit;
-      }
-      return out;
+  await page.evaluate(
+    ({ documentWidth, documentHeight, originLeft, originTop, displayWidth, displayHeight }) => {
+      document.getElementById('text-reference-ink-overlay')?.remove();
+      const overlayElement = document.createElement('div');
+      overlayElement.id = 'text-reference-ink-overlay';
+      Object.assign(overlayElement.style, {
+        position: 'fixed',
+        inset: '0',
+        zIndex: '2147483647',
+        background: '#fff',
+        pointerEvents: 'none',
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.id = 'text-reference-ink-canvas';
+      canvas.width = Math.ceil(documentWidth);
+      canvas.height = Math.ceil(documentHeight);
+      Object.assign(canvas.style, {
+        position: 'fixed',
+        left: `${originLeft}px`,
+        top: `${originTop}px`,
+        width: `${displayWidth}px`,
+        height: `${displayHeight}px`,
+      });
+      overlayElement.append(canvas);
+      document.body.append(overlayElement);
     },
     {
-      texts: strings,
-      size: fontSize,
-      family: fontFamily,
-      fit: scale,
-      padding: TEXT_PADDING_DOC_PX,
-      thresholds: {
-        redMin: RED_PIXEL_RED_MIN,
-        greenMax: RED_PIXEL_GREEN_MAX,
-        blueMax: RED_PIXEL_BLUE_MAX,
-      },
+      documentWidth: fit.documentWidth,
+      documentHeight: fit.documentHeight,
+      originLeft: origin.x,
+      originTop: origin.y,
+      displayWidth: referenceWidth,
+      displayHeight: referenceHeight,
     }
   );
+
+  try {
+    const out: Record<string, number> = {};
+    for (const text of strings) {
+      await page.evaluate(
+        ({ value, size, family, padding }) => {
+          const canvas = document.getElementById('text-reference-ink-canvas');
+          if (!(canvas instanceof HTMLCanvasElement)) throw new Error('referenceInkWidths: no reference canvas');
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('referenceInkWidths: no 2d context');
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          context.font = `${size}px ${family}`;
+          context.textBaseline = 'alphabetic';
+          context.fillStyle = '#ff0000';
+          // `renderText` puts a line's baseline at `rect.y1 + TEXT_PADDING + ascent`.
+          const ascent = context.measureText('').fontBoundingBoxAscent ?? size * 0.8;
+          context.fillText(value, padding, padding + ascent);
+        },
+        { value: text, size: fontSize, family: fontFamily, padding: TEXT_PADDING_DOC_PX }
+      );
+
+      const bounds = await inkBoundsIn(page, region);
+      if (!bounds) throw new Error(`referenceInkWidths: the reference drew no ink for ${JSON.stringify(text)}`);
+      out[text] = bounds.right - bounds.left;
+    }
+    return out;
+  } finally {
+    await page.evaluate(() => document.getElementById('text-reference-ink-overlay')?.remove());
+  }
 }
 
 /** The type size the tool is actually rendering with, read off the CONTROLLED input that owns it. */
@@ -949,6 +964,7 @@ test.describe('Text tool in-place editing', () => {
     await clickToPlace(page, box, CARET_CLICK);
     await expect(overlay(page)).toBeVisible();
     await page.keyboard.type('Kept');
+    const referenceOrigin = await textEditorOrigin(page);
 
     // Adobe's shipped default, not the historical folklore: "Note that the Esc key is set to commit
     // text by default. You can change this to cancel the changes by going to Edit > Preferences >
@@ -971,7 +987,9 @@ test.describe('Text tool in-place editing', () => {
     const references = await referenceInkWidths(page, ['Kept', 'Discarded'], {
       fontSize,
       fontFamily: 'Arial',
-      scale: fit.scale,
+      box,
+      fit,
+      origin: referenceOrigin,
     });
     const measured = await inkWidthIn(page, box, { x1: 120, y1: 150, x2: 620, y2: 340 }, 20, 'the Escape commit');
     expect(
@@ -1014,9 +1032,8 @@ test.describe('Text tool in-place editing', () => {
     await expect(overlay(page)).toHaveCount(0);
     await expect(layerRows).toHaveCount(2);
 
-    // The row is the layer thumbnail/name surface in this app. Double-clicking it must hydrate the
-    // retained source args rather than create a second layer or place a fresh draft at the origin.
-    await layerRows.nth(0).dblclick();
+    // Double-click the thumbnail to reopen the retained source rather than create a new draft.
+    await layerRows.nth(0).getByTestId('layer-thumbnail').dblclick();
     await expect(overlay(page), 'double-clicking the committed text row did not reopen the editor').toBeVisible();
     expect(await overlayText(page), 're-entry did not hydrate the committed characters').toBe('Reenter');
     await page.keyboard.type('Edited');
@@ -1033,6 +1050,7 @@ test.describe('Text tool in-place editing', () => {
     await expect(overlay(page)).toBeVisible();
     await page.keyboard.type(FIRST_TEXT);
     await expect(layerRows, 'the open draft is not a layer yet').toHaveCount(1);
+    const firstReferenceOrigin = await textEditorOrigin(page);
 
     // THE DATA-LOSS FIX. `TextToolArea`'s `onChangeEnd` used to overwrite `args` with a fresh box on
     // the second placement, and because a draft is not yet a layer nothing had recorded it: the
@@ -1080,6 +1098,7 @@ test.describe('Text tool in-place editing', () => {
     expect(await overlayText(page), 'typing into the new draft did not land as the typed string alone').toBe(
       SECOND_TEXT
     );
+    const secondReferenceOrigin = await textEditorOrigin(page);
 
     // The second draft is committed too, so BOTH layers are measurable — which is what turns "the two
     // regions" from one measurement and one absence into a claim about which string is in which layer.
@@ -1115,16 +1134,27 @@ test.describe('Text tool in-place editing', () => {
      */
     const fit = await readFit(page);
     const fontSize = await toolFontSize(page);
-    const references = await referenceInkWidths(page, [FIRST_TEXT, SECOND_TEXT, PLACEHOLDER], {
+    const referenceCandidates = [FIRST_TEXT, SECOND_TEXT, PLACEHOLDER];
+    const firstReferences = await referenceInkWidths(page, referenceCandidates, {
       fontSize,
       fontFamily: 'Arial',
-      scale: fit.scale,
+      box,
+      fit,
+      origin: firstReferenceOrigin,
+    });
+    const secondReferences = await referenceInkWidths(page, referenceCandidates, {
+      fontSize,
+      fontFamily: 'Arial',
+      box,
+      fit,
+      origin: secondReferenceOrigin,
     });
 
     for (const [region, own, label] of [
       [FIRST_BOX_REGION, FIRST_TEXT, 'the committed first box'],
       [SECOND_BOX_REGION, SECOND_TEXT, 'the committed second box'],
     ] as const) {
+      const references = own === FIRST_TEXT ? firstReferences : secondReferences;
       const measured = await inkWidthIn(page, box, region, REGION_MARGIN, label);
       // Against the OTHER TWO strings, so a measurement that happened to fit more than one cannot pass.
       for (const other of [FIRST_TEXT, SECOND_TEXT, PLACEHOLDER].filter((candidate) => candidate !== own)) {
@@ -1138,6 +1168,22 @@ test.describe('Text tool in-place editing', () => {
         `${label} carries ${measured.toFixed(1)} CSS px of ink, which is not "${own}" (${references[own].toFixed(1)})`
       ).toBeLessThanOrEqual(INK_WIDTH_TOLERANCE_CSS_PX);
     }
+
+    // The raster-width oracle distinguishes these candidate strings. Re-enter both committed rows
+    // as well so the multi-click transition also proves the exact stored text through the editor.
+    await layerRows.nth(1).getByTestId('layer-thumbnail').dblclick();
+    await expect(overlay(page), 'the first committed layer could not be reopened').toBeVisible();
+    expect(await overlayText(page), 'the first committed layer did not retain its exact text').toBe(FIRST_TEXT);
+    await page.keyboard.press('Escape');
+    await expect(overlay(page), 'the first layer stayed open after the readback').toHaveCount(0);
+    await expect(layerRows, 'reading back the first layer created another row').toHaveCount(3);
+
+    await layerRows.nth(0).getByTestId('layer-thumbnail').dblclick();
+    await expect(overlay(page), 'the second committed layer could not be reopened').toBeVisible();
+    expect(await overlayText(page), 'the second committed layer did not retain its exact text').toBe(SECOND_TEXT);
+    await page.keyboard.press('Escape');
+    await expect(overlay(page), 'the second layer stayed open after the readback').toHaveCount(0);
+    await expect(layerRows, 'reading back the second layer created another row').toHaveCount(3);
   });
 
   /**
@@ -1371,33 +1417,39 @@ test.describe('Text tool in-place editing', () => {
       5
     );
 
+    // The pixel bounds are inclusive indices, so their outer edges are half a screenshot pixel
+    // beyond the first/last pixel centres. The rotation grip also reaches farther above the box
+    // than the corner grips reach on its other three sides.
+    const screenshotPixelCssWidth = box.width / image.width;
+    const screenshotPixelCssHeight = box.height / image.height;
+    const handleOverhangX = FRAME_OVERHANG_CSS_PX - screenshotPixelCssWidth / 2;
+    const handleOverhangY = FRAME_OVERHANG_CSS_PX - screenshotPixelCssHeight / 2;
+    const frameOuterWidth = frameCss.right - frameCss.left + screenshotPixelCssWidth;
+    const frameOuterHeight = frameCss.bottom - frameCss.top + screenshotPixelCssHeight;
     // Containment, in the form that cannot pass on a shifted overlay: each edge of the box, DERIVED
-    // from where the blue stops plus the handle's own overhang, has to sit within a pixel of the
-    // overlay's edge. A document-point-to-client-pixel mapping bug — the letterbox offset dropped,
-    // the scale inverted, a `rect.y1`/`rect.x1` transposition — moves these by tens of pixels, which
-    // is why the margin here is a pixel rather than a tolerance anyone would widen.
+    // from where the blue stops plus the frame's own overhang, has to sit within two CSS pixels of
+    // the overlay's edge. A document-point-to-client-pixel mapping bug — the letterbox offset
+    // dropped, the scale inverted, a `rect.y1`/`rect.x1` transposition — moves these by tens of pixels.
     const edge = (actual: number, derivedFromFrame: number, label: string) =>
       expect(
         Math.abs(actual - derivedFromFrame),
         `${label}: the overlay edge is ${(actual - derivedFromFrame).toFixed(2)} CSS px from the box's own edge`
       ).toBeLessThanOrEqual(2);
 
-    edge(bounds.left, frameCss.left + FRAME_OVERHANG_CSS_PX, 'left');
-    edge(bounds.top, frameCss.top + FRAME_OVERHANG_CSS_PX, 'top');
-    edge(bounds.right, frameCss.right - FRAME_OVERHANG_CSS_PX, 'right');
-    edge(bounds.bottom, frameCss.bottom - FRAME_OVERHANG_CSS_PX, 'bottom');
+    edge(bounds.left, frameCss.left + handleOverhangX, 'left');
+    edge(bounds.top, frameCss.top + handleOverhangY, 'top');
+    edge(bounds.right, frameCss.right - handleOverhangX, 'right');
+    edge(bounds.bottom, frameCss.bottom - handleOverhangY, 'bottom');
 
     // And the SIZE, which is the half a pure containment check misses: an overlay twice as wide as
-    // its box contains the box perfectly and puts the user's caret in the wrong place. The handles
-    // are `HANDLE_SIZE` outside each edge, so the box is the frame narrowed by twice that.
-    // The frame comes from a device-pixel screenshot while the overlay uses CSS layout, so the
-    // mapped width can carry a fractional-pixel rounding remainder.
+    // its box contains the box perfectly and puts the user's caret in the wrong place. Account for
+    // both the inclusive pixel bounds and the distinct top overhang of the rotation grip.
     expect(
-      Math.abs(bounds.width - (frameCss.right - frameCss.left - 2 * FRAME_OVERHANG_CSS_PX)),
+      Math.abs(bounds.width - (frameOuterWidth - 2 * FRAME_OVERHANG_CSS_PX)),
       'the overlay is not as wide as the box the canvas drew'
     ).toBeLessThanOrEqual(3);
     expect(
-      Math.abs(bounds.height - (frameCss.bottom - frameCss.top - 2 * FRAME_OVERHANG_CSS_PX)),
+      Math.abs(bounds.height - (frameOuterHeight - 2 * FRAME_OVERHANG_CSS_PX)),
       'the overlay is not as tall as the box the canvas drew'
     ).toBeLessThanOrEqual(2);
   });
@@ -1897,7 +1949,7 @@ test.describe('Desktop Type click-count selection', () => {
     await expect(overlay(page)).toHaveCount(0);
     const layerRows = page.getByTitle('Drag to reorder');
     await expect(layerRows).toHaveCount(2);
-    await layerRows.nth(0).dblclick();
+    await layerRows.nth(0).getByTestId('layer-thumbnail').dblclick();
     await expect(overlay(page)).toBeVisible();
     expect(await overlayText(page)).toBe(CLICK_LADDER_TEXT);
     expect(

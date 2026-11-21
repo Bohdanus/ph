@@ -59,6 +59,27 @@ const ALLOWED_UNLISTED = new Map([
       'index unbounded, and the set grows by exactly one line in HANDOFF.md at a time.',
   ],
   [
+    'docs/handoffs/nemotron-disablement-unproven-20261111.md',
+    'covered by the docs/handoffs/ directory row, which states the ' +
+      '<branch>-<topic>.md naming convention. The handoff is task-specific and is not a maintained ' +
+      'repository guide, so one index row per completed branch would duplicate that directory entry.',
+  ],
+  [
+    'docs/handoffs/merge-harvest-all-worktrees-20261114.md',
+    'one-off evidence for this worktree harvest; the docs/handoffs/ directory row covers ' +
+      'task-specific records, so this audit does not need a permanent index row.',
+  ],
+  [
+    'docs/handoffs/overnight-salvage-20261115.md',
+    'one-off evidence for this overnight salvage and landing; the docs/handoffs/ directory row ' +
+      'covers task-specific records, so this audit does not need a permanent index row.',
+  ],
+  [
+    'docs/handoffs/linux-snapshot-ci-20261024-salvage-review.md',
+    'one-off evidence for this historical branch review; the docs/handoffs/ directory row ' +
+      'covers task-specific records, so this review does not need a permanent index row.',
+  ],
+  [
     'docs/handoffs/audit-free-subagent-hardening-review.md',
     'covered by the docs/handoffs/ directory row, which states the ' +
       '<branch>-<topic>.md naming convention. One row per merged branch would make the ' +
@@ -76,6 +97,64 @@ const ALLOWED_UNLISTED = new Map([
       '(AGENTS.md, README.md, MODELS.md does not link it either) so it does not pollute ' +
       'orchestrator context. MODELS.md is the canonical daily policy; this file is a lookup ' +
       'reference for provider terms, quotas, and failure observations.',
+  ],
+  [
+    '.kilo/skills/broad-test-improvement/SKILL.md',
+    'skill loader for .skills/broad-test-improvement.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/chat-history-query/SKILL.md',
+    'skill loader for .skills/chat-history-query.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/chat-loose-end-scan/SKILL.md',
+    'skill loader for .skills/chat-loose-end-scan.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/ci-failure-mitigation/SKILL.md',
+    'skill loader for .skills/ci-failure-mitigation.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/copilot-chat-history/SKILL.md',
+    'skill loader for .skills/copilot-chat-history.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/copilot-subagent-launch/SKILL.md',
+    'skill loader for .skills/copilot-subagent-launch.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/e2e-hardening-cron/SKILL.md',
+    'skill loader for .skills/e2e-hardening-cron.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/e2e-hardening-overnight/SKILL.md',
+    'skill loader for .skills/e2e-hardening-overnight.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/free-model-agent-rotation/SKILL.md',
+    'skill loader for .skills/free-model-agent-rotation.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/free-model-chat-sweep/SKILL.md',
+    'skill loader for .skills/free-model-chat-sweep.md; not a standalone document',
+  ],
+  ['.kilo/skills/hard-merge/SKILL.md', 'skill loader for .skills/hard-merge.md; not a standalone document'],
+  [
+    '.kilo/skills/merge-preparation-research/SKILL.md',
+    'skill loader for .skills/merge-preparation-research.md; not a standalone document',
+  ],
+  ['.kilo/skills/overnight-sweep/SKILL.md', 'skill loader for .skills/overnight-sweep.md; not a standalone document'],
+  [
+    '.kilo/skills/photoshop-tool-creation/SKILL.md',
+    'skill loader for .skills/photoshop-tool-creation.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/stale-worktree-reclaim/SKILL.md',
+    'skill loader for .skills/stale-worktree-reclaim.md; not a standalone document',
+  ],
+  [
+    '.kilo/skills/worktree-merge-harvest/SKILL.md',
+    'skill loader for .skills/worktree-merge-harvest.md; not a standalone document',
   ],
 ]);
 

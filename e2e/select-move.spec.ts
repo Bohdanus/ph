@@ -1,5 +1,6 @@
-import { expect, test } from './fixtures/extended-test';
+import { expect, test, type Page } from './fixtures/extended-test';
 import {
+  type BoundingBox,
   drawLine,
   getDarkPixelBounds,
   getWorkspaceCanvas,
@@ -9,6 +10,8 @@ import {
   LINE_START_X,
   LINE_START_Y,
   screenshotBoundsToCss,
+  viewportClip,
+  workspaceDocumentPixelMask,
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
@@ -42,6 +45,14 @@ const HANDLE_OFFSET = 4;
  */
 const GESTURE_TOLERANCE_PX = 2;
 
+function workspaceCaptureMask(page: Page, box: BoundingBox) {
+  return workspaceDocumentPixelMask(
+    page,
+    box,
+    viewportClip({ x: box.x, y: box.y, width: box.width, height: box.height })
+  );
+}
+
 test.describe('Select & Move', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -62,7 +73,7 @@ test.describe('Select & Move', () => {
     await waitForCanvasRedraw(page, box);
 
     const originalScreenshot = await captureCanvasScreenshot(page, box, testInfo, 'select-move-original');
-    const original = await getDarkPixelBounds(originalScreenshot);
+    const original = await getDarkPixelBounds(originalScreenshot, await workspaceCaptureMask(page, box));
     expect(original, 'Line not found on original canvas screenshot').toBeTruthy();
 
     // Select Move Tool (reposition)
@@ -76,7 +87,7 @@ test.describe('Select & Move', () => {
     await page.mouse.up();
 
     const movedScreenshot = await captureCanvasScreenshot(page, box, testInfo, 'select-move-moved');
-    const moved = await getDarkPixelBounds(movedScreenshot);
+    const moved = await getDarkPixelBounds(movedScreenshot, await workspaceCaptureMask(page, box));
     expect(moved, 'Line disappeared after move').toBeTruthy();
     expect(moved!.left).not.toBe(original!.left);
     expect(moved!.top).not.toBe(original!.top);
@@ -165,9 +176,9 @@ test.describe('Select & Move', () => {
     await page.mouse.up();
 
     const resizedScreenshot = await captureCanvasScreenshot(page, box, testInfo, 'select-move-resized');
-    const resized = await getDarkPixelBounds(resizedScreenshot);
+    const resized = await getDarkPixelBounds(resizedScreenshot, await workspaceCaptureMask(page, box));
     expect(resized, 'Line disappeared after resize').toBeTruthy();
-    const moved = await getDarkPixelBounds(movedScreenshot);
+    const moved = await getDarkPixelBounds(movedScreenshot, await workspaceCaptureMask(page, box));
     expect(resized!.width).toBeGreaterThan(moved!.width);
     expect(resized!.height).toBeGreaterThan(moved!.height);
 

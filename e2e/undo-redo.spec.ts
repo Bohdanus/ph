@@ -23,6 +23,8 @@ import {
   loadImageData,
   type BoundingBox,
   type ClipOptions,
+  viewportClip,
+  workspaceDocumentPixelMask,
 } from './helpers/canvas-helpers';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
@@ -126,6 +128,8 @@ test.describe('Undo and redo', () => {
   const wholeCanvasClip = (box: BoundingBox): Required<ClipOptions> => bandUnionClip([wholeCanvasBand(box)]);
 
   const capture = (page: Page, clip: Required<ClipOptions>): Promise<Buffer> => page.screenshot({ clip });
+  const pixelMask = (page: Page, box: BoundingBox, clip: Required<ClipOptions>) =>
+    workspaceDocumentPixelMask(page, box, viewportClip(clip));
 
   const captureCanvasStack = async (page: Page, includeToolOverlay: boolean) => {
     const snapshot = await page.evaluate((includeOverlay) => {
@@ -285,7 +289,7 @@ test.describe('Undo and redo', () => {
     await strokeInto(page, box, bands, 0);
     await waitForBandInked(page, bands[0], { description: 'the stroke to reach the canvas' });
 
-    const drawn = await getDarkPixelBounds(await capture(page, clip));
+    const drawn = await getDarkPixelBounds(await capture(page, clip), await pixelMask(page, box, clip));
     expect(drawn, 'the stroke was not on the canvas at all').toBeTruthy();
 
     await getUndoButton(page).click();
@@ -296,14 +300,17 @@ test.describe('Undo and redo', () => {
     await waitForBands(page, [wholeCanvasBand(box)], [false], { description: 'the canvas to carry no ink' });
     await expectPresentationDecision(page);
 
-    expect(await hasDarkPixels(await capture(page, clip)), 'undo left ink on the canvas').toBe(false);
+    expect(
+      await hasDarkPixels(await capture(page, clip), await pixelMask(page, box, clip)),
+      'undo left ink on the canvas'
+    ).toBe(false);
     await expect(getRedoButton(page)).toBeEnabled();
 
     await getRedoButton(page).click();
     await waitForBands(page, [wholeCanvasBand(box)], [true], { description: 'the redone stroke to be back' });
     await expectPresentationDecision(page);
 
-    const redone = await getDarkPixelBounds(await capture(page, clip));
+    const redone = await getDarkPixelBounds(await capture(page, clip), await pixelMask(page, box, clip));
     expect(redone, 'redo left the canvas empty').toBeTruthy();
     // The whole bounds object, not just "there is ink": a replay that restored the
     // stroke at a different position, a different length, or a different size is a
@@ -332,7 +339,11 @@ test.describe('Undo and redo', () => {
     await waitForBands(page, bands, [true, true, false], {
       description: 'one undo to drop the third stroke and leave the first two',
     });
-    expect(await bandInkFlags(await capture(page, stackClip), bands)).toEqual([true, true, false]);
+    expect(await bandInkFlags(await capture(page, stackClip), bands, await pixelMask(page, box, stackClip))).toEqual([
+      true,
+      true,
+      false,
+    ]);
 
     await getUndoButton(page).click();
     await waitForBands(page, bands, [true, false, false], {
@@ -342,7 +353,11 @@ test.describe('Undo and redo', () => {
     // Read it back as pixels rather than trusting the wait: a per-band read is the
     // assertion, the wait is only what makes it deterministic. This is the check a
     // whole-canvas "is there ink" cannot make - an off-by-one cursor leaves ink too.
-    expect(await bandInkFlags(await capture(page, stackClip), bands)).toEqual([true, false, false]);
+    expect(await bandInkFlags(await capture(page, stackClip), bands, await pixelMask(page, box, stackClip))).toEqual([
+      true,
+      false,
+      false,
+    ]);
   });
 
   test('the keyboard shortcuts undo and redo to the same pixels as the buttons', async ({ page }) => {
@@ -352,7 +367,7 @@ test.describe('Undo and redo', () => {
 
     await strokeInto(page, box, bands, 0);
     await waitForBandInked(page, bands[0], { description: 'the stroke to reach the canvas' });
-    const drawn = await getDarkPixelBounds(await capture(page, clip));
+    const drawn = await getDarkPixelBounds(await capture(page, clip), await pixelMask(page, box, clip));
     expect(drawn, 'the stroke was not on the canvas at all').toBeTruthy();
 
     // `ControlOrMeta`, not a hardcoded Meta or Control: the app matches the modifier
@@ -364,7 +379,10 @@ test.describe('Undo and redo', () => {
     await page.keyboard.press('ControlOrMeta+z');
     await waitForBands(page, [wholeCanvasBand(box)], [false], { description: 'the canvas to carry no ink' });
 
-    expect(await hasDarkPixels(await capture(page, clip)), 'the keyboard shortcut did not undo the stroke').toBe(false);
+    expect(
+      await hasDarkPixels(await capture(page, clip), await pixelMask(page, box, clip)),
+      'the keyboard shortcut did not undo the stroke'
+    ).toBe(false);
     await expect(getRedoButton(page), 'the keyboard shortcut did not move the history cursor').toBeEnabled();
 
     await page.keyboard.press('ControlOrMeta+Shift+z');
@@ -372,7 +390,7 @@ test.describe('Undo and redo', () => {
     // established that band 0 is clean, so only the redo can make this true.
     await waitForBandInked(page, bands[0], { description: 'the keyboard-redone stroke to be back' });
 
-    const redone = await getDarkPixelBounds(await capture(page, clip));
+    const redone = await getDarkPixelBounds(await capture(page, clip), await pixelMask(page, box, clip));
     expect(redone, 'the keyboard shortcut did not put the ink back').toBeTruthy();
     expect(redone, 'the keyboard shortcuts did not reach the same pixels as the buttons').toEqual(drawn);
   });
@@ -392,7 +410,10 @@ test.describe('Undo and redo', () => {
     await waitForBands(page, bands, [true, true, false], { description: 'the third stroke to be gone' });
     await expect(getRedoButton(page), 'the third stroke should be redoable').toBeEnabled();
 
-    const beforeBranch = await getDarkPixelBounds(await capture(page, bands[0].clip));
+    const beforeBranch = await getDarkPixelBounds(
+      await capture(page, bands[0].clip),
+      await pixelMask(page, box, bands[0].clip)
+    );
     expect(beforeBranch, 'band 0 carried no ink to branch from').toBeTruthy();
 
     // A new stroke in band 0, on a wider span. The append truncates the timeline at
@@ -404,8 +425,15 @@ test.describe('Undo and redo', () => {
 
     // Neither dropped stroke came back, and the branch stroke is on the canvas: a
     // wider span in band 0 is a wider dark-pixel box than the stroke it replaced.
-    expect(await bandInkFlags(await capture(page, stackClip), bands)).toEqual([true, true, false]);
-    const branched = await getDarkPixelBounds(await capture(page, bands[0].clip));
+    expect(await bandInkFlags(await capture(page, stackClip), bands, await pixelMask(page, box, stackClip))).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    const branched = await getDarkPixelBounds(
+      await capture(page, bands[0].clip),
+      await pixelMask(page, box, bands[0].clip)
+    );
     expect(branched, 'the branch stroke is not on the canvas at all').toBeTruthy();
     expect(branched!.right, 'the branch stroke did not widen band 0').toBeGreaterThan(beforeBranch!.right);
 
@@ -422,7 +450,11 @@ test.describe('Undo and redo', () => {
     await waitForBands(page, bands, [true, true, false], {
       description: 'the undo to drop the branch stroke without reviving the dropped third stroke',
     });
-    expect(await bandInkFlags(await capture(page, stackClip), bands)).toEqual([true, true, false]);
+    expect(await bandInkFlags(await capture(page, stackClip), bands, await pixelMask(page, box, stackClip))).toEqual([
+      true,
+      true,
+      false,
+    ]);
     await expect(getRedoButton(page), 'undoing back to the branch point should make it redoable').toBeEnabled();
   });
 
@@ -443,7 +475,7 @@ test.describe('Undo and redo', () => {
     await waitForBandInked(page, wholeCanvasBand(box), { description: 'the rectangle to reach the canvas' });
 
     // Verify the shape was drawn
-    const drawn = await getDarkPixelBounds(await capture(page, clip));
+    const drawn = await getDarkPixelBounds(await capture(page, clip), await pixelMask(page, box, clip));
     expect(drawn, 'the rectangle was not on the canvas at all').toBeTruthy();
 
     // Undo the shape creation
@@ -454,7 +486,10 @@ test.describe('Undo and redo', () => {
     await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
     await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
 
-    expect(await hasDarkPixels(await capture(page, clip)), 'undo left ink on the canvas').toBe(false);
+    expect(
+      await hasDarkPixels(await capture(page, clip), await pixelMask(page, box, clip)),
+      'undo left ink on the canvas'
+    ).toBe(false);
     await expect(getRedoButton(page)).toBeEnabled();
 
     // Redo the shape creation
@@ -464,7 +499,7 @@ test.describe('Undo and redo', () => {
     await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
     await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
 
-    const redone = await getDarkPixelBounds(await capture(page, clip));
+    const redone = await getDarkPixelBounds(await capture(page, clip), await pixelMask(page, box, clip));
     expect(redone, 'redo left the canvas empty').toBeTruthy();
     expect(redone, 'redo did not restore the rectangle pixel for pixel').toEqual(drawn);
   });

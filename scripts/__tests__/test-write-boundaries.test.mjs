@@ -7,8 +7,9 @@ const TEST_DIRECTORY = join(import.meta.dirname, '.');
 
 const REVIEWED = {
   'agent-board.test.mjs': {
-    scope: 'Temporary board directories and in-memory/test-owned databases; CLI children use the test board.',
-    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=9 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=14 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
+    scope:
+      'Temporary board directories and test-owned databases; malformed-lease and contributor-lock fixtures preserve holder directories, dead-worktree tests remove/recreate only temporary holders, and CLI children use the test board.',
+    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=13 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=29 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
   },
   'agents-citations.test.mjs': {
     scope: 'Subprocess invocation is part of the citation/tooling contract; review its command and cwd.',
@@ -19,10 +20,14 @@ const REVIEWED = {
       'Search fixtures use per-test temporary directories and test-owned databases, including Codex rollout symlink guards.',
     patterns: `database-open:DatabaseSync:write-capable=8 filesystem-write:mkdtempSync=18 filesystem-write:mkdirSync=5 filesystem-write:rmSync=18 filesystem-write:symlinkSync=2 filesystem-write:writeFileSync=4`,
   },
+  'codex-family.test.mjs': {
+    scope: 'Codex state databases, rollout fixtures, and cleanup are isolated to unique OS temporary directories.',
+    patterns: `filesystem-write:mkdtempSync=1 database-open:DatabaseSync:write-capable=1 filesystem-write:writeFileSync=5 filesystem-write:appendFileSync=1 filesystem-write:rmSync=1 filesystem-write:mkdirSync=1 filesystem-write:symlinkSync=1`,
+  },
   'dispose-worktree.test.mjs': {
     scope:
       'Filesystem fixtures are created under unique OS temporary directories and cleaned up; child Git is test-controlled.',
-    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=17 filesystem-write:rmSync=5 filesystem-write:mkdirSync=23 filesystem-write:symlinkSync=2 filesystem-write:renameSync=2 subprocess:execFileSync=1 subprocess:spawnSync=1`,
+    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=17 filesystem-write:rmSync=5 filesystem-write:mkdirSync=24 filesystem-write:symlinkSync=2 filesystem-write:renameSync=2 subprocess:execFileSync=1 subprocess:spawnSync=1`,
   },
   'docs-index.test.mjs': {
     scope: 'Subprocess invocation is part of the docs-index contract; review its command and cwd.',
@@ -36,6 +41,10 @@ const REVIEWED = {
   'e2e-skip-baseline.test.mjs': {
     scope: 'Baseline and report fixtures use unique OS temporary directories.',
     patterns: `filesystem-write:mkdtemp=2 filesystem-write:mkdir=4 filesystem-write:writeFile=3 filesystem-write:rm=2`,
+  },
+  'e2e-timeout-contract.test.mjs': {
+    scope: 'Read-only workflow and Playwright config checks; no filesystem writes, subprocesses or databases.',
+    patterns: '',
   },
   'find-session-id.test.mjs': {
     scope: 'Database and file fixtures live under unique OS temporary directories.',
@@ -51,21 +60,28 @@ const REVIEWED = {
     patterns: `filesystem-write:mkdtemp=6 filesystem-write:writeFile=6 filesystem-write:rm=6`,
   },
   'free-model-kilo.test.mjs': {
-    scope: 'Mock CLI and configuration fixtures use temporary directories.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=9 filesystem-write:rm=9`,
+    scope: 'Each fake Kilo CLI and configuration fixture uses a unique OS temp directory with finally cleanup.',
+    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=20 filesystem-write:rm=20 subprocess:spawnSync=1`,
   },
   'free-model-pool-external.test.mjs': {
-    scope: 'External-provider fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=2 filesystem-write:rm=2`,
+    scope:
+      'External-provider, typed transient 5xx, Kilo cost-stop and source-cooldown, OpenRouter quota metadata and UTC-midnight rollover, and keyless catalog fixtures use unique OS temporary directories with finally cleanup; keyless catalog fixture files are removed with their temporary directory.',
+    patterns: `filesystem-write:mkdtemp=12 filesystem-write:rm=12 filesystem-write:writeFile=1`,
   },
   'free-model-pool.test.mjs': {
     scope:
-      'Model/provider fixtures use unique OS temporary directories; PATH overrides are restored in finally blocks.',
-    patterns: `filesystem-write:mkdtemp=12 filesystem-write:rm=12 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
+      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, and timeout cleanup targets only fixture-owned process IDs.',
+    patterns: `filesystem-write:mkdtemp=32 filesystem-write:rm=32 filesystem-write:writeFile=15 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+  },
+  'free-model-pool-state.test.mjs': {
+    scope:
+      'Persistent pool-state regression fixtures use unique OS temporary directories and are removed after each test.',
+    patterns: `filesystem-write:mkdtemp=1 filesystem-write:rm=1`,
   },
   'free-model-quarantine.test.mjs': {
-    scope: 'Quarantine fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=7 filesystem-write:rm=7`,
+    scope:
+      'Quarantine state fixtures use unique OS temporary directories, including regular and locked expiry-load persistence checks.',
+    patterns: `filesystem-write:mkdtemp=12 filesystem-write:rm=12`,
   },
   'free-model-sweep.test.mjs': {
     scope: 'Sweep and quarantine fixtures use unique OS temporary directories.',
@@ -85,12 +101,13 @@ const REVIEWED = {
   },
   'main-worktree-guard.test.mjs': {
     scope:
-      'Git and hook fixtures use temporary repositories; review child cwd and any environment passed to subprocesses.',
-    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=43 filesystem-write:mkdtempSync=8 filesystem-write:writeFileSync=20 filesystem-write:rmSync=11 filesystem-write:mkdirSync=3`,
+      'Git and hook fixtures use temporary repositories, including foreign reuse of a stale main path, forced duplicate-main recovery, and watcher retry/recheck after one malformed owner read plus bounded exit after repeated malformed reads; review child cwd and any environment passed to subprocesses.',
+    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=49 filesystem-write:mkdtempSync=14 filesystem-write:writeFileSync=38 filesystem-write:rmSync=18 filesystem-write:mkdirSync=5`,
   },
   'main-landing-alert.test.mjs': {
-    scope: 'Alert-claim marker fixtures use a unique temporary directory and are removed after the test.',
-    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:writeFileSync=2 filesystem-write:rmSync=2`,
+    scope:
+      'Alert-claim marker fixtures use a unique temporary directory and are removed after the test. Expanded coverage includes malformed recovery, invalid JSON shapes, sent markers, and lock contention.',
+    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=7 filesystem-write:rmSync=2`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
@@ -102,28 +119,37 @@ const REVIEWED = {
   },
   'merge-takeover-guard.test.mjs': {
     scope:
-      'Temporary repositories model the owner-tracked landing wrapper; project markers, installer stubs, hook scripts, and process environment changes remain isolated to each temporary repository.',
-    patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=50 filesystem-write:mkdirSync=20 filesystem-write:copyFileSync=2 filesystem-write:chmodSync=28 filesystem-write:rmSync=7 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
+      'Temporary repositories model the owner-tracked landing wrapper; project markers, prepared-merge state, installer stubs, hook scripts, and process environment changes remain isolated to each temporary repository.',
+    patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=58 filesystem-write:mkdirSync=23 filesystem-write:copyFileSync=2 filesystem-write:chmodSync=28 filesystem-write:rmSync=7 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=5 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
   },
   'mirror-e2e.test.mjs': {
-    scope: 'Mirror and git fixtures use temporary repositories and directories.',
-    patterns: `subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=7 filesystem-write:mkdirSync=4 filesystem-write:rmSync=11`,
+    scope:
+      'Mirror and git fixtures use temporary repositories; the workflow newline regression uses a temporary CRLF fixture.',
+    patterns: `subprocess:spawnSync=3 filesystem-write:mkdtempSync=3 filesystem-write:writeFileSync=8 filesystem-write:mkdirSync=4 filesystem-write:rmSync=12`,
   },
   'orphan-branches.test.mjs': {
-    scope: 'Git fixtures use a unique temporary repository.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=11 filesystem-write:writeFileSync=3 filesystem-write:rmSync=5`,
+    scope:
+      'Git fixtures use a unique temporary repository; the Windows direct-entrypoint check reports from that fixture.',
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=12 filesystem-write:writeFileSync=3 filesystem-write:rmSync=6`,
+  },
+  'path-identity.test.mjs': {
+    scope:
+      'Git path identity is read from the current checkout; directory and symlink fixtures are created under unique OS temporary directories and removed after each test.',
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=1 filesystem-write:rmSync=1 filesystem-write:mkdirSync=3 filesystem-write:writeFileSync=1 filesystem-write:symlinkSync=3`,
   },
   'quiet-command.test.mjs': {
     scope: 'Subprocess invocation is the command-wrapper behavior under test; review command and cwd.',
     patterns: `subprocess:spawnSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=3 filesystem-write:rmSync=2`,
   },
   'recover-stale-auto-merge.test.mjs': {
-    scope: 'Git and filesystem fixtures use temporary repositories and directories.',
-    patterns: `subprocess:execFileSync=1 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=18 subprocess:spawnSync=3 filesystem-write:rmSync=6 filesystem-write:mkdirSync=3 filesystem-write:symlinkSync=1`,
+    scope:
+      'Git and filesystem fixtures use temporary repositories and directories, including a stale target package script, symlinks, hostile merge/index markers, and a Node preload shim that rewrites a fixture marker; child Git commands use the fixture repository.',
+    patterns: `subprocess:execFileSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=40 subprocess:spawnSync=4 filesystem-write:rmSync=6 filesystem-write:mkdirSync=4 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=2`,
   },
   'repo-state-gate.test.mjs': {
-    scope: 'Git and filesystem fixtures use temporary repositories; review child cwd and environment.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=4 filesystem-write:writeFileSync=18 filesystem-write:rmSync=7 filesystem-write:chmodSync=4`,
+    scope:
+      'Git and filesystem fixtures use temporary repositories; child cwd and environment are reviewed, and fixture repo/worktree paths are removed only within scratch roots cleaned by afterEach.',
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=20 filesystem-write:rmSync=9 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
   },
   'session-db-snapshot.test.mjs': {
     scope: 'Snapshot fixtures use temporary databases; copies are explicitly opened read-only.',
@@ -164,8 +190,9 @@ const REVIEWED = {
     patterns: '',
   },
   'secrets.test.mjs': {
-    scope: 'In-memory secret-key and redaction assertions; no filesystem mutations, subprocesses, or database access.',
-    patterns: '',
+    scope:
+      'In-memory secret-key/redaction assertions plus one bounded Node child for the adversarial key; no filesystem or database access.',
+    patterns: `subprocess:spawnSync=1`,
   },
   'suite-budgets.test.mjs': {
     scope: 'Unit tests with mocked data; no filesystem mutations, subprocesses, or database access.',
@@ -182,6 +209,10 @@ const REVIEWED = {
   'windows-command-shim.test.mjs': {
     scope: 'Windows command lookup fixtures live in unique temporary directories and are removed after each test.',
     patterns: `filesystem-write:mkdirSync=1 filesystem-write:mkdtempSync=11 filesystem-write:writeFileSync=9 filesystem-write:rmSync=11`,
+  },
+  'windows-process-tree.test.mjs': {
+    scope: 'Process commands are mocked; tests do not create files, processes, or databases.',
+    patterns: '',
   },
 };
 
@@ -360,6 +391,7 @@ describe('script-test resource boundary audit', () => {
     expect(() => scanTestSource('const broken = ;', 'broken.test.mjs')).toThrow('Could not parse broken.test.mjs');
   });
 
+  // These two full-tree scans can exceed Vitest's default 5s under parallel suite load.
   it('derives every script test and requires exact reviewed pattern classifications', () => {
     const tests = deriveScriptTests(TEST_DIRECTORY);
     const names = new Set(tests.map(({ name }) => name));
@@ -386,7 +418,7 @@ describe('script-test resource boundary audit', () => {
     expect(unclassified, 'new write-shaped patterns need explicit classification').toEqual([]);
     expect(stale, 'changed resource patterns need review and an updated classification').toEqual([]);
     expect(missingFiles, 'classifications must refer to discovered script tests').toEqual([]);
-  });
+  }, 15_000);
 
   it('requires explicit classification for tests with zero detected side effects', () => {
     const tests = deriveScriptTests(TEST_DIRECTORY);
@@ -397,7 +429,7 @@ describe('script-test resource boundary audit', () => {
       }
     }
     expect(unclassifiedZeroFindings, 'tests with zero findings must be explicitly classified in REVIEWED').toEqual([]);
-  });
+  }, 15_000);
 
   it('keeps intentional shared reads and their boundaries explicit', () => {
     const tests = new Map(deriveScriptTests(TEST_DIRECTORY).map(({ name }) => [name, true]));

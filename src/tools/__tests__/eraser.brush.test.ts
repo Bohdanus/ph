@@ -74,14 +74,14 @@ class RecordingOffscreenCanvas {
   }
 }
 
-/** An opaque red source raster, the way a raster commit hands the processor the layer. */
-const opaqueSource = (width: number, height: number): OffscreenCanvas => {
+/** A red source raster, optionally translucent, the way a raster commit hands the processor the layer. */
+const sourceRaster = (width: number, height: number, alpha = 255): OffscreenCanvas => {
   const pixels = new Uint8ClampedArray(width * height * 4);
   for (let i = 0; i < pixels.length; i += 4) {
     pixels[i] = 255;
     pixels[i + 1] = 0;
     pixels[i + 2] = 0;
-    pixels[i + 3] = 255;
+    pixels[i + 3] = alpha;
   }
   // Typed as an `OffscreenCanvas` because that is the union arm the recorder's `drawImage`
   // implementation reads its `pixels` from; the object carries exactly the one field it uses.
@@ -94,18 +94,26 @@ const CENTRE = 20;
 const eraserArgs = (overrides: Partial<EraserToolArgs> = {}): ToolArgs =>
   ({
     ...defaultSettings.eraser,
+    // Keep these existing pixel tests pinned to the pre-Flow renderer. New strokes and the
+    // Flow-aware cases below opt in explicitly; an absent field is the durable-history contract.
+    flow: undefined,
     toolName: 'eraser',
     points: [{ x: CENTRE, y: CENTRE }],
     ...overrides,
   }) as unknown as ToolArgs;
 
-/** Run one stroke and return the ALPHA channel of the committed raster. */
-const erasedAlpha = (args: ToolArgs): Uint8ClampedArray => {
+/** Run one stroke and return the committed RGBA raster. */
+const erasedPixels = (args: ToolArgs, source = sourceRaster(SIZE.width, SIZE.height)): Uint8ClampedArray => {
   RecordingOffscreenCanvas.instances = [];
-  eraser({ size: SIZE, bitmap: opaqueSource(SIZE.width, SIZE.height) })(args);
+  eraser({ size: SIZE, bitmap: source })(args);
   // A selection snapshot rasterizes through a second canvas; the processor's returned canvas is
   // always the first allocation in this harness.
-  const pixels = RecordingOffscreenCanvas.instances[0]!.pixels;
+  return new Uint8ClampedArray(RecordingOffscreenCanvas.instances[0]!.pixels);
+};
+
+/** Run one stroke and return the ALPHA channel of the committed raster. */
+const erasedAlpha = (args: ToolArgs): Uint8ClampedArray => {
+  const pixels = erasedPixels(args);
   const alpha = new Uint8ClampedArray(SIZE.width * SIZE.height);
   for (let i = 0, a = 3; a < pixels.length; i++, a += 4) alpha[i] = pixels[a];
   return alpha;
@@ -288,6 +296,165 @@ describe('the Brush eraser tip', () => {
   });
 });
 
+describe('Flow-aware Brush and Pencil strokes', () => {
+  const revisitedCentre: Point[] = [
+    { x: CENTRE, y: CENTRE },
+    { x: CENTRE + 24, y: CENTRE },
+    { x: CENTRE, y: CENTRE },
+  ];
+
+  it('builds coverage with repeated low-Flow dabs while staying under the per-stroke Opacity ceiling', () => {
+    const oneDab = erasedAlpha(
+      eraserArgs({
+        mode: 'brush',
+        lineWidth: 21,
+        hardness: BRUSH_HARDNESS_MAX,
+        spacing: 100,
+        alpha: 1,
+        flow: 25,
+        points: [{ x: CENTRE, y: CENTRE }],
+      })
+    );
+    const builtUp = erasedAlpha(
+      eraserArgs({
+        mode: 'brush',
+        lineWidth: 21,
+        hardness: BRUSH_HARDNESS_MAX,
+        spacing: 100,
+        alpha: 1,
+        flow: 25,
+        points: revisitedCentre,
+      })
+    );
+
+    expect(alphaAt(oneDab, CENTRE, CENTRE)).toBeCloseTo(191, 0);
+    expect(alphaAt(builtUp, CENTRE, CENTRE)).toBeLessThan(alphaAt(oneDab, CENTRE, CENTRE));
+    expect(alphaAt(builtUp, CENTRE, CENTRE)).toBeGreaterThan(0);
+  });
+
+  it('does not let repeated Flow 100 dabs erase beyond Opacity', () => {
+    const alpha = erasedAlpha(
+      eraserArgs({
+        mode: 'brush',
+        lineWidth: 21,
+        hardness: BRUSH_HARDNESS_MAX,
+        spacing: 100,
+        alpha: 0.4,
+        flow: 100,
+        points: revisitedCentre,
+      })
+    );
+
+    expect(alphaAt(alpha, CENTRE, CENTRE)).toBe(153);
+  });
+
+  it('lets Flow deposit directly toward Opacity when both controls are below 100%', () => {
+    for (const mode of ['brush', 'pencil'] as const) {
+      const alpha = erasedAlpha(
+        eraserArgs({
+          mode,
+          lineWidth: 21,
+          hardness: BRUSH_HARDNESS_MAX,
+          spacing: 100,
+          alpha: 0.5,
+          flow: 50,
+          points: [{ x: CENTRE, y: CENTRE }],
+        })
+      );
+
+      expect(alphaAt(alpha, CENTRE, CENTRE), `${mode} with Flow 50 and Opacity 50 deposits 50%`).toBe(128);
+    }
+  });
+
+  it('uses a hard Pencil tip and applies Flow under the Pencil Opacity ceiling', () => {
+    const alpha = erasedAlpha(
+      eraserArgs({
+        mode: 'pencil',
+        lineWidth: 21,
+        spacing: 100,
+        alpha: 0.4,
+        flow: 100,
+        points: [{ x: CENTRE, y: CENTRE }],
+      })
+    );
+
+    expect(alphaAt(alpha, CENTRE, CENTRE)).toBe(153);
+    expect(alphaAt(alpha, CENTRE + 10, CENTRE)).toBe(153);
+    expect(alphaAt(alpha, CENTRE + 11, CENTRE)).toBe(255);
+  });
+
+  it('applies a selection mask once to the completed Flow-aware coverage', () => {
+    const originalGetContext = RecordingOffscreenCanvas.prototype.getContext;
+    const getContextSpy = vi.spyOn(RecordingOffscreenCanvas.prototype, 'getContext').mockImplementation(function (
+      this: RecordingOffscreenCanvas
+    ) {
+      if (RecordingOffscreenCanvas.instances.length > 1) return null as unknown as CanvasRenderingContext2D;
+      return originalGetContext.call(this);
+    });
+
+    let alpha: ReturnType<typeof erasedAlpha>;
+    try {
+      alpha = erasedAlpha(
+        eraserArgs({
+          mode: 'brush',
+          lineWidth: 21,
+          hardness: BRUSH_HARDNESS_MAX,
+          alpha: 0.5,
+          flow: 50,
+          selection: {
+            points: [
+              { x: 16, y: 16 },
+              { x: 24, y: 16 },
+              { x: 24, y: 24 },
+              { x: 16, y: 24 },
+            ],
+            featherRadius: 0,
+            antiAlias: false,
+          },
+        })
+      );
+    } finally {
+      getContextSpy.mockRestore();
+    }
+
+    expect(alphaAt(alpha, CENTRE, CENTRE)).toBe(128);
+    expect(alphaAt(alpha, 6, CENTRE)).toBe(255);
+  });
+
+  it('changes only alpha, including when the source pixel already has partial alpha', () => {
+    const pixels = erasedPixels(
+      eraserArgs({
+        mode: 'brush',
+        lineWidth: 21,
+        hardness: BRUSH_HARDNESS_MAX,
+        alpha: 0.5,
+        flow: 100,
+        points: [{ x: CENTRE, y: CENTRE }],
+      }),
+      sourceRaster(SIZE.width, SIZE.height, 128)
+    );
+    const offset = (CENTRE * SIZE.width + CENTRE) * 4;
+
+    expect(Array.from(pixels.subarray(offset, offset + 4))).toEqual([255, 0, 0, 64]);
+  });
+
+  it('sanitizes an out-of-range Flow and a non-finite Flow', () => {
+    const reference = erasedAlpha(eraserArgs({ mode: 'brush', flow: 100 }));
+    const aboveRange = erasedAlpha(eraserArgs({ mode: 'brush', flow: 500 }));
+    const nonFinite = erasedAlpha(eraserArgs({ mode: 'brush', flow: Number.NaN }));
+
+    expect(Array.from(aboveRange)).toEqual(Array.from(reference));
+    expect(Array.from(nonFinite)).toEqual(Array.from(reference));
+  });
+
+  it('keeps the lower Flow bound at 1 percent, so persisted zero behaves like the slider minimum', () => {
+    const minimum = erasedAlpha(eraserArgs({ mode: 'brush', flow: 1 }));
+    const belowRange = erasedAlpha(eraserArgs({ mode: 'brush', flow: 0 }));
+
+    expect(Array.from(belowRange)).toEqual(Array.from(minimum));
+  });
+});
+
 describe('the modes the eraser already had', () => {
   /**
    * The contrast with Pencil cannot be a PIXEL assertion here, and the reason is worth writing
@@ -325,6 +492,7 @@ describe('the modes the eraser already had', () => {
 describe('the seeded eraser defaults', () => {
   it('open in Brush mode, because a hard first stroke is the defect this closes', () => {
     expect(defaultSettings.eraser.mode).toBe('brush');
+    expect(defaultSettings.eraser.flow).toBe(100);
   });
 
   it('seed a soft tip, so the very first stroke already has an adjustable edge', () => {

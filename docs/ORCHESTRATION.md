@@ -37,9 +37,10 @@ save you the next one.
 
 **Most of the rules below were written after the incident that motivated them**, so
 "documented but still violated" is usually the wrong diagnosis — the rule did not exist yet.
-The two that were genuine compliance failures against auto-injected `AGENTS.md` both needed
-programs rather than paragraphs, and both are described where they live: a `release --force`
-that dropped the caller's own locks, and a weakened assertion.
+The two genuine compliance failures against auto-injected `AGENTS.md` needed programs as well
+as paragraphs. Releasing a claim now preserves live file locks held by other identities; the
+separate self-close identity limitation remains known and unfixed because board identities are
+unauthenticated strings.
 
 ## The task lifecycle
 
@@ -73,7 +74,8 @@ required for cross-module, persistence, migration, or high-risk changes.
 - Stop only with a validated review-ready commit or an evidence-backed handoff. Crashed dirty work
   is preserved before releasing claims, merging, or removing anything.
 - Sync `main` into the branch, rerun gates, and land only from a clean current checkout. Recheck
-  diff, status, `repo:state`, liveness, and `git cherry` immediately before landing/disposal.
+  diff, status, scoped `repo:state --for-landing`, liveness, and `git cherry` immediately before
+  landing; use the full `repo:state` report when examining or disposing of worktrees.
 
 ### Tool limits
 
@@ -210,8 +212,23 @@ the final index tree to match the tree pre-commit approved; a message hook canno
 stage a different merge resolution after the takeover check. After an aborted
 merge, the next pre-commit clears the record only when the index has returned to
 the original `HEAD` tree and no `AUTO_MERGE` marker remains; otherwise, restore
-or inspect that worktree before committing. A leftover `MERGE_MSG` alone does
-not block an ordinary commit after a clean abort.
+or inspect that worktree before committing. If the abort is confirmed but staged
+changes keep the old record from clearing, preserve the working-tree contents,
+run `git reset --mixed HEAD`, then run
+`node scripts/commit-reviewed-landing-message-guard.mjs --discard-abandoned-prepared-merge`.
+That resets only the index; restage the intended changes after the record is
+discarded. The command refuses while merge markers remain or when `HEAD` is not
+the recorded parent. A leftover `MERGE_MSG` alone does not block an ordinary
+commit after a clean abort. If a prepared merge was already
+committed but its cleanup hook did not run, the next pre-commit clears the record
+only when `HEAD` is a two-parent commit with the exact recorded parent order and
+result tree, and neither `MERGE_HEAD` nor `AUTO_MERGE` remains. This check is
+independent of later staged changes; the new commit still goes through its ordinary
+checks. It also validates the completed merge's trailers: saved Branch and Chat pins
+for a pinned landing, or exactly one non-empty Chat trailer on a feature worktree.
+A retry that omits pin environment keeps the recorded pins. A main-worktree record
+without saved landing pins stays blocked. A different commit with the same tree or a
+commit with invalid trailers does not satisfy the recorded merge and remains blocked.
 The merge record begins when the `pre-commit` dispatcher runs. If an operator
 runs `git merge --quit` before that first snapshot, Git removes the merge state
 while leaving the staged result; the guard cannot recover the discarded parent
@@ -253,6 +270,38 @@ A detached watcher posts a shared swarm note when the lease reaches 15 minutes a
 At 15 minutes, every other agent should mention the blocker in its own current chat and continue
 unrelated work. It must not wait for the landing owner or modify the occupied worktree.
 
+There is one automatic exception to the four-hour recovery path: a landing lease may encounter an
+orphan `AUTO_MERGE` in the designated main checkout after the commit guard refuses the reviewed
+landing. If the only reported operation is `AUTO_MERGE`, the marker names a valid tree, and the same
+main SHA plus marker tree remain continuously observable for 30 minutes, the detached watcher
+revalidates the pinned candidate and waits for the landing wrapper and its recorded Git child to
+stop. It then creates a unique replacement under `.kilo/worktrees` with `git worktree add --force
+<path> main`, installs the hooks there, rechecks all pins, and retries the same reviewed landing.
+`main:landing status` reports the observation and replacement path. This does not unlink the marker,
+clean files or the index, remove the old worktree, or bypass the commit guards; the damaged checkout
+and its Git administrative directory remain untouched for a later sweep. A changed marker or main
+SHA restarts the 30-minute observation. Other operation markers, an invalid marker, changed candidate
+pins, or an owner/child process that is live or cannot be proven stopped do not qualify.
+The watcher runs the reviewed candidate's hook installer with the replacement path explicitly selected;
+ordinary hook installs with duplicate `main` checkouts preserve the saved designated-main identity.
+If the designated main path changes outside the active lease, the automatic failover stops and
+preserves the owner record for review. If replacement creation fails before any new worktree exists,
+the watcher restores the original owner and starts a fresh 30-minute observation. Once a replacement
+path exists, automatic creation is one-shot; a hook or landing failure preserves the lease and paths
+for the four-hour recovery process rather than creating competing main checkouts.
+
+If the orphan marker clears before the threshold and main is clean, the watcher releases the landing
+lease and tells the operator to retry the same pinned landing. If it changes into any other dirty or
+unmerged state, retain the lease and use the four-hour recovery path below.
+
+When `land` arms this wait, it prints `landing pending` and exits with code 75; this is not a
+successful landing. Code 75 is returned only after the detached watcher reads the matching lease
+and acknowledges readiness; watcher startup failure retains the lease and returns an error instead
+of reporting pending. The watcher refreshes the owner heartbeat while polling but is not supervised
+after readiness; if that heartbeat stops advancing, use the four-hour recovery procedure rather
+than assuming the pinned retry will run. Do not run post-merge parent/tree checks until
+`main:landing status` shows the lease released and the pinned merge is present in `main`.
+
 If the operator confirms the owner process tree has stopped and `main:landing status` reports a
 clean main checkout with no Git operation, the operator can release the abandoned reservation
 immediately. `release-stale` archives the owner record and refuses to run if main is dirty or has
@@ -285,8 +334,9 @@ npm run main:landing -- clear-control-lock \
   --confirm-no-other-recovery
 ```
 
-For dirty or unmerged state, keep the lease and use the four-hour recovery path unless the operator
-personally takes responsibility for an earlier preservation and recovery.
+For dirty or unmerged state other than the exact orphan `AUTO_MERGE` case above, keep the lease and
+use the four-hour recovery path unless the operator personally takes responsibility for an earlier
+preservation and recovery.
 
 At four hours, an agent that sees the alert must check the owning chat's structured host liveness
 and the full holder process tree without opening transcripts. The reported PIDs are direct
@@ -325,7 +375,7 @@ worktree untouched:
 # From the verified recovery task worktree, with NEW_MAIN under .kilo/worktrees/.
 # If the registered main path is C:/..., use Git for Windows and Windows Node even when the task
 # worktree is opened through /mnt/c. For native Linux clones, use WSL Git and Node.
-git worktree add --force "$NEW_MAIN" refs/heads/main
+git worktree add --force "$NEW_MAIN" main
 cd "$NEW_MAIN"
 node scripts/install-git-hooks.js
 git rev-parse --show-toplevel
@@ -575,8 +625,8 @@ repo:state` is what reports an operation in progress, and it separates the two s
   (cd "$TASK_WORKTREE" && npm run branches:orphan)
   (cd "$TASK_WORKTREE" && npm run swarm -- status)
   (cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
-  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME" --dry-run)
-  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME")
+  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME" --codex-owner-audit-complete --dry-run)
+  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME" --codex-owner-audit-complete)
   ```
   This checks a recorded committed-main snapshot; if `main` moved during the run, repeat from its
   new SHA before calling the result current. The scratch branch and worktree are named and live
@@ -691,17 +741,33 @@ roster it could not read, or a worktree it could not describe, is reported as
 unreadable rather than as clean. `npm run dispose` refuses on exactly those inputs, and
 a report that answered them with exit 0 would be the surface a person trusts more.
 
-**Run it before you believe the repository is quiet.** It exits non-zero when
-anything is in progress, and it is the check to run before a sweep, before a landing,
-and before you conclude that a worktree is finished.
+**Run the full report before you believe the repository is quiet.** The default command exits
+non-zero when operation markers, unresolved index paths, or unreadable worktree state need
+attention; use it before a sweep, cleanup, or when you need to inspect the whole fleet. An
+`AUTO_MERGE`-only finding is labeled as a marker without a primary operation marker, rather than
+as an active operation. The marker alone does not prove that an operation is active or stale; it
+remains visible and non-zero until its owner reviews it and completes or recovers the worktree.
+Use the owner-aware recovery procedure only after establishing that the marker is stale.
+The full report's exit status is not a main-landing gate. For a main landing, run
+`npm run repo:state -- --for-landing <source-branch>` as the operation-scope check, so an unrelated
+branch operation does not become a manual hard stop on an independent landing.
 
-**A non-zero report is repository-wide, not a command to stop all independent work.**
+**A non-zero default report is repository-wide, not a command to stop all independent work.**
 Read the exact worktree paths and operation markers it reports. Do not run
 `--abort`, clear markers, resolve conflicts, or otherwise alter another worktree
 without first establishing its owner and following that worktree's recovery
-procedure. A blocked landing remains blocked; unrelated research and implementation
-can continue in clean task worktrees. Re-run `repo:state` before each landing attempt,
-because resolving one operation does not prove that the rest of the fleet is clear.
+procedure. The `--for-landing` form still reports every finding, but exits non-zero only when
+the registered main checkout or selected candidate branch has operation state, or when a finding
+is unreadable or cannot be assigned to a known branch. An operation in another known branch remains
+visible and untouched; its index and operation markers are worktree-local. An unreadable finding,
+a finding without a known branch, or a missing/ambiguous main or candidate worktree remains a hard
+stop. A zero exit means only that the operation scope is clear; it does not certify a clean diff,
+passing gates, a reviewed candidate, or valid landing pins. The command also
+recognizes only the designated-main orphan `AUTO_MERGE` shape as eligible for the pinned
+`main:landing` recovery path; that wrapper revalidates the marker and all landing pins. Re-run the
+scoped report after the final candidate sync and immediately before each landing attempt. This is a
+point-in-time report, not a lease. `main:landing` checks its designated checkout under its exclusive
+landing lease and revalidates the reviewed parents, candidate, source branch, and tree.
 
 **It is advisory and is wired into no hook, on purpose.** It costs two git spawns per
 worktree, so it scales with the fleet — measured in seconds on a fleet of this
@@ -710,10 +776,10 @@ decisive reason is behavioural: a hook would block every push in the repository
 because _some other_ worktree is mid-merge, and a gate that punishes the whole swarm
 for one session's state gets `--no-verify`'d, after which it protects nothing.
 
-**It reports WHAT is in progress and never WHOSE it is.** git does not record that
-either, so `WORKTREES.json` carries a chat-recency signal for it. Establish the owner
-before you intervene: the worktree measured above was live, and an abort would have
-destroyed a session's in-flight work.
+**It reports Git operation markers and unresolved paths, but never WHOSE they are.**
+Git does not record that, so `WORKTREES.json` carries a chat-recency signal for them.
+Establish the owner before you intervene: the worktree measured above was live, and an
+abort would have destroyed a session's in-flight work.
 
 **`MERGE_HEAD` with an index that no longer has unmerged paths is the dangerous
 shape, and the report warns about it by name.** Every conflict resolved, nothing
@@ -721,7 +787,7 @@ committed. `git commit` lands an unattended resolution; `git merge --abort` thro
 resolution away. Both are one command away, and neither is distinguishable from the
 index alone. Decide in that worktree, from inside it — never from the main checkout.
 
-**`npm run dispose` refuses a worktree with an operation in progress**, because
+**`npm run dispose` refuses a worktree with operation markers or unresolved state**, because
 removing the worktree deletes the state files and there is no reflog entry and
 nothing for `git fsck` to recover. It also refuses when it could not read that state,
 and when no state was supplied for it at all: an absent signal is not a clear
@@ -746,24 +812,80 @@ its remedy is nothing rather than a plausible-looking command that fatals.
 **An orphan `AUTO_MERGE` has guarded recovery paths, not a guessed abort.** When it is
 the only operation marker, the worktree is clean, the index has no unresolved paths,
 and the marker names exactly `HEAD^{tree}`, the remaining file can be a stale artifact from a completed
-rebase. `npm run repo:state:recover-auto-merge -- --expected-head <full-sha>` performs
-a read-only preflight from the target task worktree. Only after independently
-establishing that its owner has stopped may the operator repeat the command with
-`--apply --confirm-owner-stopped`; it rechecks every predicate and removes only that
-worktree's `AUTO_MERGE` file.
+rebase. First identify the current designated main checkout from `git worktree list
+--porcelain`; select the unique worktree block whose `branch` is `refs/heads/main`.
+Invoke that checkout's `scripts/recover-stale-auto-merge.mjs` by
+absolute path, while keeping the process working directory at the target task
+worktree root:
+
+```sh
+node "<absolute-main-worktree>/scripts/recover-stale-auto-merge.mjs" --expected-head "$(git rev-parse HEAD)"
+```
+
+This performs a read-only preflight using the current recovery implementation. Do not
+run `npm run repo:state:recover-auto-merge` (or a relative script path) from the target
+worktree: its checkout may be stale and execute older recovery code. Only after
+independently establishing that the target's owner has stopped may the operator repeat
+the absolute-path command with `--apply --confirm-owner-stopped`; it rechecks every
+predicate and removes only that worktree's `AUTO_MERGE` file. Use the same absolute
+script path and target working directory for matching and divergent preserve modes
+below.
+
+Before applying **any** recovery mode, manually verify that the owning root chat and
+every descendant have stopped, then recheck the current live-session overlay,
+relevant process tree and open files, and board claims/locks for the target worktree
+and paths. `--confirm-owner-stopped` is an operator assertion; the recovery command
+does not query chat liveness, the process tree, or the board.
+
+These checks are point-in-time checks, not a lock. Keep every editor, watcher, and
+other process that could write to the worktree stopped until apply returns. If the
+command reports that the worktree changed concurrently, `AUTO_MERGE` has already
+been removed and apply is not rolled back. Preserve modes leave the durable recovery
+ref in place. In clean mode, the marker tree matched `HEAD^{tree}` before removal;
+recheck `HEAD` and preserve the current files/index before taking any further recovery
+action.
 
 Dirty work may be preserved when the index still matches `HEAD`, there are no
 unresolved paths or other operation markers, and every tracked working file exactly
 matches the tree named by `AUTO_MERGE`. Run the read-only preflight with
-`--preserve-matching-worktree`; it prints the marker-tree and worktree-status pins.
-After confirming the owner stopped, apply only with those exact pins, `--apply`, and
-`--confirm-owner-stopped`. This path unlinks only `AUTO_MERGE`: it does not reset,
-stage, commit, or alter tracked or untracked files. Continue to review and preserve
-that work under the normal landing procedure. It refuses `main`, staged changes,
-conflicts, other operation markers, changed HEAD or status, malformed markers, and
-tracked content that differs from the marker. Do not use either path for a live or
-unresolved merge. Board file claims are separate: wait for their leases to expire or
-release them as their owner; Git recovery never overrides or clears board locks.
+`--preserve-matching-worktree`. It prints the exact HEAD, marker tree, worktree-status
+digest, worktree-content digest, and the recovery ref it will create or verify. The
+status digest covers Git's status records. The content digest covers changed tracked
+files and non-ignored untracked files identified by Git, including their paths, modes,
+file contents, and symlink targets; ignored files are not included. Preserve preflight
+fails closed if a path cannot be represented as UTF-8 or is neither a regular file nor
+a symlink (for example, a changed submodule directory); inspect and preserve that state
+manually. Preflight changes no files or refs. Apply only with the original
+`--expected-head` and all three printed worktree values: `--expected-auto-merge-tree`,
+`--expected-worktree-status-sha256`, and `--expected-worktree-content-sha256`, plus
+`--apply` and `--confirm-owner-stopped`. Before unlinking the marker,
+the command creates or verifies the durable tree ref
+`refs/recovery/auto-merge/<HEAD>/<TREE>` so the marker tree remains reachable after
+recovery. It then unlinks only `AUTO_MERGE`; it does not reset, stage, commit, or alter
+tracked or untracked files or the index. Keep the recovery ref as an audit anchor and
+review preserved work under the normal landing procedure. An apply that creates the
+anchor and then refuses a later recheck leaves that exact tree ref in place; retain it
+as an audit anchor. It refuses `main`, staged
+changes, conflicts, other operation markers, changed HEAD or pins, malformed markers,
+and tracked content that differs from the marker.
+
+If the owner family is proven stopped but tracked edits no longer match the marker
+tree, run the read-only preflight with `--preserve-divergent-worktree`. It still
+requires the index at `HEAD`, no unresolved paths, no other operation markers, and at
+least one unstaged tracked path whose working content differs from both `HEAD` and
+`AUTO_MERGE`. A difference on one path from `HEAD` and another from `AUTO_MERGE` is
+not enough; untracked-only work is not sufficient. It prints the same pins and records
+the count of tracked paths that differ from the marker. After the general owner,
+overlay, process, and board checks above, apply only with the original `--expected-head`,
+all three printed worktree values (`--expected-auto-merge-tree`,
+`--expected-worktree-status-sha256`, and `--expected-worktree-content-sha256`),
+`--apply`, and `--confirm-owner-stopped`. As in matching mode,
+the command creates or verifies the durable `refs/recovery/auto-merge/<HEAD>/<TREE>`
+anchor before removing `AUTO_MERGE`; it does not alter tracked files, untracked files,
+or the index. Re-review all preserved work under the normal landing procedure. Do not
+use either preserve mode for a live or unresolved merge. Board file claims are
+separate: wait for their leases to expire or release them as their owner; Git recovery
+never overrides or clears board locks.
 
 ## The list of worktrees: `WORKTREES.json`
 
@@ -932,6 +1054,11 @@ It refuses, and says which signal refused, unless all of these hold:
   worktree and checks out the base branch in a linked worktree;
 - **no board claim, no board file lock and no live board agent** names it;
 - **no Kilo session** has it as its `directory` inside the live window;
+- the coordinator has checked the four-hour Codex live overlay immediately before each dry-run and
+  again immediately before removal, and searched root/subagent transcripts for the exact worktree
+  path, branch, changed files and commit subject, then supplied `--codex-owner-audit-complete` to
+  both commands. This assertion does not replace the search; the current-tip UUID `Chat:` family
+  check is additional evidence;
 - its **working tree is clean** — re-read now, not taken from the inventory
   snapshot, because a verdict generated at 23:38 acted on at 00:44 is the case
   this exists for;
@@ -987,13 +1114,13 @@ value as a clean answer.
 
 **The refusal most likely to be hit by a reader who did nothing wrong.** `dispose` refuses
 `derived-live-writer` when the record's `derivedLive` is true or `writeHistory.derivedChatIds` is
-non-empty. `derivedLive` is an **or** of four arms, and only three of them are records of a call
+non-empty. `derivedLive` is an **or** of four arms, and only two of them are records of a call
 inside the directory:
 
 | arm         | what it actually is                                                   | window                     | names a chat?      |
 | ----------- | --------------------------------------------------------------------- | -------------------------- | ------------------ |
 | `writeLive` | the write calls inside the worktree                                   | `LIVE_WINDOW_MS`, 30 min   | **yes**            |
-| `ioLive`    | recent `shellHistory` — `readHistory` is intentionally excluded       | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
+| `ioLive`    | recent `shellHistory` for this worktree; excludes `readHistory`       | `RECENT_IO_WINDOW_MS`, 2 h | no                 |
 | `chatLive`  | `session.directory` plus `time_updated` — a chat that only _messaged_ | `LIVE_WINDOW_MS`           | no                 |
 | `liveAgent` | a board row, not a call history                                       | the board's own            | prints an agent id |
 
@@ -1269,20 +1396,19 @@ heartbeat` still exists and is still correct — it is the only thing that can
   flag as `true` rather than rejecting it, so it is silently ignored and you get the same
   refusal, which reads as the flag having been considered and rejected.
 
-- **`--force` on a release hands back locks, and it hands back YOURS.** `release
---force` skips exactly one guard — `claim.agent_id !== who` — and the claim's file
-  locks go with it, because they are released **by issue pairing rather than by actor**: every
-  `issue_locks` row for that issue is dropped, and a lock is freed whenever no other issue
-  that is not yet closed still pairs that same `(path, agent_id)`. One identity can therefore
-  release locks another identity acquired, and nothing checks who owns the pairing. Recorded
-  shape, in one minute in one shell: five paths taken as `main`, then
-  `AGENT_BOARD_AGENT=fix/… release` refused with `is claimed by main, not by fix/…`, and
-  `release --force` dropped the five locks the same session had taken twenty-three seconds
-  earlier. **Set `AGENT_BOARD_AGENT` once in the shell's environment**, not per command, so
-  every invocation in it is the same agent — `resolveIdentity` reads the variable _before_ the
-  branch, and the only time-varying terms in that chain (`KILO_RUN_ID`, `process.pid`) are
-  unreachable inside a checkout that has one. `--force` on `unlock` is the same trade on files,
-  with no pairing table to soften it.
+- **Releasing a claim or reopening an issue cannot silently steal another identity's live file
+  lock.** Claim release and reopen free locks owned by the caller and keep other live lock rows
+  paired with the issue; the CLI reports this partial release with exit 4 and JSON includes
+  `files_retained` entries shaped as `{path, agent_id}`, where `path` is the canonical repo-relative
+  path. `unlock --force`
+  also reports foreign live locks as blocked; a foreign lock with a parseable expired lease can
+  be released with force. An unparseable lease stays live. If a holder is confirmed dead while its
+  lease is still live, perform recovery under that resource's recorded holder identity only after
+  verifying its process tree has stopped. `doctor` includes retained locks in the released-claim
+  finding and exits 4 when a stale claim is released but another identity's live lock remains.
+  These identity strings are not authentication. Keep one identity for routine commands; for a
+  manual recovery, set `AGENT_BOARD_AGENT=<holder>` inline on that command so the override cannot
+  leak into later operations.
 - **`--agent <id>` is unauthenticated, and it DEFEATS the self-close check.** The
   guard compares the string you pass, not who you are, so `npm run swarm -- close
 <id> --agent somebody-else` closes an issue you resolved yourself. **Use `--agent`
@@ -1313,13 +1439,22 @@ heartbeat` still exists and is still correct — it is the only thing that can
   claimed or not claimable · 4 file held by another agent · 5 self-verification
   refused.
 
-It is a command, not a gate, and no commit may be blocked on it. Exactly one thing
-calls it: `.husky/post-merge` runs `scripts/merge-release.mjs`, which releases the
-claims and locks of eligible worktrees the merge put on `main`, while reporting
-merged worktrees blocked by dirty state or other release conditions — non-blocking,
-because the merge is already recorded by the time a post-merge hook runs. Nothing else in
-`.husky/` reads the board, and nothing runs it on worktree creation or on a chat
-stopping.
+It is a command, not a gate, and no commit may be blocked on it. Two automatic paths run
+`scripts/merge-release.mjs`: `.husky/post-merge` after a completed Git merge, and
+`scripts/main-landing.mjs` after a pinned landing commit. The pinned landing prepares its
+merge with `--no-commit`, so Git does not invoke `post-merge` for that flow. The script acts
+only when the current checkout is on the base branch. It compares `ORIG_HEAD` with the
+previous entry in that branch's reflog; if they disagree or either is unavailable, it
+reports the transition as unproven and releases nothing. Otherwise it considers only clean
+branches newly reachable from the captured base-tip snapshot. It refuses duplicate branch
+checkouts because the board keys by branch, and a concurrent later landing cannot widen the
+captured snapshot. Board heartbeat age is not evidence that an editor stopped: a chat can
+remain open without running a swarm command. The script releases only the merged branch's
+own claims and locks, and the board refuses rows owned by another identity. A task checkout
+that fast-forwarded from `main`, or a later merge that sees an older landed branch, therefore
+cannot sweep unrelated claims. Both automatic callers are non-blocking after the merge is
+recorded. Nothing else in `.husky/` reads the board, and nothing runs this hook on worktree
+creation or on a chat stopping.
 
 ### Resource locking and releasing
 
@@ -1333,15 +1468,35 @@ deny each other a file.
 **Liveness is recency only.** `agents.last_pid` and `session_id` are written and
 never read — the one process-level signal the schema carries is consulted nowhere.
 
-**The two readers disagree about a malformed timestamp, and the board side is the
-dangerous one.** `board.mjs:isLive` treats one as **live**; `liveLocks`
-(`db.mjs`) treats it as **free**, because `NaN > at` is false — so the
-inventory can show a file held while `swarm check` calls it free. Unreachable
-today, since every writer goes through `msFromNow`, but a resource's safety rests
-on an invariant the code does not hold. Claims fail the other way: `doctor` tests
-`Date.parse(lease_until) <= at`, also false for `NaN`, so a malformed lease is
-neither live nor reclaimable and `swarm health` reports an expired count
-`swarm doctor` cannot reduce.
+**Unreadable lease deadlines fail closed.** The claim and lock checks use
+`isLiveDeadline`: a parseable future deadline is live, and an unparseable value
+is also treated as live because the board cannot prove that it expired. This
+keeps `liveClaimOrNull`, `liveLocks`, `swarm check`, and `doctor` from treating
+an unknown row as available while another reader treats it as occupied. An
+unreadable deadline is not auto-reclaimed: health counts an unreadable claim as
+live, and `doctor` does not treat an unreadable deadline as expired. It can
+still report a row when separate evidence, such as a missing holder worktree,
+makes it reclaimable. The raw `lease_until` and `expires_at` values are available
+through `swarm export`, which includes all claim and lock rows. Do not clear a
+row just because its deadline is malformed. First preserve its work and verify
+the holder's process tree has stopped. Then release each claim or file lock under
+its own recorded holder identity. For a claim, use
+`AGENT_BOARD_AGENT=<claim-holder> npm run swarm -- release <issue> --reason "malformed deadline"`;
+for a file lock, use `AGENT_BOARD_AGENT=<lock-holder> npm run swarm -- unlock <path>`.
+A foreign identity cannot force-clear a live or unparseable file lock. The normal
+writers still use `msFromNow`; this is a defensive boundary for corrupt or manually
+altered database rows, not a supported deadline format.
+
+`swarm doctor --dry-run --json` also returns an `anomalies` list for active
+claims and locks with unreadable deadlines. These rows remain reserved because
+the deadline alone cannot establish that the holder stopped. A separate
+`findings` entry, such as a missing worktree, is independent reclaim evidence;
+the dry run does not release anything. A command from the matching branch and
+worktree can renew a worktree-scoped malformed lease, replacing its unreadable
+deadline with a valid one. Legacy claims with no recorded worktree retain their
+existing renewal rule; locks without a worktree cannot be renewed this way.
+The dry run lists point-in-time candidates; a later sweep rechecks the lease
+generation, so a candidate renewed in between is kept.
 
 A **claim** renews itself while its worktree exists, and `autoSweep` renews
 before it sweeps. The limit of that ordering: `doctor` also reclaims on **expiry**,
@@ -1359,9 +1514,12 @@ agent extended a dead colleague's lease and released it in one invocation.
 `--version` return before the board is even built. Four things are worth knowing, because each
 is a way to hold a lock and lose it:
 
-- **Your own rows only.** The `WHERE` clause names your `agent_id`. A lock cannot be kept
-  alive by a peer, and `acquired_at` is deliberately left alone so the log records when the
-  lock was taken rather than when it was last touched.
+- **Your branch and worktree only.** Board identity is the branch, so two sessions on one
+  branch in different worktrees share an `agent_id`. Lock renewal also matches the recorded
+  worktree, preventing one checkout from extending another checkout's locks. Locks without
+  a recorded worktree are not renewed because their holder cannot be established. The
+  `acquired_at` field is deliberately left alone so the log records when the lock was taken
+  rather than when it was last touched.
 - **A worktree path must resolve.** `renewOwnLocks` bails when `identity.worktree` is falsy.
   **That is not the `main`-checkout or detached case**, which is what this section claimed for
   years: `resolveIdentity` fills the field from `git rev-parse --show-toplevel`, which succeeds
@@ -1374,11 +1532,18 @@ is a way to hold a lock and lose it:
   half-lease threshold. That threshold is what makes it safe to reason about: a lock is never
   extended before it is half gone, so a stale row cannot be kept alive by a command that has
   nothing to do with the file.
-- **The sweep is no longer the hazard it was.** `doctor` releases each expired row through
-  `releaseFiles([finding.path], { agent: finding.agent, reason: 'swept' })` — with **no
-  `force`** — so the `agent_id !== who` guard still applies and a live holder on the same path
-  is not swept out from under itself. The key is `(path, agent_id)`, so two live rows on one
-  path are schema-legal, and `doctor` iterates every live row rather than the first.
+- **The sweep releases the generation it inspected.** Claims and locks are rechecked inside
+  their write transaction, and the update matches the inspected owner, worktree, and lease
+  timestamps. If another command renewed or replaced a row after the scan, the sweep leaves it
+  alone and does not report a release. A stale claim cascade releases only paired locks that are
+  independently stale; a live file lock survives even when the claim lease has expired. Each
+  standalone lock remains an independent candidate even when its agent also has a stale claim.
+  `releaseFiles` still runs without `force`, and the `(path, agent_id)` key allows two rows for one
+  path; `doctor` iterates every inspected row rather than the first.
+
+This closes the scan-then-release race between separate board processes. It does not extend the
+lease of an agent that stops running `swarm` for half a lease; the owner still needs an activity
+signal for work that can run longer than the renewal window.
 
 What is left is the same limit a claim has: an agent that stops running `swarm` for a
 half-lease loses its locks, and the fix is an activity signal rather than a longer TTL.
@@ -1404,7 +1569,10 @@ tails. That is why these are not optional politeness:
 <paths you will touch>`, or `npm run swarm -- hold <path>` for a path with no
   issue. Run `npm run swarm -- check <paths>` before you edit anything a brief, a
   handoff, or a sibling subagent names. `check` exits 1 on a path somebody else
-  holds, and `claim`/`hold` exit 4; both name the holder.
+  holds, and `claim`/`hold` exit 4; both name the holder. `unlock` exits 4 when
+  a foreign live lock remains, and `release` exits 4 when it opens the issue but
+  retains another identity's live file lock. `reopen` exits 4 when it reopens an issue but retains
+  another identity's live file lock.
 - **Claim the merge, not just the files.** A branch that is about to land carries
   a hazard to every path in it, and no file claim expresses that. `npm run swarm
 -- note` the branch and the paths _before_ you start resolving.
@@ -1709,9 +1877,12 @@ Then preview stale claims and locks with `npm run swarm -- doctor --dry-run`.
 `npm run swarm -- doctor` releases claims from missing worktrees, expired leases,
 and expired file locks. If the worktree still exists but the session is confirmed
 dead in Agent Manager/session state and no process is writing, release its claim
-with `npm run swarm -- release <issue> --force --reason "agent died; worktree
-inspected"`. Do not force-release a live lease merely because a network-lost
-session is quiet.
+under its recorded holder identity with `AGENT_BOARD_AGENT=<holder> npm run swarm
+-- release <issue> --reason "agent died; worktree inspected"`. Do not force-release
+a live lease merely because a network-lost session is quiet. If exit 4 reports
+retained file locks, verify each holder separately and release each path under
+that lock's recorded identity with `AGENT_BOARD_AGENT=<lock-holder> npm run swarm
+-- unlock <path>`.
 
 Keep the worktree while salvaging uncommitted changes; never use `git stash`.
 After preservation or discard, remove only an accounted-for worktree and refresh

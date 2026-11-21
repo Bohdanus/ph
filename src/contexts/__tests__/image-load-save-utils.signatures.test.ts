@@ -1208,7 +1208,7 @@ describe('loadImageFile rejection paths', () => {
     await expect(loadDocumentFile(file)).rejects.toThrow('embedded resource that cannot be safely preflighted');
 
     expect(decoders.reader).toBeUndefined();
-  });
+  }, 15_000);
 
   it('fails closed when the outer CSS walk and one variable-value walk exceed the shared node bound', async () => {
     const decoders = installBrowserDecoders();

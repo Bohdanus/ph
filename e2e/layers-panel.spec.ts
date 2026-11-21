@@ -1,18 +1,16 @@
 import { expect, test, type Locator, type Page, type TestInfo } from './fixtures/extended-test';
 import {
   type BoundingBox,
+  documentToCanvasOffset,
   drawLine,
+  documentOnlyPixelMask,
   getColorAtPoint,
   getWorkspaceCanvas,
   hasDarkPixels,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
   loadImageData,
   viewportClip,
 } from './helpers/canvas-helpers';
-import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { cssPointToImage, type Point } from './helpers/screenshot-scale';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
@@ -77,12 +75,38 @@ const isRed = (color: Rgb | null): boolean =>
 const isGreen = (color: Rgb | null): boolean =>
   color !== null && color.green > 120 && color.red < 120 && color.blue < 120;
 
-const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot) => !(await hasDarkPixels(screenshot));
+const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot, mask) => !(await hasDarkPixels(screenshot, mask));
 
 async function canvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
   if (!box) throw new Error('The workspace canvas has no box, so strokes cannot be placed');
   return box;
+}
+
+/**
+ * Document-space coordinates for the standard test lines.
+ * Mirrors the box-relative LINE_* constants but expressed in the 800x600 document space.
+ */
+const DOC_LINE_START_X = 150;
+const DOC_LINE_START_Y = 150;
+const DOC_LINE_END_X = 350;
+const DOC_LINE_END_Y = 150;
+const DOC_LINE_Y_2 = 350; // LINE_START_Y + 200
+
+/**
+ * Computes a viewport clip around a document-space line.
+ * 20px padding around the line in box space, matching the pattern in `color.spec.ts`
+ * and `adjustments.spec.ts`.
+ */
+function computeLineClip(box: BoundingBox, docY: number) {
+  const start = documentToCanvasOffset(box, DOC_LINE_START_X, docY);
+  const end = documentToCanvasOffset(box, DOC_LINE_END_X, docY);
+  return viewportClip({
+    x: box.x + Math.min(start.x, end.x) - 20,
+    y: box.y + Math.min(start.y, end.y) - 20,
+    width: Math.abs(end.x - start.x) + 40,
+    height: 40,
+  } as const);
 }
 
 const layerRows = (page: Page): Locator => page.getByTitle('Drag to reorder');
@@ -202,6 +226,70 @@ test.describe('Layers panel', () => {
     await expect(canvas).toBeVisible();
   });
 
+  test('keeps the Photoshop lock row compact at desktop and tablet widths', async ({ page }) => {
+    const controls = page.getByRole('group', { name: 'Layer protection controls' });
+    await expect(controls).toBeVisible();
+    await expect(controls.getByRole('button')).toHaveCount(4);
+    await expect(controls.getByRole('button').nth(0)).toBeDisabled();
+    await expect(controls.getByRole('button').nth(1)).toBeDisabled();
+    await expect(controls.getByRole('button').nth(2)).toBeDisabled();
+    await expect(controls.getByRole('button').nth(3)).toHaveAttribute('aria-label', 'Lock Blank 1');
+
+    const lockLabel = page.getByText('Lock:', { exact: true });
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 1024, height: 768 },
+    ]) {
+      await page.setViewportSize(viewport);
+      const labelBox = await lockLabel.boundingBox();
+      const controlsBox = await controls.boundingBox();
+      const unavailableBoxes = await Promise.all(
+        [0, 1, 2].map((index) => controls.getByRole('button').nth(index).boundingBox())
+      );
+      const lockAllBox = await controls.getByRole('button').nth(3).boundingBox();
+
+      expect(labelBox).not.toBeNull();
+      expect(controlsBox).not.toBeNull();
+      expect(unavailableBoxes.every((box) => box !== null)).toBe(true);
+      expect(lockAllBox).not.toBeNull();
+      const labelGap = controlsBox!.x - labelBox!.x - labelBox!.width;
+      expect(labelGap).toBeGreaterThanOrEqual(0);
+      expect(labelGap).toBeLessThanOrEqual(4);
+      expect(controlsBox!.height).toBeLessThanOrEqual(28);
+      expect(Math.abs(controlsBox!.x + controlsBox!.width - (lockAllBox!.x + lockAllBox!.width))).toBeLessThanOrEqual(
+        1
+      );
+      expect(unavailableBoxes[0]!.x).toBeLessThan(unavailableBoxes[1]!.x);
+      expect(unavailableBoxes[1]!.x).toBeLessThan(unavailableBoxes[2]!.x);
+      expect(unavailableBoxes[2]!.x).toBeLessThan(lockAllBox!.x);
+    }
+  });
+
+  test('New Layer inserts above the selected row and is one undoable history step', async ({ page }) => {
+    const rows = page.getByTestId(LAYER_ROW);
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    const newLayer = page.getByTestId('layers-new-layer-button');
+
+    await expect(rows).toHaveCount(1);
+    await expect(newLayer).toBeEnabled();
+    await newLayer.click();
+    await expect(rows).toHaveCount(2);
+    await activateRow(layerRow(page, 'Blank 1'), layerRow(page, 'Blank 2'));
+    await newLayer.click();
+
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toContainText('Blank 2');
+    await expect(rows.nth(1)).toContainText('Blank 3');
+    await expect(rows.nth(2)).toContainText('Blank 1');
+    await expect(historyRows).toHaveCount(3);
+
+    await page.getByTestId('undo-button').click();
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toContainText('Blank 2');
+    await expect(rows.nth(1)).toContainText('Blank 1');
+    await expect(historyRows).toHaveCount(3);
+  });
+
   /**
    * Everything the five tests share: a stroke that lands on its own new layer (the Draw
    * tool area calls `createLayerFromTool` per stroke, `DrawToolArea.tsx:87`), and a pixel
@@ -215,21 +303,19 @@ test.describe('Layers panel', () => {
     if (!viewport) throw new Error('Page has no viewport size');
 
     /**
-     * Both captures are pinned to ONE rect, because the two capture paths disagree about any
-     * part of the canvas that leaves the viewport: `page.screenshot({clip})` comes back
-     * clipped to the viewport, while the CDP helper returns the whole clipped rect. A rect
-     * only one of them honours is a rect where the two samplers read different rows of the
-     * same stroke and every colour assertion misses, so the coordinates below are mapped
-     * onto the INTERSECTION of the canvas box and the viewport rather than onto the box.
+     * Both captures use Playwright screenshots, but `waitForCanvasPixels` can scroll a clip
+     * into view while `captureCanvasScreenshot` captures the supplied viewport clip directly.
+     * Pin both to the INTERSECTION of the canvas box and viewport so they read the same rows
+     * of each stroke instead of comparing different regions.
      *
      * That intersection is the canvas box itself, and the reason is worth recording because
      * the claim it replaced was wrong: `html`, `body` and `#root` are all `height: 100%`
-     * (`src/index.scss:58`), and `<main>` is a `1fr` grid item carrying `overflow-y-auto`
+     * (`src/index.scss`), and `<main>` is a `1fr` grid item carrying `overflow-y-auto`
      * whose only child with a document open is `absolute h-full w-full`
-     * (`src/components/Main/Main.tsx:230`). The document does not scroll, and the canvas
+     * (`src/components/Main/Main.tsx`). The document does not scroll, and the canvas
      * element cannot leave the viewport. The clamp stays because it is free while it is the
      * identity and the file still has to be right if that stops holding - `.zoom-container`
-     * carries a commented-out `transform: scale(zoom)` (`Main.tsx:236`) that would put the
+     * carries a commented-out `transform: scale(zoom)` that would put the
      * element box outside the viewport again.
      */
     const region = viewportClip({
@@ -239,7 +325,7 @@ test.describe('Layers panel', () => {
       height: Math.min(box.y + box.height, viewport.height) - Math.max(box.y, 0),
     });
 
-    /** Screenshot of `region`, captured and attached by the CDP helper. */
+    /** Screenshot of `region`, captured and attached by the shared helper. */
     const capture = (name: string, testInfo: TestInfo) => captureCanvasScreenshot(page, region, testInfo, name);
 
     const stroke = async (color: string, line: { from: Point; to: Point }) => {
@@ -485,11 +571,13 @@ test.describe('Layers panel', () => {
   test('the eye takes a layer off the canvas and puts it back', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     const box = await canvasBox(page);
-    const clip = canvasRedrawClip(box);
+    const clip = computeLineClip(box, DOC_LINE_START_Y);
 
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, '#000000', true);
-    await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+    const start = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_START_Y);
+    const end = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_END_Y);
+    await drawLine(page, box, start.x, start.y, end.x, end.y);
     await waitForCanvasPixels(page, clip, hasDarkPixels, { description: 'the stroke' });
 
     // One draw commits one layer on top of the bedrock one, so the stroke has a row of
@@ -512,8 +600,10 @@ test.describe('Layers panel', () => {
 
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, '#000000', true);
-    await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-    const clip = canvasRedrawClip(box);
+    const start = documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_START_Y);
+    const end = documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_END_Y);
+    await drawLine(page, box, start.x, start.y, end.x, end.y);
+    const clip = computeLineClip(box, DOC_LINE_START_Y);
     await waitForCanvasPixels(page, clip, hasDarkPixels, { description: 'the stroke' });
 
     // Visibility is a document edit, so it belongs on the timeline. A layer attribute
@@ -562,11 +652,15 @@ test.describe('Layers panel', () => {
     // pixel, so "the pixels did not change" is also what "nothing happened at all" looks
     // like. A second layer, and a history row to prove the gesture was processed, are what
     // make the negative half mean something.
-    await drawLine(page, drawBox, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y);
-    const firstClip = canvasRedrawClip(drawBox);
+    const start1 = documentToCanvasOffset(drawBox, DOC_LINE_START_X, DOC_LINE_START_Y);
+    const end1 = documentToCanvasOffset(drawBox, DOC_LINE_END_X, DOC_LINE_START_Y);
+    await drawLine(page, drawBox, start1.x, start1.y, end1.x, end1.y);
+    const firstClip = computeLineClip(drawBox, DOC_LINE_START_Y);
     await waitForCanvasPixels(page, firstClip, hasDarkPixels, { description: 'the first stroke' });
-    await drawLine(page, drawBox, LINE_START_X, LINE_START_Y + 200, LINE_END_X, LINE_START_Y + 200);
-    const secondClip = { ...firstClip, y: firstClip.y + 200 };
+    const start2 = documentToCanvasOffset(drawBox, DOC_LINE_START_X, DOC_LINE_Y_2);
+    const end2 = documentToCanvasOffset(drawBox, DOC_LINE_END_X, DOC_LINE_Y_2);
+    await drawLine(page, drawBox, start2.x, start2.y, end2.x, end2.y);
+    const secondClip = computeLineClip(drawBox, DOC_LINE_Y_2);
     await waitForCanvasPixels(page, secondClip, hasDarkPixels, { description: 'the second stroke' });
     // Every history row, not just the draw ones: an eraser commit is titled after the
     // eraser, and the count is what says the gesture was processed at all.
@@ -589,28 +683,40 @@ test.describe('Layers panel', () => {
     // finished eraser bar produced under the erase, rather than a stale one aimed at the
     // strokes' own bands.
     const eraserBox = await canvasBox(page);
-    const eraserFirst = canvasRedrawClip(eraserBox);
-    const eraserSecond = { ...eraserFirst, y: eraserFirst.y + 200 };
+    const eraserFirst = computeLineClip(eraserBox, DOC_LINE_START_Y);
+    const eraserSecond = computeLineClip(eraserBox, DOC_LINE_Y_2);
     /**
      * Erasing `drawY` pixels below the top of the box the strokes were drawn in. Both
      * erases go through it so the two are aimed the same way, at the same bands the clips
      * above are cut from — which is the whole reason the second erase can be aimed at the
      * SECOND stroke instead of at the first one's band a second time.
      */
-    const eraseBand = (drawY: number) =>
-      drawLine(page, eraserBox, LINE_START_X, drawY, LINE_END_X, drawY, { steps: 20 });
+    const eraseBand = (docY: number) =>
+      drawLine(
+        page,
+        eraserBox,
+        documentToCanvasOffset(eraserBox, DOC_LINE_START_X, docY).x,
+        documentToCanvasOffset(eraserBox, DOC_LINE_START_X, docY).y,
+        documentToCanvasOffset(eraserBox, DOC_LINE_END_X, docY).x,
+        documentToCanvasOffset(eraserBox, DOC_LINE_END_X, docY).y,
+        { steps: 20 }
+      );
 
     // The precondition of the second half, asserted rather than assumed: the band the
     // second erase is about to be aimed at is dark now, so "it went bare" afterwards is a
     // transition and not a state that already held.
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserSecond })), {
-        message: 'the second stroke is on its own layer, and it is still there before anything erases it',
-      })
+      .poll(
+        async () =>
+          hasDarkPixels(await page.screenshot({ clip: eraserSecond }), await documentOnlyPixelMask(page, eraserSecond)),
+        {
+          message: 'the second stroke is on its own layer, and it is still there before anything erases it',
+        }
+      )
       .toBe(true);
 
     await activateRow(layerRow(page, 'draw 2'), layerRow(page, 'draw 3'));
-    await eraseBand(LINE_START_Y);
+    await eraseBand(DOC_LINE_START_Y);
     // The history row is the observable that the erase was PROCESSED. Without it the pixel
     // check below passes on its first poll, before the app has done anything, and the test
     // is green whether or not `activateRow` worked.
@@ -621,19 +727,23 @@ test.describe('Layers panel', () => {
       description: 'the first stroke, erased on the layer that was activated',
     });
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserSecond })), {
-        message: 'the second stroke is on the other layer, so erasing the active one must leave it alone',
-      })
+      .poll(
+        async () =>
+          hasDarkPixels(await page.screenshot({ clip: eraserSecond }), await documentOnlyPixelMask(page, eraserSecond)),
+        {
+          message: 'the second stroke is on the other layer, so erasing the active one must leave it alone',
+        }
+      )
       .toBe(true);
 
-    // And the SAME GESTURE aimed at the OTHER band. Aimed at `LINE_START_Y` instead — which
+    // And the SAME GESTURE aimed at the OTHER band. Aimed at `DOC_LINE_START_Y` instead — which
     // is where the first erase went — this half could not fail: `draw 3` carries nothing in
     // that band, so whether the row click activated `draw 3`, `draw 2`, or nothing at all,
     // not one pixel moved, and only the history count below was ever live. Aimed at
     // `eraserSecond`, the band goes bare only if the active layer really is the one that
     // holds the second stroke — which is the named claim.
     await activateRow(layerRow(page, 'draw 3'), layerRow(page, 'draw 2'));
-    await eraseBand(LINE_START_Y + 200);
+    await eraseBand(DOC_LINE_Y_2);
     await expect(historyRows, 'and the second erase committed one too').toHaveCount(5);
     await waitForCanvasPixels(page, eraserSecond, hasNoDarkPixels, {
       description: 'the second stroke, erased on the layer that was activated',
@@ -642,9 +752,13 @@ test.describe('Layers panel', () => {
     // one. Checked once the transition above has landed, so it is read against the state the
     // second gesture produced rather than against the state before it.
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserFirst })), {
-        message: 'the second erase put the first stroke back — it edited the wrong layer',
-      })
+      .poll(
+        async () =>
+          hasDarkPixels(await page.screenshot({ clip: eraserFirst }), await documentOnlyPixelMask(page, eraserFirst)),
+        {
+          message: 'the second erase put the first stroke back — it edited the wrong layer',
+        }
+      )
       .toBe(false);
   });
 
@@ -690,10 +804,31 @@ test.describe('Layers panel', () => {
   });
 
   test('removing the last layer shows the panel empty state', async ({ page }) => {
-    await expect(layerRow(page, 'Blank 1')).toBeVisible();
-    await layerRow(page, 'Blank 1').getByRole('button', { name: 'Remove layer' }).click();
+    const row = layerRow(page, 'Blank 1');
+    await expect(row).toBeVisible();
+    await row.click();
+    await page.getByTestId('layers-delete-active-button').click();
+    await page.getByTestId('confirm-dialog-confirm-button').click();
     await expect(layerRows(page)).toHaveCount(0);
     await expect(page.getByText('No layers yet.')).toBeVisible();
+  });
+
+  test('a full-locked layer cannot be deleted until it is unlocked', async ({ page }) => {
+    await page.getByTestId('layers-new-layer-button').click();
+    const row = layerRow(page, 'Blank 2');
+
+    await page.getByRole('button', { name: 'Lock Blank 2' }).click();
+    const activeDelete = page.getByTestId('layers-delete-active-button');
+    await expect(activeDelete).toBeDisabled();
+    await expect(page.getByTestId('confirm-dialog')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Unlock Blank 2' }).click();
+    await expect(activeDelete).toBeEnabled();
+
+    await activeDelete.click();
+    await page.getByTestId('confirm-dialog-confirm-button').click();
+    await expect(row).toHaveCount(0);
+    await expect(layerRows(page)).toHaveCount(1);
   });
 
   /**
@@ -805,7 +940,7 @@ test.describe('Layers panel', () => {
     await expect(textOptions).toHaveCount(0);
 
     const row = page.getByTestId(LAYER_ROW).first();
-    await row.dblclick();
+    await row.getByTestId('layer-thumbnail').dblclick();
 
     // A lit overflow tile would still match after switching to another collapsed tool.
     await expect(drawOptions).toBeVisible();
@@ -859,18 +994,7 @@ test.describe('Layers panel', () => {
     await expect(historyRows, 'the conversion appended exactly one history entry').toHaveCount(2);
   });
 
-  /**
-   * The trash button calls `e.stopPropagation()` before `handleConfirmRemove`
-   * (`LayersTab.tsx:318-321`), so clicking it must NOT also fire the row's `onClick`,
-   * which would call `selectLayer` and change which layer is active.
-   *
-   * The test activates one layer, then clicks trash on the OTHER layer and checks that
-   * the first is still active by its resolved `backgroundColor` — `bg-white` for the
-   * active row, `bg-transparent` for an inactive one. Reading the fill, not the click,
-   * is what makes the assertion hold: if the active layer had changed, the clicked row
-   * would be white and the originally-active row would be transparent.
-   */
-  test('clicking the trash button does not select the layer', async ({ page }) => {
+  test('layer deletion is available from the action bar, not individual rows', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     const { stroke } = await setup(page);
@@ -879,31 +1003,12 @@ test.describe('Layers panel', () => {
 
     const rows = page.getByTestId(LAYER_ROW);
     await expect(rows).toHaveCount(3);
-
-    // draw 3 (green, topmost) is the active layer by default after the second stroke.
-    const greenRow = layerRow(page, 'draw 3');
-    const redRow = layerRow(page, 'draw 2');
-    await activateRow(greenRow, redRow);
-
-    // Click away to clear any hover fill before reading computed styles.
-    await page.mouse.move(0, 0);
-
-    // Click trash on the RED row (the one that is NOT active).
-    await redRow.getByRole('button', { name: 'Remove layer' }).click();
-    await expect(redRow).toHaveCount(0);
-
-    // The green row must still be the active one.
-    await page.mouse.move(0, 0);
-    await expect
-      .poll(async () => (await rowFill(greenRow)) !== TRANSPARENT_FILL, {
-        message: "the active layer did not change after clicking a different row's trash",
-      })
-      .toBe(true);
+    await expect(rows.getByRole('button', { name: 'Remove layer' })).toHaveCount(0);
+    await expect(page.getByTestId('layers-delete-active-button')).toBeEnabled();
   });
 
   /**
-   * Same stop-propagation contract as the trash button applies to the eye: the handler
-   * calls `e.stopPropagation()` before `toggleVisibility`, so the row's `onClick` never
+   * The eye handler calls `e.stopPropagation()` before `toggleVisibility`, so the row's `onClick` never
    * fires and the active layer is not moved.
    */
   test('clicking the eye button does not select the layer', async ({ page }) => {
@@ -977,22 +1082,12 @@ test.describe('Layers panel', () => {
 });
 
 /**
- * Puts a layer row's name into edit mode the way a user does: a click on the name, whose
- * mousedown sets `editingLayerId`, and a second click, which is the browser's own default
- * action of placing a caret inside what is by then a `contentEditable` span. The first click
- * is what enters edit mode; the second is what makes the caret deterministic.
- *
- * Both steps ASSERT their state, which is the reason this exists rather than two bare
- * clicks: `LayersTab.tsx:214-218` enters edit mode on `onMouseDown`, and the second click
- * only lands a caret once React's discrete-event flush has re-rendered the span as
- * `contentEditable`. Without the assertions, a late flush makes `ControlOrMeta+a` select the
- * document, the typed text goes into the body, `Enter` does nothing, and the caller fails
- * several lines later with an unexplained "expected 1, received 0" on the layer count.
+ * Puts a layer name into edit mode with Photoshop's double-click gesture and waits for the
+ * resulting editable span to receive focus before the caller types.
  */
 async function enterRenameMode(row: Locator): Promise<void> {
   const name = layerName(row);
-  await name.click();
+  await name.dblclick();
   await expect(name).toHaveAttribute('contenteditable', 'true');
-  await name.click();
   await expect(name).toBeFocused();
 }

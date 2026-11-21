@@ -69,9 +69,10 @@
  * THE ORDER OF OPERATIONS IS THE POINT
  * ------------------------------------
  * Anchor, then salvage, then remove the worktree, then delete the branch with
- * `-d`. The anchor (`refs/keep/disposed/<name>`) means no `git gc` can make a
- * disposed branch unreachable, which converts "irreversible" into "reversible
- * with one command" at the cost of a single ref. `git branch -d` refuses an
+ * `-d` from the registered main worktree. The anchor
+ * (`refs/keep/disposed/<name>`) keeps a disposed tip reachable through `git gc`,
+ * turning "irreversible" into "reversible with one command" at the cost of one
+ * ref. `git branch -d` refuses an
  * unmerged branch, and that refusal is the ordinary guard on the last step. A
  * generated `patchEquivalence: "absorbed"` disposal is the explicit exception:
  * it anchors first, then uses guarded `-D` because patch absorption does not
@@ -97,10 +98,12 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
+import { relativePathInside, samePath } from './lib/path-identity.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
+import { inspectCodexChatTrailers } from './lib/worktree-inventory/codex-family.mjs';
 import { ACTION, LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
 import { SCHEMA_VERSION } from './lib/worktree-inventory/assemble.mjs';
 import {
@@ -150,6 +153,8 @@ export const REFUSALS = {
     `No worktree named "${t}" in \`git worktree list\`. Name it exactly as \`git worktree list\` does.`,
   'main-worktree': () =>
     'This is the main checkout. It is never a deletion candidate — it is the landing site every other session resolves paths through.',
+  'main-worktree-path-unavailable': () =>
+    'Git did not verify a registered main checkout and its common Git directory. The disposer needs both to verify the base and delete the branch after removing this worktree.',
   detached: () => 'HEAD is detached, so there is no branch to delete and no name to anchor. Resolve the branch first.',
   'no-branch': () => 'This worktree reports no branch, so there is nothing safe to delete after the worktree goes.',
   locked: (reason) =>
@@ -162,6 +167,12 @@ export const REFUSALS = {
     `The board database could not be read (${detail}), so the claims, file locks and live agents that would say whether this worktree is in use are all unknown. An absent signal is not an unowned worktree — restore the board, or ask the operator.`,
   'sessions-unavailable': (detail) =>
     `The Kilo session database could not be read (${detail}), so a chat with this worktree as its \`directory\` cannot be ruled out. An absent signal is not an absent chat.`,
+  'codex-owner-unverified': (detail) =>
+    `Codex ownership evidence is unavailable or unresolved (${detail}). A current-tip UUID \`Chat:\` trailer must resolve to a complete Codex thread family before this worktree can be disposed.`,
+  'codex-family-active': (chatIds, detail) =>
+    `The current tip names Codex chat family ${chatIds}, and its transcript contains an unfinished turn${detail ? ` (${detail})` : ''}. Preserve the worktree until every family member has a verified terminal result.`,
+  'codex-owner-audit-required': () =>
+    'The required Codex live-owner audit has not been asserted. Search the recent Codex overlay and each root/subagent transcript for this worktree path, branch, changed files, and commit subject; then rerun with `--codex-owner-audit-complete`. The flag records that the audit was performed; it does not replace the search.',
   'derived-live-writer': (ids) =>
     `The inventory records this worktree as derived-live: ${ids} wrote a file in it inside the live window. \`classify.mjs\` reports \`live\` as false only when \`--no-live-writers\` suppressed it, so the \`dispose\` beside it is a suppression, not a clearance.`,
   'inventory-missing': () =>
@@ -458,6 +469,8 @@ export function preflight({
   inventory,
   board,
   sessions,
+  codexOwnership,
+  codexOwnerAuditComplete = false,
   maxAgeMs = MAX_INVENTORY_AGE_MS,
   preserveBranch = false,
 } = {}) {
@@ -480,6 +493,7 @@ export function preflight({
   // bare working directory. Protect the base branch independently of Git's
   // `isPrimary` marker so a stale inventory cannot classify it for removal.
   if (gitState.isPrimary || gitState.branch === 'main') refuse('main-worktree');
+  if (!keepBranch && (!gitState.mainWorktreePath || !gitState.commonDir)) refuse('main-worktree-path-unavailable');
   if (gitState.detached) refuse('detached');
   // `readGitState` writes one of two parenthesised placeholders when
   // `git worktree list --porcelain` gave no `branch` line. They are matched by
@@ -658,6 +672,14 @@ export function preflight({
   if ((board?.fileLocks?.length ?? 0) > 0) refuse('board-lock', board.fileLocks.length);
   if ((board?.liveAgents?.length ?? 0) > 0) refuse('board-agent-live', board.liveAgents.length);
   if ((sessions?.live?.length ?? 0) > 0) refuse('live-session', sessions.live.length);
+  if (!codexOwnership || !['not-applicable', 'complete', 'active', 'unproven'].includes(codexOwnership.status)) {
+    refuse('codex-owner-unverified', codexOwnership?.reason ?? 'the Codex ownership audit is missing');
+  } else if (codexOwnership.status === 'active') {
+    refuse('codex-family-active', (codexOwnership.chatIds ?? []).join(', ') || 'unknown chat', codexOwnership.reason);
+  } else if (codexOwnership.status === 'unproven') {
+    refuse('codex-owner-unverified', codexOwnership.reason ?? 'the Codex family could not be verified');
+  }
+  if (codexOwnerAuditComplete !== true) refuse('codex-owner-audit-required');
 
   return {
     ok: failures.length === 0,
@@ -747,6 +769,25 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
        fails open, and the two are different questions. */
   }
 
+  // After removal, the invoking cwd may be the directory Git just deleted.
+  // Capture a surviving main checkout from the same repository before mutation.
+  const mainWorktrees = entries.filter(
+    (entry) => entry.bare !== true && entry.branch === 'main' && !entry.prunableReason
+  );
+  const registeredMainPath = mainWorktrees.length === 1 ? mainWorktrees[0].path : null;
+  let mainWorktreePath = null;
+  if (registeredMainPath && existsSync(registeredMainPath) && commonDir) {
+    try {
+      const mainCommonDir = realpathIfExists(
+        run(registeredMainPath, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim()
+      );
+      const mainBranch = run(registeredMainPath, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
+      if (mainBranch === 'main' && samePath(mainCommonDir, commonDir)) mainWorktreePath = registeredMainPath;
+    } catch {
+      // A stale or reused path cannot be the surviving checkout for this repository.
+    }
+  }
+
   let tip = null;
   let mainHead = null;
   let modified = 0;
@@ -815,7 +856,8 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     prunableReason: match.prunableReason ?? null,
     tip,
     mainHead,
-    isPrimary: commonDir !== '' && gitDir === commonDir,
+    mainWorktreePath,
+    isPrimary: commonDir !== '' && samePath(gitDir, commonDir),
     commonDir,
     modified,
     untracked,
@@ -910,11 +952,14 @@ export function resolveOrphanDirectory(
     return { found: false, reason: 'unreadable', path: candidate, error: firstLine(err) };
   }
 
-  const relativePath = relative(canonicalRoot, absolutePath);
-  if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+  const relativePath = relativePathInside(canonicalRoot, absolutePath);
+  if (relativePath === null) {
     return { found: false, reason: 'outside-worktrees', path: candidate, worktreesRoot: canonicalRoot };
   }
-  if (relativePath.split(sep).length !== 1) {
+  if (relativePath === '') {
+    return { found: false, reason: 'not-direct-child', path: candidate, worktreesRoot: canonicalRoot };
+  }
+  if (relativePath.split('/').length !== 1) {
     return { found: false, reason: 'not-direct-child', path: candidate, worktreesRoot: canonicalRoot };
   }
 
@@ -1181,7 +1226,14 @@ function collectOwnership(cwd, gitState, { nowMs = Date.now(), liveWindowMs = LI
   // `available: false`, which `preflight` now treats as a refusal rather than as
   // zero rows.
   const sessions = readSessionsIn(gitState.absolutePath, { nowMs, liveWindowMs });
-  return { board: boardRows, sessions };
+  // This exact-tip UUID lookup is only additional evidence. `not-applicable` does
+  // not mean owner-free; preflight separately requires the explicit live-overlay
+  // and transcript audit assertion before any registered worktree is disposed.
+  const codexOwnership =
+    typeof gitState.tip === 'string'
+      ? inspectCodexChatTrailers(cwd, gitState.tip)
+      : { status: 'not-applicable', chatIds: [], family: [], reason: 'unregistered directory has no commit tip' };
+  return { board: boardRows, sessions, codexOwnership };
 }
 
 /** The ownership and content checks for a directory without a Git worktree. */
@@ -1324,40 +1376,60 @@ function anchor(cwd, gitState, { run = defaultRun } = {}) {
   const source = gitState.branch && !PLACEHOLDER_BRANCHES.has(gitState.branch) ? gitState.branch : gitState.name;
   const slug = refSlug(source);
   if (!slug) return null;
-  // The suffix is resolved through the INJECTED runner and the caller's cwd, so a
-  // dry run and the real disposal agree on the ref name, and a suite that
-  // injects its runner does not spawn a real `git` to find that out.
-  const ref = `${KEEP_REF_PREFIX}${slug}${anchorDisambiguation(cwd, slug, source, gitState.tip, run)}`;
+  // The ref selection is shared with dry-run. An existing ref that already names
+  // this tip is reused below; creating it again with an empty old value would
+  // fail and needlessly create a second recovery ref.
+  const selection = anchorRefSelection(cwd, slug, source, gitState.tip, run);
+  const { ref } = selection;
   try {
     run(cwd, ['check-ref-format', ref]);
   } catch {
     return null;
   }
+  if (selection.reusesExisting) return ref;
   // CREATE-IF-ABSENT, so the read above and this write are one atomic step in
   // git rather than two steps in this process.
   //
   // The empty old-value is the whole mechanism: `git update-ref <ref> <new> ''`
   // succeeds only if `<ref>` does not exist, and exits 128 if it does. Without
-  // it this was a read-then-write with a window between them, and the comment on
-  // `anchorDisambiguation` claimed a cross-process guarantee the code could not
-  // deliver. Proven on a scratch repo with two concurrent processes: both read
+  // it this was a read-then-write with a window between them, and a prior comment
+  // on ref selection claimed a cross-process guarantee the code could not deliver.
+  // Proven on a scratch repo with two concurrent processes: both read
   // "the slug is free", both wrote the BARE ref, and the loser's commit was gone
   // from every ref — with `dispose` reporting a successful anchor for both.
   try {
     run(cwd, ['update-ref', ref, gitState.tip, '']);
   } catch {
-    // Lost the race, or the ref appeared between the read and here. Fall back to
-    // a name derived from this tip, which cannot be the one that just won, and
-    // write that unconditionally — there is nothing left to collide with,
-    // because a losing tip has never been an anchor.
+    // Another disposer can create this exact primary ref after selection but
+    // before the create-only write. Reuse it when it now names the same tip,
+    // instead of adding a redundant fallback anchor.
+    try {
+      const existingTip = (run(cwd, ['rev-parse', '--verify', '--quiet', ref]).stdout ?? '').trim();
+      if (existingTip === gitState.tip) return ref;
+    } catch {
+      // If the primary ref cannot be verified, preserve the tip through fallback.
+    }
+    // Lost the race, or the ref appeared between the read and here. The hash is a
+    // compact name, not proof of uniqueness, so the fallback must also be
+    // create-if-absent. If it already names this tip, reuse it; otherwise refuse
+    // rather than replacing another disposal's only recovery point.
     const fallback = `${ref}-g${createHash('sha256').update(`${source} ${gitState.tip}`).digest('hex').slice(0, 9)}`;
     try {
       run(cwd, ['check-ref-format', fallback]);
     } catch {
       return null;
     }
-    run(cwd, ['update-ref', fallback, gitState.tip]);
-    return fallback;
+    try {
+      run(cwd, ['update-ref', fallback, gitState.tip, '']);
+      return fallback;
+    } catch {
+      try {
+        const existingTip = (run(cwd, ['rev-parse', '--verify', '--quiet', fallback]).stdout ?? '').trim();
+        return existingTip === gitState.tip ? fallback : null;
+      } catch {
+        return null;
+      }
+    }
   }
   return ref;
 }
@@ -1514,6 +1586,23 @@ export function dispose(
   } = {}
 ) {
   const steps = [];
+  if (!keepBranch && (!gitState.mainWorktreePath || !gitState.commonDir)) {
+    steps.push(
+      `KEPT worktree ${gitState.absolutePath}: Git did not report a registered main checkout and common directory to use after removal`
+    );
+    return {
+      steps,
+      branchDeleted: false,
+      worktreeRemoved: false,
+      anchorRef: null,
+      salvage: null,
+      branchKept: false,
+    };
+  }
+  const mainWorktreeCwd = gitState.mainWorktreePath ?? cwd;
+  // Keep ref operations bound to the captured repository even if that checkout
+  // path is replaced after readGitState validates it.
+  const runInRepository = (args) => run(mainWorktreeCwd, ['--git-dir', gitState.commonDir, ...args]);
   // NO ANCHOR WHEN THE BRANCH SURVIVES. The anchor exists so a deleted branch is
   // still reachable; a branch that is deliberately kept is already reachable,
   // and writing `refs/keep/disposed/<slug>` for it would put a ref that reads as
@@ -1537,8 +1626,9 @@ export function dispose(
 
   const noOpMergeBaseIsCurrent = () => {
     if (deleteReason !== 'merge-tree-no-op') return true;
+    if (!gitState.commonDir) return false;
     try {
-      return run(cwd, ['rev-parse', '--verify', 'main^{commit}']).stdout.trim() === expectedBaseHead;
+      return runInRepository(['rev-parse', '--verify', 'main^{commit}']).stdout.trim() === expectedBaseHead;
     } catch {
       return false;
     }
@@ -1658,9 +1748,9 @@ export function dispose(
       );
       return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept: true };
     }
+    const deleteFlag = deleteUnmergedBranch ? '-D' : '-d';
     try {
-      const deleteFlag = deleteUnmergedBranch ? '-D' : '-d';
-      run(cwd, ['branch', deleteFlag, gitState.branch]);
+      runInRepository(['branch', deleteFlag, gitState.branch]);
       branchDeleted = true;
       if (deleteUnmergedBranch) {
         steps.push(
@@ -1669,7 +1759,7 @@ export function dispose(
       } else steps.push(`deleted branch ${gitState.branch}`);
     } catch (err) {
       steps.push(
-        `KEPT branch ${gitState.branch}: git refused \`${deleteUnmergedBranch ? '-D' : '-d'}\`, so it is unmerged (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
+        `KEPT branch ${gitState.branch}: could not delete it with \`git branch ${deleteFlag}\` (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
       );
     }
   }
@@ -1700,7 +1790,7 @@ function defaultRun(cwd, args, { input } = {}) {
 /** The real filesystem, as an object so a caller can substitute one. */
 const defaultFs = { mkdirSync, writeFileSync };
 
-const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> [--dry-run] [--keep-branch] [--max-age-minutes <n>]
+const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> --codex-owner-audit-complete [--dry-run] [--keep-branch] [--max-age-minutes <n>]
 
   <worktree>   a registered worktree, or an unregistered directory to inspect for a
                refusal. Recursive removal of unregistered directories is disabled.
@@ -1710,6 +1800,13 @@ For a registered worktree, refuses unless the generated inventory calls it
  an \`at-risk\` worktree. No board claim, lock or live agent may name it, no session
 may have it as its directory inside the live window, and ignored content or Git
 operations in progress always refuse removal.
+
+The coordinator must inspect the recent Codex live overlay and the full root/subagent
+transcript family for the exact worktree before either dry-run or removal, including
+path, branch, changed-file, and commit-subject searches. The required
+\`--codex-owner-audit-complete\` flag asserts that this audit found no active owner;
+it is not a substitute for the search. An exact UUID \`Chat:\` trailer is checked
+automatically as additional evidence.
 
 If Git no longer registers the directory, the fallback inspects a real direct
 child of the repository's \`.kilo/worktrees/\` and reports ownership and content
@@ -1773,6 +1870,7 @@ function main(argv) {
   }
   const dryRun = args.includes('--dry-run');
   const preserveBranch = args.includes('--keep-branch');
+  const codexOwnerAuditComplete = args.includes('--codex-owner-audit-complete');
   const target = args.find((a) => !a.startsWith('--') && args[args.indexOf(a) - 1] !== '--max-age-minutes');
   if (!target) {
     process.stderr.write(USAGE);
@@ -1862,6 +1960,8 @@ function main(argv) {
     inventory,
     board: ownership.board,
     sessions: ownership.sessions,
+    codexOwnership: ownership.codexOwnership,
+    codexOwnerAuditComplete,
     maxAgeMs,
     preserveBranch,
   });
@@ -1915,17 +2015,18 @@ function main(argv) {
  * would WRITE the ref, and a `--dry-run` that mutates the repository is not a dry
  * run. The slug rule lives in `refSlug()` for that reason.
  */
-function anchorRefFor(gitState, { run = defaultRun, cwd = process.cwd() } = {}) {
+export function anchorRefFor(gitState, { run = defaultRun, cwd = process.cwd() } = {}) {
+  if (!gitState.tip) return null;
   const source = gitState.branch && !PLACEHOLDER_BRANCHES.has(gitState.branch) ? gitState.branch : gitState.name;
   const slug = refSlug(source);
-  return slug ? `${KEEP_REF_PREFIX}${slug}${anchorDisambiguation(cwd, slug, source, gitState.tip, run)}` : null;
+  return slug ? anchorRefSelection(cwd, slug, source, gitState.tip, run).ref : null;
 }
 
 /**
  * The ref-name slug rule, in one place so the dry run and `anchor()` agree.
  *
- * NOT INJECTIVE, and that is the point of `anchorDisambiguation`. `/`, a space
- * and a run of anything else all collapse to one `-`, and `-` is itself a legal
+ * NOT INJECTIVE, which is why `anchorRefSelection` checks the existing tip:
+ * `/`, a space and a run of anything else all collapse to one `-`, and `-` is a legal
  * branch character, so `feat/marble`, `feat marble` and `feat-marble` all slug
  * to `feat-marble`. The anchor is the ONLY recovery point for a disposed branch,
  * so two collisions mean the second disposal overwrites the first's — and
@@ -1940,14 +2041,6 @@ function refSlug(source) {
   );
 }
 
-/**
- * The suffix that makes a slug unique, or '' when the slug is already free.
- *
- * A HASH, not a counter: it does not depend on what this process has seen, so
- * two disposals in two processes cannot both conclude the slug is free. `-g<hash>`
- * is 9 hex characters of the exact branch name, which is enough that a
- * deliberate collision is not what anyone is defending against.
- */
 /**
  * The suffix that makes a slug unique, or '' when the slug is already free.
  *
@@ -1966,8 +2059,8 @@ function refSlug(source) {
  * `feat-marble`. The anchor is the ONLY recovery point for a disposed branch, so
  * two collisions mean the second overwrites the first's.
  */
-function anchorDisambiguation(cwd, slug, source, tip, run) {
-  if (!slug) return '';
+function anchorRefSelection(cwd, slug, source, tip, run) {
+  if (!slug) return null;
   const ref = `${KEEP_REF_PREFIX}${slug}`;
   let current = null;
   try {
@@ -1977,13 +2070,13 @@ function anchorDisambiguation(cwd, slug, source, tip, run) {
   }
   // A free slug stays bare, so the common case writes the same ref it always
   // did and no recovery path anyone has written down moves.
-  if (!current) return '';
+  if (!current) return { ref, reusesExisting: false };
   // Re-anchoring the SAME COMMIT re-anchors it: the ref already points where it
-  // is about to point, and there is nothing to protect. The comparison is
-  // against the tip, not the branch name — `rev-parse --verify` resolves a ref
-  // to a commit, so comparing it to `source` would never be equal and would
-  // suffix every re-anchor of a branch that had been disposed once already.
-  if (tip && current === tip) return '';
+  // is about to point, and there is nothing to protect. Return the existing ref
+  // so the writer can reuse it without a create-only `update-ref` that must fail.
+  // Compare against the tip, not the branch name: `rev-parse` resolves the ref
+  // to a commit.
+  if (tip && current === tip) return { ref, reusesExisting: true };
   // HASHED OVER THE TIP, NOT THE NAME. Hashing the branch name fixed two
   // different names that slug alike and left the reachable case open: dispose
   // `feat/marble` at 457bfd4, let `git branch -d` refuse because the branch is
@@ -1995,7 +2088,7 @@ function anchorDisambiguation(cwd, slug, source, tip, run) {
     .update(`${source ?? ''} ${tip ?? ''}`)
     .digest('hex')
     .slice(0, 9);
-  return `-g${hash}`;
+  return { ref: `${ref}-g${hash}`, reusesExisting: false };
 }
 
 if (process.argv[1] && realpathIfExists(process.argv[1]) === realpathIfExists(fileURLToPath(import.meta.url))) {

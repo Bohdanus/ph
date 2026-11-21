@@ -13,13 +13,11 @@ import { expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/
  *
  * WHAT IS ASSERTED, AND AGAINST WHAT
  *   A committed band is drawn ONCE, on `selection-ants-canvas`, by `useSelectionMarchingAnts`
- *   (`src/hooks/useSelectionAnts.ts`). `Main.tsx:214` sizes that canvas to the DOCUMENT
- *   (`resizeCanvas(selectionAntsOverlayRef.current, width, height)`), so one backing-store pixel
- *   IS one document pixel and every number below is already in the space
- *   `singleRowMarqueeRect` / `singleColumnMarqueeRect` work in. The reads come from
- *   `e2e/helpers/selection-ants.ts`, which takes them out of `getImageData` rather than a
- *   screenshot for exactly that reason, and that file's header is the reference for what
- *   `readAntRuns` returns.
+ *   (`src/hooks/useSelectionAnts.ts`). `Main.tsx` sizes that canvas to the DOCUMENT and scales its
+ *   backing store by the device-pixel ratio. The reads come from `e2e/helpers/selection-ants.ts`,
+ *   which folds backing pixels into document pixels before returning runs, so every number below
+ *   stays in the space `singleRowMarqueeRect` / `singleColumnMarqueeRect` work in. It reads
+ *   `getImageData` rather than a screenshot so it does not composite the document underneath.
  *
  *   `tool-overlay-canvas` is no longer where a band can be found, and this spec does not look
  *   there for one. `drawSelectionOutline` is gone, and `SingleRowColumnMarqueeToolArea.tsx:70`

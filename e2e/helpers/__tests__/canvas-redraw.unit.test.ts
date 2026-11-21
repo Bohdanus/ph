@@ -17,6 +17,7 @@ import {
   waitForCanvasRedraw,
   type BoundingBox,
   type ClipOptions,
+  WHOLE_CAPTURE,
 } from '../canvas-helpers';
 import {
   BLACK,
@@ -58,7 +59,12 @@ interface PollingPage {
  * faked (see `beforeEach`): the real `setTimeout` stays installed so the sharp decode behind
  * `hasDarkPixels` still settles, and the elapsed time is tracked here rather than measured.
  */
-function createPollingPage(result: Buffer = SCREENSHOT): PollingPage {
+function createPollingPage(
+  result: Buffer = SCREENSHOT,
+  viewRotation = 0,
+  canvasBox?: BoundingBox,
+  documentSize?: { width: number; height: number }
+): PollingPage {
   let elapsed = 0;
   const waitForTimeout: WaitForTimeoutSpy = vi.fn(async (ms: number) => {
     elapsed += ms;
@@ -67,7 +73,13 @@ function createPollingPage(result: Buffer = SCREENSHOT): PollingPage {
   // The default geometry is a window that holds its whole page, so every clip here is
   // already on screen and the reads are the clips the tests pass in. What the scroll model
   // buys is `evaluate` at all: the wait reads the window to decide that.
-  const scrollable = createScrollablePage({ result, waitForTimeout });
+  const scrollable = createScrollablePage({
+    result,
+    waitForTimeout,
+    viewRotation,
+    ...(canvasBox ? { canvasBox } : {}),
+    ...(documentSize ? { documentSize } : {}),
+  });
   return {
     page: scrollable.page,
     screenshot: scrollable.screenshot,
@@ -117,9 +129,41 @@ describe('waitForCanvasPixels', () => {
     await waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate, { timeoutMs: 5_000, pollIntervalMs: 100 });
 
     expect(harness.screenshot).toHaveBeenCalledTimes(3);
-    expect(predicate.mock.calls).toEqual([[SCREENSHOT], [SCREENSHOT], [SCREENSHOT]]);
+    expect(predicate.mock.calls.map(([screenshot]) => screenshot)).toEqual([SCREENSHOT, SCREENSHOT, SCREENSHOT]);
+    expect(predicate.mock.calls.map(([, mask]) => mask)).toEqual(
+      Array.from({ length: 3 }, () => ({
+        capture: STANDALONE_CLIP,
+        document: { x: 0, y: 0, width: 800, height: 600 },
+      }))
+    );
     expect(harness.waitForTimeout.mock.calls).toEqual([[100], [100]]);
     expect(harness.elapsed()).toBe(200);
+  });
+
+  it('fails closed for a rotated workspace instead of using the axis-aligned canvas bounds', async () => {
+    const harness = createPollingPage(SCREENSHOT, 37);
+    const predicate = always(true);
+
+    await expect(waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate)).rejects.toThrow(
+      'workspaceDocumentPixelMask: dark-pixel geometry requires an unrotated workspace view, got 37°'
+    );
+
+    expect(harness.screenshot).toHaveBeenCalledTimes(1);
+    expect(predicate).not.toHaveBeenCalled();
+  });
+
+  it('uses the live cropped document dimensions when masking a workspace capture', async () => {
+    const box: BoundingBox = { x: 98, y: 100, width: 974, height: 583 };
+    const harness = createPollingPage(SCREENSHOT, 0, box, { width: 640, height: 300 });
+    const clip = viewportClip(box);
+    const predicate = always(true);
+
+    await waitForCanvasPixels(harness.page, clip, predicate);
+
+    expect(predicate.mock.calls[0][1]).toEqual({
+      capture: clip,
+      document: { x: 98, y: 163.21875, width: 974, height: 456.5625 },
+    });
   });
 
   it('stops at the first true instead of burning the 10s default timeout', async () => {
@@ -954,7 +998,7 @@ describe('waitForCanvasRedraw', () => {
 
   it('keeps polling for a light-gray stroke that never reads as dark', async () => {
     const spray = await createTestImage(SPRAY_GRAY);
-    expect(await hasDarkPixels(spray)).toBe(false);
+    expect(await hasDarkPixels(spray, WHOLE_CAPTURE)).toBe(false);
     const harness = createPollingPage(spray);
 
     await expect(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 0 })).rejects.toThrow(
@@ -967,7 +1011,7 @@ describe('waitForCanvasRedraw', () => {
 
   it('does not mistake a fully transparent capture for a dark stroke', async () => {
     const transparent = await createTestImage(BLACK, 2, 2, 0);
-    expect(await hasDarkPixels(transparent)).toBe(false);
+    expect(await hasDarkPixels(transparent, WHOLE_CAPTURE)).toBe(false);
     const harness = createPollingPage(transparent);
 
     await expect(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 0 })).rejects.toThrow(

@@ -7,6 +7,7 @@ import { execSync } from 'node:child_process';
 import { compareScreenshots } from '../helpers/image-comparison';
 import { containFit, DEFAULT_DOCUMENT_SIZE, getWorkspaceCanvas } from '../helpers/canvas-helpers';
 import { clickToolButton } from '../helpers/toolbar-helpers';
+import { EXPORT_LAYOUT_SWEEP_TEST_TIMEOUT_MS } from '../helpers/timeouts';
 import {
   assertExportGeometry,
   browserVerifiedFormats,
@@ -17,6 +18,7 @@ import {
   mimeType,
   prepareExportDownloadDirectory,
   openSaveDialog,
+  readExportGeometry,
   setupExportTest,
   setupIcoTest,
   submitSaveDialogForDownload,
@@ -257,7 +259,7 @@ test.describe('Export visual regression', () => {
    * regression in the export geometry, not an OS rendering difference.
    */
   test('the export is independent of the shell layout @os-agnostic', async ({ page }, testInfo) => {
-    test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
+    test.setTimeout(EXPORT_LAYOUT_SWEEP_TEST_TIMEOUT_MS);
 
     const configurations: { label: string; width: number; height: number; toolbarLayout: 'default' | 'toggled' }[] = [];
     for (const height of [720, 560]) {
@@ -277,7 +279,6 @@ test.describe('Export visual regression', () => {
       label: string;
       sourceDataUrl: string;
       bytes: Buffer;
-      canvas: { width: number; height: number };
     }[] = [];
 
     for (const { label, width, height, toolbarLayout } of configurations) {
@@ -321,20 +322,11 @@ test.describe('Export visual regression', () => {
 
       const bytes = await readFile(target);
       expect(bytes.byteLength, `${label}: the exported file should not be empty`).toBeGreaterThan(100);
-      const canvas = await page.evaluate(() => {
-        const c = document.querySelector('[data-testid="workspace-canvas"]') as HTMLCanvasElement;
-        return { width: c.width, height: c.height };
-      });
-      exports.push({ label, sourceDataUrl, bytes, canvas });
-    }
-
-    // The backing store is the document size at any viewport, so a difference below is geometry
-    // and not a differently-sized document being encoded.
-    for (const { label, canvas } of exports) {
-      expect(canvas, `${label}: the backing store is the document size at any viewport`).toEqual({
-        width: 800,
-        height: 600,
-      });
+      // Assert the export's logical document dimensions and visible content. The workspace
+      // canvas backing store is a presentation surface and grows with DPR; it is not the
+      // exported image's size.
+      await readExportGeometry(bytes);
+      exports.push({ label, sourceDataUrl, bytes });
     }
 
     // The property, on the export.
