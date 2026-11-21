@@ -756,6 +756,10 @@ git's own markers — `MERGE_HEAD`, `SQUASH_MSG`, `CHERRY_PICK_HEAD`, `REVERT_HE
 entry from an ordinary edit. `git ls-files -u` separates them too and returns the same
 paths; `-U` was chosen because its output is already one path per record.
 `--json` prints the same findings for a caller that wants them as data.
+For an `AUTO_MERGE` marker without a primary operation marker, the JSON keeps the marker visible
+but sets `operation` to `null`; the marker does not establish that an operation is active or which
+operation produced it. This shape is used in both `repo:state --json` findings and
+`main:landing status --json` operations. Consumers must not infer activity from the array entry.
 
 **It exits non-zero when it could not look, not only when it found something.** A
 roster it could not read, or a worktree it could not describe, is reported as
