@@ -144,17 +144,23 @@ The completion child receives runtime path variables, but uses a per-request tem
 directories, and working directory instead of the operator's OpenCode credentials and project
 config. It does not inherit arbitrary provider API-key variables or `OPENCODE_CONFIG_DIR`.
 `OPENCODE_PURE` and `OPENCODE_DISABLE_PROJECT_CONFIG` provide additional isolation. Its injected
-policies deny tool use, MCP servers, plugins, skills, and web search. System-wide OpenCode config
-and managed preferences remain machine policy and are still loaded by the CLI. OpenCode's
-provider-owned free models do not require an API key; `opencode auth login` is not needed for this
-route.
+policies deny tool use, provider/integration selection, integration connections, MCP servers,
+plugins, skills, and web search; they allow only the `opencode` provider and free-tier integration.
+Use OpenCode 2.2.6 or newer so all of these policy actions are recognized. System-wide OpenCode
+config and managed preferences remain machine policy and are still loaded by the CLI. Managed
+policies have higher precedence than the injected config and can override its denies, so the runner
+does not guarantee tool isolation on a machine whose OpenCode administrator allows tools or
+integrations. Provider-owned free models do not require an API key; `opencode auth login` is not
+needed for this route.
 
 The runner accepts provider-owned model IDs ending in `-free`, plus the exact Nemotron `:free` ID
 only when the catalog marks it `owned_by: opencode`. It denies tool and extension use and requires a clean CLI exit
 with non-empty text. The current OpenCode catalog inspection on 2026-11-12 did not list the exact
 Nemotron model, so no OpenCode Nemotron route was eligible in that check.
-OpenCode CLI JSON output can omit its final `step_finish` event; a clean exit, text response, and free
-catalog ID are sufficient when no explicit error, tool call, or non-zero cost was reported.
+OpenCode CLI JSON output can omit its final `step_finish` event. For provider-owned model IDs ending
+in `-free`, a clean exit with non-empty text is sufficient when no explicit error, tool call, or
+non-zero cost was reported. The exact Nemotron `:free` ID does not use this fallback and requires an
+explicit terminal event.
 The typed `provider.free-limit` event and upstream `FreeUsageLimitError` alias both signal a service
 quota for the account, workspace, and network. This remains a source-wide stop when there is no HTTP
 status or when an earlier model-specific error came first. Skip OpenCode for the current run without

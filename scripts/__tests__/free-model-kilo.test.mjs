@@ -126,24 +126,27 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     }
   });
 
-  it('rejects any attempted tool call even when the model later emits final text', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
-    const command = await writeExecutable(
-      join(directory, 'fake-kilo'),
-      `console.log(JSON.stringify({ type: 'tool_use', part: { type: 'tool' } }));
+  it.each(['stdout', 'stderr'])(
+    'rejects any attempted tool call reported on %s even when final text follows',
+    async (stream) => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+      const command = await writeExecutable(
+        join(directory, 'fake-kilo'),
+        `${stream === 'stderr' ? 'console.error' : 'console.log'}(JSON.stringify({ type: 'tool_use', part: { type: 'tool' } }));
 console.log(JSON.stringify({ type: 'text', part: { text: 'not accepted' } }));
 console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0 } }));`
-    );
+      );
 
-    try {
-      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
-        error: 'Kilo attempted a tool call; the completion was rejected',
-        exhaustSource: true,
-      });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
+      try {
+        await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+          error: 'Kilo attempted a tool call; the completion was rejected',
+          exhaustSource: true,
+        });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
   it.each([
     [
@@ -207,6 +210,96 @@ kilo_grep({pattern: "selection", paths: ["e2e"]})`,
       `<function=kilo_memory_recall>
 <parameter=mode>search</parameter>
 </function >`,
+    ],
+    [
+      'XML parameters indented within a serialized call',
+      `<tool_call>
+<function=kilo_memory_recall>
+    <parameter=mode>search</parameter>
+</function>
+</tool_call>`,
+    ],
+    ['a Kilo call with an indented object argument', 'kilo_ls(\n    {paths: ["src"]}\n)'],
+    [
+      'a serialized call after a blockquoted fence opener ends',
+      ['> ```', '<function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a serialized call in an indented paragraph continuation',
+      ['Explanation', '    <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a serialized call in a list continuation below the list code-block threshold',
+      ['- item', '', '    <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a serialized call in an ordered-list continuation below the code-block threshold',
+      ['1. item', '', '      <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a serialized call in a tab-indented list continuation below the code-block threshold',
+      ['- item', '', '\t<function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a serialized call in a nested-list continuation below the code-block threshold',
+      ['- outer', '  - inner', '', '      <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a serialized call in a blockquote list continuation below the code-block threshold',
+      ['> - item', '> ', '>     <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a serialized call in a blockquote list paragraph after tab padding shifts the list edge',
+      ['>\t- item', '>', '>       <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a serialized call in a list continuation after a lazy paragraph line',
+      ['- item', '  continuation', '', '    <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a serialized call continuing a paragraph after a blank line in a list item',
+      ['- item', '', '  paragraph', '      <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a serialized call in an ordered-list continuation after a fenced example',
+      [
+        '  10.  item',
+        '',
+        '       ~~~xml',
+        '       <tool_call>',
+        '       ~~~',
+        '       <function=kilo_ls></function></tool_call>',
+      ].join('\n'),
+    ],
+    [
+      'a serialized call after a fenced block exits its list item',
+      ['- item', '', '  ~~~xml', '  example', 'visible paragraph', '<function=kilo_ls></function></tool_call>'].join(
+        '\n'
+      ),
+    ],
+    [
+      'a serialized call after a nested fence exits to its parent list item',
+      [
+        '- outer',
+        '  - inner',
+        '',
+        '    ~~~xml',
+        '    example',
+        '  outer paragraph',
+        '  <function=kilo_ls></function></tool_call>',
+      ].join('\n'),
+    ],
+    [
+      'escaped literal backticks around serialized call text',
+      ['Before ', '\\', '` <function=kilo_ls></function></tool_call> after ', '\\', '`'].join(''),
+    ],
+    [
+      'an escaped backtick inside inline code does not hide visible tool syntax',
+      ['`', '\\', '` kilo_ls({paths: ["src"]}) ', '`'].join(''),
+    ],
+    [
+      'backticks in separate paragraphs do not hide serialized call text',
+      'Before a literal `\n\n<function=kilo_ls></function></tool_call>\n\nAfter a literal `',
     ],
   ])('rejects %s when returned as text instead of an answer', async (_label, content) => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
@@ -275,6 +368,11 @@ search
         '~~~~',
       ].join('\n'),
     ],
+    ['a blockquoted tilde fence', ['> ~~~javascript', '> kilo_ls({paths: ["src"]})', '> ~~~'].join('\n')],
+    [
+      'a blockquoted tilde marker inside a top-level fence',
+      ['~~~xml', '> ~~~', '<tool_call>', '<function=kilo_ls></function>', '</tool_call>', '~~~'].join('\n'),
+    ],
     [
       'tool-call fragments separated by a fenced example',
       [
@@ -284,6 +382,10 @@ search
         '~~~~',
         '</function></tool_call>',
       ].join('\n'),
+    ],
+    [
+      'a JavaScript-style tool-call fragment split by a fenced example',
+      ['kilo_edit(', '~~~js', 'const example = true;', '~~~', '{ "path": "a" })'].join('\n'),
     ],
     [
       'an unclosed tilde fence',
@@ -298,6 +400,58 @@ search
     [
       'an inline JavaScript-style tool-call example',
       'The tool syntax is `kilo_ls({paths: ["src"]})` in this documentation example.',
+    ],
+    [
+      'an indented code example after an inline tool-call mention',
+      'Use `kilo_ls({paths: ["src"]})` like this:\n\n    kilo_ls({paths: ["src"]})',
+    ],
+    [
+      'a completed function-call mention before an indented example',
+      'The old call was kilo_ls().\n\n    kilo_ls({paths: ["src"]})',
+    ],
+    [
+      'a completed function call with a closing parenthesis in a string before an indented example',
+      'The old call was kilo_ls(")").\n\n    kilo_ls({paths: ["src"]})',
+    ],
+    [
+      'an indented code example at the threshold inside a bullet list item',
+      ['- item', '', '      <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'an indented code example at the threshold inside an ordered list item',
+      ['1. item', '', '       <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'an indented code example at the threshold inside a nested list item',
+      ['- outer', '  - inner', '', '        <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'an indented code example at the threshold inside an indented ordered list item',
+      ['  10.  item', '', '           <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'an indented code example at the threshold after a tab-padded list marker',
+      ['-\titem', '', '\t\t<function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'an indented code example after an ordered marker whose tab advances one column',
+      [' 1.\tfirst', '', '        <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'an indented code example under a list after a tab-padded blockquote marker',
+      ['>\t- item', '>', '>         <function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a fenced example inside an ordered list',
+      ['  10.  item', '', '       ~~~xml', '       <function=kilo_ls></function></tool_call>', '       ~~~'].join('\n'),
+    ],
+    [
+      'a fenced example inside a nested list item',
+      ['- outer', '  - inner', '', '    ~~~xml', '    <function=kilo_ls></function></tool_call>', '    ~~~'].join('\n'),
+    ],
+    [
+      'a root indented code example after a list and a top-level paragraph',
+      ['- item', '', 'Paragraph', '', '    kilo_ls({paths: ["src"]})'].join('\n'),
     ],
   ])('accepts tool-call markup inside %s as ordinary answer text', async (_label, content) => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
@@ -480,6 +634,7 @@ process.exit(1);`
     ['error.code versioned', { type: 'error', error: { code: 'content_filter_blocked_v2' } }],
     ['error.code versioned base', { type: 'error', error: { code: 'content_filter_v1' } }],
     ['error.code content policy', { type: 'error', error: { code: 'content_policy' } }],
+    ['error.code refusal', { type: 'error', error: { code: 'refusal' } }],
     ['error.type', { type: 'error', error: { code: 'request_failed', type: 'content_filter_blocked' } }],
     [
       'error.type uppercase and hyphenated',

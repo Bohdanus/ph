@@ -1047,6 +1047,11 @@ const OPENCODE_TOOL_DENY_CONFIG = JSON.stringify({
   // Keep tool invocation and separately configured extension sources disabled.
   // V2 policies are hard denies and take precedence over saved approvals.
   policies: [
+    { action: 'provider.use', resource: '*', effect: 'deny' },
+    { action: 'provider.use', resource: 'opencode', effect: 'allow' },
+    { action: 'integration.connect', resource: '*', effect: 'deny' },
+    { action: 'integration.use', resource: '*', effect: 'deny' },
+    { action: 'integration.use', resource: 'opencode', effect: 'allow' },
     { action: 'tool.use', resource: '*', effect: 'deny' },
     { action: 'mcp.use', resource: '*', effect: 'deny' },
     { action: 'skill.use', resource: '*', effect: 'deny' },
@@ -1318,34 +1323,39 @@ export async function runOpenCodeCompletion({
     ) {
       return { error: 'OpenCode reported an error or attempted a tool call' };
     }
-    const explicitTerminal = events.some(
-      (event) => event.type === 'done' || (event.type === 'step_finish' && event.part?.reason === 'stop')
-    );
-    // OpenCode V2 can exit cleanly after final text without emitting its final step_finish event.
-    const cleanFreeTextExit =
-      model.endsWith('-free') && events.some((event) => event.type === 'text' && event.part?.text?.trim());
-    const terminal = explicitTerminal || cleanFreeTextExit;
+    const finishedSteps = events.filter((event) => event.type === 'step_finish');
+    const finalStep = finishedSteps.at(-1);
+    const finalStepReason =
+      typeof finalStep?.part?.reason === 'string' ? finalStep.part.reason.trim().toLowerCase() : null;
+    const explicitTerminal = events.some((event) => event.type === 'done') || finalStepReason === 'stop';
     const content = events
       .filter((event) => event.type === 'text' && typeof event.part?.text === 'string')
       .map((event) => event.part.text)
       .join('');
-    const finishedSteps = events.filter((event) => event.type === 'step_finish');
-    if (!terminal || !content.trim()) return { error: 'OpenCode did not return a complete non-empty response' };
-    const tokens = finishedSteps.at(-1)?.part?.tokens;
+    const tokens = finalStep?.part?.tokens;
+    const usage = tokens
+      ? {
+          input_tokens: tokens.input,
+          output_tokens: tokens.output,
+          reasoning_tokens: tokens.reasoning,
+          ...(reportedCosts.length > 0 ? { cost: reportedCosts.reduce((total, cost) => total + Number(cost), 0) } : {}),
+        }
+      : null;
+    if (finalStepReason === 'length') return { model, content, finishReason: 'length', usage };
+    // OpenCode V2 can exit cleanly after final text without emitting its final step_finish event.
+    const cleanFreeTextExit =
+      model.endsWith('-free') &&
+      finishedSteps.length === 0 &&
+      events.some((event) => event.type === 'text' && event.part?.text?.trim());
+    const terminal = explicitTerminal || cleanFreeTextExit;
+    if (!terminal || !content.trim() || (finalStepReason !== null && finalStepReason !== 'stop')) {
+      return { error: 'OpenCode did not return a complete non-empty response' };
+    }
     return {
       model,
       content,
       finishReason: 'stop',
-      usage: tokens
-        ? {
-            input_tokens: tokens.input,
-            output_tokens: tokens.output,
-            reasoning_tokens: tokens.reasoning,
-            ...(reportedCosts.length > 0
-              ? { cost: reportedCosts.reduce((total, cost) => total + Number(cost), 0) }
-              : {}),
-          }
-        : null,
+      usage,
     };
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -1890,11 +1900,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
       }
       if (candidate.source === 'opencode') {
         try {
+          const effectiveMaxTokens = candidate.maxTokensOverride ?? routeMaxTokens;
           const result = await runOpenCode({
             command: opencodeCommand,
             model: candidate.model,
             prompt,
-            maxTokens: routeMaxTokens,
+            maxTokens: effectiveMaxTokens,
             timeoutMs: routeTimeoutMs,
             ...(candidate.providerOwned === true ? { providerOwned: true } : {}),
           });
@@ -1902,6 +1913,24 @@ export async function completeWithFreeModel(prompt, options = {}) {
             await stopForReportedCost(candidate);
           }
           if (isContentPolicyError(result)) stopForContentPolicy(candidate);
+          if (result?.finishReason === 'length') {
+            const isNemotron = candidate.model === NEMOTRON_3_ULTRA_FREE_MODEL;
+            const alreadyRetried = candidate.nemotronTokenRetry === true;
+            const increasedTokens = increasedNemotronMaxTokens(routeMaxTokens);
+            if (isNemotron && !alreadyRetried && increasedTokens !== null) {
+              stderr.write(
+                `Nemotron 3 Ultra finish_reason=length; retrying with ${increasedTokens} tokens (was ${effectiveMaxTokens}).\n`
+              );
+              available.splice(candidateIndex + 1, 0, {
+                ...candidate,
+                nemotronTokenRetry: true,
+                maxTokensOverride: increasedTokens,
+              });
+              continue;
+            }
+            errors.push(`opencode/${candidate.model}: incomplete completion (finish_reason=length)`);
+            continue;
+          }
           if (result?.content && result.finishReason === 'stop') {
             const resolvedModel = result.model ?? candidate.model;
             if (!available.some((entry) => entry.source === 'opencode' && entry.model === resolvedModel)) {

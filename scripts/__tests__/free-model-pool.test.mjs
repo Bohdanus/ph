@@ -415,6 +415,20 @@ describe('free model catalog filtering', () => {
     expect(runKilo.mock.calls.map(([options]) => options?.maxTokens)).toEqual([4096, 6144]);
   });
 
+  it('retries truncated OpenCode Nemotron once with a larger response-length budget', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({ opencode: [{ id: model, owned_by: 'opencode' }] });
+    const runOpenCode = vi
+      .fn()
+      .mockResolvedValueOnce({ model, content: 'partial', finishReason: 'length' })
+      .mockResolvedValueOnce({ model, content: 'complete', finishReason: 'stop' });
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, opencodeCommand: '/fake-opencode', runOpenCode })
+    ).resolves.toMatchObject({ source: 'opencode', model, content: 'complete' });
+    expect(runOpenCode.mock.calls.map(([options]) => options?.maxTokens)).toEqual([4096, 6144]);
+  });
+
   it('blocks noncanonical Nemotron variants before any inference request', async () => {
     const model = 'nvidia/nemotron-3-ultra-550b-a55b-v2:free';
     const chat = vi.fn();
@@ -885,9 +899,20 @@ const path = require('node:path');
 const args = process.argv.slice(2);
 const model = args[args.indexOf('--model') + 1];
 const policies = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT).policies;
-for (const action of ['tool.use', 'mcp.use', 'skill.use', 'plugin.use', 'websearch.use']) {
+for (const action of ['tool.use', 'mcp.use', 'skill.use', 'plugin.use', 'websearch.use', 'integration.connect']) {
   if (!policies.some((policy) => policy.action === action && policy.resource === '*' && policy.effect === 'deny')) {
     process.exit(9);
+  }
+}
+for (const action of ['provider.use', 'integration.use']) {
+  if (!policies.some((policy) => policy.action === action && policy.resource === '*' && policy.effect === 'deny')) {
+    process.exit(12);
+  }
+  const finalDecision = policies
+    .filter((policy) => policy.action === action && ['*', 'opencode'].includes(policy.resource))
+    .pop();
+  if (finalDecision?.resource !== 'opencode' || finalDecision.effect !== 'allow') {
+    process.exit(13);
   }
 }
 if (process.env.OPENCODE_PURE !== '1' || process.env.OPENCODE_DISABLE_PROJECT_CONFIG !== '1') process.exit(10);
@@ -940,6 +965,28 @@ console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }))
     }
   });
 
+  it('preserves an explicit OpenCode length finish reason instead of inferring a complete free response', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'partial answer' } }));
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'length', tokens: { input: 12, output: 64 } } }));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 64 })
+      ).resolves.toMatchObject({
+        model: 'beam-free',
+        content: 'partial answer',
+        finishReason: 'length',
+        usage: { input_tokens: 12, output_tokens: 64 },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('passes runtime paths but isolates OpenCode from unrelated credentials and config', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-env-test-'));
     const overrides = {
@@ -974,9 +1021,20 @@ const leaked = ['OPENROUTER_API_KEY', 'GROQ_API_KEY', 'KILO_CONFIG_CONTENT', 'OP
 if (mismatched.length || isolatedProfilePaths.length || leaked.length) process.exit(10);
 if (process.env.OPENCODE_CONFIG_CONTENT === 'caller-config-must-be-replaced') process.exit(11);
 const policies = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT).policies;
-for (const action of ['tool.use', 'mcp.use', 'skill.use', 'plugin.use', 'websearch.use']) {
+for (const action of ['tool.use', 'mcp.use', 'skill.use', 'plugin.use', 'websearch.use', 'integration.connect']) {
   if (!policies.some((policy) => policy.action === action && policy.resource === '*' && policy.effect === 'deny')) {
     process.exit(12);
+  }
+}
+for (const action of ['provider.use', 'integration.use']) {
+  if (!policies.some((policy) => policy.action === action && policy.resource === '*' && policy.effect === 'deny')) {
+    process.exit(16);
+  }
+  const finalDecision = policies
+    .filter((policy) => policy.action === action && ['*', 'opencode'].includes(policy.resource))
+    .pop();
+  if (finalDecision?.resource !== 'opencode' || finalDecision.effect !== 'allow') {
+    process.exit(17);
   }
 }
 if (process.env.OPENCODE_DISABLE_AUTOUPDATE !== '1' || process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS !== '1') process.exit(13);
@@ -1436,6 +1494,20 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
         finishReason: 'stop',
         usage: { cost: 0 },
       });
+
+      const noTerminalCommand = await writeFakeOpenCode(
+        directory,
+        `console.log(JSON.stringify({ type: 'text', part: { text: 'provider-owned Nemotron result' } }));`
+      );
+      await expect(
+        runOpenCodeCompletion({
+          command: noTerminalCommand,
+          model,
+          prompt: 'private prompt',
+          maxTokens: 1200,
+          providerOwned: true,
+        })
+      ).resolves.toEqual({ error: 'OpenCode did not return a complete non-empty response' });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

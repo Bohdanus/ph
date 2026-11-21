@@ -144,48 +144,125 @@ function hasToolActivity(events) {
   );
 }
 
-function hasKiloFunctionCallText(text) {
-  const skipWhitespaceAndComments = (from) => {
-    let index = from;
-    while (index < text.length) {
-      if (/\s/.test(text[index] ?? '')) {
-        index += 1;
-        continue;
-      }
-      if (text.startsWith('/*', index)) {
-        const closing = text.indexOf('*/', index + 2);
-        if (closing < 0) return null;
-        index = closing + 2;
-        continue;
-      }
-      if (text.startsWith('//', index)) {
-        const newline = text.indexOf('\n', index + 2);
-        if (newline < 0) return text.length;
-        index = newline + 1;
-        continue;
-      }
-      break;
+function skipWhitespaceAndComments(text, from) {
+  let index = from;
+  while (index < text.length) {
+    if (/\s/.test(text[index] ?? '')) {
+      index += 1;
+      continue;
     }
-    return index;
-  };
+    if (text.startsWith('/*', index)) {
+      const closing = text.indexOf('*/', index + 2);
+      if (closing < 0) return null;
+      index = closing + 2;
+      continue;
+    }
+    if (text.startsWith('//', index)) {
+      const newline = text.indexOf('\n', index + 2);
+      if (newline < 0) return text.length;
+      index = newline + 1;
+      continue;
+    }
+    break;
+  }
+  return index;
+}
 
+function hasKiloFunctionCallText(text) {
   for (const match of text.matchAll(/\bkilo_[A-Za-z0-9_]+/g)) {
     if (match.index === undefined) continue;
-    const openParen = skipWhitespaceAndComments(match.index + match[0].length);
+    const openParen = skipWhitespaceAndComments(text, match.index + match[0].length);
     if (openParen === null) return true;
     if (text[openParen] !== '(') continue;
-    const argument = skipWhitespaceAndComments(openParen + 1);
+    const argument = skipWhitespaceAndComments(text, openParen + 1);
     if (argument === null) return true;
     if (text[argument] === '{') return true;
   }
   return false;
 }
 
-function stripInlineCodeSpans(text) {
+function matchingParenthesis(text, openParen) {
+  let depth = 0;
+  let quote = null;
+  let lineComment = false;
+  let blockComment = false;
+  for (let index = openParen; index < text.length; index += 1) {
+    const character = text[index];
+    const next = text[index + 1];
+    if (lineComment) {
+      if (character === '\n') lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (character === '*' && next === '/') {
+        blockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (character === '\\') {
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === '/' && next === '/') {
+      lineComment = true;
+      index += 1;
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      blockComment = true;
+      index += 1;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (character === '(') depth += 1;
+    if (character === ')') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function hasKiloFunctionCallPrefix(text) {
+  const functionNames = /\bkilo_[A-Za-z0-9_]+/g;
+  let match;
+  while ((match = functionNames.exec(text)) !== null) {
+    const openParen = skipWhitespaceAndComments(text, match.index + match[0].length);
+    if (openParen === null) return true;
+    if (text[openParen] !== '(') continue;
+    const closeParen = matchingParenthesis(text, openParen);
+    if (closeParen < 0) return true;
+    functionNames.lastIndex = Math.max(functionNames.lastIndex, closeParen + 1);
+  }
+  return false;
+}
+
+function hasOpenSerializedToolCallPrefix(text) {
+  const lower = text.toLowerCase();
+  if (lower.lastIndexOf('<function=') > lower.lastIndexOf('</function')) return true;
+  if (lower.lastIndexOf('<tool_call') > lower.lastIndexOf('</tool_call')) return true;
+  return hasKiloFunctionCallPrefix(text);
+}
+
+function isEscapedBacktick(text, index) {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) backslashes += 1;
+  return backslashes % 2 === 1;
+}
+
+function stripInlineCodeParagraph(text) {
   const visible = text.split('');
   let index = 0;
   while (index < text.length) {
-    if (text[index] !== '`') {
+    if (text[index] !== '`' || isEscapedBacktick(text, index)) {
       index += 1;
       continue;
     }
@@ -219,34 +296,205 @@ function stripInlineCodeSpans(text) {
   return visible.join('');
 }
 
+function stripInlineCodeSpans(text) {
+  return text
+    .split(/((?:\r?\n[ \t]*){2,})/)
+    .map((paragraph, index) => (index % 2 === 0 ? stripInlineCodeParagraph(paragraph) : paragraph))
+    .join('');
+}
+
+function expandBlockquotePrefixTabs(line) {
+  let expanded = '';
+  let column = 0;
+  let index = 0;
+  while (index < line.length) {
+    const character = line[index];
+    if (character === ' ' || character === '>') {
+      expanded += character;
+      column += 1;
+      index += 1;
+      continue;
+    }
+    if (character === '\t') {
+      const spaces = 4 - (column % 4);
+      expanded += ' '.repeat(spaces);
+      column += spaces;
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  return expanded + line.slice(index);
+}
+
+function parseBlockquoteLine(line) {
+  let text = expandBlockquotePrefixTabs(line);
+  let quoteDepth = 0;
+  while (true) {
+    const prefix = /^ {0,3}> ?/.exec(text);
+    if (!prefix) break;
+    text = text.slice(prefix[0].length);
+    quoteDepth += 1;
+  }
+  return { quoteDepth, text };
+}
+
+function leadingIndentColumns(line) {
+  let index = 0;
+  let columns = 0;
+  while (line[index] === ' ' || line[index] === '\t') {
+    if (line[index] === '\t') {
+      columns += 4 - (columns % 4);
+    } else {
+      columns += 1;
+    }
+    index += 1;
+  }
+  return { columns, index };
+}
+
+function parseListMarker(line) {
+  const indentation = leadingIndentColumns(line);
+  const marker = /^([-+*]|[0-9]{1,9}[.)])(?:([ \t]+)|$)/.exec(line.slice(indentation.index));
+  if (!marker) return null;
+
+  const markerEnd = indentation.columns + marker[1].length;
+  let contentIndent = markerEnd + 1;
+  if (marker[2]) {
+    let paddedIndent = markerEnd;
+    for (const character of marker[2]) {
+      paddedIndent = character === '\t' ? paddedIndent + (4 - (paddedIndent % 4)) : paddedIndent + 1;
+    }
+    const padding = paddedIndent - markerEnd;
+    contentIndent = markerEnd + (padding <= 4 ? padding : 1);
+  }
+
+  return { markerIndent: indentation.columns, contentIndent };
+}
+
+function updateListStack(listStacks, quoteDepth, line, canStartIndentedCode) {
+  for (const depth of listStacks.keys()) {
+    if (depth > quoteDepth) listStacks.delete(depth);
+  }
+
+  const stack = listStacks.get(quoteDepth) ?? [];
+  const marker = parseListMarker(line);
+  if (marker) {
+    while (stack.length > 0 && marker.markerIndent < stack.at(-1).contentIndent) stack.pop();
+    const parent = stack.at(-1);
+    const startsListItem = parent ? marker.markerIndent >= parent.contentIndent : marker.markerIndent <= 3;
+    if (startsListItem) {
+      stack.push(marker);
+      listStacks.set(quoteDepth, stack);
+      return stack;
+    }
+  }
+
+  if (canStartIndentedCode) {
+    const indentation = leadingIndentColumns(line).columns;
+    while (stack.length > 0 && indentation < stack.at(-1).contentIndent) stack.pop();
+  }
+  if (stack.length > 0) listStacks.set(quoteDepth, stack);
+  else listStacks.delete(quoteDepth);
+  return stack;
+}
+
 function isSerializedToolCallText(content) {
   const outsideFencedSegments = [];
   let currentSegment = [];
-  const lines = content.split(/\r?\n/);
+  const lines = content.split(/\r?\n/).map(parseBlockquoteLine);
+  const listStacks = new Map();
   let fence = null;
-  for (const line of lines) {
-    if (fence) {
-      const closing = /^ {0,3}(`+|~+)[ \t]*$/.exec(line);
-      if (closing && closing[1][0] === fence.character && closing[1].length >= fence.length) {
+  let indentedCode = null;
+  let canStartIndentedCode = true;
+  for (const { quoteDepth, text: line } of lines) {
+    let reprocess = true;
+    while (reprocess) {
+      reprocess = false;
+      if (fence) {
+        if (quoteDepth < fence.quoteDepth) {
+          fence = null;
+          canStartIndentedCode = true;
+          reprocess = true;
+          continue;
+        }
+        if (
+          quoteDepth === fence.quoteDepth &&
+          line.trim() !== '' &&
+          leadingIndentColumns(line).columns < fence.listContentIndent
+        ) {
+          fence = null;
+          canStartIndentedCode = true;
+          reprocess = true;
+          continue;
+        }
+        if (quoteDepth === fence.quoteDepth) {
+          const closing = /^([ \t]*)(`+|~+)[ \t]*$/.exec(line);
+          const closingIndent = leadingIndentColumns(line).columns;
+          if (
+            closing &&
+            closingIndent >= fence.listContentIndent &&
+            closingIndent <= fence.listContentIndent + 3 &&
+            closing[2][0] === fence.character &&
+            closing[2].length >= fence.length
+          ) {
+            fence = null;
+            canStartIndentedCode = true;
+          }
+        }
+        break;
+      }
+      if (indentedCode) {
+        if (
+          quoteDepth === indentedCode.quoteDepth &&
+          (line.trim() === '' || leadingIndentColumns(line).columns >= indentedCode.minimumIndent)
+        ) {
+          break;
+        }
+        indentedCode = null;
+        canStartIndentedCode = true;
+        reprocess = true;
+        continue;
+      }
+      if (line.trim() === '') {
+        currentSegment.push(line);
+        canStartIndentedCode = true;
+        break;
+      }
+      const listStack = updateListStack(listStacks, quoteDepth, line, canStartIndentedCode);
+      const listContentIndent = listStack.at(-1)?.contentIndent ?? 0;
+      const indentation = leadingIndentColumns(line).columns;
+      const opening = /^([ \t]*)(`{3,}|~{3,})(.*)$/.exec(line);
+      if (
+        opening &&
+        indentation >= listContentIndent &&
+        indentation <= listContentIndent + 3 &&
+        !(opening[2][0] === '`' && opening[3].includes('`'))
+      ) {
         outsideFencedSegments.push(currentSegment.join('\n'));
         currentSegment = [];
-        fence = null;
+        fence = {
+          character: opening[2][0],
+          length: opening[2].length,
+          quoteDepth,
+          listContentIndent,
+        };
+        canStartIndentedCode = true;
+        break;
       }
-      continue;
+      const minimumIndentedCodeIndent = listContentIndent + 4;
+      if (indentation >= minimumIndentedCodeIndent && canStartIndentedCode) {
+        const visiblePrefix = stripInlineCodeSpans(currentSegment.join('\n'));
+        if (hasOpenSerializedToolCallPrefix(visiblePrefix)) return true;
+        outsideFencedSegments.push(currentSegment.join('\n'));
+        currentSegment = [];
+        indentedCode = { quoteDepth, minimumIndent: minimumIndentedCodeIndent };
+        canStartIndentedCode = false;
+        break;
+      }
+      currentSegment.push(line);
+      canStartIndentedCode = false;
     }
-    const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (opening && !(opening[1][0] === '`' && opening[2].includes('`'))) {
-      outsideFencedSegments.push(currentSegment.join('\n'));
-      currentSegment = [];
-      fence = { character: opening[1][0], length: opening[1].length };
-      continue;
-    }
-    if (/^(?: {4,}|\t)/.test(line)) {
-      outsideFencedSegments.push(currentSegment.join('\n'));
-      currentSegment = [];
-      continue;
-    }
-    currentSegment.push(line);
   }
   outsideFencedSegments.push(currentSegment.join('\n'));
   return outsideFencedSegments.some((outsideFencedText) => {
@@ -324,6 +572,7 @@ const CONTENT_POLICY_ERROR_CODES = new Set([
   'moderation_blocked',
   'moderation_rejected',
   'prompt_injection_detected',
+  'refusal',
   'safety_filter',
   'safety_violation',
 ]);
@@ -631,7 +880,7 @@ export async function runKiloCompletion({
     if (timedOut) return { error: `Kilo completion exceeded ${effectiveTimeoutMs} ms` };
     if (outputOverflow) return { error: `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes` };
     if (malformed) return { error: 'Kilo CLI returned malformed JSONL output', exhaustSource: true };
-    if (hasToolActivity(events))
+    if (hasToolActivity([...events, ...stderrEvents]))
       return { error: 'Kilo attempted a tool call; the completion was rejected', exhaustSource: true };
     if (events.some((event) => event?.type === 'error')) return sanitizedProcessError(events, stderrText, code, signal);
     if (code !== 0) return sanitizedProcessError(events, stderrText, code, signal);

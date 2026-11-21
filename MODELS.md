@@ -72,8 +72,10 @@ Groq serves only `openai/gpt-oss-120b` on the Free plan — no per-model pricing
 ## Free-agent boundaries
 
 - Free Kilo children are read-only: use `read-only-research` for visible sessions and `explore` for internal tasks. Deny shell, edit, write, patch, and all connected file-mutation tools. If the host cannot verify this boundary, use the completion runner or do not launch the child.
-- The completion runner has no agent tools. Its Kilo CLI profile denies every tool name, pipes prompts through stdin, and never uses `--file` or `--auto`; the coordinator owns file edits and Git. Cap fan-out at 15.
+- The completion runner has no agent tools. Its Kilo CLI profile denies every tool name, pipes prompts through stdin, and never uses `--file` or `--auto`; the coordinator owns file edits and Git.
+- The host-managed free-subagent launcher caps batches at 15 and validates every task's current model/provider route.
 - Use concise evidence-backed results. For large outputs, use `--output-file`; use `free-research.mjs` only for bounded public HTTPS URL lists.
+- Completion-runner token and timeout profiles apply only to its tool-free text calls. `scripts/free-subagent-launcher.mjs` exposes neither `maxTokens` nor a timeout field; bound those tasks by prompt scope and expected output instead of claiming an exact token budget.
 
 ## Research and credentials
 
