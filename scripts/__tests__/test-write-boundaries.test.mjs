@@ -106,8 +106,8 @@ const REVIEWED = {
   },
   'main-landing-alert.test.mjs': {
     scope:
-      'Alert-claim and status fixtures use unique temporary repositories/directories; coverage includes duration thresholds, invalid timestamp reporting, malformed recovery, sent markers, and lock contention.',
-    patterns: `filesystem-write:mkdtempSync=13 filesystem-write:mkdirSync=1 filesystem-write:writeFileSync=9 filesystem-write:rmSync=2 subprocess:spawnSync=6`,
+      'Alert, owner identity, and status fixtures use unique temporary repositories/directories; Git setup and CLI child processes stay inside those fixtures, and coverage includes duration thresholds, invalid timestamp recovery, sent markers, lock contention, and process tokens.',
+    patterns: `filesystem-write:mkdtempSync=14 filesystem-write:mkdirSync=2 filesystem-write:writeFileSync=10 filesystem-write:rmSync=2 subprocess:spawnSync=9`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
@@ -136,6 +136,11 @@ const REVIEWED = {
     scope:
       'Git path identity is read from the current checkout; directory and symlink fixtures are created under unique OS temporary directories and removed after each test.',
     patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=1 filesystem-write:rmSync=1 filesystem-write:mkdirSync=3 filesystem-write:writeFileSync=1 filesystem-write:symlinkSync=3`,
+  },
+  'process-identity.test.mjs': {
+    scope:
+      'Linux procfs and platform command fixtures are mocked except for the current-process identity smoke test, which uses read-only procfs or one bounded ps/PowerShell query; no files or databases are written.',
+    patterns: '',
   },
   'quiet-command.test.mjs': {
     scope: 'Subprocess invocation is the command-wrapper behavior under test; review command and cwd.',
