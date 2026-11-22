@@ -11,6 +11,7 @@ import { toleranceFor } from './helpers/viewport-tolerance';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
 import { clickToolButton } from './helpers/toolbar-helpers';
+import { HIDPI_PIXEL_COMPARISON_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 const BACKING_STORE_TEST_IDS = [
   'workspace-canvas',
@@ -113,7 +114,7 @@ test.describe('Device pixel ratio', () => {
   });
 
   test('committing a Draw stroke preserves the live HiDPI preview pixels', async ({ page }) => {
-    test.setTimeout(90_000);
+    test.setTimeout(HIDPI_PIXEL_COMPARISON_TEST_TIMEOUT_MS);
     await page.goto('/');
     await expect(getWorkspaceCanvas(page)).toBeVisible();
     expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
