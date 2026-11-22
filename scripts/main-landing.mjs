@@ -10,12 +10,15 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import {
-  appendFileSync,
+  closeSync,
   copyFileSync,
   existsSync,
+  fstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -44,6 +47,9 @@ const WATCHER_READY_TIMEOUT_MS = 10_000;
 const AUTO_MERGE_RECOVERY_MS = 30 * 60_000;
 const AUTO_MERGE_OBSERVATION_GAP_MS = WATCH_POLL_MS * 3;
 const PENDING_RECOVERY_EXIT = 75;
+const FAILURE_LOG_MAX_BYTES = 256 * 1024;
+const FAILURE_LOG_MAX_LINES = 128;
+const FAILURE_LOG_MAX_LINE_CHARS = 512;
 const ALERTS = [
   { minutes: 15, label: '15 minutes' },
   { minutes: 240, label: '4 hours' },
@@ -533,6 +539,65 @@ function invalidTimestampMessage(owner) {
   ).replace(/--/g, '- -');
 }
 
+function appendFailureLog(paths, message) {
+  const file = join(paths.lockDir, 'alert-failures.log');
+  const line = (new Date().toISOString() + ' ' + String(message).replace(/[\r\n]+/g, ' ')).slice(
+    0,
+    FAILURE_LOG_MAX_LINE_CHARS
+  );
+  const entry = Buffer.from(line + '\n', 'utf8');
+  if (entry.length > FAILURE_LOG_MAX_BYTES) throw new Error('main landing failure log entry exceeds byte limit');
+  const previousLimit = Math.max(0, FAILURE_LOG_MAX_BYTES - entry.length);
+  let previous = Buffer.alloc(0);
+  let previousMode;
+  let descriptor;
+  try {
+    descriptor = openSync(file, 'r');
+    const fileState = fstatSync(descriptor);
+    const size = fileState.size;
+    previousMode = fileState.mode & 0o777;
+    const length = Math.min(size, previousLimit);
+    if (length > 0) {
+      const buffer = Buffer.alloc(length);
+      const offset = size - length;
+      let bytesRead = 0;
+      while (bytesRead < length) {
+        const count = readSync(descriptor, buffer, bytesRead, length - bytesRead, offset + bytesRead);
+        if (count === 0) break;
+        bytesRead += count;
+      }
+      const tail = buffer.subarray(0, bytesRead);
+      const firstLine = offset > 0 ? tail.indexOf(0x0a) + 1 : 0;
+      previous = firstLine > 0 ? tail.subarray(firstLine) : offset > 0 ? Buffer.alloc(0) : tail;
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+
+  const lines = previous
+    .toString('utf8')
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .slice(-(FAILURE_LOG_MAX_LINES - 1));
+  let contents = Buffer.from([...lines, line].join('\n') + '\n', 'utf8');
+  if (contents.length > FAILURE_LOG_MAX_BYTES) {
+    const tail = contents.subarray(contents.length - FAILURE_LOG_MAX_BYTES);
+    const firstLine = tail.indexOf(0x0a);
+    contents = firstLine >= 0 ? tail.subarray(firstLine + 1) : entry;
+  }
+
+  const temporary = file + '.' + process.pid + '.' + randomUUID() + '.tmp';
+  try {
+    writeFileSync(temporary, contents, { flag: 'wx', mode: previousMode ?? 0o666 });
+    renameSync(temporary, file);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
 function deliverClaimedAlert(paths, owner, key, message, postNote) {
   const file = alertMarker(paths, key);
   if (postNote(paths, message)) {
@@ -543,8 +608,11 @@ function deliverClaimedAlert(paths, owner, key, message, postNote) {
       message,
     });
   } else {
-    appendFileSync(join(paths.lockDir, 'alert-failures.log'), new Date().toISOString() + ' ' + message + '\n');
-    rmSync(file, { force: true });
+    try {
+      appendFailureLog(paths, message);
+    } finally {
+      rmSync(file, { force: true });
+    }
   }
 }
 
@@ -1737,10 +1805,7 @@ async function recoverPersistentOrphanAutoMerge(
         return current;
       });
     } catch (updateError) {
-      appendFileSync(
-        join(paths.lockDir, 'alert-failures.log'),
-        new Date().toISOString() + ' AUTO_MERGE failover: ' + updateError.message + '\n'
-      );
+      appendFailureLog(paths, 'AUTO_MERGE failover: ' + updateError.message);
     }
     note(
       paths,
@@ -1775,25 +1840,17 @@ export async function watch(
       consecutiveReadFailures = 0;
     } catch (error) {
       consecutiveReadFailures += 1;
-      appendFileSync(
-        join(paths.lockDir, 'alert-failures.log'),
-        new Date().toISOString() +
-          ' watcher readOwner failed (attempt ' +
+      appendFailureLog(
+        paths,
+        'watcher readOwner failed (attempt ' +
           consecutiveReadFailures +
           '/' +
           WATCHER_READ_RETRY_MAX +
           '): ' +
-          error.message +
-          '\n'
+          error.message
       );
       if (consecutiveReadFailures >= WATCHER_READ_RETRY_MAX) {
-        appendFileSync(
-          join(paths.lockDir, 'alert-failures.log'),
-          new Date().toISOString() +
-            ' watcher: readOwner failed ' +
-            WATCHER_READ_RETRY_MAX +
-            ' consecutive times; exiting\n'
-        );
+        appendFailureLog(paths, 'watcher: readOwner failed ' + WATCHER_READ_RETRY_MAX + ' consecutive times; exiting');
         return 1;
       }
       await sleep(WATCHER_READ_RETRY_BASE_MS * consecutiveReadFailures);
@@ -1845,10 +1902,7 @@ export async function watch(
       notifyIfDue(paths, owner);
     } catch (error) {
       try {
-        appendFileSync(
-          join(paths.lockDir, 'alert-failures.log'),
-          new Date().toISOString() + ' watcher: ' + error.message + '\n'
-        );
+        appendFailureLog(paths, 'watcher: ' + error.message);
       } catch {
         return 1;
       }

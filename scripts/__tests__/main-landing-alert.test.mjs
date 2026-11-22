@@ -282,6 +282,84 @@ describe('main landing invalid lease timestamps', () => {
 });
 
 describe('main landing duration alerts', () => {
+  it('bounds failure history while retaining the latest entries', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-duration-log-'));
+    tempDirectories.push(lockDir);
+    const logFile = join(lockDir, 'alert-failures.log');
+    writeFileSync(logFile, Array.from({ length: 160 }, (_, index) => 'old failure ' + index).join('\n') + '\n');
+    const owner = {
+      leaseId: 'bounded-log-lease',
+      occupiedSince: '2026-11-17T12:45:02.000Z',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+
+    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false);
+
+    const log = readFileSync(logFile, 'utf8');
+    const lines = log.split(/\r?\n/).filter(Boolean);
+    expect(lines).toHaveLength(128);
+    expect(log).not.toContain('old failure 0\n');
+    expect(log).toContain('old failure 159');
+    expect(lines.slice(-2)).toEqual(
+      expect.arrayContaining([expect.stringContaining('15 minutes'), expect.stringContaining('4 hours')])
+    );
+    expect(Buffer.byteLength(log)).toBeLessThanOrEqual(256 * 1024);
+  });
+
+  it('caps large UTF-8 failure logs without leaving a partial leading line', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-duration-log-bytes-'));
+    tempDirectories.push(lockDir);
+    const logFile = join(lockDir, 'alert-failures.log');
+    writeFileSync(
+      logFile,
+      Array.from({ length: 180 }, (_, index) => 'old failure ' + index + ' ' + '🧪'.repeat(1000)).join('\n') + '\n'
+    );
+    const owner = {
+      leaseId: 'bounded-byte-log-lease',
+      occupiedSince: '2026-11-17T12:45:02.000Z',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+
+    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false);
+
+    const log = readFileSync(logFile, 'utf8');
+    expect(Buffer.byteLength(log)).toBeLessThanOrEqual(256 * 1024);
+    expect(log).not.toContain('�');
+    const lines = log.split(/\r?\n/).filter(Boolean);
+    expect(log).not.toContain('old failure 0');
+    expect(log).toContain('old failure 179');
+    expect(lines[0]).toMatch(/^old failure \d+ 🧪/u);
+    expect(lines.slice(-2)).toEqual(
+      expect.arrayContaining([expect.stringContaining('15 minutes'), expect.stringContaining('4 hours')])
+    );
+  });
+
+  it('clears a failed alert claim even when failure logging fails', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-duration-log-error-'));
+    tempDirectories.push(lockDir);
+    const owner = {
+      leaseId: 'failed-log-lease',
+      occupiedSince: '2026-11-17T12:45:02.000Z',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+    const alertFile = join(lockDir, 'alert-15m.json');
+    const paths = { lockDir };
+    const postNote = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        paths.lockDir = join(lockDir, 'missing-log-directory');
+        return false;
+      })
+      .mockReturnValueOnce(true);
+
+    expect(() => notifyIfDue(paths, owner, Date.parse('2026-11-17T13:45:02.000Z'), postNote)).toThrow();
+    expect(existsSync(alertFile)).toBe(false);
+    paths.lockDir = lockDir;
+    notifyIfDue(paths, owner, Date.parse('2026-11-17T13:45:02.000Z'), postNote);
+    expect(postNote).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(readFileSync(alertFile, 'utf8'))).toMatchObject({ status: 'sent', leaseId: owner.leaseId });
+  });
+
   it('uses the injected delivery function for each elapsed threshold', () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-duration-alert-'));
     tempDirectories.push(lockDir);
