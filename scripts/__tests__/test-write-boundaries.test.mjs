@@ -8,8 +8,8 @@ const TEST_DIRECTORY = join(import.meta.dirname, '.');
 const REVIEWED = {
   'agent-board.test.mjs': {
     scope:
-      'Temporary board directories and test-owned databases; malformed-lease fixtures preserve holder directories, dead-worktree tests remove/recreate only temporary holders, and CLI children use the test board.',
-    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=11 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=29 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
+      'Temporary board directories and test-owned databases; malformed-lease and contributor-lock fixtures preserve holder directories, dead-worktree tests remove/recreate only temporary holders, and CLI children use the test board.',
+    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=13 database-open:DatabaseSync:write-capable=9 filesystem-write:mkdirSync=29 filesystem-write:symlinkSync=1 subprocess:execFileSync=7 filesystem-write:writeFileSync=2 subprocess:spawn=2`,
   },
   'agents-citations.test.mjs': {
     scope: 'Subprocess invocation is part of the citation/tooling contract; review its command and cwd.',
@@ -62,7 +62,7 @@ const REVIEWED = {
   'free-model-kilo.test.mjs': {
     scope:
       'Each fake Kilo CLI, auth-boundary, and symlinked XDG fixture uses a unique OS temp directory with finally cleanup; project-local auth sentinels remain untouched and child processes use test-owned paths.',
-    patterns: `filesystem-write:mkdir=6 filesystem-write:mkdtemp=25 filesystem-write:rm=25 filesystem-write:symlink=1 filesystem-write:writeFile=8 subprocess:spawnSync=1`,
+    patterns: `filesystem-write:mkdir=8 filesystem-write:mkdtemp=25 filesystem-write:rm=25 filesystem-write:symlink=4 filesystem-write:writeFile=8 subprocess:spawnSync=1`,
   },
   'kilo-project-boundary.test.mjs': {
     scope:
@@ -77,7 +77,7 @@ const REVIEWED = {
   'free-model-pool.test.mjs': {
     scope:
       'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, its explicit incomplete-length fixture uses an isolated fake CLI, and timeout cleanup targets only fixture-owned process IDs.',
-    patterns: `filesystem-write:mkdtemp=33 filesystem-write:rm=33 filesystem-write:writeFile=15 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+    patterns: `filesystem-write:mkdtemp=42 filesystem-write:rm=42 filesystem-write:writeFile=19 filesystem-write:mkdir=13 filesystem-write:symlinkSync=10 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -397,6 +397,7 @@ describe('script-test resource boundary audit', () => {
     expect(() => scanTestSource('const broken = ;', 'broken.test.mjs')).toThrow('Could not parse broken.test.mjs');
   });
 
+  // These two full-tree scans can exceed Vitest's default 5s under parallel suite load.
   it('derives every script test and requires exact reviewed pattern classifications', () => {
     const tests = deriveScriptTests(TEST_DIRECTORY);
     const names = new Set(tests.map(({ name }) => name));
@@ -423,7 +424,7 @@ describe('script-test resource boundary audit', () => {
     expect(unclassified, 'new write-shaped patterns need explicit classification').toEqual([]);
     expect(stale, 'changed resource patterns need review and an updated classification').toEqual([]);
     expect(missingFiles, 'classifications must refer to discovered script tests').toEqual([]);
-  });
+  }, 15_000);
 
   it('requires explicit classification for tests with zero detected side effects', () => {
     const tests = deriveScriptTests(TEST_DIRECTORY);
@@ -434,7 +435,7 @@ describe('script-test resource boundary audit', () => {
       }
     }
     expect(unclassifiedZeroFindings, 'tests with zero findings must be explicitly classified in REVIEWED').toEqual([]);
-  });
+  }, 15_000);
 
   it('keeps intentional shared reads and their boundaries explicit', () => {
     const tests = new Map(deriveScriptTests(TEST_DIRECTORY).map(({ name }) => [name, true]));

@@ -167,6 +167,7 @@ describe('toolDescriptions', () => {
     expect(quick.options.map((option) => option.detail).join(' ')).toMatch(
       /temporary Shift-add and Alt\/Option-subtract while brushing.*app implements both gestures/i
     );
+    expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option-subtract while brushing/i);
     expect(quick.appNotes).toMatch(/Holding Shift temporarily adds.*Holding Alt\/Option temporarily subtracts/i);
     expect(quick.appNotes).toMatch(
       /The app has no Intersect mode and does not implement bracket-key resizing or Shift\+Alt intersection/i

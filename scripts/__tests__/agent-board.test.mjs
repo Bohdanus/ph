@@ -501,6 +501,190 @@ describe('claims are exclusive and leased', () => {
     expect(() => b.releaseClaim(id, { force: true })).not.toThrow();
     b.close();
   });
+
+  it("preserves another agent's live issue locks during a forced claim release", () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'not yours' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/held-by-a.ts'], { issueId: id, leaseMs: 60_000 });
+    a.close();
+
+    const b = boardFor('b');
+    const result = b.releaseClaim(id, { force: true });
+    expect(result.files_released).toEqual([]);
+    expect(result.files_retained).toEqual([{ path: 'src/held-by-a.ts', agent_id: 'a' }]);
+    expect(b.getIssue(id).status).toBe('open');
+    expect(b.locksHeldBy('a').map((lock) => lock.path)).toEqual(['src/held-by-a.ts']);
+    expect(b.locksFor(id).map(({ path, agent_id }) => ({ path, agent_id }))).toEqual([
+      { path: 'src/held-by-a.ts', agent_id: 'a' },
+    ]);
+    b.close();
+  });
+
+  it('preserves all live issue locks when a forced release has no caller identity', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'unattributed forced release' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/held-without-caller.ts'], { issueId: id, leaseMs: 60_000 });
+    a.close();
+
+    const unattributed = new Board({ dir, now: () => clock }).open();
+    const result = unattributed.releaseClaim(id, { force: true });
+
+    expect(result.files_retained).toEqual([{ path: 'src/held-without-caller.ts', agent_id: 'a' }]);
+    expect(unattributed.checkPath('src/held-without-caller.ts').free).toBe(false);
+    unattributed.close();
+  });
+
+  it('preserves a live contributor lock when the claim owner releases the issue', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'shared issue' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    const b = boardFor('b');
+    b.holdFiles(['src/held-by-b.ts'], { issueId: id, leaseMs: 60_000 });
+
+    const result = a.releaseClaim(id);
+    expect(result.files_retained).toEqual([{ path: 'src/held-by-b.ts', agent_id: 'b' }]);
+    expect(b.locksFor(id).map(({ path, agent_id }) => ({ path, agent_id }))).toEqual([
+      { path: 'src/held-by-b.ts', agent_id: 'b' },
+    ]);
+    expect(b.checkPath('src/held-by-b.ts', { agent: 'someone-else' }).free).toBe(false);
+    a.close();
+    b.close();
+  });
+
+  it('preserves a live contributor lock when the claim owner reopens the issue', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'reopened with a contributor lock' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.holdFiles(['src/reopen-owner.ts'], { issueId: id, leaseMs: 60_000 });
+    const b = boardFor('b');
+    b.holdFiles(['src/reopen-contributor.ts'], { issueId: id, leaseMs: 60_000 });
+
+    const result = a.reopenIssue(id);
+
+    expect(result.files_released).toEqual(['src/reopen-owner.ts']);
+    expect(result.files_retained).toEqual([{ path: 'src/reopen-contributor.ts', agent_id: 'b' }]);
+    expect(b.checkPath('src/reopen-contributor.ts', { agent: 'someone-else' }).free).toBe(false);
+    expect(a.readyIssues().map((entry) => entry.id)).toContain(id);
+    a.close();
+    b.close();
+  });
+
+  it('uses one transaction time for claim and lock checks when reopening', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'reopen with a near-expired contributor lock' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    const b = boardFor('b');
+    b.holdFiles(['src/reopen-near-expiry.ts'], { issueId: id, leaseMs: 1 });
+    const reopenAt = clock;
+    let reads = 0;
+    a.now = () => (reads++ === 0 ? reopenAt : reopenAt + 2);
+
+    const result = a.reopenIssue(id);
+
+    expect(result.files_retained).toEqual([{ path: 'src/reopen-near-expiry.ts', agent_id: 'b' }]);
+    expect(b.checkPath('src/reopen-near-expiry.ts', { agent: 'someone-else', at: reopenAt }).free).toBe(false);
+    a.close();
+    b.close();
+  });
+
+  it('releases issue locks on reopen even when the claim is no longer live', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'reopened after its claim expired' });
+    a.holdFiles(['src/reopen-unclaimed-owner.ts'], { issueId: id, leaseMs: 60_000 });
+
+    const b = boardFor('b');
+    b.holdFiles(['src/reopen-unclaimed-contributor.ts'], { issueId: id, leaseMs: 60_000 });
+
+    const result = a.reopenIssue(id);
+
+    expect(result.files_released).toEqual(['src/reopen-unclaimed-owner.ts']);
+    expect(result.files_retained).toEqual([{ path: 'src/reopen-unclaimed-contributor.ts', agent_id: 'b' }]);
+    expect(b.checkPath('src/reopen-unclaimed-contributor.ts', { agent: 'someone-else' }).free).toBe(false);
+    a.close();
+    b.close();
+  });
+
+  it("lets doctor release a dead claim without dropping another agent's live issue lock", () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'abandoned claim' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.close();
+
+    const b = boardFor('b');
+    ensureAgentWorktree('b');
+    b.holdFiles(['src/held-by-b.ts'], { issueId: id, leaseMs: 60_000 });
+    const findings = b.doctor();
+
+    expect(findings.map((finding) => finding.issue)).toContain(id);
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        issue: id,
+        files_released: [],
+        files_retained: [{ path: 'src/held-by-b.ts', agent_id: 'b' }],
+      })
+    );
+    expect(b.getIssue(id).status).toBe('open');
+    expect(b.locksFor(id).map(({ path, agent_id }) => ({ path, agent_id }))).toEqual([
+      { path: 'src/held-by-b.ts', agent_id: 'b' },
+    ]);
+    b.close();
+  });
+
+  it('does not report a foreign live lock after doctor reclaims its dead worktree', () => {
+    ensureAgentWorktree('a');
+    ensureAgentWorktree('b');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'stale claim with dead contributor' });
+    a.claimIssue(id, { leaseMs: 86_400_000 });
+    const b = boardFor('b');
+    b.holdFiles(['src/dead-contributor.ts'], { issueId: id, leaseMs: 86_400_000 });
+    a.close();
+    b.close();
+
+    rmSync(join(dir, 'wt-a'), { recursive: true, force: true });
+    rmSync(join(dir, 'wt-b'), { recursive: true, force: true });
+    const doctor = boardFor('doctor');
+    const findings = doctor.doctor();
+
+    expect(findings.map((finding) => finding.kind)).toEqual(['dead-worktree', 'dead-worktree-lock']);
+    expect(findings[0].files_retained).toEqual([]);
+    expect(doctor.locksHeldBy('b')).toHaveLength(0);
+    doctor.close();
+  });
+
+  it('reports a lock renewed while doctor is releasing its expired claim snapshot', () => {
+    ensureAgentWorktree('a');
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'claim expired while its file work continued' });
+    const path = 'src/renewed-during-sweep.ts';
+    a.claimIssue(id, { leaseMs: 1 });
+    a.holdFiles([path], { issueId: id, leaseMs: 60_000 });
+    advance(2);
+
+    const releaseClaim = a.releaseClaim.bind(a);
+    let renewed = false;
+    a.releaseClaim = (issueId, options) => {
+      if (!renewed) {
+        renewed = true;
+        a.holdFiles([path], { issueId, leaseMs: 60_000 });
+      }
+      return releaseClaim(issueId, options);
+    };
+
+    const findings = a.doctor();
+
+    expect(renewed).toBe(true);
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        issue: id,
+        files_retained: [{ path, agent_id: 'a' }],
+      })
+    );
+    expect(a.checkPath(path, { agent: 'b' }).free).toBe(false);
+    a.close();
+  });
 });
 
 describe('file locks make one-file-one-agent real', () => {
@@ -559,6 +743,33 @@ describe('file locks make one-file-one-agent real', () => {
     b.close();
   });
 
+  it("does not force-unlock another agent's live file", () => {
+    const a = boardFor('a');
+    a.holdFiles(['src/held-by-a.ts'], { leaseMs: 60_000 });
+    a.close();
+
+    const b = boardFor('b');
+    const result = b.releaseFiles(['src/held-by-a.ts'], { force: true });
+    expect(result).toEqual({ released: [], blocked: [{ path: 'src/held-by-a.ts', agent_id: 'a' }] });
+    expect(b.checkPath('src/held-by-a.ts').free).toBe(false);
+    b.close();
+  });
+
+  it("allows force-unlock of another agent's expired file lease", () => {
+    const a = boardFor('a');
+    a.holdFiles(['src/expired-forced.ts'], { leaseMs: 60_000 });
+    a.close();
+    advance(60_001);
+
+    const b = boardFor('b');
+    expect(b.releaseFiles(['src/expired-forced.ts'], { force: true })).toEqual({
+      released: ['src/expired-forced.ts'],
+      blocked: [],
+    });
+    expect(b.checkPath('src/expired-forced.ts').free).toBe(true);
+    b.close();
+  });
+
   it('keeps a file lock with an unreadable expiry live instead of granting it twice', () => {
     const a = boardFor('a');
     mkdirSync(a.identity.worktree, { recursive: true });
@@ -570,6 +781,10 @@ describe('file locks make one-file-one-agent real', () => {
     const b = boardFor('b');
     expect(b.liveLocks().map((lock) => lock.path)).toContain('src/unreadable-lock.ts');
     expect(b.checkPath('src/unreadable-lock.ts').free).toBe(false);
+    expect(b.releaseFiles(['src/unreadable-lock.ts'], { force: true })).toEqual({
+      released: [],
+      blocked: [{ path: 'src/unreadable-lock.ts', agent_id: 'a' }],
+    });
     expect(b.doctor()).toEqual([]);
     expect(b.unreadableLeaseDeadlines()).toEqual([
       {
@@ -2268,6 +2483,37 @@ describe('the command line', () => {
     expect(other.err).toMatch(/held by another agent/);
   });
 
+  it('preserves foreign live locks when releasing a claim or force-unlocking a path', async () => {
+    const filed = JSON.parse((await cli(['new', 'keep a live lock', '--json'])).out);
+    const path = 'src/keep-live-lock.ts';
+    expect((await cli(['claim', filed.id, '--files', path])).code).toBe(0);
+
+    const released = await cli(['release', filed.id, '--force'], 'b');
+    expect(released.code).toBe(4);
+    expect(released.out).toMatch(/released; live file locks remain held/);
+    expect(JSON.parse((await cli(['show', filed.id, '--json'])).out).issue.status).toBe('open');
+
+    const unlocked = await cli(['unlock', path, '--force'], 'b');
+    expect(unlocked.code).toBe(4);
+    expect(unlocked.out).toMatch(/not released, held by another agent/);
+    expect((await cli(['check', path], 'b')).code).toBe(1);
+  });
+
+  it('reports a retained contributor lock when reopening a claimed issue', async () => {
+    const filed = JSON.parse((await cli(['new', 'reopen with contributor lock', '--json'])).out);
+    const path = 'src/reopen-cli-contributor.ts';
+    expect((await cli(['claim', filed.id, '--files', 'src/reopen-cli-owner.ts'])).code).toBe(0);
+    expect((await cli(['hold', path, '--issue', filed.id], 'b')).code).toBe(0);
+
+    const reopened = await cli(['reopen', filed.id]);
+
+    expect(reopened.code).toBe(4);
+    expect(reopened.out).toContain('reopened; live file locks remain held');
+    expect(reopened.out).toContain(`${path} by b`);
+    expect(JSON.parse((await cli(['show', filed.id, '--json'])).out).issue.status).toBe('open');
+    expect((await cli(['check', path], 'a')).code).toBe(1);
+  });
+
   it('shows, in `ready`, the files an issue is about and whether they are free', async () => {
     const filed = JSON.parse(
       (await cli(['new', 'P0 — the worst thing in the adapter', '--files', 'src/a.ts', 'src/b.ts', '--json'])).out
@@ -2736,12 +2982,16 @@ describe('the command line', () => {
     execFileSync('git', ['init', '--quiet'], { cwd: repo });
     const { id } = JSON.parse((await cli(['new', 'orphaned', '--json'], 'a', repo)).out);
     await cli(['claim', id, '--lease', '24h', '--files', 'src/orphan.ts'], 'a', repo);
+    await cli(['hold', 'src/orphan-contributor.ts', '--issue', id], 'b');
     rmSync(repo, { recursive: true, force: true });
     const dry = await cli(['doctor', '--dry-run', '--json']);
     expect(dry.code).toBe(0);
     expect(JSON.parse(dry.out).findings.length).toBeGreaterThan(0);
-    const fixed = await cli(['doctor']);
+    const fixed = await cli(['doctor'], 'b');
+    expect(fixed.code).toBe(4);
     expect(fixed.out).toContain('released');
+    expect(fixed.out).toContain('live file locks remain held');
+    expect(fixed.out).toContain('src/orphan-contributor.ts by b');
     expect(JSON.parse((await cli(['show', id, '--json'])).out).issue.status).toBe('open');
   });
 

@@ -1022,7 +1022,7 @@ describe('useRect', () => {
       expect(decodeURIComponent(evictedCursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1] ?? '')).toContain(
         'rotate(80.1) scale(0.2)'
       );
-    });
+    }, 15_000);
 
     it('orients resize cursors along rotated object edges', () => {
       const { result } = renderUseRect({

@@ -988,19 +988,18 @@ the `[` row is
 `https://www.adobe.com/learn/photoshop/web/compositing`. The app does not bind either bracket key
 for Quick Selection, independently of what Photoshop's configurable defaults are.
 
-**The hint and this historical finding had drifted apart.** An earlier version of the bar named
-Shift and Alt while the tool area ignored both keys. Commit `7f3b0d19` removed that false promise.
-The current bar now describes the gestures the tool area actually implements: Shift temporarily
-adds while a subtract-mode stroke is in progress, and Alt/Option temporarily subtracts while an
-add-mode stroke is in progress. `QuickSelectionToolArea` samples the modifiers for each pointer
-event and returns to the selected bar mode when the modifier is released. Adobe's current general
-selection instructions describe the same combination gestures for any selection tool.
+**The current Quick Selection hint names supported selection-mode modifiers.** In Add mode,
+the bar says Alt/Option temporarily subtracts; in Subtract mode it says Shift temporarily adds.
+`QuickSelectionToolArea.updateStrokeModeFromModifiers()` reads those keys during pointer events,
+and its tests cover both base modes and return to the mode captured when a stroke began. Adobe
+documents Shift-drag for Add and Alt/Option-drag for Subtract with selection tools, and the current
+Quick Selection guide documents Add and Subtract modes in the Options bar.
 
-The two `modifiers[]` rows are therefore implemented for Quick Selection and must not be described
-as missing. This support is selection-mode switching during a brush stroke; it does not implement
-brush-tip resizing or another brush-shape gesture. Keep the test and descriptor aligned with these
-specific behaviors rather than treating every modifier gesture used by Photoshop's brush tools as
-a Quick Selection capability.
+The former finding that the bar promised an unsupported modifier was accurate before these
+handlers and hint text were added back, but the old account is stale and must not describe current
+behavior. Brush adjustments are separate: Adobe documents Alt + right-click drag on Windows or
+Control + Option drag on macOS for brush size and hardness; Shift-to-square or circle applies to
+Marquee tools. The Quick Selection hint promises none of those gestures.
 
 ### Sources
 
@@ -1011,6 +1010,8 @@ a Quick Selection capability.
 - `https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf?TVGll=wnKKa` (2019) — excludes Quick Selection from the Intersect shortcut; lists brackets for Brush/Stamp tools without naming Quick Selection
 - `https://www.adobe.com/learn/photoshop/web/compositing` — Adobe Learn tutorial directly demonstrates `[` decreasing Quick Selection brush size
 - `https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html` (updated 2026-09-08) — directs users to the customizable Keyboard Shortcuts dialog for current defaults
+- `https://helpx.adobe.com/au/photoshop/desktop/get-started/settings-and-preferences/change-tool-pointers.html` (updated 2025-12-02) — Alt + right-click or Control + Option drag adjusts brush size and hardness
+- `https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/make-selections-with-marquee-tools.html` (updated 2026-09-28) — Shift constrains marquee shapes to squares or circles
 - `https://helpx.adobe.com/photoshop/using/tool-techniques/quick-selection-tool.html` (2023-05-24) — `(W)`, edge detection on drag
 - `https://helpx.adobe.com/ph_fil/photoshop/how-to/use-quick-selection-tool.html` (2022-12-28) — the `Auto-Enhance` label, auto-switch to Add, Option/Alt subtract
 - `https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html` (2022-12-28) — `Select and Mask` on every selection tool's bar, "similar tones and image edges", Refine Edge Brush, Properties panel

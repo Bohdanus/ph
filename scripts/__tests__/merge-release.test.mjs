@@ -182,9 +182,8 @@ describe('releaseWorktree — releases as the branch, and only the branch', () =
     const result = releaseWorktree(board, { worktreePath: path, branch: 'feat/mine', base: 'main', previousBase });
     expect(result.releasedClaims).toEqual([id]);
     expect(board.listIssues({ claimedBy: 'feat/mine' })).toEqual([]);
-    // The lock goes with the claim, which is the board's own pairing rule
-    // (`releaseIssueLocksInTransaction`), not a second thing this script had to do. So the
-    // assertion is on the end state: the path is free for the next agent.
+    // The issue pairing releases its lock without a second path-level release by this script.
+    // The assertion is on the end state: the path is free for the next agent.
     expect(board.locksHeldBy('feat/mine')).toEqual([]);
     expect(board.liveLocks().map((l) => l.path)).toEqual([]);
   });
@@ -211,6 +210,52 @@ describe('releaseWorktree — releases as the branch, and only the branch', () =
     // Still held, by the agent that took it. This is the assertion that would break first
     // if anyone reached for `--force`, because force skips the ownership check entirely.
     expect(theirs.locksHeldBy('other/agent').map((l) => l.path)).toEqual(['src/contested.ts']);
+  });
+
+  it('reports a foreign live lock retained while releasing a merged claim', () => {
+    const path = makeWorktree('retained', { commit: true });
+    const previousBase = git(['rev-parse', 'main']);
+    const theirs = boardFor('other/agent', path);
+    const id = theirs.createIssue({ title: 'shared issue' }).id;
+    theirs.holdFiles(['src/contested.ts'], { issueId: id, leaseMs: 60_000 });
+
+    const mine = boardFor('feat/retained', path);
+    mine.claimIssue(id, { leaseMs: 60_000 });
+    git(['merge', '-q', '--no-ff', '-m', 'land retained', 'feat/retained'], repo);
+
+    const result = releaseWorktree(mine, {
+      worktreePath: path,
+      branch: 'feat/retained',
+      base: 'main',
+      previousBase,
+    });
+
+    expect(result.retainedLocks).toEqual([{ path: 'src/contested.ts', agent_id: 'other/agent' }]);
+    expect(theirs.checkPath('src/contested.ts', { agent: 'someone-else' }).free).toBe(false);
+    expect(formatReport([result]).join('\n')).toContain('foreign locks retained: src/contested.ts by other/agent');
+  });
+
+  it('reports a foreign live lock blocked by path-level release', () => {
+    const path = makeWorktree('path-retained', { commit: true });
+    const previousBase = git(['rev-parse', 'main']);
+    const mine = boardFor('feat/path-retained', path);
+    const theirs = boardFor('other/agent', path);
+    mine.holdFiles(['src/contested.ts'], { leaseMs: 60_000 });
+    theirs.holdFiles(['src/contested.ts'], { leaseMs: 60_000, force: true });
+
+    git(['merge', '-q', '--no-ff', '-m', 'land path-retained', 'feat/path-retained'], repo);
+
+    const result = releaseWorktree(mine, {
+      worktreePath: path,
+      branch: 'feat/path-retained',
+      base: 'main',
+      previousBase,
+    });
+
+    expect(result.releasedLocks).toEqual(['src/contested.ts']);
+    expect(result.retainedLocks).toEqual([{ path: 'src/contested.ts', agent_id: 'other/agent' }]);
+    expect(theirs.checkPath('src/contested.ts', { agent: 'someone-else' }).free).toBe(false);
+    expect(formatReport([result]).join('\n')).toContain('foreign locks retained: src/contested.ts by other/agent');
   });
 
   it('refuses a claim another agent holds, rather than taking it', () => {
@@ -457,6 +502,19 @@ describe('formatReport — the report the hook actually prints', () => {
     const out = text([{ worktree: 'wt', branch: 'feat/landed', releasedClaims: ['a'], releasedLocks: ['x', 'y'] }]);
     expect(out).toContain('feat/landed — claims a, 2 lock(s)');
     expect(out).toContain('released 1 of 1 worktree(s)');
+  });
+
+  it('reports foreign live locks retained during a release', () => {
+    const out = text([
+      {
+        worktree: 'wt',
+        branch: 'feat/landed',
+        releasedClaims: ['a'],
+        releasedLocks: [],
+        retainedLocks: [{ path: 'src/held.ts', agent_id: 'other/agent' }],
+      },
+    ]);
+    expect(out).toContain('foreign locks retained: src/held.ts by other/agent');
   });
 
   it('says the dry run would release rather than that it released', () => {
