@@ -41,6 +41,8 @@ const storeState = vi.hoisted(
       hasImage: true,
       toolName: 'brush' as ToolName,
       activeLayerId: 'layer-1' as string | null,
+      viewState: { panX: 0, panY: 0, zoom: 1, fitScaleCompensation: 1, rotation: 0, fitToScreen: true },
+      setViewState: vi.fn(),
       layers: {
         'layer-1': {
           id: 'layer-1',
@@ -56,6 +58,15 @@ const storeState = vi.hoisted(
       hasImage: boolean;
       toolName: ToolName;
       activeLayerId: string | null;
+      viewState: {
+        panX: number;
+        panY: number;
+        zoom: number;
+        fitScaleCompensation: number;
+        rotation: number;
+        fitToScreen: boolean;
+      };
+      setViewState: ReturnType<typeof vi.fn>;
       layers: Record<string, { id: string; pos: { x: number; y: number }; isBedrock: boolean; locked: boolean }>;
     }
 );
@@ -162,6 +173,8 @@ beforeEach(() => {
   storeState.hasImage = true;
   storeState.toolName = 'brush';
   storeState.activeLayerId = 'layer-1';
+  storeState.viewState = { panX: 0, panY: 0, zoom: 1, fitScaleCompensation: 1, rotation: 0, fitToScreen: true };
+  storeState.setViewState.mockClear();
   storeState.layers['layer-1'] = {
     id: 'layer-1',
     pos: { x: 20, y: 30 },
@@ -1714,5 +1727,139 @@ describe('AppKeyboardShortcuts failure isolation', () => {
 
     expect(goToTool).not.toHaveBeenCalled();
     expect(undo).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppKeyboardShortcuts View navigation', () => {
+  it.each([
+    ['macOS', { metaKey: true }],
+    ['Windows and Linux', { ctrlKey: true }],
+  ])('Ctrl+0 / Cmd+0 triggers Fit on Screen on %s', (_platform, modifiers) => {
+    storeState.viewState = { panX: 100, panY: 50, zoom: 2, fitScaleCompensation: 1, rotation: 0, fitToScreen: false };
+    renderShortcuts();
+
+    expect(press('0', modifiers)).toBe(true);
+    expect(storeState.setViewState).toHaveBeenCalledWith({
+      panX: 0,
+      panY: 0,
+      zoom: 1,
+      fitScaleCompensation: 1,
+      rotation: 0,
+      fitToScreen: true,
+    });
+  });
+
+  it.each([
+    ['macOS', { metaKey: true }],
+    ['Windows and Linux', { ctrlKey: true }],
+  ])('Ctrl+1 / Cmd+1 triggers 100% magnification on %s', (_platform, modifiers) => {
+    renderShortcuts();
+
+    expect(press('1', modifiers)).toBe(true);
+    expect(storeState.setViewState).toHaveBeenCalledWith({
+      panX: 0,
+      panY: 0,
+      zoom: 1,
+      fitScaleCompensation: 1,
+      rotation: 0,
+      minimumZoomOverride: undefined,
+    });
+  });
+
+  it.each([
+    ['macOS', { metaKey: true }],
+    ['Windows and Linux', { ctrlKey: true }],
+  ])('Ctrl++ / Cmd++ triggers Zoom In on %s', (_platform, modifiers) => {
+    storeState.viewState = { panX: 0, panY: 0, zoom: 1, fitScaleCompensation: 1, rotation: 0, fitToScreen: false };
+    renderShortcuts();
+
+    expect(press('+', modifiers)).toBe(true);
+    expect(storeState.setViewState).toHaveBeenCalledWith({ zoom: 1.25 });
+  });
+
+  it.each([
+    ['macOS', { metaKey: true }],
+    ['Windows and Linux', { ctrlKey: true }],
+  ])('Ctrl+= / Cmd+= triggers Zoom In on %s', (_platform, modifiers) => {
+    storeState.viewState = { panX: 0, panY: 0, zoom: 1, fitScaleCompensation: 1, rotation: 0, fitToScreen: false };
+    renderShortcuts();
+
+    expect(press('=', modifiers)).toBe(true);
+    expect(storeState.setViewState).toHaveBeenCalledWith({ zoom: 1.25 });
+  });
+
+  it.each([
+    ['macOS', { metaKey: true }],
+    ['Windows and Linux', { ctrlKey: true }],
+  ])('Ctrl+- / Cmd+- triggers Zoom Out on %s', (_platform, modifiers) => {
+    storeState.viewState = { panX: 0, panY: 0, zoom: 2, fitScaleCompensation: 1, rotation: 0, fitToScreen: false };
+    renderShortcuts();
+
+    expect(press('-', modifiers)).toBe(true);
+    expect(storeState.setViewState).toHaveBeenCalledWith({ zoom: 1.6 });
+  });
+
+  it.each([
+    ['macOS', { metaKey: true }],
+    ['Windows and Linux', { ctrlKey: true }],
+  ])('Ctrl+_ / Cmd+_ triggers Zoom Out on %s', (_platform, modifiers) => {
+    storeState.viewState = { panX: 0, panY: 0, zoom: 2, fitScaleCompensation: 1, rotation: 0, fitToScreen: false };
+    renderShortcuts();
+
+    expect(press('_', modifiers)).toBe(true);
+    expect(storeState.setViewState).toHaveBeenCalledWith({ zoom: 1.6 });
+  });
+
+  it('ignores View shortcuts when an input field is focused', () => {
+    renderShortcuts();
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.focus();
+
+    press('0', { ctrlKey: true }, input);
+    press('1', { ctrlKey: true }, input);
+    press('+', { ctrlKey: true }, input);
+    press('-', { ctrlKey: true }, input);
+
+    expect(storeState.setViewState).not.toHaveBeenCalled();
+
+    input.remove();
+  });
+
+  it('does nothing at all while no image is loaded', () => {
+    storeState.hasImage = false;
+    renderShortcuts();
+
+    press('0', { ctrlKey: true });
+    press('1', { ctrlKey: true });
+    press('+', { ctrlKey: true });
+    press('-', { ctrlKey: true });
+
+    expect(storeState.setViewState).not.toHaveBeenCalled();
+  });
+
+  it('Zoom In and Zoom Out are relative to current magnification', () => {
+    storeState.viewState = { panX: 0, panY: 0, zoom: 2, fitScaleCompensation: 1, rotation: 0, fitToScreen: false };
+    const { rerender } = render(
+      <KeyboardEventsProvider>
+        <AppKeyboardShortcuts />
+      </KeyboardEventsProvider>
+    );
+
+    press('+', { ctrlKey: true });
+    expect(storeState.setViewState).toHaveBeenLastCalledWith({ zoom: 2.5 });
+
+    // StoreContext rerenders after setViewState. Reflect that state transition in the mock
+    // before the next key event so the second shortcut reads the same 2.5x view as production.
+    storeState.viewState = { ...storeState.viewState, zoom: 2.5 };
+    rerender(
+      <KeyboardEventsProvider>
+        <AppKeyboardShortcuts />
+      </KeyboardEventsProvider>
+    );
+    storeState.setViewState.mockClear();
+
+    press('-', { ctrlKey: true });
+    expect(storeState.setViewState).toHaveBeenLastCalledWith({ zoom: 2 });
   });
 });

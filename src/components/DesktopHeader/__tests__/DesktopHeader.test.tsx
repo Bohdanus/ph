@@ -6,6 +6,7 @@ import { availableTools } from '../../../../toolbar-mapping.ts';
 import { createMockLayers } from '../../../__tests__/fixtures/layer.ts';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
 import type { TextToolArgs } from '../../../tools/text.ts';
+import { DEFAULT_VIEW_STATE } from '../../../contexts/view-state.ts';
 
 const committedLayers = createMockLayers(1);
 
@@ -22,6 +23,8 @@ const storeState = vi.hoisted(() => ({
   documentFrame: { x: 0, y: 0, width: 800, height: 600 },
   hasImage: true,
   toolName: 'draw' as ToolName,
+  viewState: { panX: 0, panY: 0, zoom: 1, fitScaleCompensation: 1, rotation: 0, fitToScreen: true },
+  setViewState: vi.fn(),
 }));
 
 const dispatch = vi.hoisted(() => vi.fn());
@@ -65,6 +68,8 @@ vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => history })
 vi.mock('../../../contexts/useLayer.ts', () => ({ useLayers: () => layers }));
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({ useCurrentTool: () => currentTool }));
 vi.mock('../../../hooks/useInvertLayer.ts', () => ({ useInvertLayer: () => ({ invertActiveLayer }) }));
+vi.mock('../../../hooks/useDevicePixelRatio.ts', () => ({ useDevicePixelRatio: () => 2 }));
+vi.mock('../../../hooks/useWorkspaceFitScale.ts', () => ({ useWorkspaceFitScale: () => 0.25 }));
 vi.mock('../../../contexts/ThemeContext.tsx', () => ({
   useTheme: () => themeState,
 }));
@@ -82,6 +87,8 @@ const defaultStore = {
   documentFrame: { x: 0, y: 0, width: 800, height: 600 },
   hasImage: true,
   toolName: 'draw' as ToolName,
+  viewState: { panX: 0, panY: 0, zoom: 1, fitScaleCompensation: 1, rotation: 0, fitToScreen: true },
+  setViewState: vi.fn(),
 };
 
 /**
@@ -96,7 +103,7 @@ function renderHeader() {
   );
 }
 
-function openMenu(name: 'File' | 'Tools' | 'Image' | 'Edit') {
+function openMenu(name: 'File' | 'Tools' | 'Image' | 'Edit' | 'View') {
   fireEvent.click(screen.getByRole('button', { name }));
 }
 
@@ -172,6 +179,7 @@ beforeEach(() => {
   storeState.toolName = 'draw';
   storeState.totalSize = { width: 800, height: 600 };
   storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
+  storeState.viewState = { ...DEFAULT_VIEW_STATE };
   history.canUndo.mockReturnValue(false);
   history.canRedo.mockReturnValue(false);
   layers.commitDirtyTool.mockReturnValue(committedLayers);
@@ -193,7 +201,60 @@ describe('DesktopHeader', () => {
     expect(screen.getByRole('button', { name: 'Tools' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Image' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Window' })).toBeInTheDocument();
+  });
+
+  it('opens View with Zoom In, Zoom Out, Fit on Screen and 100% commands', () => {
+    renderHeader();
+
+    openMenu('View');
+
+    expect(screen.getByTestId('view-menu-zoom-in-button')).toBeInTheDocument();
+    expect(screen.getByTestId('view-menu-zoom-out-button')).toBeInTheDocument();
+    expect(screen.getByTestId('view-menu-fit-on-screen-button')).toBeInTheDocument();
+    expect(screen.getByTestId('view-menu-100-percent-button')).toBeInTheDocument();
+  });
+
+  it('applies the existing zoom-step behavior and closes the menu', () => {
+    renderHeader();
+
+    openMenu('View');
+    fireEvent.click(screen.getByTestId('view-menu-zoom-in-button'));
+    expect(storeState.setViewState).toHaveBeenLastCalledWith({ zoom: 1.25 });
+    expect(screen.queryByTestId('header-view-menu')).toBeNull();
+
+    openMenu('View');
+    fireEvent.click(screen.getByTestId('view-menu-zoom-out-button'));
+    expect(storeState.setViewState).toHaveBeenLastCalledWith({ zoom: 0.8 });
+    expect(screen.queryByTestId('header-view-menu')).toBeNull();
+  });
+
+  it('resets the view to Fit on Screen and closes the menu', () => {
+    renderHeader();
+
+    openMenu('View');
+    fireEvent.click(screen.getByTestId('view-menu-fit-on-screen-button'));
+
+    expect(storeState.setViewState).toHaveBeenCalledWith(DEFAULT_VIEW_STATE);
+    expect(screen.queryByTestId('header-view-menu')).toBeNull();
+  });
+
+  it('sets 100% magnification with DPR-aware scale and resets pan and rotation', () => {
+    renderHeader();
+
+    openMenu('View');
+    fireEvent.click(screen.getByTestId('view-menu-100-percent-button'));
+
+    expect(storeState.setViewState).toHaveBeenCalledWith({
+      panX: 0,
+      panY: 0,
+      zoom: 2,
+      fitScaleCompensation: 1,
+      rotation: 0,
+      minimumZoomOverride: undefined,
+    });
+    expect(screen.queryByTestId('header-view-menu')).toBeNull();
   });
 
   it('shows all available tools in the Tools menu', () => {
@@ -1052,5 +1113,94 @@ describe('DesktopHeader history controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
 
     expect(history.redo).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('DesktopHeader View menu edge cases', () => {
+  it('closes the View menu when Escape is pressed', () => {
+    renderHeader();
+
+    openMenu('View');
+    expect(screen.getByTestId('header-view-menu')).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(screen.queryByTestId('header-view-menu')).toBeNull();
+  });
+
+  it('disables View menu items when no image is open', () => {
+    storeState.hasImage = false;
+    renderHeader();
+
+    openMenu('View');
+
+    expect(screen.getByTestId('view-menu-zoom-in-button')).toBeDisabled();
+    expect(screen.getByTestId('view-menu-zoom-out-button')).toBeDisabled();
+    expect(screen.getByTestId('view-menu-fit-on-screen-button')).toBeDisabled();
+    expect(screen.getByTestId('view-menu-100-percent-button')).toBeDisabled();
+  });
+
+  it('View menu items are enabled when an image is open', () => {
+    storeState.hasImage = true;
+    renderHeader();
+
+    openMenu('View');
+
+    expect(screen.getByTestId('view-menu-zoom-in-button')).not.toBeDisabled();
+    expect(screen.getByTestId('view-menu-zoom-out-button')).not.toBeDisabled();
+    expect(screen.getByTestId('view-menu-fit-on-screen-button')).not.toBeDisabled();
+    expect(screen.getByTestId('view-menu-100-percent-button')).not.toBeDisabled();
+  });
+
+  it('Fit on Screen respects fitToScreen false state and toggles it to true', () => {
+    storeState.viewState = {
+      panX: 100,
+      panY: 50,
+      zoom: 2,
+      fitScaleCompensation: 1,
+      rotation: 0,
+      fitToScreen: false,
+    };
+    renderHeader();
+
+    openMenu('View');
+    fireEvent.click(screen.getByTestId('view-menu-fit-on-screen-button'));
+
+    expect(storeState.setViewState).toHaveBeenCalledWith(DEFAULT_VIEW_STATE);
+  });
+
+  it('100% command works correctly with non-zero pan and rotation', () => {
+    storeState.viewState = {
+      panX: 200,
+      panY: 150,
+      zoom: 3,
+      fitScaleCompensation: 1,
+      rotation: 45,
+      fitToScreen: false,
+    };
+    renderHeader();
+
+    openMenu('View');
+    fireEvent.click(screen.getByTestId('view-menu-100-percent-button'));
+
+    expect(storeState.setViewState).toHaveBeenCalledWith({
+      panX: 0,
+      panY: 0,
+      zoom: 2,
+      fitScaleCompensation: 1,
+      rotation: 0,
+      minimumZoomOverride: undefined,
+    });
+  });
+
+  it('View menu closes when clicking outside after opening', () => {
+    renderHeader();
+
+    openMenu('View');
+    expect(screen.getByTestId('header-view-menu')).toBeInTheDocument();
+
+    fireEvent.mouseDown(document.body);
+
+    expect(screen.queryByTestId('header-view-menu')).toBeNull();
   });
 });
