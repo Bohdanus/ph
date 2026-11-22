@@ -412,6 +412,48 @@ describe('useRect', () => {
     expect(ctx.clearRect).toHaveBeenCalledWith(-50, -40, 100, 80);
   });
 
+  it.each([false, true])(
+    'repaints the overlay when its frame or dim visibility changes (incremental: %s)',
+    (incrementalOverlay) => {
+      const props: UseRectProps = {
+        imageSize: { width: 800, height: 600 },
+        initialRect: { x1: 100, y1: 120, x2: 200, y2: 200 },
+        incrementalOverlay,
+        hideBlend: false,
+        containerRef: { current: testContext.containerElement },
+        overlayRef: { current: testContext.overlayCanvas },
+        onChangeEnd: vi.fn(),
+      };
+      const ctx = testContext.overlayCanvas.getContext('2d') as unknown as ReturnType<typeof createMockCanvasContext>;
+      const clearBackingStore = () =>
+        expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, ctx.canvas.width, ctx.canvas.height);
+      const { rerender } = renderHook(({ imageSize, hideBlend }) => useRect({ ...props, imageSize, hideBlend }), {
+        initialProps: { imageSize: props.imageSize, hideBlend: false },
+      });
+
+      vi.mocked(ctx.clearRect).mockClear();
+      vi.mocked(ctx.fillRect).mockClear();
+      act(() => rerender({ imageSize: { width: 400, height: 300 }, hideBlend: false }));
+
+      clearBackingStore();
+      expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 400, 300);
+
+      vi.mocked(ctx.clearRect).mockClear();
+      vi.mocked(ctx.fillRect).mockClear();
+      act(() => rerender({ imageSize: { width: 400, height: 300 }, hideBlend: true }));
+
+      clearBackingStore();
+      expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 400, 300);
+
+      vi.mocked(ctx.clearRect).mockClear();
+      vi.mocked(ctx.fillRect).mockClear();
+      act(() => rerender({ imageSize: { width: 400, height: 300 }, hideBlend: false }));
+
+      clearBackingStore();
+      expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 400, 300);
+    }
+  );
+
   it('clears the shared canvas when an external overlay is mounted for the first time', () => {
     const initialRect = { x1: 100, y1: 120, x2: 200, y2: 200 };
     const ctx = testContext.overlayCanvas.getContext('2d') as unknown as ReturnType<typeof createMockCanvasContext>;
