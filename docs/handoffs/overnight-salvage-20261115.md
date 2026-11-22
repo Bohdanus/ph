@@ -65,3 +65,76 @@ This snapshot supersedes the earlier landing and operation status above. The des
 Immediately before this handoff-only update, the continuation candidate was `task/salvage-continuation-20261116` at `f03797163c91a03c5a9f7cc06a28457837c76129` (tree `40f50757bbf008010387c607e89ca4627fec1363`), based on current `main`. Its only code changes beyond `main` are a 60-second bounded timeout for synchronous Git probes in `main-landing.mjs` and a 15-second test budget for the 12MP sharpen buffer/index correctness test. Both focused tests passed. The commit gate passed; the subsequent full push gate completed without failure output. An earlier full-gate attempt exposed the resource-sensitive timeouts that these adjustments address.
 
 No additional source changes were selected from the preserved dirty snapshots. `audit-harvest-all-20261114` still has a staged patch that removes newer test coverage. The seven tracked working files in `systemic-hardening-disposition-20261115` match current `main` exactly; its untracked `REVIEW_RESULTS.json` remains preserved. The detached primary `ph` checkout remains dirty with unfinished chats, and its untracked `ORCHESTRATION_ISSUES_AND_BUGS.md`, `check-db.mjs`, and cursor image remain untouched. The issue report was not copied into the tracked tree because its claims mix fixed behavior, documented design limits, and unverified risks. No worktree or branch was disposed.
+
+## WSL stale-worktree continuation - 2026-11-21
+
+### Current source and integration
+
+A fresh WSL fetch and git ls-remote origin refs/heads/main both resolved to
+e31679a888261612e5efabe7bb3ce8d822a51479. The WSL salvage task branch was already
+based on that commit. npm run repo:state now reports no operation in progress across
+the 32 registered worktrees; the designated main worktree remains at older commit
+61fe07d1 and its landing lease was free at the last check.
+
+The dirty task/wsl-board-lock-salvage-20261119 worktree is preserved unchanged because
+its owner could not be conclusively identified. Its complete staged and unstaged patch
+was copied to the current task branch. The stale prepared merge in
+fix/orchestration-rigorous-final-20261116 was cleared only after its exact staged
+result was saved, no unresolved paths or unstaged changes remained, no process using
+that worktree was found, and the branch-side work was shown to be represented in the
+carried patch. Its six source commits and clean worktree remain preserved.
+
+The integrated lock patch reports live foreign locks when claim release or reopen
+retains them, prevents forced release of a live foreign lock, and makes doctor
+report only retained locks still present after the entire sweep. A regression covers
+the case where a later stale-lock pass clears a lock that the earlier claim pass
+temporarily retained. The focused agent-board and merge-release suites pass 222 tests.
+Three tool-free Kilo Nemotron 3 Ultra completion reviews ran at zero reported cost;
+they were review completions, not subagents, and multiple claims were rejected after
+source checks. Kilo task dispatch is unavailable in this Codex host and OpenRouter
+preflight returned HTTP 401, so no OpenRouter completion or Kilo subagent is claimed.
+
+### Ref and patch dispositions
+
+- task/review-next-salvage-20261104: the exact-pixel getImageData/putImageData
+  implementation is present on current origin/main; the dirty source difference
+  removes two comments. Its docs/INCOMING_COMMITS.md ledger is obsolete and was
+  deliberately removed by current main commit b657d3c7a. No pixel or ledger content
+  was transplanted.
+- Bedrock conversion tests and the source-flag assertion from commits 8b12fa488 and
+  66e21c3a4 exist in current main's evolved test file. The retained-pixel patch
+  from 8d1e7026f is also represented by current materialization code. Patch-ID
+  differences here do not indicate missing behavior.
+- The inventory batching safeguard from 68826b23e is present in current main with
+  stricter handling for an individually overlong path. The old shared Kilo DB-path
+  resolver was not ported: the WSL session database was unavailable, and the old
+  resolver did not establish a working Windows AppData path from this WSL environment.
+- task/wsl-files is obsolete against current main, which already owns
+  docs/WSL-SETUP.md and scripts/wsl-setup.sh. The older branch copy regresses
+  current setup guidance and compares the installed Node major to the full .nvmrc
+  version string; its npm run prepare failure is also ignored.
+- task/salvage-stale-worktrees-20261104 and its related old synchronization refs
+  contain obsolete blocker reports and copies of changes already represented in
+  current source. They were not merged wholesale.
+- wsl/systemic-hardening-review still has patch-unique Windows process, shell
+  argument, and executable-resolution changes. Its own prior review explicitly
+  requires focused Windows validation. It remains preserved and unlanded; do not
+  merge it directly into the WSL salvage candidate without that review.
+- fix/activity-analyzer adds a personal Windows activity-cache analyzer with a
+  machine-specific database path. It remains excluded from the product branch.
+- The broken e2e-hardening- worktree metadata and all other source worktrees were
+  left in place; no prune, disposal, or metadata repair was attempted.
+
+### Remaining release state
+
+The candidate contains the reviewed lock-safety changes, test and documentation
+corrections for the supported Quick Selection modifiers, updated write-boundary
+counts for the added temporary-directory cleanup, and this disposition update.
+The first full-suite runs surfaced stale Quick Selection assertions and the new
+cleanup callsites; those checks now match the current behavior and resource use.
+The flood-fill scaling test passed alone (49 tests); its one failure in the default
+four-worker full suite was a timing ratio under load. The full push gate passed with
+CI=true, using the project's configured two-worker CI mode, without relaxing the
+assertion. This section records pre-landing validation; establish final landing and push status from the verified main Git history and origin/main.
+The preserved Windows-specific branch is explicitly unproven pending its platform
+review; it is not a reason to merge stale snapshots or discard its source worktree.
