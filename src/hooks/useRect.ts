@@ -429,6 +429,13 @@ export function useRect({
   const borderAnimationFrameRef = useRef<number | null>(null);
   const borderDashOffsetRef = useRef(0);
   const overlayPaintModeRef = useRef<'external' | 'incremental' | 'full' | null>(null);
+  const lastPaintedOverlayInputsRef = useRef<{
+    imageWidth: number;
+    imageHeight: number;
+    hideBlend: boolean;
+    externalOverlay: boolean;
+    incrementalOverlay: boolean;
+  } | null>(null);
   const lastIncrementalRectRef = useRef<{
     x: number;
     y: number;
@@ -436,6 +443,9 @@ export function useRect({
     height: number;
     angle: number;
     scale: number;
+    frameWidth: number;
+    frameHeight: number;
+    hideBlend: boolean;
   } | null>(null);
   const incrementalCanvasSizeRef = useRef({ width: 0, height: 0 });
   const gesturePointerIdRef = useRef<number | null>(null);
@@ -519,9 +529,18 @@ export function useRect({
 
   useEffect(() => {
     rotationRef.current = rotation;
-    if (lastRotationRef.current !== rotation && rectUnsortedRef.current) drawMaskRef.current?.();
+    const rotationChanged = lastRotationRef.current !== rotation;
+    const previousPaintInputs = lastPaintedOverlayInputsRef.current;
+    const overlayInputsChanged =
+      previousPaintInputs !== null &&
+      (previousPaintInputs.imageWidth !== imageSize.width ||
+        previousPaintInputs.imageHeight !== imageSize.height ||
+        previousPaintInputs.hideBlend !== Boolean(hideBlend) ||
+        previousPaintInputs.externalOverlay !== externalOverlay ||
+        previousPaintInputs.incrementalOverlay !== incrementalOverlay);
+    if ((rotationChanged || overlayInputsChanged) && rectUnsortedRef.current) drawMaskRef.current?.();
     lastRotationRef.current = rotation;
-  }, [rotation]);
+  }, [externalOverlay, hideBlend, imageSize.height, imageSize.width, incrementalOverlay, rotation]);
 
   useEffect(() => {
     const previous = overlayAppearanceRef.current;
@@ -804,6 +823,13 @@ export function useRect({
     const { scale } = dimensionsRef.current;
     const ctx = overlayRef.current?.getContext('2d');
     if (!ctx) return;
+    lastPaintedOverlayInputsRef.current = {
+      imageWidth: imageSize.width,
+      imageHeight: imageSize.height,
+      hideBlend: Boolean(hideBlend),
+      externalOverlay,
+      incrementalOverlay,
+    };
 
     const rect = rectUnsortedRef.current;
 
@@ -866,7 +892,10 @@ export function useRect({
         // prior bounds to restore. Repaint the backing store in either case so no stale pixels can
         // survive outside the current crop.
         previous === null ||
-        previous.angle !== angle;
+        previous.angle !== angle ||
+        previous.frameWidth !== imageSize.width ||
+        previous.frameHeight !== imageSize.height ||
+        previous.hideBlend !== Boolean(hideBlend);
       if (needsBasePaint) {
         clearCanvasBackingStore(ctx);
         if (!hideBlend) {
@@ -1029,7 +1058,19 @@ export function useRect({
     // todo update status bar - add func on each update
     onRepaint?.(sortedRect);
 
-    if (incrementalOverlay) lastIncrementalRectRef.current = { x, y, width, height, angle, scale };
+    if (incrementalOverlay) {
+      lastIncrementalRectRef.current = {
+        x,
+        y,
+        width,
+        height,
+        angle,
+        scale,
+        frameWidth: imageSize.width,
+        frameHeight: imageSize.height,
+        hideBlend: Boolean(hideBlend),
+      };
+    }
 
     if (hasRectChanged) {
       onChange?.(sortedRect);
