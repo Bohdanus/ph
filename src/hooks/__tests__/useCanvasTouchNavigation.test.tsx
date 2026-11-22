@@ -1,6 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { inverseViewPoint, type ViewState, zoomAroundViewportPoint } from '../../contexts/view-state.ts';
+import {
+  absoluteViewZoom,
+  inverseViewPoint,
+  minimumSliderZoomForCurrentView,
+  type ViewState,
+  zoomAroundViewportPoint,
+} from '../../contexts/view-state.ts';
 import { useCanvasTouchNavigation } from '../useCanvasTouchNavigation.ts';
 
 const state = vi.hoisted(() => {
@@ -317,6 +323,12 @@ describe('useCanvasTouchNavigation', () => {
     state.fitScale = 0.5;
     state.devicePixelRatio = 1;
     state.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
+    const initialView = { ...state.viewStateRef.current };
+    const minimumMagnification = minimumSliderZoomForCurrentView(
+      state.documentFrame,
+      absoluteViewZoom(initialView, state.fitScale, state.devicePixelRatio),
+      initialView.minimumZoomOverride
+    );
 
     touchDown(tool, 4, 100, 100);
     touchDown(tool, 9, 200, 100);
@@ -336,9 +348,8 @@ describe('useCanvasTouchNavigation', () => {
     touchMove(tool, 4, 150, 100);
     touchMove(tool, 9, 150, 100);
 
-    const finalZoom = state.viewStateRef.current.zoom;
-    const documentMinimum = 1 / 600;
-    expect(finalZoom).toBeGreaterThanOrEqual(documentMinimum * 0.9);
+    const finalMagnification = absoluteViewZoom(state.viewStateRef.current, state.fitScale, state.devicePixelRatio);
+    expect(finalMagnification).toBeGreaterThanOrEqual(minimumMagnification);
   });
 
   it('does not start navigation when hasImage is false but still allows tool events through', () => {
@@ -381,7 +392,7 @@ describe('useCanvasTouchNavigation', () => {
     expect(toolEvents.downs).toContain(12);
   });
 
-  it('rebases the pan baseline when the workspace resizes during a one-finger pan after pinch', () => {
+  it('continues the one-finger pan without jumping when the workspace resizes after pinch', () => {
     const { tool, surface, rerender } = renderHarness();
     touchDown(tool, 4, 100, 100);
     touchDown(tool, 9, 200, 100);
@@ -393,6 +404,8 @@ describe('useCanvasTouchNavigation', () => {
     const panAfterMove = state.viewStateRef.current.panX;
 
     state.fitScale = 0.25;
+    surface.getBoundingClientRect = () =>
+      ({ x: 30, y: 40, left: 30, top: 40, right: 1030, bottom: 740, width: 1000, height: 700 }) as DOMRect;
     state.viewStateRef.current = {
       ...state.viewStateRef.current,
       zoom: 1,
@@ -401,7 +414,7 @@ describe('useCanvasTouchNavigation', () => {
     rerender(<Harness />);
 
     touchMove(tool, 9, 260, 140);
-    expect(state.viewStateRef.current.panX).not.toBe(panAfterMove);
+    expect(state.viewStateRef.current.panX).toBeCloseTo(panAfterMove + 20, 8);
   });
 
   it('handles rotation in view state during pinch by anchoring to the rotating document point', () => {
