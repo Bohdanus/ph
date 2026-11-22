@@ -58,6 +58,28 @@ step before it could clean the test output. This platform-specific issue is left
 unfixed per the current task's scope; use a Windows-compatible cleanup command or a
 cross-platform Node script when addressing it.
 
+### macOS-only — crop-history retained-affine parity fails for the blank source
+
+Focused mirror run [45024770598](https://github.com/Bohdanus/ph/actions/runs/45024770598)
+on candidate `8de043d527360399460da2fece066e15b6d53fb6` failed the
+`multi-step frame transitions retain byte parity across text, vector, blank, and paint sources`
+case on macOS. All three attempts failed for layer `blank-affine` at the
+`integer frame fixture retained affine` stage, with 88 differing frame bytes and the same sampled
+pixels. A baseline run
+[45026204451](https://github.com/Bohdanus/ph/actions/runs/45026204451) on
+`1a1486cba8c931cc1c250a9e6d55c07e93b77196` reproduced the same bytes and samples. That
+diagnostic commit is based on local `main` and changes only unrelated unit-test fixtures and
+classifications; the crop-history spec and renderer source are unchanged, so the repaint candidate
+did not introduce this failure. The candidate passed this focused spec on Linux
+([45023851588](https://github.com/Bohdanus/ph/actions/runs/45023851588)) and Windows
+([45024289894](https://github.com/Bohdanus/ph/actions/runs/45024289894)).
+
+The cause is unknown. This assertion compares the retained-affine diagnostic renderer with the
+legacy renderer; the current product still keeps legacy presentation authoritative while retained
+operation admission is closed, so these runs do not establish a user-visible output regression.
+Keep the exact-zero assertion and investigate the blank-layer materialization difference before
+claiming this parity cell passes across supported platforms.
+
 ### Invariant — headless is the default, and the refusal is structural
 
 **This is not a work item.** The mitigation is already shipped, and the rest of
