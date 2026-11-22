@@ -71,6 +71,20 @@ then checks common VS Code, Cursor, and Windsurf extension folders. If discovery
 CLI, set `KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never
 read or print the Kilo auth database or JSON file.
 
+Automatic discovery resolves PATH and extension candidates to canonical paths, skips this checkout
+and ancestor `node_modules/.bin` directories, and rejects executable aliases whose target is inside
+the checkout or the `node_modules` tree containing an excluded ancestor bin. Trusted executable
+targets outside those trees remain eligible. Missing or inaccessible PATH entries are skipped; if
+an ancestor `.bin` cannot be inspected, automatic discovery fails closed. Windows path comparisons
+are case-insensitive. Relative `KILO_CLI` overrides resolve from the caller's working directory. On
+Windows, bare command overrides use the filtered runtime `PATH` and preserve the caller's order among
+supported `PATHEXT` suffixes; `PATHEXT` is used only for lookup and is not passed to the child. An
+explicit `KILO_CLI` path is an operator-trusted override.
+
+The child process receives a PATH filtered with those same exclusions. The current Node runtime's
+directory is prepended so a launcher using `/usr/bin/env node` selects the Node process already
+running the pool.
+
 `kilo run` starts with `--pure` from a fresh temporary project containing only a generated
 `free-completion` agent whose wildcard permission denies every tool name. Before creating it, the
 adapter resolves the caller environment's configured temporary directory (or the system default)
@@ -155,6 +169,22 @@ credentials in `~/.local/share/opencode/opencode.db` or the older `auth.json`; `
 configuration, not proof that credentials are absent. Do not inspect credential values in the
 database or auth file. See the [OpenCode CLI auth guide](https://opencode.ai/docs/cli/) and
 [storage guide](https://opencode.ai/docs/troubleshooting/).
+
+For a bare command such as `opencode`, the runner removes PATH entries inside this checkout and
+ancestor `node_modules/.bin` directories added by npm. It resolves relative and symlinked entries
+before filtering, drops missing or inaccessible paths and canonical entries that contain the PATH
+delimiter, resolves the command to an absolute executable, and skips executable aliases into this
+checkout or an excluded ancestor bin, including npm bin symlinks to package files. If an ancestor
+bin cannot be inspected, PATH filtering and bare lookup fail closed. On Windows it reads `Path` and
+`PATHEXT` without case sensitivity and honors the caller's order among supported executable
+extensions. A Windows PATH alias is accepted only when its canonical target has the selected
+executable extension, and the shim receives that canonical target to avoid a second alias lookup.
+Explicit extensionless Windows path overrides are resolved to the first existing supported
+executable in that order before spawning; the child receives only the filtered `PATH`.
+Set `OPENCODE_CLI` to an absolute
+path when you want to select a specific executable; an explicit path is treated as an
+operator-trusted choice.
+Other executable directories on the host `PATH` remain part of the operator's trusted environment.
 
 The completion child receives runtime path variables, but uses a per-request temporary `HOME`, XDG
 directories, and working directory instead of the operator's OpenCode credentials and project

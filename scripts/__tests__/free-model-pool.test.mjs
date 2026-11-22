@@ -1,16 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync, realpathSync, symlinkSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, join } from 'node:path';
+import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 import {
   catalogCandidates,
   completeWithFreeModel as completeWithFreeModelImplementation,
   CONTROL_PLANE_TIMEOUT_MS,
   discoverGroqKeyFiles,
+  filterOpenCodePath,
   isContentPolicyError,
   loadCatalogs,
   main,
@@ -19,6 +20,7 @@ import {
   normalizeGroqKeys,
   orderFreeModelRoutes,
   readBoundedPrompt,
+  resolveOpenCodeCommand,
   runOpenCodeCompletion,
   zeroPriced,
 } from '../free-model-pool.mjs';
@@ -48,8 +50,8 @@ const completeWithFreeModel = async (prompt, options = {}) => {
   }
 };
 
-async function writeFakeOpenCode(directory, source) {
-  const commandPath = join(directory, 'fake-opencode');
+async function writeFakeOpenCode(directory, source, name = 'fake-opencode') {
+  const commandPath = join(directory, name);
   if (process.platform === 'win32') {
     const scriptPath = `${commandPath}.cjs`;
     const shimPath = `${commandPath}.cmd`;
@@ -381,6 +383,22 @@ describe('free model catalog filtering', () => {
       timeoutMs: 12 * 60 * 1000,
       providerOwned: true,
     });
+  });
+
+  it('exhausts OpenCode for the run after bare executable lookup returns ENOENT', async () => {
+    const fetchImpl = catalogFetch({
+      opencode: [
+        { id: 'beam-free', owned_by: 'opencode' },
+        { id: 'deepseek-v4.1-flash-free', owned_by: 'opencode' },
+      ],
+    });
+    const missingExecutable = Object.assign(new Error('OpenCode CLI was not found'), { code: 'ENOENT' });
+    const runOpenCode = vi.fn().mockRejectedValue(missingExecutable);
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, opencodeCommand: 'opencode', runOpenCode })
+    ).rejects.toThrow(/No free model completed/);
+    expect(runOpenCode).toHaveBeenCalledTimes(1);
   });
 
   it('honors an explicit Nemotron token budget above the default', async () => {
@@ -965,6 +983,363 @@ console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }))
     }
   });
 
+  it('does not resolve OpenCode from repository-local PATH entries or aliases', async () => {
+    const projectRoot = resolve(import.meta.dirname, '../..');
+    const projectBin = await mkdtemp(join(projectRoot, '.opencode-path-shadow-'));
+    let trustedBin;
+    try {
+      trustedBin = await mkdtemp(join(tmpdir(), 'free-model-opencode-trusted-'));
+      const aliasBin = join(trustedBin, 'aliases');
+      await mkdir(aliasBin);
+      const commandName = basename(projectBin).replaceAll('.', '');
+      const projectCommand = await writeFakeOpenCode(
+        projectBin,
+        "console.log(JSON.stringify({ type: 'text', part: { text: 'project shadow' } }));",
+        commandName
+      );
+      const trustedCommand = await writeFakeOpenCode(
+        trustedBin,
+        "console.log(JSON.stringify({ type: 'text', part: { text: 'trusted command' } }));",
+        commandName
+      );
+      if (process.platform !== 'win32') {
+        symlinkSync(projectCommand, join(aliasBin, basename(projectCommand)));
+      }
+      const enclosingNpmBin = resolve(projectRoot, '..', 'node_modules', '.bin');
+      const workspaceNpmBin = resolve(projectRoot, '..', '..', '..', 'node_modules', '.bin');
+      const suppliedPath = [
+        projectBin,
+        relative(process.cwd(), projectBin),
+        enclosingNpmBin,
+        relative(process.cwd(), workspaceNpmBin),
+        aliasBin,
+        trustedBin,
+        process.env.PATH ?? '',
+      ].join(delimiter);
+      const filteredPath = filterOpenCodePath(suppliedPath, {
+        cwd: process.cwd(),
+        projectRoot,
+        platform: process.platform,
+      });
+      const filteredEntries = filteredPath.split(delimiter);
+      expect(filteredEntries).not.toContain(realpathSync.native(projectBin));
+      expect(filteredEntries).not.toContain(enclosingNpmBin);
+      expect(filteredEntries).not.toContain(workspaceNpmBin);
+      const resolvedCommand = resolveOpenCodeCommand(commandName, {
+        environment: { PATH: suppliedPath },
+        cwd: process.cwd(),
+        projectRoot,
+        platform: process.platform,
+      });
+      expect(resolvedCommand).toBe(realpathSync.native(trustedCommand));
+      await expect(
+        runOpenCodeCompletion({
+          command: commandName,
+          model: 'beam-free',
+          prompt: 'prompt',
+          maxTokens: 64,
+          environment: { PATH: suppliedPath },
+        })
+      ).resolves.toMatchObject({ content: 'trusted command', finishReason: 'stop', model: 'beam-free' });
+    } finally {
+      await rm(projectBin, { recursive: true, force: true });
+      if (trustedBin) await rm(trustedBin, { recursive: true, force: true });
+    }
+  });
+
+  it('filters npm ancestor bins with Windows path semantics', () => {
+    const projectRoot = 'C:\\Users\\dev\\repo\\worktree';
+    const filtered = filterOpenCodePath(
+      [
+        `${projectRoot}\\node_modules\\.bin`,
+        'node_modules\\.bin',
+        'C:\\Users\\dev\\repo\\node_modules\\.bin',
+        'C:\\Users\\dev\\node_modules\\.bin',
+        'C:\\node_modules\\.bin',
+      ].join(';'),
+      { cwd: projectRoot, projectRoot, platform: 'win32' }
+    );
+
+    expect(filtered).toBe('');
+  });
+
+  it.skipIf(process.platform === 'win32')('drops canonical PATH aliases containing the PATH delimiter', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-path-delimiter-'));
+    const target = join(parent, `trusted${delimiter}split`);
+    const alias = join(parent, 'trusted-alias');
+    const missingAlias = join(parent, 'missing-alias');
+    try {
+      await mkdir(target);
+      symlinkSync(target, alias);
+      symlinkSync(join(parent, 'not-created'), missingAlias);
+
+      const filteredPath = filterOpenCodePath([alias, missingAlias].join(delimiter), { cwd: process.cwd() });
+      expect(filteredPath).toBe('');
+      expect(
+        resolveOpenCodeCommand('opencode', {
+          environment: { PATH: filteredPath },
+          cwd: process.cwd(),
+          platform: process.platform,
+        })
+      ).toBeNull();
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('fails closed when an npm ancestor bin cannot be inspected', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-uninspectable-bin-'));
+    const projectRoot = join(parent, 'repo', 'worktree');
+    const ancestorBin = join(parent, 'repo', 'node_modules', '.bin');
+    const trustedBin = join(parent, 'trusted');
+    try {
+      await mkdir(projectRoot, { recursive: true });
+      await mkdir(dirname(ancestorBin), { recursive: true });
+      await mkdir(trustedBin);
+      symlinkSync(ancestorBin, ancestorBin, 'dir');
+      await writeFakeOpenCode(trustedBin, "console.log('must not run');", 'uninspectable-opencode');
+
+      expect(filterOpenCodePath(trustedBin, { cwd: projectRoot, projectRoot, platform: process.platform })).toBe('');
+      expect(
+        resolveOpenCodeCommand('uninspectable-opencode', {
+          environment: { PATH: trustedBin },
+          cwd: projectRoot,
+          projectRoot,
+          platform: process.platform,
+        })
+      ).toBeNull();
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects PATH aliases that resolve into an npm ancestor bin', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-ancestor-bin-'));
+    const projectRoot = join(parent, 'repo', 'worktree');
+    const nodeModules = join(parent, 'repo', 'node_modules');
+    const ancestorBin = join(nodeModules, '.bin');
+    const actualBin = join(parent, 'npm-bin-target');
+    const packageBin = join(nodeModules, 'ancestor-package', 'bin');
+    const aliasDirectory = join(parent, 'trusted');
+    const aliasBinDirectory = join(parent, 'trusted-bin-alias');
+    const directAliasDirectory = join(parent, 'trusted-direct-alias');
+    try {
+      await mkdir(projectRoot, { recursive: true });
+      await mkdir(nodeModules, { recursive: true });
+      await mkdir(actualBin);
+      await mkdir(packageBin, { recursive: true });
+      await mkdir(aliasDirectory);
+      await mkdir(directAliasDirectory);
+      const target = await writeFakeOpenCode(packageBin, "console.log('should not run');", 'ancestor-opencode');
+      const npmEntry = join(actualBin, basename(target));
+      symlinkSync(target, npmEntry);
+      symlinkSync(actualBin, ancestorBin, 'dir');
+      symlinkSync(ancestorBin, aliasBinDirectory, 'dir');
+      symlinkSync(join(ancestorBin, basename(target)), join(aliasDirectory, basename(target)));
+      symlinkSync(target, join(directAliasDirectory, basename(target)));
+
+      expect(filterOpenCodePath(aliasBinDirectory, { cwd: projectRoot, projectRoot, platform: process.platform })).toBe(
+        ''
+      );
+
+      expect(
+        resolveOpenCodeCommand('ancestor-opencode', {
+          environment: { PATH: aliasDirectory },
+          cwd: projectRoot,
+          projectRoot,
+          platform: process.platform,
+        })
+      ).toBeNull();
+      expect(
+        filterOpenCodePath(directAliasDirectory, { cwd: projectRoot, projectRoot, platform: process.platform })
+      ).toBe(realpathSync.native(directAliasDirectory));
+      expect(
+        resolveOpenCodeCommand('ancestor-opencode', {
+          environment: { PATH: directAliasDirectory },
+          cwd: projectRoot,
+          projectRoot,
+          platform: process.platform,
+        })
+      ).toBeNull();
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'win32')(
+    'resolves Windows PATH and PATHEXT case-insensitively in caller order',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-windows-env-'));
+      try {
+        const command = await writeFakeOpenCode(
+          directory,
+          "console.log(JSON.stringify({ type: 'text', part: { text: 'windows path and pathext' } }));",
+          'case-insensitive-opencode'
+        );
+        await writeFile(`${command.slice(0, -4)}.exe`, 'intentionally invalid executable');
+        const callerPath = Object.entries(process.env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] ?? '';
+        const environment = {
+          Path: [directory, callerPath].filter(Boolean).join(';'),
+          PATHEXT: '.CMD;.EXE',
+          ComSpec: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'COMSPEC')?.[1],
+          SystemRoot: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'SYSTEMROOT')?.[1],
+        };
+
+        expect(
+          resolveOpenCodeCommand(basename(command, '.cmd'), {
+            environment,
+            cwd: process.cwd(),
+            projectRoot: process.cwd(),
+            platform: 'win32',
+          })
+        ).toBe(realpathSync.native(command));
+
+        await expect(
+          runOpenCodeCompletion({
+            command: basename(command, '.cmd'),
+            model: 'beam-free',
+            prompt: 'prompt',
+            maxTokens: 64,
+            environment,
+          })
+        ).resolves.toMatchObject({ content: 'windows path and pathext', finishReason: 'stop', model: 'beam-free' });
+        await expect(
+          runOpenCodeCompletion({
+            command: command.slice(0, -4),
+            model: 'beam-free',
+            prompt: 'prompt',
+            maxTokens: 64,
+            environment,
+          })
+        ).resolves.toMatchObject({ content: 'windows path and pathext', finishReason: 'stop', model: 'beam-free' });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.skipIf(process.platform !== 'win32')(
+    'rejects unsupported .js bare Windows commands while preserving explicit path overrides',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-windows-suffix-'));
+      try {
+        const command = await writeFakeOpenCode(
+          directory,
+          "console.log(JSON.stringify({ type: 'text', part: { text: 'trusted cmd' } }));",
+          'suffix-policy-opencode'
+        );
+        const script = `${command.slice(0, -4)}.js`;
+        await writeFile(script, 'inert unsupported suffix fixture');
+        const environment = {
+          Path: directory,
+          PATHEXT: '.CMD;.EXE',
+          ComSpec: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'COMSPEC')?.[1],
+          SystemRoot: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'SYSTEMROOT')?.[1],
+        };
+        const options = {
+          environment,
+          cwd: process.cwd(),
+          projectRoot: process.cwd(),
+          platform: 'win32',
+        };
+
+        expect(resolveOpenCodeCommand(basename(script), options)).toBeNull();
+        expect(resolveOpenCodeCommand(command, options)).toBe(realpathSync.native(command));
+        expect(resolveOpenCodeCommand(script, options)).toBe(script);
+        await expect(
+          runOpenCodeCompletion({
+            command: basename(script),
+            model: 'beam-free',
+            prompt: 'prompt',
+            maxTokens: 64,
+            environment,
+          })
+        ).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.skipIf(process.platform !== 'win32')(
+    'rejects a Windows PATH alias whose target changes the selected executable extension',
+    async (context) => {
+      const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-windows-alias-'));
+      const targetDirectory = join(directory, 'target');
+      const aliasDirectory = join(directory, 'alias');
+      try {
+        await mkdir(targetDirectory);
+        await mkdir(aliasDirectory);
+        const extensionlessTarget = join(targetDirectory, 'opencode-target');
+        await writeFile(extensionlessTarget, 'not a supported executable');
+        await writeFile(`${extensionlessTarget}.exe`, 'intentionally invalid executable');
+        const alias = join(aliasDirectory, 'opencode.cmd');
+        try {
+          symlinkSync(extensionlessTarget, alias, 'file');
+        } catch (error) {
+          if (['EACCES', 'EPERM', 'ENOTSUP'].includes(error?.code)) {
+            context.skip(`Windows file symlinks are unavailable: ${error.code}`);
+          }
+          throw error;
+        }
+        const environment = {
+          Path: aliasDirectory,
+          PATHEXT: '.CMD;.EXE',
+          ComSpec: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'COMSPEC')?.[1],
+          SystemRoot: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'SYSTEMROOT')?.[1],
+        };
+
+        expect(
+          resolveOpenCodeCommand('opencode', {
+            environment,
+            cwd: process.cwd(),
+            projectRoot: process.cwd(),
+            platform: 'win32',
+          })
+        ).toBeNull();
+        await expect(
+          runOpenCodeCompletion({
+            command: 'opencode',
+            model: 'beam-free',
+            prompt: 'prompt',
+            maxTokens: 64,
+            environment,
+          })
+        ).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it('marks an unresolved bare OpenCode executable as ENOENT', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-missing-'));
+    try {
+      await expect(
+        runOpenCodeCompletion({
+          command: 'missing-opencode-for-free-model-pool-test',
+          model: 'beam-free',
+          prompt: 'prompt',
+          maxTokens: 64,
+          environment: { PATH: directory },
+        })
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'win32')('treats drive-relative OpenCode overrides as explicit paths', () => {
+    expect(
+      resolveOpenCodeCommand('C:opencode.cmd', {
+        environment: { Path: '' },
+        cwd: 'C:\\Users\\dev\\repo',
+        projectRoot: 'C:\\Users\\dev\\repo',
+        platform: 'win32',
+      })
+    ).toBe('C:\\Users\\dev\\repo\\opencode.cmd');
+  });
+
   it('preserves an explicit OpenCode length finish reason instead of inferring a complete free response', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
     const command = await writeFakeOpenCode(
@@ -1304,7 +1679,7 @@ process.exit(1);`
     });
     const terminateWindowsProcessTreeImpl = vi.fn(() => termination);
     const completion = runOpenCodeCompletion({
-      command: process.execPath,
+      command: process.platform === 'win32' ? process.execPath : `${process.execPath}.exe`,
       model: 'beam-free',
       prompt: 'prompt',
       maxTokens: 8,
@@ -1392,7 +1767,7 @@ process.stdout.write('x'.repeat(2 * 1024 * 1024));`
     const terminateWindowsProcessTreeImpl = vi.fn(() => Promise.reject(new Error('taskkill failed')));
 
     const error = await runOpenCodeCompletion({
-      command: '/unused/opencode',
+      command: process.platform === 'win32' ? process.execPath : `${process.execPath}.exe`,
       model: 'beam-free',
       prompt: 'prompt',
       maxTokens: 8,

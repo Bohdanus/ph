@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, lstat, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
+import path from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import {
   DEFAULT_FREE_COMPLETION_TIMEOUT_MS,
   freeModelProfile,
@@ -76,13 +77,16 @@ async function createIsolatedHome(environment, platform) {
   return mkdtemp(join(temporaryParent, 'kilo-free-completion-'));
 }
 
-function kiloRuntimeEnvironment(environment, isolatedHome, isolatedDataHome) {
+function kiloRuntimeEnvironment(environment, isolatedHome, isolatedDataHome, safePath) {
   const runtime = Object.fromEntries(
-    KILO_RUNTIME_ENV_KEYS.flatMap((key) => (typeof environment[key] === 'string' ? [[key, environment[key]]] : []))
+    KILO_RUNTIME_ENV_KEYS.flatMap((key) =>
+      key !== 'PATH' && typeof environment[key] === 'string' ? [[key, environment[key]]] : []
+    )
   );
   const isolatedTemp = join(isolatedHome, 'tmp');
   return {
     ...runtime,
+    PATH: safePath,
     HOME: isolatedHome,
     USERPROFILE: isolatedHome,
     XDG_CONFIG_HOME: join(isolatedHome, 'config'),
@@ -96,7 +100,16 @@ function kiloRuntimeEnvironment(environment, isolatedHome, isolatedDataHome) {
   };
 }
 
-async function prepareIsolatedKiloRuntime(environment, isolatedHome, platform) {
+function commandResolutionEnvironment(isolatedEnvironment, callerEnvironment, platform) {
+  if (platform !== 'win32') return isolatedEnvironment;
+  const pathextKey = Object.keys(callerEnvironment)
+    .sort()
+    .find((key) => key.toUpperCase() === 'PATHEXT');
+  if (pathextKey === undefined || typeof callerEnvironment[pathextKey] !== 'string') return isolatedEnvironment;
+  return { ...isolatedEnvironment, PATHEXT: callerEnvironment[pathextKey] };
+}
+
+async function prepareIsolatedKiloRuntime(environment, isolatedHome, platform, safePath) {
   const projectRoot = join(isolatedHome, 'project');
   const isolatedDataHome = join(isolatedHome, 'data');
   const isolatedDirectories = [
@@ -115,7 +128,7 @@ async function prepareIsolatedKiloRuntime(environment, isolatedHome, platform) {
     flag: 'wx',
   });
   await createIsolatedKiloDataHome(environment, isolatedHome, platform);
-  return { projectRoot, environment: kiloRuntimeEnvironment(environment, isolatedHome, isolatedDataHome) };
+  return { projectRoot, environment: kiloRuntimeEnvironment(environment, isolatedHome, isolatedDataHome, safePath) };
 }
 
 async function createIsolatedKiloDataHome(environment, isolatedHome, platform) {
@@ -166,41 +179,232 @@ async function createIsolatedKiloDataHome(environment, isolatedHome, platform) {
   return isolatedDataHome;
 }
 
-async function isExecutable(path, platform, accessImpl) {
+function pathComparisonKey(candidate, platform) {
+  return platform === 'win32' ? candidate.toLowerCase() : candidate;
+}
+
+function pathIsWithin(parent, candidate, pathApi, platform) {
+  const relative = pathApi.relative(parent, candidate);
+  const comparable = platform === 'win32' ? relative.toLowerCase() : relative;
+  return (
+    comparable === '' ||
+    (comparable !== '..' && !comparable.startsWith(`..${pathApi.sep}`) && !pathApi.isAbsolute(relative))
+  );
+}
+
+function isAncestorNodeModulesBin(directory, projectRoot, pathApi, platform) {
+  if (pathApi.basename(directory).toLowerCase() !== '.bin') return false;
+  const nodeModules = pathApi.dirname(directory);
+  if (pathApi.basename(nodeModules).toLowerCase() !== 'node_modules') return false;
+  const ancestor = pathApi.dirname(nodeModules);
+  return pathIsWithin(ancestor, projectRoot, pathApi, platform);
+}
+
+function missingPathError(error) {
+  return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+}
+
+async function excludedKiloPaths(projectRoot, pathApi, platform, realpathImpl, readdirImpl, statImpl) {
+  const directories = [];
+  const executables = new Set();
+  let complete = true;
+  let canonicalRoot;
   try {
-    await accessImpl(path, platform === 'win32' ? constants.F_OK : constants.X_OK);
-    return true;
+    canonicalRoot = await realpathImpl(projectRoot);
   } catch {
-    return false;
+    return { canonicalRoot: null, directories, executables, complete: false };
   }
+
+  const roots = new Set([projectRoot, canonicalRoot]);
+  for (const root of roots) {
+    let ancestor = pathApi.resolve(root);
+    while (true) {
+      const bin = pathApi.join(ancestor, 'node_modules', '.bin');
+      let binStat;
+      try {
+        binStat = await statImpl(bin);
+      } catch (error) {
+        if (!missingPathError(error)) complete = false;
+      }
+      if (binStat?.isDirectory()) {
+        try {
+          const canonicalBin = await realpathImpl(bin);
+          const canonicalNodeModules = await realpathImpl(pathApi.dirname(bin));
+          directories.push(canonicalBin);
+          for (const entry of await readdirImpl(bin, { withFileTypes: true })) {
+            const candidate = pathApi.join(bin, entry.name);
+            try {
+              if ((await statImpl(candidate)).isFile()) {
+                const canonicalCandidate = await realpathImpl(candidate);
+                if (pathIsWithin(canonicalNodeModules, canonicalCandidate, pathApi, platform)) {
+                  executables.add(pathComparisonKey(canonicalCandidate, platform));
+                }
+              }
+            } catch (error) {
+              if (!missingPathError(error)) complete = false;
+            }
+          }
+        } catch {
+          complete = false;
+        }
+      }
+      const parent = pathApi.dirname(ancestor);
+      if (parent === ancestor) break;
+      ancestor = parent;
+    }
+  }
+  return { canonicalRoot, directories, executables, complete };
+}
+
+function isExcludedKiloPath(candidate, excluded, pathApi, platform) {
+  if (pathComparisonKey(candidate, platform) === pathComparisonKey(excluded.canonicalRoot, platform)) return true;
+  if (pathIsWithin(excluded.canonicalRoot, candidate, pathApi, platform)) return true;
+  if (isAncestorNodeModulesBin(pathApi.dirname(candidate), excluded.canonicalRoot, pathApi, platform)) return true;
+  if (excluded.executables.has(pathComparisonKey(candidate, platform))) return true;
+  return excluded.directories.some((directory) => pathIsWithin(directory, candidate, pathApi, platform));
+}
+
+async function canonicalKiloCandidate(candidate, excluded, pathApi, platform, realpathImpl, statImpl, accessImpl) {
+  try {
+    const canonical = await realpathImpl(candidate);
+    if (!(await statImpl(canonical)).isFile() || isExcludedKiloPath(canonical, excluded, pathApi, platform))
+      return null;
+    if (platform === 'win32' && pathApi.extname(candidate).toLowerCase() !== pathApi.extname(canonical).toLowerCase()) {
+      return null;
+    }
+    await accessImpl(canonical, platform === 'win32' ? constants.F_OK : constants.X_OK);
+    return canonical;
+  } catch {
+    return null;
+  }
+}
+
+async function trustedKiloPathDirectories(
+  pathValue,
+  { cwd = process.cwd(), projectRoot = resolve(import.meta.dirname, '../..'), platform = process.platform } = {},
+  { realpathImpl = realpath, readdirImpl = readdir, statImpl = stat } = {}
+) {
+  const pathApi = platform === 'win32' ? path.win32 : path;
+  const absoluteProjectRoot = pathApi.resolve(projectRoot);
+  const absoluteCwd = pathApi.resolve(cwd);
+  const excluded = await excludedKiloPaths(absoluteProjectRoot, pathApi, platform, realpathImpl, readdirImpl, statImpl);
+  if (!excluded.complete) return null;
+
+  const trustedDirectories = [];
+  const seenDirectories = new Set();
+  for (const directory of pathValue.split(pathApi.delimiter).filter(Boolean)) {
+    const resolvedDirectory = pathApi.resolve(absoluteCwd, directory);
+    if (
+      pathIsWithin(absoluteProjectRoot, resolvedDirectory, pathApi, platform) ||
+      isAncestorNodeModulesBin(resolvedDirectory, absoluteProjectRoot, pathApi, platform)
+    ) {
+      continue;
+    }
+    try {
+      const canonicalDirectory = await realpathImpl(resolvedDirectory);
+      if (!(await statImpl(canonicalDirectory)).isDirectory()) continue;
+      if (
+        isExcludedKiloPath(canonicalDirectory, excluded, pathApi, platform) ||
+        canonicalDirectory.includes(pathApi.delimiter)
+      ) {
+        continue;
+      }
+      const key = pathComparisonKey(canonicalDirectory, platform);
+      if (seenDirectories.has(key)) continue;
+      seenDirectories.add(key);
+      trustedDirectories.push(canonicalDirectory);
+    } catch {
+      // Missing, inaccessible, and unsafe PATH entries are not forwarded.
+    }
+  }
+  return { pathApi, absoluteProjectRoot, excluded, trustedDirectories };
+}
+
+function pathValueFromEnvironment(environment, platform) {
+  const key = Object.keys(environment).find((name) =>
+    platform === 'win32' ? name.toLowerCase() === 'path' : name === 'PATH'
+  );
+  return typeof key === 'string' && typeof environment[key] === 'string' ? environment[key] : '';
+}
+
+async function safeKiloRuntimePath(
+  environment,
+  { cwd = process.cwd(), projectRoot = resolve(import.meta.dirname, '../..'), platform = process.platform } = {},
+  dependencies = {}
+) {
+  const { realpathImpl = realpath, statImpl = stat } = dependencies;
+  // `platform` can select a command shim in tests; filesystem paths use the
+  // host that is actually running this process.
+  const filesystemPlatform = process.platform;
+  const trusted = await trustedKiloPathDirectories(
+    pathValueFromEnvironment(environment, filesystemPlatform),
+    { cwd, projectRoot, platform: filesystemPlatform },
+    dependencies
+  );
+  if (!trusted) return null;
+
+  let runtimeDirectory;
+  try {
+    const canonicalRuntime = await realpathImpl(process.execPath);
+    runtimeDirectory = trusted.pathApi.dirname(canonicalRuntime);
+    if (!(await statImpl(runtimeDirectory)).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  if (
+    isExcludedKiloPath(runtimeDirectory, trusted.excluded, trusted.pathApi, filesystemPlatform) ||
+    runtimeDirectory.includes(trusted.pathApi.delimiter)
+  ) {
+    return null;
+  }
+
+  const directories = [runtimeDirectory, ...trusted.trustedDirectories];
+  const unique = [...new Set(directories.map((directory) => pathComparisonKey(directory, platform)))];
+  const canonicalByKey = new Map(directories.map((directory) => [pathComparisonKey(directory, platform), directory]));
+  return unique.map((key) => canonicalByKey.get(key)).join(trusted.pathApi.delimiter);
 }
 
 export async function resolveKiloCli({
   command = process.env.KILO_CLI,
   pathValue = process.env.PATH ?? '',
   home = homedir(),
+  cwd = process.cwd(),
+  projectRoot = resolve(import.meta.dirname, '../..'),
   platform = process.platform,
   accessImpl = access,
   readdirImpl = readdir,
+  realpathImpl = realpath,
+  statImpl = stat,
 } = {}) {
   if (typeof command === 'string' && command.trim()) return command.trim();
 
+  const trusted = await trustedKiloPathDirectories(
+    pathValue,
+    { cwd, projectRoot, platform },
+    { realpathImpl, readdirImpl, statImpl }
+  );
+  if (!trusted) return null;
+
+  const { pathApi, excluded, trustedDirectories } = trusted;
   const executableNames = platform === 'win32' ? ['kilo.exe', 'kilo.cmd', 'kilo.bat'] : ['kilo'];
-  const searchFlags = platform === 'win32' ? constants.F_OK : constants.X_OK;
-  for (const directory of pathValue.split(delimiter).filter(Boolean)) {
+  for (const directory of trustedDirectories) {
     for (const executable of executableNames) {
-      const candidate = join(directory, executable);
-      try {
-        await accessImpl(candidate, searchFlags);
-        return candidate;
-      } catch {
-        // Continue through PATH and then the supported editor extension roots.
-      }
+      const candidate = pathApi.join(directory, executable);
+      const canonical = await canonicalKiloCandidate(
+        candidate,
+        excluded,
+        pathApi,
+        platform,
+        realpathImpl,
+        statImpl,
+        accessImpl
+      );
+      if (canonical) return canonical;
     }
   }
 
   for (const relativeRoot of KILO_EXTENSION_ROOTS) {
-    const extensionRoot = join(home, relativeRoot);
+    const extensionRoot = pathApi.join(home, relativeRoot);
     let entries;
     try {
       entries = await readdirImpl(extensionRoot, { withFileTypes: true });
@@ -212,8 +416,17 @@ export async function resolveKiloCli({
       .sort((left, right) => right.name.localeCompare(left.name, undefined, { numeric: true }));
     for (const extension of extensions) {
       for (const executable of executableNames) {
-        const candidate = join(extensionRoot, extension.name, 'bin', executable);
-        if (await isExecutable(candidate, platform, accessImpl)) return candidate;
+        const candidate = pathApi.join(extensionRoot, extension.name, 'bin', executable);
+        const canonical = await canonicalKiloCandidate(
+          candidate,
+          excluded,
+          pathApi,
+          platform,
+          realpathImpl,
+          statImpl,
+          accessImpl
+        );
+        if (canonical) return canonical;
       }
     }
   }
@@ -760,6 +973,11 @@ export async function runKiloCompletion({
   maxTokens,
   timeoutMs,
   env = process.env,
+  cwd = process.cwd(),
+  projectRoot = resolve(import.meta.dirname, '../..'),
+  realpathImpl = realpath,
+  readdirImpl = readdir,
+  statImpl = stat,
   spawnImpl = spawn,
   platform = process.platform,
   terminateWindowsProcessTreeImpl = terminateWindowsProcessTree,
@@ -802,11 +1020,18 @@ export async function runKiloCompletion({
   const message = `Answer the provided request directly, in plain text, using at most ${profile.maxTokens} output tokens.\n\n${prompt}`;
   let isolatedHome;
   try {
+    const safePath = await safeKiloRuntimePath(
+      env,
+      { cwd, projectRoot, platform },
+      { realpathImpl, readdirImpl, statImpl }
+    );
+    if (safePath === null) return { error: 'Kilo completion failed locally', exhaustSource: true };
     isolatedHome = await createIsolatedHome(env, platform);
-    const isolatedRuntime = await prepareIsolatedKiloRuntime(env, isolatedHome, platform);
+    const isolatedRuntime = await prepareIsolatedKiloRuntime(env, isolatedHome, platform, safePath);
     const args = ['run', '--pure', '--format', 'json', '--model', `kilo/${model}`, '--agent', 'free-completion'];
     if (profile.reasoningEffort) args.push('--variant', profile.reasoningEffort);
-    const commandShim = resolveCommandShim(command, args);
+    const commandEnvironment = commandResolutionEnvironment(isolatedRuntime.environment, env, platform);
+    const commandShim = resolveCommandShim(command, args, { env: commandEnvironment, cwd });
 
     const { events, stderrText, code, signal, timedOut, outputOverflow, malformed, inputError, terminationError } =
       await new Promise((resolve, reject) => {

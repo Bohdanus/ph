@@ -61,8 +61,8 @@ const REVIEWED = {
   },
   'free-model-kilo.test.mjs': {
     scope:
-      'Each fake Kilo CLI, auth-boundary, and symlinked XDG fixture uses a unique OS temp directory with finally cleanup; project-local auth sentinels remain untouched and child processes use test-owned paths.',
-    patterns: `filesystem-write:mkdir=8 filesystem-write:mkdtemp=25 filesystem-write:rm=25 filesystem-write:symlink=4 filesystem-write:writeFile=8 subprocess:spawnSync=1`,
+      'Each fake Kilo CLI, auth-boundary, filtered Windows PATH, relative command, and symlinked XDG fixture uses a unique OS temp directory with finally cleanup; project-local auth sentinels remain untouched and child processes use test-owned paths.',
+    patterns: `filesystem-write:mkdir=11 filesystem-write:mkdtemp=26 filesystem-write:rm=26 filesystem-write:symlink=4 filesystem-write:writeFile=12 subprocess:spawnSync=1`,
   },
   'kilo-project-boundary.test.mjs': {
     scope:

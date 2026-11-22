@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync, realpathSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import path, { delimiter, dirname, join } from 'node:path';
 import { MAX_KILO_OUTPUT_BYTES, resolveKiloCli, runKiloCompletion } from '../lib/free-model-kilo.mjs';
 
 vi.setConfig({ testTimeout: 15_000 });
@@ -29,8 +29,51 @@ describe('Kilo CLI discovery', () => {
     );
   });
 
-  it('finds Kilo Code in PATH before editor extension directories', async () => {
+  it('filters Windows PATH entries case-insensitively with the Windows delimiter', async () => {
+    const projectRoot = 'C:\\Repo';
+    const projectBin = path.win32.join(projectRoot, 'node_modules', '.bin');
+    const trustedDirectory = 'C:\\Tools';
+    const fileSystem = new Map([
+      [path.win32.normalize(projectBin).toLowerCase(), 'directory'],
+      [path.win32.normalize(path.win32.join(projectBin, 'kilo.exe')).toLowerCase(), 'file'],
+      [path.win32.normalize(trustedDirectory).toLowerCase(), 'directory'],
+      [path.win32.normalize(path.win32.join(trustedDirectory, 'kilo.exe')).toLowerCase(), 'file'],
+    ]);
+    const statImpl = async (candidate) => {
+      const kind = fileSystem.get(path.win32.normalize(candidate).toLowerCase());
+      if (!kind) throw Object.assign(new Error('missing fixture path'), { code: 'ENOENT' });
+      return { isDirectory: () => kind === 'directory', isFile: () => kind === 'file' };
+    };
+
+    await expect(
+      resolveKiloCli({
+        command: '',
+        pathValue: `${projectBin.toLowerCase()};${trustedDirectory}`,
+        cwd: projectRoot,
+        projectRoot,
+        platform: 'win32',
+        accessImpl: async () => {},
+        readdirImpl: async () => [{ name: 'kilo.exe' }],
+        realpathImpl: async (candidate) => path.win32.normalize(candidate),
+        statImpl,
+      })
+    ).resolves.toBe(path.win32.join(trustedDirectory, 'kilo.exe'));
+  });
+
+  it('filters unsafe PATH aliases and fails closed on unreadable ancestor bins before editor extensions', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-discovery-'));
+    const projectRoot = join(directory, 'project', 'repo');
+    const projectBin = join(projectRoot, 'node_modules', '.bin');
+    const ancestorBin = join(directory, 'node_modules', '.bin');
+    const projectKilo = await writeExecutable(join(projectBin, 'kilo'), 'process.exit(0);');
+    await writeExecutable(join(ancestorBin, 'other'), 'process.exit(0);');
+    const externalKilo = await writeExecutable(join(directory, 'global-bin', 'kilo'), 'process.exit(0);');
+    await symlink(externalKilo, join(ancestorBin, 'kilo'));
+    const binAlias = join(directory, 'bin-alias');
+    const executableAliasDirectory = join(directory, 'path-alias');
+    await symlink(projectBin, binAlias, process.platform === 'win32' ? 'junction' : 'dir');
+    await writeExecutable(join(executableAliasDirectory, 'other'), 'process.exit(0);');
+    await symlink(projectKilo, join(executableAliasDirectory, 'kilo'));
     const pathKilo = await writeExecutable(join(directory, 'path', 'kilo'), 'process.exit(0);');
     const extensionKilo = await writeExecutable(
       join(directory, 'home', '.vscode', 'extensions', 'kilocode.kilo-code-8.0.0-test', 'bin', 'kilo'),
@@ -40,12 +83,38 @@ describe('Kilo CLI discovery', () => {
       await expect(
         resolveKiloCli({
           command: '',
+          pathValue: [projectBin, binAlias, ancestorBin, executableAliasDirectory, join(directory, 'path')].join(
+            delimiter
+          ),
+          home: join(directory, 'home'),
+          cwd: projectRoot,
+          projectRoot,
+        })
+      ).resolves.toBe(realpathSync(pathKilo));
+      await expect(
+        resolveKiloCli({
+          command: '',
+          pathValue: join(directory, 'global-bin'),
+          home: join(directory, 'home'),
+          cwd: projectRoot,
+          projectRoot,
+        })
+      ).resolves.toBe(realpathSync(externalKilo));
+      await expect(
+        resolveKiloCli({
+          command: '',
           pathValue: join(directory, 'path'),
           home: join(directory, 'home'),
+          cwd: projectRoot,
+          projectRoot,
+          statImpl: async (candidate) => {
+            if (candidate === ancestorBin) throw Object.assign(new Error('fixture access denied'), { code: 'EACCES' });
+            return stat(candidate);
+          },
         })
-      ).resolves.toBe(pathKilo);
+      ).resolves.toBeNull();
       await expect(resolveKiloCli({ command: '', pathValue: '', home: join(directory, 'home') })).resolves.toBe(
-        extensionKilo
+        realpathSync(extensionKilo)
       );
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -54,9 +123,93 @@ describe('Kilo CLI discovery', () => {
 });
 
 describe('authenticated Kilo CLI completion', () => {
+  it.skipIf(process.platform !== 'win32')(
+    'resolves Kilo shims through the filtered PATH and relative overrides from the caller cwd',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-shim-isolation-'));
+      const callerCwd = join(directory, 'caller');
+      const projectBin = join(callerCwd, 'node_modules', '.bin');
+      const safeBin = join(directory, 'safe-bin');
+      const relativeBin = join(callerCwd, 'relative-bin');
+      await Promise.all([
+        mkdir(projectBin, { recursive: true }),
+        mkdir(safeBin, { recursive: true }),
+        mkdir(relativeBin),
+      ]);
+      const projectShim = join(projectBin, 'kilo.cmd');
+      const safeShim = join(safeBin, 'kilo.cmd');
+      const safeExecutable = join(safeBin, 'kilo.exe');
+      const relativeShim = join(relativeBin, 'kilo.cmd');
+      await writeFile(projectShim, '@echo off\r\n', 'utf8');
+      await writeFile(safeShim, '@echo off\r\n', 'utf8');
+      await writeFile(safeExecutable, '', 'utf8');
+      await writeFile(relativeShim, '@echo off\r\n', 'utf8');
+      const callerPath = [projectBin, safeBin].join(';');
+      const isolatedComSpec = join(directory, 'isolated-cmd.exe');
+      const inheritedComSpec = join(directory, 'inherited-cmd.exe');
+      vi.stubEnv('PATH', callerPath);
+      vi.stubEnv('PATHEXT', '.EXE;.CMD');
+      vi.stubEnv('ComSpec', inheritedComSpec);
+      const spawnImpl = vi.fn(() => {
+        throw new Error('intentional test stop before process launch');
+      });
+      const env = {
+        PATH: callerPath,
+        HOME: directory,
+        USERPROFILE: directory,
+        TEMP: directory,
+        TMP: directory,
+        TMPDIR: directory,
+        XDG_DATA_HOME: join(directory, 'xdg-data'),
+        COMSPEC: isolatedComSpec,
+        PATHEXT: '.CMD;.EXE',
+      };
+      const options = {
+        model: 'model:free',
+        prompt: 'prompt',
+        env,
+        cwd: callerCwd,
+        projectRoot: callerCwd,
+        spawnImpl,
+      };
+
+      try {
+        await expect(runKiloCompletion({ ...options, command: 'kilo' })).resolves.toEqual({
+          error: 'Kilo CLI could not be started',
+          exhaustSource: true,
+        });
+        let [spawnCommand, spawnArgs, spawnOptions] = spawnImpl.mock.calls.at(-1);
+        expect(spawnCommand).toBe(isolatedComSpec);
+        expect(spawnArgs.at(-1)).toContain(safeShim);
+        expect(spawnArgs.at(-1)).not.toContain(projectShim);
+        expect(spawnArgs.at(-1)).not.toContain(safeExecutable);
+        expect(spawnOptions.env.PATH).not.toContain(projectBin);
+        expect(spawnOptions.env.PATHEXT).toBeUndefined();
+        expect(spawnOptions.env.COMSPEC).toBe(isolatedComSpec);
+
+        spawnImpl.mockClear();
+        await expect(
+          runKiloCompletion({ ...options, command: path.win32.relative(callerCwd, relativeShim) })
+        ).resolves.toEqual({ error: 'Kilo CLI could not be started', exhaustSource: true });
+        [spawnCommand, spawnArgs, spawnOptions] = spawnImpl.mock.calls.at(-1);
+        expect(spawnCommand).toBe(isolatedComSpec);
+        expect(spawnArgs.at(-1)).toContain(relativeShim);
+        expect(spawnOptions.cwd).not.toBe(callerCwd);
+      } finally {
+        vi.unstubAllEnvs();
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('uses the logged-in provider, private stdin prompt, no-tools agent, and strict JSON completion', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
     const fixtureDataHome = join(directory, 'fixture-data');
+    const runtimeProjectRoot = join(directory, 'caller-project', 'repo');
+    const runtimeProjectBin = join(runtimeProjectRoot, 'node_modules', '.bin');
+    const runtimeAncestorBin = join(directory, 'node_modules', '.bin');
+    await mkdir(runtimeProjectBin, { recursive: true });
+    await mkdir(runtimeAncestorBin, { recursive: true });
     await mkdir(join(fixtureDataHome, 'kilo'), { recursive: true });
     await mkdir(join(fixtureDataHome, 'other-app'), { recursive: true });
     await writeFile(join(fixtureDataHome, 'kilo', 'auth.json'), 'fixture auth', 'utf8');
@@ -75,6 +228,9 @@ const valueAfter = (flag) => args[args.indexOf(flag) + 1];
 const isolatedKiloData = path.join(process.env.XDG_DATA_HOME, 'kilo');
 const agentPath = path.join(process.cwd(), '.kilo', 'agent', 'free-completion.md');
 const agentPolicy = fs.readFileSync(agentPath, 'utf8');
+const runtimePath = process.env.PATH.split(path.delimiter);
+if (runtimePath.includes(${JSON.stringify(runtimeProjectBin)}) || runtimePath.includes(${JSON.stringify(runtimeAncestorBin)})) process.exit(23);
+if (!runtimePath.includes(path.dirname(fs.realpathSync(process.execPath)))) process.exit(24);
 if (!args.includes('--pure') || valueAfter('--format') !== 'json') process.exit(4);
 if (valueAfter('--model') !== 'kilo/xingchen-agi/xing4.0-29b-a4b:free') process.exit(5);
 if (valueAfter('--agent') !== 'free-completion') process.exit(6);
@@ -109,8 +265,9 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           model: 'xingchen-agi/xing4.0-29b-a4b:free',
           prompt: 'private prompt',
           maxTokens: 65536,
+          projectRoot: runtimeProjectRoot,
           env: {
-            PATH: process.env.PATH,
+            PATH: [runtimeProjectBin, runtimeAncestorBin, dirname(process.execPath)].join(delimiter),
             HOME: '/fixture/home',
             USERPROFILE: '/fixture/home',
             XDG_CONFIG_HOME: '/fixture/config',
@@ -136,6 +293,25 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
         finishReason: 'stop',
         usage: { input_tokens: 10, output_tokens: 3, reasoning_tokens: 1, cost: 0 },
       });
+
+      const blockedSpawn = vi.fn();
+      await expect(
+        runKiloCompletion({
+          command,
+          model: 'xingchen-agi/xing4.0-29b-a4b:free',
+          prompt: 'private prompt',
+          maxTokens: 128,
+          projectRoot: runtimeProjectRoot,
+          env: { PATH: [runtimeProjectBin, runtimeAncestorBin, dirname(process.execPath)].join(delimiter) },
+          statImpl: async (candidate) => {
+            if (candidate === runtimeAncestorBin)
+              throw Object.assign(new Error('fixture access denied'), { code: 'EACCES' });
+            return stat(candidate);
+          },
+          spawnImpl: blockedSpawn,
+        })
+      ).resolves.toEqual({ error: 'Kilo completion failed locally', exhaustSource: true });
+      expect(blockedSpawn).not.toHaveBeenCalled();
 
       const agent = await readFile(join(directory, 'isolated-agent-policy.txt'), 'utf8');
       expect(agent).toContain("  '*': deny");
