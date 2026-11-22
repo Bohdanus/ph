@@ -15,6 +15,15 @@ import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import { useInvertLayer } from '../../hooks/useInvertLayer.ts';
 import type { FigureType } from '../../tools/shape.ts';
+import {
+  absoluteViewZoom,
+  DEFAULT_VIEW_STATE,
+  MAX_SLIDER_ZOOM,
+  MIN_VIEW_ZOOM,
+  relativeViewZoomForMagnification,
+} from '../../contexts/view-state.ts';
+import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
+import { useWorkspaceFitScale } from '../../hooks/useWorkspaceFitScale.ts';
 
 /**
  * A second, non-exhaustive surface over the same tool set. `Array` rather than an
@@ -263,7 +272,7 @@ const ADJUSTMENTS_ITEMS: readonly MenuHostItem[] = [
 ];
 
 const DesktopHeader = () => {
-  const [{ fileName, totalSize, documentFrame, hasImage }] = useStore();
+  const [{ fileName, totalSize, documentFrame, hasImage, viewState, setViewState }] = useStore();
   const { commitDirtyTool } = useLayers();
   const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
@@ -272,6 +281,8 @@ const DesktopHeader = () => {
   const { invertActiveLayer } = useInvertLayer();
 
   const { theme, toggleTheme } = useTheme();
+  const fitScale = useWorkspaceFitScale();
+  const devicePixelRatio = useDevicePixelRatio();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   // Which submenu is expanded inside the open host. Keyed by the host, so switching from
   // `image` to `edit` cannot leave a stale submenu expanded — and it is deliberately not
@@ -281,6 +292,7 @@ const DesktopHeader = () => {
   const toolsMenuRef = useRef<HTMLLIElement>(null);
   const imageMenuRef = useRef<HTMLLIElement>(null);
   const editMenuRef = useRef<HTMLLIElement>(null);
+  const viewMenuRef = useRef<HTMLLIElement>(null);
   const windowMenuRef = useRef<HTMLLIElement>(null);
 
   // One toggle for both hosts, so the click that opens a menu is also the click that
@@ -292,13 +304,14 @@ const DesktopHeader = () => {
 
   const toggleSubmenu = (id: string) => setOpenSubmenu((current) => (current === id ? null : id));
 
-  // The five hosts, addressed by the same ids `openMenu` holds, so one close path can put
+  // The six hosts, addressed by the same ids `openMenu` holds, so one close path can put
   // focus back on whichever button opened what it just closed.
   const menuHostRefs: Record<string, React.RefObject<HTMLLIElement | null>> = {
     file: fileMenuRef,
     tools: toolsMenuRef,
     image: imageMenuRef,
     edit: editMenuRef,
+    view: viewMenuRef,
     window: windowMenuRef,
   };
 
@@ -331,6 +344,33 @@ const DesktopHeader = () => {
 
   const handleFreeTransform = () => handleToolSelection('transform');
 
+  const handleFitOnScreen = () => {
+    setViewState(DEFAULT_VIEW_STATE);
+    closeMenus();
+  };
+
+  const handleActualPixels = () => {
+    setViewState({
+      panX: 0,
+      panY: 0,
+      zoom: relativeViewZoomForMagnification(1, fitScale, 1, devicePixelRatio),
+      fitScaleCompensation: 1,
+      rotation: 0,
+      minimumZoomOverride: undefined,
+    });
+    closeMenus();
+  };
+
+  const handleZoomStep = (factor: number) => {
+    const state = viewState ?? DEFAULT_VIEW_STATE;
+    const magnification = absoluteViewZoom(state, fitScale, devicePixelRatio);
+    const next = Math.min(MAX_SLIDER_ZOOM, Math.max(MIN_VIEW_ZOOM, magnification * factor));
+    setViewState({
+      zoom: relativeViewZoomForMagnification(next, fitScale, state.fitScaleCompensation, devicePixelRatio),
+    });
+    closeMenus();
+  };
+
   const adjustmentCommands: Record<AdjustmentCommand, () => void> = {
     invert: () => void invertActiveLayer(),
   };
@@ -357,6 +397,9 @@ const DesktopHeader = () => {
         setOpenMenu(null);
       }
       if (openMenu === 'edit' && editMenuRef.current && !editMenuRef.current.contains(event.target as Node)) {
+        setOpenMenu(null);
+      }
+      if (openMenu === 'view' && viewMenuRef.current && !viewMenuRef.current.contains(event.target as Node)) {
         setOpenMenu(null);
       }
       if (openMenu === 'window' && windowMenuRef.current && !windowMenuRef.current.contains(event.target as Node)) {
@@ -641,6 +684,69 @@ const DesktopHeader = () => {
                   data-testid="edit-menu-free-transform-button"
                 >
                   Free Transform
+                </button>
+              </li>
+            </ul>
+          )}
+        </li>
+        <li className="relative" ref={viewMenuRef}>
+          <button
+            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
+            type="button"
+            onClick={() => toggleMenu('view')}
+            aria-haspopup="true"
+            aria-expanded={openMenu === 'view'}
+            data-testid="header-view-menu-button"
+          >
+            View
+          </button>
+          {openMenu === 'view' && (
+            <ul
+              className="absolute left-0 top-full z-10 m-0 min-w-[180px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800"
+              data-testid="header-view-menu"
+            >
+              <li>
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  disabled={!hasImage}
+                  onClick={() => handleZoomStep(1.25)}
+                  data-testid="view-menu-zoom-in-button"
+                >
+                  Zoom In
+                </button>
+              </li>
+              <li>
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  disabled={!hasImage}
+                  onClick={() => handleZoomStep(0.8)}
+                  data-testid="view-menu-zoom-out-button"
+                >
+                  Zoom Out
+                </button>
+              </li>
+              <li>
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  disabled={!hasImage}
+                  onClick={handleFitOnScreen}
+                  data-testid="view-menu-fit-on-screen-button"
+                >
+                  Fit on Screen
+                </button>
+              </li>
+              <li>
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  disabled={!hasImage}
+                  onClick={handleActualPixels}
+                  data-testid="view-menu-100-percent-button"
+                >
+                  100%
                 </button>
               </li>
             </ul>
