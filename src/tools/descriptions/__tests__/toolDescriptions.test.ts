@@ -147,6 +147,9 @@ describe('toolDescriptions', () => {
       expect.arrayContaining([expect.stringMatching(/Alt:.*temporarily reverses the Finger Painting setting/i)])
     );
     expect(smudge.appNotes).toMatch(/This app does not bind Alt\/Option to Finger Painting/i);
+    expect(smudge.sources).toContain(
+      'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html'
+    );
 
     const magnetic = toolDescriptions['feather-magnetic-lasso'];
     expect(magnetic.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
@@ -166,10 +169,13 @@ describe('toolDescriptions', () => {
     );
     expect(quick.appNotes).toMatch(/Holding Shift temporarily adds.*Holding Alt\/Option temporarily subtracts/i);
     expect(quick.appNotes).toMatch(
-      /does not offer an Intersect selection mode or implement Shift\+Alt intersection or bracket-key resizing/i
+      /The app has no Intersect mode and does not implement bracket-key resizing or Shift\+Alt intersection/i
     );
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
       /current Quick Selection guide lists New, Add to and Subtract from.*general Intersect guide says.*any selection tool.*includes Quick Selection.*selection-combination tutorial explicitly includes Quick Selection.*exact current Options-bar mode list remains unclear.*2019 keyboard reference excludes Quick Selection from the Shift\+Alt\/Option intersect gesture.*app implements both gestures but has no Intersect mode/i
+    );
+    expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
+      /any selection tool can temporarily add with Shift or subtract with Alt\/Option while dragging; the app implements those temporary modifiers for Quick Selection strokes/i
     );
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
       /excludes Quick Selection from the Shift\+Alt\/Option intersect gesture/i

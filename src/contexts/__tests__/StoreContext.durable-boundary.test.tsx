@@ -780,7 +780,7 @@ describe('StoreContext DurableDocumentStatus contract', () => {
     expect(diagnostic?.message).toBe(`boom-${status}`);
   });
 
-  it('clears the durable document whenever SET_DURABLE_STATUS is non-current', () => {
+  it('clears the durable document but preserves logical history when SET_DURABLE_STATUS is non-current', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
     act(() => {
@@ -789,7 +789,8 @@ describe('StoreContext DurableDocumentStatus contract', () => {
         payload: { documentId: 'doc-status', history: [baselineItem()], updates: { totalSize: initialSize } },
       });
     });
-    expect(getProbe().store.durableDocument).not.toBeNull();
+    const beforeStatus = getProbe().store;
+    expect(beforeStatus.durableDocument).not.toBeNull();
 
     act(() => {
       dispatch()({
@@ -798,8 +799,14 @@ describe('StoreContext DurableDocumentStatus contract', () => {
       });
     });
 
-    expect(getProbe().store.durableDocument).toBeNull();
-    expect(getProbe().store.durableStatus).toBe('stale');
+    const afterStatus = getProbe().store;
+    expect(afterStatus.durableDocument).toBeNull();
+    expect(afterStatus.durableStatus).toBe('stale');
+    expect(afterStatus.history).toBe(beforeStatus.history);
+    expect(afterStatus.historyIndex).toBe(beforeStatus.historyIndex);
+    expect(afterStatus.layers).toBe(beforeStatus.layers);
+    expect(afterStatus.activeLayerId).toBe(beforeStatus.activeLayerId);
+    expect(afterStatus.branchRevision).toBe(beforeStatus.branchRevision);
   });
 
   it('marks a converted durable sidecar stale instead of unavailable for runtime-only edits', () => {

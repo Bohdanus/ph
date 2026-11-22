@@ -2097,7 +2097,7 @@ OVR-2 is about the Draw tool, not shapes. Preserve the `!!args.backgroundColor` 
 gate either way; it prevents a filled figure without a colour from painting with whatever
 `fillStyle` the shared overlay last carried.
 
-## 229. Fixed-size marquee's ordinary-click anchor lacks Photoshop evidence
+## 233. Fixed-size marquee's ordinary-click anchor lacks Photoshop evidence
 
 **Problem.** `useRect.adjustFreshPoint()` centers the configured fixed-size rectangle on the press
 point, and the current `e2e/selection-tools.spec.ts` fixed-size test pins that behavior. The

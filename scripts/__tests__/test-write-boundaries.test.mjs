@@ -112,8 +112,8 @@ const REVIEWED = {
   },
   'main-landing-alert.test.mjs': {
     scope:
-      'Alert and bounded failure-log fixtures use unique temporary directories; child workers coordinate concurrent/stale lock scenarios, status probes run in fixture repositories, and symlink/hardlink targets remain inside each fixture.',
-    patterns: `filesystem-write:linkSync=1 filesystem-write:mkdirSync=2 filesystem-write:mkdtempSync=20 filesystem-write:renameSync=1 filesystem-write:rmSync=2 filesystem-write:symlinkSync=2 filesystem-write:writeFileSync=19 subprocess:spawn=2 subprocess:spawnSync=3`,
+      'Alert, invalid/missing timestamp, duration, and bounded failure-log fixtures use unique temporary directories; child workers coordinate concurrent/stale lock scenarios, status probes run in fixture repositories, and symlink/hardlink targets remain inside each fixture.',
+    patterns: `filesystem-write:linkSync=1 filesystem-write:mkdirSync=3 filesystem-write:mkdtempSync=22 filesystem-write:renameSync=1 filesystem-write:rmSync=2 filesystem-write:symlinkSync=2 filesystem-write:writeFileSync=20 subprocess:spawn=2 subprocess:spawnSync=6`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',

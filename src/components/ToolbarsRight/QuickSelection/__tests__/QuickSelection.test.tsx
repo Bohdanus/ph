@@ -379,12 +379,13 @@ describe('QuickSelection toolbar', () => {
       ).toBeInTheDocument();
     });
 
-    it('describes only the temporary modifier supported for the current mode', () => {
+    it('describes only the temporary modifier supported for the current mode without promising brush-tip gestures', () => {
       render(<QuickSelection />);
 
       const hint = screen.getByText(/^Drag over/);
       expect(hint).toHaveTextContent(/Hold Alt\/Option to subtract/);
       expect(hint).not.toHaveTextContent(/Hold Shift to add/);
+      expect(hint).not.toHaveTextContent(/resize|brush tip|constrain.*circle/i);
 
       fireEvent.change(getMode(), { target: { value: 'subtract' } });
 

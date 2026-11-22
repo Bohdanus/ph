@@ -556,7 +556,7 @@ function alertMessage(owner, minutes) {
 
 function invalidTimestampMessage(owner) {
   return (
-    'Main landing lease timestamp is invalid: branch=' +
+    'Main landing lease timestamp is invalid or missing: branch=' +
     alertText(owner.owner?.branch) +
     ', chat=' +
     alertText(owner.owner?.chatId) +

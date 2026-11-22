@@ -56,6 +56,47 @@ afterEach(() => {
 });
 
 describe('main landing invalid lease timestamps and bounded failure logging', () => {
+  it('shows a missing lease ID and invalid timestamp in status without creating an alert marker', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'main-landing-invalid-status-'));
+    tempDirectories.push(repo);
+    const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
+    expect(initialized.status).toBe(0);
+
+    for (const [key, value] of [
+      ['ph.mainWorktreeGitDir', join(repo, '.git')],
+      ['ph.mainWorktreePath', repo],
+    ]) {
+      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
+      expect(configured.status).toBe(0);
+    }
+
+    const lockDir = join(repo, '.git', 'main-landing-occupancy');
+    mkdirSync(lockDir);
+    writeFileSync(
+      join(lockDir, 'owner.json'),
+      JSON.stringify({
+        occupiedSince: 'not-a-timestamp',
+        owner: { branch: 'task/example', chatId: 'example-chat' },
+      })
+    );
+
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, '../main-landing.mjs'), 'status', '--json'], {
+      cwd: repo,
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      occupied: true,
+      leaseIdKnown: false,
+      ageKnown: false,
+      age: 'unknown age',
+      timestampIntegrityAlert: 'not sent',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    });
+    expect(existsSync(join(lockDir, 'alert-invalid-timestamp.json'))).toBe(false);
+  });
+
   it('posts one integrity diagnostic without claiming a duration threshold or changing the lease', () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-invalid-time-'));
     tempDirectories.push(lockDir);
@@ -74,6 +115,7 @@ describe('main landing invalid lease timestamps and bounded failure logging', ()
     notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), postNote);
 
     expect(postNote).toHaveBeenCalledTimes(1);
+    expect(postNote.mock.calls[0][1]).toContain('timestamp is invalid or missing');
     expect(postNote.mock.calls[0][1]).toContain('Lease age and recovery thresholds are unknown');
     expect(postNote.mock.calls[0][1]).toContain('Preserve the lease and main state');
     expect(JSON.parse(readFileSync(join(lockDir, 'alert-invalid-timestamp.json'), 'utf8'))).toMatchObject({
@@ -140,6 +182,31 @@ describe('main landing invalid lease timestamps and bounded failure logging', ()
     expect(postNote).not.toHaveBeenCalled();
     expect(existsSync(join(lockDir, 'alert-15m.json'))).toBe(false);
     expect(existsSync(join(lockDir, 'alert-240m.json'))).toBe(false);
+  });
+
+  it('uses the injected delivery function for each elapsed threshold', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-duration-alert-'));
+    tempDirectories.push(lockDir);
+    const owner = {
+      leaseId: 'elapsed-lease',
+      occupiedSince: '2026-11-17T12:45:02.000Z',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+    const postNote = vi.fn(() => true);
+
+    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), postNote);
+
+    expect(postNote).toHaveBeenCalledTimes(2);
+    expect(postNote.mock.calls.map(([, message]) => message)).toEqual(
+      expect.arrayContaining([expect.stringContaining('15 minutes'), expect.stringContaining('4 hours')])
+    );
+    for (const marker of ['alert-15m.json', 'alert-240m.json']) {
+      expect(JSON.parse(readFileSync(join(lockDir, marker), 'utf8'))).toMatchObject({
+        status: 'sent',
+        leaseId: owner.leaseId,
+      });
+    }
+    expect(existsSync(join(lockDir, 'alert-invalid-timestamp.json'))).toBe(false);
   });
 
   it('bounds failure history by line count while retaining the newest entries', () => {
