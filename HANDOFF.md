@@ -1282,26 +1282,23 @@ the commit until the user chooses, which is worse and is not recommended.
 
 ---
 
-## 152. Canvas input lacks a stylus and gesture policy
+## 152. Canvas input lacks a stylus policy
 
-**Problem.** Canvas tools do not distinguish pen from touch, consume stylus pressure, or support
-pinch-zoom and two-finger pan. These gaps affect tablet input and remain separate from the layer
-list's implemented pointer-based touch reorder path.
+**Problem.** Tablet canvas input has no tool policy for distinguishing pen from touch or consuming
+stylus pressure. Palm rejection and pressure behavior remain undefined across canvas tools.
 
-**Evidence.** `LayersTab.tsx` uses `pointerType` for touch reordering, and `usePointerPosition` now
-stores and returns `pointerTypeRef`, but no canvas tool consumes it for filtering. No tool processor
-consumes pointer pressure. `docs/FEATURES.md` records pinch-zoom and two-finger pan as absent.
-The slider hit-target gap has a separate shared `TouchSlider` implementation and the
-`e2e/touch-slider-target.spec.ts` contract; it is no longer part of this open item. Touch E2E
-coverage is not zero (`layers.spec.ts`, `text-edit.spec.ts`, `canvas-growth.spec.ts` opt in per
-test), but the suite has no dedicated touch project.
+**Evidence.** `useCanvasTouchNavigation.ts` handles two-finger canvas navigation while leaving a
+single touch with the active tool. `usePointerPosition` stores and returns `pointerTypeRef`, but no
+canvas tool consumes it to filter input. No tool processor consumes pointer pressure. Touch E2E
+coverage exists (`layers.spec.ts`, `text-edit.spec.ts`, `canvas-growth.spec.ts` opt in per test), but
+the suite has no dedicated touch project. The slider hit-target contract is covered separately by
+`TouchSlider` and `e2e/touch-slider-target.spec.ts`.
 
-**Next work.** Decide how canvas tools should handle pen, touch, and pressure before adding palm
-rejection; add touch gestures for canvas zoom and pan. Keep this work within the desktop and
-tablet/touch product boundary.
+**Next work.** Define pen, touch, pressure and palm-rejection behavior for canvas tools. Keep this
+work within the desktop and tablet/touch product boundary.
 
-**Files.** `src/hooks/usePointerPosition.ts`, canvas tool input handlers and processors, canvas
-zoom/pan handling, and their touch E2E coverage.
+**Files.** `src/hooks/usePointerPosition.ts`, canvas tool input handlers and processors, and their
+pen/pressure coverage.
 
 ---
 
