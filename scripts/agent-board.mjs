@@ -64,6 +64,20 @@ import { resolveIdentity } from './lib/agent-board/identity.mjs';
  */
 const RUN = 'npm run swarm --';
 
+export function formatDoctorFinding(finding) {
+  const target = finding.issue ?? finding.path;
+  const missingWorktree =
+    (finding.kind === 'dead-worktree' || finding.kind === 'dead-worktree-lock') && finding.worktree
+      ? ` (${finding.worktree} is gone)`
+      : '';
+  const retainedLocks = finding.files_retained?.length
+    ? `; live file locks remain held: ${finding.files_retained
+        .map((lock) => `${lock.path} by ${lock.agent_id}`)
+        .join(', ')}`
+    : '';
+  return `  ${finding.kind} ${target} — ${finding.agent}${missingWorktree}${retainedLocks}`;
+}
+
 const USAGE = `swarm — live coordination for a swarm of agents on one repository
 
   NOT KILO'S board_read
@@ -1327,18 +1341,7 @@ export async function run(
             : `${flags.dry_run ? 'found' : 'released'} ${findings.length} ${flags.dry_run ? 'stale release candidate(s)' : 'stale holding(s)'}${
                 flags.dry_run ? ' (rechecked before release)' : ''
               }:`,
-          ...findings.map(
-            (finding) =>
-              `  ${finding.kind} ${finding.issue ?? finding.path} — ${finding.agent}${
-                finding.worktree ? ` (${finding.worktree} is gone)` : ''
-              }${
-                finding.files_retained?.length
-                  ? `; live file locks remain held: ${finding.files_retained
-                      .map((lock) => `${lock.path} by ${lock.agent_id}`)
-                      .join(', ')}`
-                  : ''
-              }`
-          ),
+          ...findings.map(formatDoctorFinding),
         ];
         if (anomalies.length > 0) {
           output.push(
