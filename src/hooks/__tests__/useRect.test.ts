@@ -24,6 +24,7 @@ const usePointerPositionMock = vi.hoisted(() => {
     dimensionsRef: { current: { scale: 1, offset: { x: 0, y: 0 } } },
     onResize: vi.fn(),
     pointerIdRef: { current: null },
+    simulateResizeCallbackOnSizeChange: false,
   };
   return {
     usePointerPosition: vi.fn(() => mockData),
@@ -34,7 +35,35 @@ const usePointerPositionMock = vi.hoisted(() => {
   };
 });
 
-vi.mock('../usePointerPosition.ts', () => usePointerPositionMock);
+vi.mock('../usePointerPosition.ts', async () => {
+  const { useEffect, useRef } = await import('react');
+
+  return {
+    usePointerPosition: vi.fn(
+      ({
+        imageSize,
+        onResize,
+      }: {
+        imageSize: { width: number; height: number };
+        onResize?: (dimensions: typeof usePointerPositionMock.mockData.dimensionsRef.current) => void;
+      }) => {
+        const previousImageSize = useRef(imageSize);
+
+        useEffect(() => {
+          const sizeChanged =
+            previousImageSize.current.width !== imageSize.width ||
+            previousImageSize.current.height !== imageSize.height;
+          previousImageSize.current = imageSize;
+          if (sizeChanged && usePointerPositionMock.mockData.simulateResizeCallbackOnSizeChange) {
+            onResize?.(usePointerPositionMock.mockData.dimensionsRef.current);
+          }
+        }, [imageSize, onResize]);
+
+        return usePointerPositionMock.mockData;
+      }
+    ),
+  };
+});
 
 const rectUtilsMock = vi.hoisted(() => ({
   getCanvasSize: vi.fn(() => ({ width: 800, height: 600 })),
@@ -275,6 +304,7 @@ describe('useRect', () => {
     // test that drives a real drag has to be undone here or it decides the branch every later test
     // takes — in whatever order the runner happens to use.
     usePointerPositionMock.mockData.isMouseDown.current = false;
+    usePointerPositionMock.mockData.simulateResizeCallbackOnSizeChange = false;
     testContext = createTestContext();
   });
 
@@ -418,39 +448,76 @@ describe('useRect', () => {
       const props: UseRectProps = {
         imageSize: { width: 800, height: 600 },
         initialRect: { x1: 100, y1: 120, x2: 200, y2: 200 },
+        overlayColorForRect: vi.fn(() => '#fff'),
+        overlayType: 'ruleOfThirds',
         incrementalOverlay,
         hideBlend: false,
         containerRef: { current: testContext.containerElement },
         overlayRef: { current: testContext.overlayCanvas },
+        onRepaint: vi.fn(),
         onChangeEnd: vi.fn(),
       };
+      usePointerPositionMock.mockData.simulateResizeCallbackOnSizeChange = true;
+      const onRepaint = props.onRepaint as ReturnType<typeof vi.fn>;
       const ctx = testContext.overlayCanvas.getContext('2d') as unknown as ReturnType<typeof createMockCanvasContext>;
       const clearBackingStore = () =>
         expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, ctx.canvas.width, ctx.canvas.height);
-      const { rerender } = renderHook(({ imageSize, hideBlend }) => useRect({ ...props, imageSize, hideBlend }), {
-        initialProps: { imageSize: props.imageSize, hideBlend: false },
-      });
+      const { rerender } = renderHook(
+        ({ imageSize, hideBlend, overlayColorForRect }) =>
+          useRect({ ...props, imageSize, hideBlend, overlayColorForRect }),
+        {
+          initialProps: {
+            imageSize: props.imageSize,
+            hideBlend: false,
+            overlayColorForRect: props.overlayColorForRect,
+          },
+        }
+      );
 
       vi.mocked(ctx.clearRect).mockClear();
       vi.mocked(ctx.fillRect).mockClear();
-      act(() => rerender({ imageSize: { width: 400, height: 300 }, hideBlend: false }));
+      onRepaint.mockClear();
+      act(() =>
+        rerender({
+          imageSize: { width: 400, height: 300 },
+          hideBlend: false,
+          overlayColorForRect: vi.fn(() => '#000'),
+        })
+      );
 
       clearBackingStore();
       expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 400, 300);
+      expect(onRepaint).toHaveBeenCalledTimes(1);
 
       vi.mocked(ctx.clearRect).mockClear();
       vi.mocked(ctx.fillRect).mockClear();
-      act(() => rerender({ imageSize: { width: 400, height: 300 }, hideBlend: true }));
+      onRepaint.mockClear();
+      act(() =>
+        rerender({
+          imageSize: { width: 400, height: 300 },
+          hideBlend: true,
+          overlayColorForRect: props.overlayColorForRect,
+        })
+      );
 
       clearBackingStore();
       expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 400, 300);
+      expect(onRepaint).toHaveBeenCalledTimes(1);
 
       vi.mocked(ctx.clearRect).mockClear();
       vi.mocked(ctx.fillRect).mockClear();
-      act(() => rerender({ imageSize: { width: 400, height: 300 }, hideBlend: false }));
+      onRepaint.mockClear();
+      act(() =>
+        rerender({
+          imageSize: { width: 400, height: 300 },
+          hideBlend: false,
+          overlayColorForRect: props.overlayColorForRect,
+        })
+      );
 
       clearBackingStore();
       expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 400, 300);
+      expect(onRepaint).toHaveBeenCalledTimes(1);
     }
   );
 
