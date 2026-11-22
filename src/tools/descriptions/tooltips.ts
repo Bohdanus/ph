@@ -46,7 +46,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   'polygonal-lasso': {
     summary:
-      'In this app, click to add straight-sided polygon anchors; close the draft with a double-click, right-click, or Enter/Return.',
+      'Click to add straight-sided anchors; close by clicking the start, double-clicking, or Ctrl/Command-clicking. This app lacks Ctrl/Command-click closure.',
     implementation: 'partial',
   },
   'feather-magnetic-lasso': {

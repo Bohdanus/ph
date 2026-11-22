@@ -285,8 +285,20 @@ export function isOrphanAutoMergeState(state) {
     state?.branch === 'main' &&
     Array.isArray(state.operations) &&
     state.operations.length === 1 &&
-    state.operations[0]?.operation === 'in-progress' &&
+    state.operations[0]?.operation === null &&
     state.operations[0]?.marker === 'AUTO_MERGE'
+  );
+}
+
+export function formatOperationSummary(operations) {
+  return (
+    operations
+      .map((entry) =>
+        typeof entry?.operation === 'string'
+          ? `${entry.operation}:${entry.marker}`
+          : `${entry?.marker ?? 'Unknown'} marker without a primary operation marker`
+      )
+      .join(', ') || 'none'
   );
 }
 
@@ -1026,7 +1038,7 @@ function showStatus(paths, json = false) {
         ' has unowned Git state; owner is unknown. branch=' +
         state.branch +
         ', operations=' +
-        (state.operations.map((entry) => entry.operation + ':' + entry.marker).join(', ') || 'none') +
+        formatOperationSummary(state.operations) +
         ', dirty=' +
         state.dirty +
         ', unmerged=' +

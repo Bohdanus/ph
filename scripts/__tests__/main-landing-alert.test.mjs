@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
   existsSync,
@@ -21,6 +21,7 @@ import { pathToFileURL } from 'node:url';
 import {
   canRecoverOrphanAutoMerge,
   claimAlert,
+  formatOperationSummary,
   isOrphanAutoMergeState,
   notifyIfDue,
   observeOrphanAutoMerge,
@@ -669,18 +670,59 @@ describe('main landing alert claims', () => {
 describe('persistent orphan AUTO_MERGE failover', () => {
   const orphan = {
     branch: 'main',
-    operations: [{ operation: 'in-progress', marker: 'AUTO_MERGE', value: null }],
+    operations: [{ operation: null, marker: 'AUTO_MERGE', value: null }],
   };
 
-  it('recognizes only an unnamed AUTO_MERGE operation on main', () => {
+  it('recognizes only a main checkout with an unpaired AUTO_MERGE marker', () => {
     expect(isOrphanAutoMergeState(orphan)).toBe(true);
+    expect(isOrphanAutoMergeState({ branch: 'main', operations: [] })).toBe(false);
     expect(isOrphanAutoMergeState({ ...orphan, branch: 'feature' })).toBe(false);
+    expect(
+      isOrphanAutoMergeState({
+        ...orphan,
+        operations: [{ operation: 'in-progress', marker: 'AUTO_MERGE', value: null }],
+      })
+    ).toBe(false);
     expect(
       isOrphanAutoMergeState({
         ...orphan,
         operations: [...orphan.operations, { operation: 'merge', marker: 'MERGE_HEAD' }],
       })
     ).toBe(false);
+  });
+
+  it('formats an unpaired marker without rendering a null operation name', () => {
+    expect(formatOperationSummary(orphan.operations)).toBe('AUTO_MERGE marker without a primary operation marker');
+    expect(formatOperationSummary([{ operation: 'merge', marker: 'MERGE_HEAD' }])).toBe('merge:MERGE_HEAD');
+    expect(formatOperationSummary([])).toBe('none');
+  });
+
+  it('serializes an AUTO_MERGE-only main state with a nullable operation in status JSON', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'main-landing-status-'));
+    tempDirectories.push(repo);
+    const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
+    expect(initialized.status).toBe(0);
+
+    for (const [key, value] of [
+      ['ph.mainWorktreeGitDir', join(repo, '.git')],
+      ['ph.mainWorktreePath', repo],
+    ]) {
+      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
+      expect(configured.status).toBe(0);
+    }
+    writeFileSync(join(repo, '.git', 'AUTO_MERGE'), 'unpaired marker\n');
+
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, '../main-landing.mjs'), 'status', '--json'], {
+      cwd: repo,
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      occupied: true,
+      branch: 'main',
+      operations: [{ operation: null, marker: 'AUTO_MERGE', value: null }],
+    });
   });
 
   it('requires the same main and AUTO_MERGE tree to be observed continuously for 30 minutes', () => {

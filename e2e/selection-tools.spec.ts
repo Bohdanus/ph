@@ -1165,7 +1165,7 @@ test.describe('Rectangular Marquee Tool', () => {
 
       const box = await measureCanvas(page);
       const press = { x: box.x + box.width * 0.4, y: box.y + box.height * 0.4 };
-      const drag = { x: press.x + 24, y: press.y + 12 };
+      const drag = { x: press.x + 24, y: press.y + 9 };
       expect(Math.abs(Number(fixedWidth) * (1 - fitScale))).toBeGreaterThan(OUTLINE_BOUNDS_TOLERANCE_PX);
       expect(Math.abs(Number(fixedHeight) * (1 - fitScale))).toBeGreaterThan(OUTLINE_BOUNDS_TOLERANCE_PX);
 

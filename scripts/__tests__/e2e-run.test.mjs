@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'no
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import {
   SwarmLock,
@@ -1262,6 +1263,118 @@ describe('e2e-run: runPlaywright quiet capture', () => {
       script.cleanup();
     }
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'kills ignored Playwright descendants after the runner handles SIGTERM',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'e2e-cancel-tree-'));
+      const cli = join(dir, 'fake-playwright.mjs');
+      const wrapper = join(dir, 'wrapper.mjs');
+      const processFile = join(dir, 'processes.json');
+      const token = `e2e-orphan-test-${process.pid}-${Date.now()}`;
+
+      writeFileSync(
+        cli,
+        [
+          "import { spawn } from 'node:child_process';",
+          "import { writeFileSync } from 'node:fs';",
+          'writeFileSync(process.env.E2E_PROCESS_FILE, JSON.stringify({ runnerPid: process.pid, childPid: null }));',
+          'const child = spawn(process.execPath, [',
+          '  "-e", "process.on(' + "'SIGTERM'" + ', () => {}); setInterval(() => {}, 1000);",',
+          '  process.env.E2E_ORPHAN_TOKEN,',
+          "], { stdio: 'inherit' });",
+          'writeFileSync(process.env.E2E_PROCESS_FILE, JSON.stringify({ runnerPid: process.pid, childPid: child.pid }));',
+          "process.on('SIGTERM', () => process.exit(128 + 15));",
+          'setInterval(() => {}, 1000);',
+        ].join('\n')
+      );
+      writeFileSync(
+        wrapper,
+        [
+          `import { runPlaywright } from ${JSON.stringify(pathToFileURL(join(REPO_ROOT, 'scripts/e2e-run/index.mjs')).href)};`,
+          'process.exitCode = await runPlaywright([process.env.E2E_ORPHAN_TOKEN], { cli: process.env.E2E_FAKE_CLI, quiet: true });',
+        ].join('\n')
+      );
+
+      const root = spawn(process.execPath, [wrapper], {
+        env: {
+          ...process.env,
+          E2E_FAKE_CLI: cli,
+          E2E_PROCESS_FILE: processFile,
+          E2E_ORPHAN_TOKEN: token,
+        },
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      const closed = new Promise((resolve) => root.once('close', (code, signal) => resolve({ code, signal })));
+      const closeWithin = (timeoutMs) => {
+        let timeout;
+        return Promise.race([
+          closed,
+          new Promise((resolve) => {
+            timeout = setTimeout(() => resolve(null), timeoutMs);
+          }),
+        ]).finally(() => clearTimeout(timeout));
+      };
+      let processInfo;
+
+      const processState = (pid) => {
+        if (!Number.isInteger(pid) || pid <= 0) return null;
+        const result = spawnSync('ps', ['-ww', '-o', 'stat=,command=', '-p', String(pid)], { encoding: 'utf8' });
+        if (result.error) throw result.error;
+        if (result.stderr.trim()) throw new Error(`ps could not inspect pid ${pid}: ${result.stderr.trim()}`);
+        const line = result.stdout.trim();
+        if (!line || !line.includes(token)) return null;
+        const [state] = line.split(/\s+/);
+        return state.startsWith('Z') ? null : state;
+      };
+
+      try {
+        const readyDeadline = Date.now() + 5_000;
+        while (Date.now() < readyDeadline) {
+          try {
+            processInfo = JSON.parse(readFileSync(processFile, 'utf8'));
+            if (Number.isInteger(processInfo.childPid)) break;
+          } catch {
+            // The fake CLI writes its leader PID before starting the ignored-signal child.
+          }
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        expect(Number.isInteger(processInfo?.childPid), 'the ignored-signal descendant started').toBe(true);
+
+        root.kill('SIGTERM');
+        const result = await closeWithin(10_000);
+        expect(result, 'the wrapper closes after SIGTERM').not.toBeNull();
+        expect(result).toMatchObject({ code: 128 + 15, signal: null });
+
+        const exitDeadline = Date.now() + 5_000;
+        while (processState(processInfo.childPid) && Date.now() < exitDeadline) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        expect(processState(processInfo.childPid), 'no descendant survives the cancelled run').toBeNull();
+      } finally {
+        if (root.exitCode == null && root.signalCode == null) {
+          root.kill('SIGTERM');
+          await closeWithin(5_000);
+          if (root.exitCode == null && root.signalCode == null) {
+            root.kill('SIGKILL');
+            await closeWithin(1_000);
+          }
+        }
+        if (
+          Number.isInteger(processInfo?.runnerPid) &&
+          (processState(processInfo.runnerPid) || processState(processInfo.childPid))
+        ) {
+          try {
+            process.kill(-processInfo.runnerPid, 'SIGKILL');
+          } catch {
+            // The process group is already gone on the passing path.
+          }
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  );
 
   it('signals the whole process tree so a dev server cannot outlive the runner', async () => {
     const script = makeScript(

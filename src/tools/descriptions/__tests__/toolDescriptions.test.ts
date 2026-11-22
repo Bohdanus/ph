@@ -131,8 +131,9 @@ describe('toolDescriptions', () => {
       ])
     );
     expect(polygonRows).not.toEqual(expect.arrayContaining([expect.stringMatching(/Alt.*double-click/i)]));
-    expect(polygon.summary).toMatch(/In this app,.*double-click.*right-click.*Enter\/Return/i);
-    expect(polygon.summary).not.toMatch(/Ctrl\/Command|starting point/i);
+    expect(polygon.summary).toMatch(/close by clicking the start, double-clicking, or Ctrl\/Command-clicking/i);
+    expect(polygon.summary).toMatch(/This app lacks Ctrl\/Command-click closure/i);
+    expect(polygon.summary).not.toMatch(/right-click|Enter|Return/i);
     expect(polygon.purpose).toMatch(/Ctrl-clicking on Windows \/ Command-clicking on macOS/i);
     expect(polygon.purpose).not.toMatch(/Enter|Return/i);
     expect(polygon.purpose).not.toMatch(/right-click/i);
@@ -164,10 +165,14 @@ describe('toolDescriptions', () => {
       /temporary Shift-add and Alt\/Option-subtract while brushing.*app implements both gestures/i
     );
     expect(quick.appNotes).toMatch(/Holding Shift temporarily adds.*Holding Alt\/Option temporarily subtracts/i);
-    expect(quick.appNotes).toMatch(/Shift\+Alt intersection.*not implemented/i);
-    expect(quick.appNotes).toMatch(/bracket-key resizing are not implemented/i);
+    expect(quick.appNotes).toMatch(
+      /does not offer an Intersect selection mode or implement Shift\+Alt intersection or bracket-key resizing/i
+    );
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
-      /general Intersect guide directs any selection tool.*by its wording includes Quick Selection.*2019 keyboard reference separately excludes Quick Selection from the Shift\+Alt\/Option\+Shift gesture.*exact current Intersect support remains unresolved/i
+      /current Quick Selection guide lists New, Add to and Subtract from.*general Intersect guide says.*any selection tool.*includes Quick Selection.*selection-combination tutorial explicitly includes Quick Selection.*exact current Options-bar mode list remains unclear.*2019 keyboard reference excludes Quick Selection from the Shift\+Alt\/Option intersect gesture.*app implements both gestures but has no Intersect mode/i
+    );
+    expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
+      /excludes Quick Selection from the Shift\+Alt\/Option intersect gesture/i
     );
     const quickShortcutKeys = quick.shortcuts.map((shortcut) => shortcut.keys);
     expect(quickShortcutKeys).toContain('[');

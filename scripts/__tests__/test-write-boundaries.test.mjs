@@ -36,7 +36,7 @@ const REVIEWED = {
   'e2e-run.test.mjs': {
     scope:
       'Board, run-record, process-tree, and filesystem fixtures are temporary; the live run record and sentinel are read-only tripwires.',
-    patterns: `filesystem-write:mkdtempSync=3 filesystem-write:rmSync=3 subprocess:spawnSync=3 filesystem-write:writeFileSync=1 subprocess:spawn=1`,
+    patterns: `filesystem-write:mkdtempSync=4 filesystem-write:rmSync=4 subprocess:spawnSync=4 filesystem-write:writeFileSync=3 subprocess:spawn=2`,
   },
   'e2e-skip-baseline.test.mjs': {
     scope: 'Baseline and report fixtures use unique OS temporary directories.',
@@ -112,8 +112,8 @@ const REVIEWED = {
   },
   'main-landing-alert.test.mjs': {
     scope:
-      'Alert and bounded failure-log fixtures use unique temporary directories; child workers coordinate concurrent/stale lock scenarios, and symlink/hardlink targets remain inside each fixture.',
-    patterns: `filesystem-write:linkSync=1 filesystem-write:mkdirSync=2 filesystem-write:mkdtempSync=19 filesystem-write:renameSync=1 filesystem-write:rmSync=2 filesystem-write:symlinkSync=2 filesystem-write:writeFileSync=18 subprocess:spawn=2`,
+      'Alert and bounded failure-log fixtures use unique temporary directories; child workers coordinate concurrent/stale lock scenarios, status probes run in fixture repositories, and symlink/hardlink targets remain inside each fixture.',
+    patterns: `filesystem-write:linkSync=1 filesystem-write:mkdirSync=2 filesystem-write:mkdtempSync=20 filesystem-write:renameSync=1 filesystem-write:rmSync=2 filesystem-write:symlinkSync=2 filesystem-write:writeFileSync=19 subprocess:spawn=2 subprocess:spawnSync=3`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
@@ -155,7 +155,7 @@ const REVIEWED = {
   'repo-state-gate.test.mjs': {
     scope:
       'Git and filesystem fixtures use temporary repositories; child cwd and environment are reviewed, and fixture repo/worktree paths are removed only within scratch roots cleaned by afterEach.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=9 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=20 filesystem-write:rmSync=9 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=10 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=23 filesystem-write:rmSync=9 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
   },
   'session-db-snapshot.test.mjs': {
     scope: 'Snapshot fixtures use temporary databases; copies are explicitly opened read-only.',
