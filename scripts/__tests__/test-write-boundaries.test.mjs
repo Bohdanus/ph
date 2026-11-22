@@ -112,8 +112,8 @@ const REVIEWED = {
   },
   'main-landing-alert.test.mjs': {
     scope:
-      'Alert, invalid/missing timestamp, duration, and bounded failure-log fixtures use unique temporary directories; child workers coordinate concurrent/stale lock scenarios, status probes run in fixture repositories, and symlink/hardlink targets remain inside each fixture.',
-    patterns: `filesystem-write:linkSync=1 filesystem-write:mkdirSync=3 filesystem-write:mkdtempSync=22 filesystem-write:renameSync=1 filesystem-write:rmSync=2 filesystem-write:symlinkSync=2 filesystem-write:writeFileSync=20 subprocess:spawn=2 subprocess:spawnSync=6`,
+      'Alert, owner identity, invalid/missing timestamp, duration, and bounded failure-log fixtures use unique temporary repositories/directories; Git setup and CLI children stay inside those fixtures, concurrent workers coordinate through temporary files, and symlink/hardlink targets remain inside each fixture.',
+    patterns: `subprocess:spawn=1 filesystem-write:rmSync=2 filesystem-write:mkdtempSync=25 subprocess:spawnSync=9 filesystem-write:mkdirSync=4 filesystem-write:writeFileSync=22 filesystem-write:renameSync=1 filesystem-write:symlinkSync=2 filesystem-write:linkSync=1`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
@@ -142,6 +142,11 @@ const REVIEWED = {
     scope:
       'Git path identity is read from the current checkout; directory and symlink fixtures are created under unique OS temporary directories and removed after each test.',
     patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=1 filesystem-write:rmSync=1 filesystem-write:mkdirSync=3 filesystem-write:writeFileSync=1 filesystem-write:symlinkSync=3`,
+  },
+  'process-identity.test.mjs': {
+    scope:
+      'Linux procfs and platform command fixtures are mocked except for the current-process identity smoke test, which uses read-only procfs or one bounded ps/PowerShell query; no files or databases are written.',
+    patterns: '',
   },
   'quiet-command.test.mjs': {
     scope: 'Subprocess invocation is the command-wrapper behavior under test; review command and cwd.',

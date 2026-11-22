@@ -55,10 +55,10 @@ platform limit.
 | Layers            | `partial`   | No groups, masks, clipping or adjustment layers; no separate Fill opacity                                    |
 | History           | `partial`   | Linear panel exists; no state limit, snapshots, non-linear history or History Brush                          |
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                                                          |
-| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                                                        |
-| View / navigation | `partial`   | The Ruler measures; no pan, no canvas rulers, no guides                                                      |
-| Keyboard          | `partial`   | 46 bindings against Photoshop's ~200                                                                         |
-| Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                                               |
+| Menu bar          | `divergent` | Six hosts including custom Tools; View has Zoom In/Out, Fit on Screen and 100%                               |
+| View / navigation | `partial`   | Pan, zoom, fit and rotate work; no canvas rulers or guides                                                   |
+| Keyboard          | `partial`   | 65 keyboard bindings/handlers against Photoshop's ~200 defaults                                              |
+| Colour management | `partial`   | Current pixel pipeline is 8-bit sRGB; no ICC, CMYK or 16/32-bit document modes                               |
 | Export options    | `partial`   | JPEG quality is the only user-controllable option                                                            |
 | Tablet touch      | `partial`   | Tablet-sized touch shell; Retina/high-DPI matters; handheld phone layouts are out of scope                   |
 | Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                                                      |
@@ -305,27 +305,30 @@ which are options bars, not panels.
 
 ## Menu bar
 
-**Photoshop:** File, Edit, Image, Layer, Type, Select, Filter, 3D, View, Window,
-Help.
+**Photoshop:** File, Edit, Image, Layer, Type, Select, Filter, View, Window and
+Help. Adobe says Photoshop's legacy 3D features were removed as of July 2024
+([Manage layers and groups](https://helpx.adobe.com/photoshop/using/layers.html)).
 
-**This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
-(`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses). File has New, Open,
+**This app:** six menu hosts — `file`, `tools`, `image`, `edit`, `view`, `window`
+(`DesktopHeader.tsx` — the six hosts `menuHostRefs` addresses). File has New, Open,
 Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
 Adobe's item list with **three enabled** — `Brightness/Contrast`, `Desaturate` and
 `Invert` — and nineteen **disabled** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`); a disabled item
 records a capability
 the app does not have rather than faking it. Edit holds one item, `Free Transform`,
 which is where Adobe puts it (`DesktopHeader.tsx` — `handleFreeTransform`). Window
-has Reset Workspace.
+has Reset Workspace. View has `Zoom In`, `Zoom Out`, `Fit on Screen` and `100%`;
+the latter uses the active workspace fit and device-pixel ratio.
 
 **Status:** `divergent`
 
-**Gap:** The Layer, Type, Select, Filter, 3D, View and Help menus do not exist, and
-Image and Edit are each a stub — Image has no Mode, Image Size, Canvas Size, Crop,
+**Gap:** The Layer, Type, Select, Filter and Help menus do not exist, and
+Image and Edit remain partial — Image has no Mode, Image Size, Canvas Size, Crop,
 Trim or Canvas Rotation, and Edit has nothing but Free Transform. So Undo, Cut, Copy,
 Paste, Image Size, Canvas Size, Layer Mask, Clipping Mask, Group, Merge, Select All,
-Deselect (both on the keyboard only), Modify, the Filter gallery, Zoom, Fit Screen, Rulers, Guides and Print are
-unreachable from the menu bar — several are unreachable entirely.
+Deselect (both on the keyboard only), Modify, the Filter gallery, Rulers, Guides and
+Print are unreachable from the menu bar — several are unreachable entirely. Legacy
+3D is not listed as a gap because Adobe removed those features.
 
 Undo and Redo exist as buttons (`HistoryControls.tsx` — its `undo-button` and
 `redo-button`)
@@ -354,9 +357,16 @@ fullscreen, keeping the in-window hide when the browser refuses.
 
 **Status:** `partial`
 
-**Gap:** Flick panning, wheel and animated zoom preferences, pinch/two-finger
-gestures, the Rotate View compass, angle snapping and multi-window sync remain
-absent. The implementation deliberately caps the options-bar zoom control at
+**Gap:** Flick panning, animated zoom preferences, the Rotate View compass,
+multi-window sync, canvas rulers, guides, snap and the grid overlay remain absent.
+View exposes Zoom In, Zoom Out, Fit on Screen and 100%. Zoom In/Out follow the existing
+1.25/0.8 relative step; Photoshop's Zoom tool uses preset percentage steps
+([Zoom images in Photoshop](https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/zoom-images.html)),
+so exact step parity remains open. Hand, Zoom and Rotate View surfaces support wheel pan and
+Ctrl/Meta+wheel zoom while a View tool is active; those wheel gestures do not apply
+while another tool is selected. Two-finger touch pans and pinches the canvas while a
+single touch remains with the active tool. Shift constrains Rotate View to 15-degree
+increments. The implementation deliberately caps the options-bar zoom control at
 1600% pending a product-specific desktop maximum.
 
 `absent`, not `platform`. Every one of these is a browser's ordinary business.
@@ -376,8 +386,10 @@ same registration path.
 
 **Status:** `partial`
 
-**Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O, H, Z, R; `Ctrl+Z`, `Shift+Ctrl+Z`,
-`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Cmd/Ctrl+T`, `Ctrl+S`; `Ctrl+A` (Select All, replacing any
+**Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O, H, Z, R; temporary Hand while holding
+Space (except while editing text or a document gesture is open); `Ctrl+Z`, `Shift+Ctrl+Z`,
+`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Cmd/Ctrl+T`, `Ctrl+S`; `Ctrl/Cmd+0` (Fit on Screen),
+`Ctrl/Cmd+1` (100%), `Ctrl/Cmd++` / `=` (Zoom In) and `Ctrl/Cmd+-` / `_` (Zoom Out); `Ctrl+A` (Select All, replacing any
 selection), `Ctrl+D` (Deselect) and `Ctrl+I` (`Image > Adjustments > Invert` on the active
 non-bedrock layer, clipped by the active selection); `Tab` to hide or show the Tools panel,
 options bar and panels; `F` / `Shift+F` to cycle Standard, Full Screen With Menu Bar and Full
@@ -395,8 +407,7 @@ only save is Save As, which is what `File > Save` opens
 **Gap:** `A` is unbound — Automatic Select. `Ctrl+Shift+I` (Select > Inverse) is unbound; the
 app has no inverse-selection operation. `Ctrl+I` refuses the bedrock layer, as every raster tool
 does, where Photoshop inverts a Background layer. `Shift+Tab` (panels only) is unbound, and `Tab`
-does nothing in Full Screen, where Photoshop shows the panels over the image. `Ctrl++`, `Ctrl+-`
-and `Ctrl+0` are unbound, and Space does not pan.
+does nothing in Full Screen, where Photoshop shows the panels over the image.
 
 ## Colour management
 
@@ -409,11 +420,13 @@ PSD import hard-rejects anything but 8-bit and RGB/greyscale
 (`psd-utils.ts` — `loadPsd()`), and PSD export quantises opacity to one byte
 (`psd-utils.ts` — `savePsd()`).
 
-**Status:** `platform` for the colour-space and bit-depth half.
+**Status:** `partial` for the colour-space and bit-depth half.
 
-`getContext('2d')` gives 8-bit RGBA, and that is a platform boundary rather than a
-choice. Wider-gamut and float surfaces are appearing in browsers, and none is used
-here.
+The app requests default 2D canvas contexts, which use 8-bit unsigned channel data
+in sRGB. The HTML canvas standard also defines explicit `display-p3` and `float16`
+context settings; this app does not request them. Their browser support and behavior
+must be checked for each supported runtime before the editor can rely on them
+([HTML Standard: canvas](https://html.spec.whatwg.org/multipage/canvas.html)).
 
 **Status:** `absent` for the profile half. Shipping and honouring an ICC profile is
 something a browser application can do; it has not been done.
@@ -457,14 +470,16 @@ tiles come
 from the same `toolbarMap` as desktop so they cannot drift
 (`mobile-tools.ts` — `mobileToolGroups`, derived from `toolbarMap`), and a layers
 drawer
-(`MobileLayersDrawer.tsx`). Canvas input goes
-through Pointer Events with single-pointer capture, so drawing works on touch
-(`usePointerPosition.ts` — `isPointerDownValid()`).
+(`MobileLayersDrawer.tsx`). Canvas input uses Pointer Events: one touch stays with the
+selected tool, while a second touch cancels its in-flight gesture and starts canvas
+navigation (`useCanvasTouchNavigation.ts`).
 
 **Status:** `partial`
 
-**Gap:** No pinch-zoom and no two-finger pan — inherited from the absence of zoom
-and pan entirely, not a mobile-specific omission.
+**Gap:** Two-finger pan and pinch zoom now work on the canvas, and one remaining finger
+continues as a hand pan. A third touch pauses navigation until every touch is lifted.
+Flick panning and a two-finger rotation gesture remain absent. Text editing keeps its
+own touch handling and does not start canvas navigation.
 
 **Retina/High-DPI Status:** Pointer mapping is DPR-correct (tested at 3×). Paint tools are DPR-proof — all geometry paths are document-pixel invariant. Option-bar thumbnails and display surfaces (workspace canvas and overlays) use DPR-scaled backing stores while retaining document-pixel coordinates. Export remains decoupled from display resolution, and the marching-ants clear path uses logical frame bounds.
 
@@ -521,14 +536,14 @@ that is a backlog item, not a limit.
 Recorded so that the `platform` status above stays honest. All of these are
 ordinary browser capabilities that this app simply does not use yet:
 
-| Capability          | In a browser                                                                 |
-| ------------------- | ---------------------------------------------------------------------------- |
-| Print               | `window.print()` — a real API                                                |
-| Zoom and pan        | Transforms and pointer capture; the app has neither implemented              |
-| Wider gamut         | `getContext('2d', { colorSpace: 'display-p3' })`                             |
-| Off-thread work     | `OffscreenCanvas` in a worker — used for working surfaces, never in a worker |
-| Transferable pixels | `ImageBitmapTransfer` — zero occurrences in `src/`                           |
-| Font loading        | `document.fonts` and `FontFace`                                              |
+| Capability          | In a browser                                                                                              |
+| ------------------- | --------------------------------------------------------------------------------------------------------- |
+| Print               | `window.print()` — a real API                                                                             |
+| Zoom and pan        | Transforms, wheel navigation and two-finger touch pan/pinch are implemented; flick inertia remains absent |
+| Wider gamut         | `getContext('2d', { colorSpace: 'display-p3' })`                                                          |
+| Off-thread work     | `OffscreenCanvas` in a worker — used for working surfaces, never in a worker                              |
+| Transferable pixels | `ImageBitmapTransfer` — zero occurrences in `src/`                                                        |
+| Font loading        | `document.fonts` and `FontFace`                                                                           |
 
 The last two are notable because `OffscreenCanvas` already appears throughout
 `src/util/` and `src/tools/` — the project has chosen synchronous main-thread

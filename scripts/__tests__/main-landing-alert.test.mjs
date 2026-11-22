@@ -24,11 +24,17 @@ import {
   formatOperationSummary,
   isOrphanAutoMergeState,
   notifyIfDue,
+  newOwner,
   observeOrphanAutoMerge,
+  recordedPidStates,
   resetOrphanAutoMergeFailover,
   runMergeReleaseAfterLanding,
   startWatcher,
 } from '../main-landing.mjs';
+import { processRuntimeScopeToken, processStartToken } from '../lib/process-identity.mjs';
+
+// Child-process landing fixtures exceed Vitest's default budget on loaded machines.
+vi.setConfig({ testTimeout: 15_000 });
 
 const tempDirectories = [];
 
@@ -53,6 +59,114 @@ function runNodeChild(scriptPath, environment) {
 
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+describe('main landing recorded process identity', () => {
+  it('records a required owner token and starts child identity empty', () => {
+    const startToken = vi.fn((pid) => `process-start-${pid}`);
+    const owner = newOwner({ branch: 'task/example', chatId: 'chat-example' }, 'landing', '/repo/main', { startToken });
+
+    expect(startToken).toHaveBeenCalledWith(process.pid);
+    expect(owner.owner).toMatchObject({
+      pid: process.pid,
+      pidStartToken: `process-start-${process.pid}`,
+      runtimeScopeToken: processRuntimeScopeToken(),
+      childPid: null,
+      childStartToken: null,
+    });
+  });
+
+  it('refuses to create a landing lease without an owner start token', () => {
+    expect(() =>
+      newOwner({ branch: 'task/example', chatId: 'chat-example' }, 'landing', '/repo/main', { startToken: () => null })
+    ).toThrow(/cannot identify its owner process/);
+  });
+
+  it('uses owner and child start tokens without treating unknown probes as stopped', () => {
+    const owner = {
+      host: hostname(),
+      platform: process.platform,
+      runtimeScopeToken: processRuntimeScopeToken(),
+      pid: 101,
+      pidStartToken: 'old-owner-start',
+      childPid: 202,
+      childStartToken: 'current-child-start',
+    };
+    const startToken = (pid) => (pid === 101 ? 'reused-owner-start' : 'current-child-start');
+
+    expect(recordedPidStates(owner, { exists: () => true, startToken })).toEqual({ owner: false, child: true });
+    expect(recordedPidStates(owner, { exists: () => null, startToken })).toEqual({ owner: null, child: null });
+  });
+
+  it('keeps Linux PID probes unknown when the checker is in a different namespace', () => {
+    const exists = vi.fn(() => true);
+    const owner = {
+      host: 'same-host',
+      platform: 'linux',
+      runtimeScopeToken: 'linux:pid:[old-namespace]',
+      pid: 101,
+      pidStartToken: 'old-process',
+      childPid: 202,
+      childStartToken: 'old-child',
+    };
+
+    expect(
+      recordedPidStates(owner, {
+        host: 'same-host',
+        platform: 'linux',
+        runtimeScopeToken: 'linux:pid:[new-namespace]',
+        exists,
+      })
+    ).toEqual({ owner: null, child: null });
+    expect(exists).not.toHaveBeenCalled();
+  });
+});
+
+describe('main landing owner-control process identity', () => {
+  it('clears a reused PID only when the recorded start token differs', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'main-landing-control-reused-pid-'));
+    tempDirectories.push(repo);
+    const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
+    expect(initialized.status).toBe(0);
+
+    for (const [key, value] of [
+      ['ph.mainWorktreeGitDir', join(repo, '.git')],
+      ['ph.mainWorktreePath', repo],
+    ]) {
+      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
+      expect(configured.status).toBe(0);
+    }
+
+    const controlFile = join(repo, '.git', 'main-landing-occupancy', 'owner-control.lock');
+    mkdirSync(join(repo, '.git', 'main-landing-occupancy'), { recursive: true });
+    writeFileSync(
+      controlFile,
+      JSON.stringify({
+        leaseId: 'old-lease',
+        pid: process.pid,
+        pidStartToken: 'different-process-start',
+        runtimeScopeToken: processRuntimeScopeToken(),
+        host: hostname(),
+        platform: process.platform,
+        startedAt: new Date().toISOString(),
+      })
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(import.meta.dirname, '../main-landing.mjs'),
+        'clear-control-lock',
+        '--confirm-control-process-stopped',
+        '--confirm-no-other-recovery',
+      ],
+      { cwd: repo, encoding: 'utf8' }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('stale owner-control lock cleared');
+    expect(existsSync(controlFile)).toBe(false);
+  });
 });
 
 describe('main landing invalid lease timestamps and bounded failure logging', () => {
@@ -110,7 +224,19 @@ describe('main landing invalid lease timestamps and bounded failure logging', ()
       owner: { branch: 'task/example', chatId: 'example-chat' },
     };
     const original = structuredClone(owner);
-    const postNote = vi.fn(() => true);
+    const markerFile = join(lockDir, 'alert-invalid-timestamp.json');
+    const postNote = vi.fn(() => {
+      const pending = JSON.parse(readFileSync(markerFile, 'utf8'));
+      expect(pending).toMatchObject({
+        status: 'pending',
+        leaseId: owner.leaseId,
+        host: hostname(),
+        platform: process.platform,
+        pid: process.pid,
+      });
+      expect(Number.isFinite(Date.parse(pending.startedAt))).toBe(true);
+      return true;
+    });
 
     notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), postNote);
 
@@ -118,7 +244,7 @@ describe('main landing invalid lease timestamps and bounded failure logging', ()
     expect(postNote.mock.calls[0][1]).toContain('timestamp is invalid or missing');
     expect(postNote.mock.calls[0][1]).toContain('Lease age and recovery thresholds are unknown');
     expect(postNote.mock.calls[0][1]).toContain('Preserve the lease and main state');
-    expect(JSON.parse(readFileSync(join(lockDir, 'alert-invalid-timestamp.json'), 'utf8'))).toMatchObject({
+    expect(JSON.parse(readFileSync(markerFile, 'utf8'))).toMatchObject({
       status: 'sent',
       leaseId: owner.leaseId,
     });
@@ -154,6 +280,10 @@ describe('main landing invalid lease timestamps and bounded failure logging', ()
       status: 'sent',
       leaseId: owner.leaseId,
     });
+
+    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:46:02.000Z'), postNote);
+
+    expect(postNote).toHaveBeenCalledTimes(2);
   });
 
   it('does not create a non-idempotent integrity marker when the lease ID is missing', () => {
@@ -171,7 +301,7 @@ describe('main landing invalid lease timestamps and bounded failure logging', ()
     expect(existsSync(join(lockDir, 'alert-invalid-timestamp.json'))).toBe(false);
   });
 
-  it('does not create threshold markers when the lease ID is missing', () => {
+  it('does not create malformed threshold markers when the lease ID is missing', () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-no-lease-id-'));
     tempDirectories.push(lockDir);
     const owner = { occupiedSince: '2026-11-17T12:45:02.000Z' };
@@ -216,7 +346,7 @@ describe('main landing invalid lease timestamps and bounded failure logging', ()
     writeFileSync(logFile, Array.from({ length: 160 }, (_, index) => 'old failure ' + index).join('\n') + '\n');
     const owner = {
       leaseId: 'bounded-log-lease',
-      occupiedSince: '2026-11-17T12:45:02.3NZ',
+      occupiedSince: '2026-11-17T12:45:02.000Z',
       owner: { branch: 'task/example', chatId: 'example-chat' },
     };
 
@@ -227,7 +357,9 @@ describe('main landing invalid lease timestamps and bounded failure logging', ()
     expect(lines).toHaveLength(128);
     expect(log).not.toContain('old failure 0\n');
     expect(log).toContain('old failure 159');
-    expect(log).toContain('Main landing lease timestamp is invalid');
+    expect(lines.slice(-2)).toEqual(
+      expect.arrayContaining([expect.stringContaining('15 minutes'), expect.stringContaining('4 hours')])
+    );
     expect(Buffer.byteLength(log)).toBeLessThanOrEqual(256 * 1024);
   });
 
@@ -241,7 +373,7 @@ describe('main landing invalid lease timestamps and bounded failure logging', ()
     );
     const owner = {
       leaseId: 'bounded-byte-log-lease',
-      occupiedSince: '2026-11-17T12:45:02.3NZ',
+      occupiedSince: '2026-11-17T12:45:02.000Z',
       owner: { branch: 'task/example', chatId: 'example-chat' },
     };
 
@@ -252,7 +384,11 @@ describe('main landing invalid lease timestamps and bounded failure logging', ()
     expect(log).not.toContain('�');
     expect(log).not.toContain('old failure 0');
     expect(log).toContain('old failure 179');
-    expect(log.trimEnd().split('\n').at(-1)).toContain('Main landing lease timestamp is invalid');
+    const lines = log.split(/\r?\n/).filter(Boolean);
+    expect(lines[0]).toMatch(/^old failure \d+ 🧪/u);
+    expect(lines.slice(-2)).toEqual(
+      expect.arrayContaining([expect.stringContaining('15 minutes'), expect.stringContaining('4 hours')])
+    );
   });
 
   it('preserves both failure records when distinct alert deliveries log concurrently', async () => {
@@ -330,22 +466,18 @@ notifyIfDue(
     expect(existsSync(join(lockDir, 'alert-failures.lock'))).toBe(false);
   }, 15_000);
 
-  it('reclaims a failure-log lock only after its same-host process has stopped', async () => {
+  it('reclaims a failure-log lock when its PID start token proves that PID was reused', () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-stale-log-lock-'));
     tempDirectories.push(lockDir);
-    const deadProcess = spawn(process.execPath, ['-e', 'process.exit(0)'], {
-      stdio: 'ignore',
-    });
-    const deadPid = deadProcess.pid;
-    await new Promise((resolve, reject) => {
-      deadProcess.once('error', reject);
-      deadProcess.once('close', resolve);
-    });
+    const currentStartToken = processStartToken(process.pid);
+    expect(currentStartToken).toBeTruthy();
     writeFileSync(
       join(lockDir, 'alert-failures.lock'),
       JSON.stringify({
         token: '123e4567-e89b-42d3-a456-426614174000',
-        pid: deadPid,
+        pid: process.pid,
+        pidStartToken: 'different-process-start',
+        runtimeScopeToken: processRuntimeScopeToken(),
         host: hostname(),
         platform: process.platform,
         startedAt: new Date().toISOString(),
@@ -364,7 +496,35 @@ notifyIfDue(
     );
     expect(existsSync(join(lockDir, 'alert-failures.lock'))).toBe(false);
     expect(existsSync(join(lockDir, 'owner-control.lock'))).toBe(false);
-  }, 10_000);
+  }, 15_000);
+
+  it('preserves a legacy failure-log lock that has no process identity token', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-legacy-log-lock-'));
+    tempDirectories.push(lockDir);
+    const lockFile = join(lockDir, 'alert-failures.lock');
+    writeFileSync(
+      lockFile,
+      JSON.stringify({
+        token: '123e4567-e89b-42d3-a456-426614174002',
+        pid: process.pid,
+        host: hostname(),
+        platform: process.platform,
+        startedAt: new Date().toISOString(),
+      }) + '\n'
+    );
+    const owner = {
+      leaseId: 'legacy-log-lock-lease',
+      occupiedSince: '2026-11-17T12:45:02.3NZ',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+
+    expect(() => notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false)).toThrow(
+      'main landing failure log lock is held or its process liveness is unknown'
+    );
+    expect(existsSync(lockFile)).toBe(true);
+    expect(existsSync(join(lockDir, 'owner-control.lock'))).toBe(false);
+    expect(existsSync(join(lockDir, 'alert-invalid-timestamp.json'))).toBe(false);
+  }, 15_000);
 
   it('reports live contention when an unreadable failure-log lock is replaced during retry', async () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-changing-log-lock-'));
@@ -414,6 +574,8 @@ try {
       JSON.stringify({
         token: '123e4567-e89b-42d3-a456-426614174001',
         pid: process.pid,
+        pidStartToken: processStartToken(process.pid),
+        runtimeScopeToken: processRuntimeScopeToken(),
         host: hostname(),
         platform: process.platform,
         startedAt: new Date().toISOString(),
@@ -425,7 +587,7 @@ try {
     expect(result).toHaveProperty('error');
     expect(result.error?.message).toContain('lock is held or its process liveness is unknown');
     expect(result.error?.message).not.toContain('lock is unreadable');
-  }, 10_000);
+  }, 15_000);
 
   it.skipIf(process.platform === 'win32')(
     'replaces a symlinked failure log without importing its target contents',
@@ -518,6 +680,33 @@ try {
 
     expect(() => notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false)).toThrow();
     expect(existsSync(alertFile)).toBe(false);
+  });
+
+  it('retries an alert after failure-log persistence fails and clears its pending marker', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-duration-log-retry-'));
+    tempDirectories.push(lockDir);
+    const owner = {
+      leaseId: 'retry-after-log-failure',
+      occupiedSince: '2026-11-17T12:45:02.000Z',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+    const alertFile = join(lockDir, 'alert-15m.json');
+    const paths = { lockDir };
+    const postNote = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        paths.lockDir = join(lockDir, 'missing-log-directory');
+        return false;
+      })
+      .mockReturnValueOnce(true);
+
+    expect(() => notifyIfDue(paths, owner, Date.parse('2026-11-17T13:45:02.000Z'), postNote)).toThrow();
+    expect(existsSync(alertFile)).toBe(false);
+    paths.lockDir = lockDir;
+    notifyIfDue(paths, owner, Date.parse('2026-11-17T13:45:02.000Z'), postNote);
+
+    expect(postNote).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(readFileSync(alertFile, 'utf8'))).toMatchObject({ status: 'sent', leaseId: owner.leaseId });
   });
 });
 
