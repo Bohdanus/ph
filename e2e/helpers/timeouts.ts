@@ -67,7 +67,5 @@ export const SEARCH_TEST_TIMEOUT_MS = 180_000;
  */
 export const EXPORT_LAYOUT_SWEEP_TEST_TIMEOUT_MS = 120_000;
 
-/**
- * A full HiDPI Draw preview/commit comparison copies both backing stores and checks every device pixel.
- */
-export const HIDPI_DRAW_PREVIEW_COMMIT_TEST_TIMEOUT_MS = 90_000;
+/** Full HiDPI Draw preview/commit comparison copies both backing stores and checks every device pixel. */
+export const HIDPI_PIXEL_COMPARISON_TEST_TIMEOUT_MS = 90_000;

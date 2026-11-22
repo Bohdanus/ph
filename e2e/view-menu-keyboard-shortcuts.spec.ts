@@ -2,6 +2,7 @@ import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 async function openFitDocument(page: Page): Promise<void> {
   await page.goto('/');
@@ -49,6 +50,7 @@ async function getFitMagnification(page: Page): Promise<number> {
 
 test.describe('View menu keyboard shortcuts', () => {
   test.use({ deviceScaleFactor: 2 });
+  test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS });
 
   test.beforeEach(async ({ page }) => {
     await openFitDocument(page);
@@ -178,6 +180,7 @@ test.describe('View menu keyboard shortcuts', () => {
 
 test.describe('View menu commands via header', () => {
   test.use({ deviceScaleFactor: 2 });
+  test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS });
 
   test.beforeEach(async ({ page }) => {
     await openFitDocument(page);
