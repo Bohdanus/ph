@@ -990,17 +990,21 @@ for Quick Selection, independently of what Photoshop's configurable defaults are
 
 **The hint and this historical finding had drifted apart.** An earlier version of the bar named
 Shift and Alt while the tool area ignored both keys. Commit `7f3b0d19` removed that false promise.
-The current bar now describes the gestures the tool area actually implements: Shift temporarily
-adds while a subtract-mode stroke is in progress, and Alt/Option temporarily subtracts while an
-add-mode stroke is in progress. `QuickSelectionToolArea` samples the modifiers for each pointer
-event and returns to the selected bar mode when the modifier is released. Adobe's current general
-selection instructions describe the same combination gestures for any selection tool.
+The current bar names the selection-mode gestures the tool area implements: Shift temporarily adds
+while a subtract-mode stroke is in progress, and Alt/Option temporarily subtracts while an add-mode
+stroke is in progress. `QuickSelectionToolArea.updateStrokeModeFromModifiers()` samples modifiers
+for pointer events and returns to the selected bar mode when a modifier is released. Adobe's current
+general selection instructions describe Shift-drag to add and Alt/Option-drag to subtract.
 
 The two `modifiers[]` rows are therefore implemented for Quick Selection and must not be described
-as missing. This support is selection-mode switching during a brush stroke; it does not implement
-brush-tip resizing or another brush-shape gesture. Keep the test and descriptor aligned with these
-specific behaviors rather than treating every modifier gesture used by Photoshop's brush tools as
-a Quick Selection capability.
+as missing. These are selection-mode changes during a brush stroke; they are separate from brush-tip
+size and hardness gestures. Adobe's cursor guidance documents Alt + right-click (Windows) or
+Control + Option (macOS) drag to resize a brush cursor or change its hardness. Adobe documents the
+Shift square/circle constraint specifically for Marquee tools. The Quick Selection hint promises
+none of those brush or Marquee gestures. Keep the descriptor and test aligned with the supported
+selection-mode behavior, without extending unrelated brush-tool behavior to Quick Selection. See
+[Adobe's cursor controls](https://helpx.adobe.com/uk/photoshop/desktop/get-started/settings-and-preferences/change-tool-pointers.html)
+and [Marquee tool behavior](https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/make-selections-with-marquee-tools.html).
 
 ### Sources
 

@@ -151,6 +151,7 @@ describe('toolDescriptions', () => {
         expect.stringMatching(/Alt:.*temporarily subtracts.*while brushing/i),
       ])
     );
+    expect(quick.appNotes).toMatch(/Holding Shift temporarily adds, and holding Alt\/Option temporarily subtracts/i);
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
       /any selection tool can temporarily add with Shift or subtract with Alt\/Option while dragging; the app implements those temporary modifiers for Quick Selection strokes/i
     );

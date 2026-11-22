@@ -64,6 +64,20 @@ import { resolveIdentity } from './lib/agent-board/identity.mjs';
  */
 const RUN = 'npm run swarm --';
 
+export function formatDoctorFinding(finding) {
+  const target = finding.issue ?? finding.path;
+  const missingWorktree =
+    (finding.kind === 'dead-worktree' || finding.kind === 'dead-worktree-lock') && finding.worktree
+      ? ` (${finding.worktree} is gone)`
+      : '';
+  const retainedLocks = finding.files_retained?.length
+    ? `; live file locks remain held: ${finding.files_retained
+        .map((lock) => `${lock.path} by ${lock.agent_id}`)
+        .join(', ')}`
+    : '';
+  return `  ${finding.kind} ${target} — ${finding.agent}${missingWorktree}${retainedLocks}`;
+}
+
 const USAGE = `swarm — live coordination for a swarm of agents on one repository
 
   NOT KILO'S board_read
@@ -874,8 +888,18 @@ export async function run(
           force: Boolean(flags.force),
           reason: flags.reason ? String(flags.reason) : null,
         });
-        emit(result, result.released ? `${id} released, its file locks with it` : `${id}: ${result.reason}`);
-        return 0;
+        const retained = result.files_retained ?? [];
+        emit(
+          result,
+          result.released
+            ? retained.length > 0
+              ? `${id} released; live file locks remain held: ${retained
+                  .map((lock) => `${lock.path} by ${lock.agent_id}`)
+                  .join(', ')}`
+              : `${id} released`
+            : `${id}: ${result.reason}`
+        );
+        return retained.length > 0 ? 4 : 0;
       }
 
       case 'hold': {
@@ -1056,9 +1080,20 @@ export async function run(
       case 'reopen': {
         const id = args[0];
         if (!id) throw new BoardError('reopen needs an issue id', { code: 1 });
-        board.reopenIssue(id, { reason: flags.reason ? String(flags.reason) : null, force: Boolean(flags.force) });
-        emit({ id, status: 'open' }, `${id} reopened`);
-        return 0;
+        const result = board.reopenIssue(id, {
+          reason: flags.reason ? String(flags.reason) : null,
+          force: Boolean(flags.force),
+        });
+        const retained = result.files_retained ?? [];
+        emit(
+          result,
+          retained.length > 0
+            ? `${id} reopened; live file locks remain held: ${retained
+                .map((lock) => `${lock.path} by ${lock.agent_id}`)
+                .join(', ')}`
+            : `${id} reopened`
+        );
+        return retained.length > 0 ? 4 : 0;
       }
 
       case 'dep': {
@@ -1306,12 +1341,7 @@ export async function run(
             : `${flags.dry_run ? 'found' : 'released'} ${findings.length} ${flags.dry_run ? 'stale release candidate(s)' : 'stale holding(s)'}${
                 flags.dry_run ? ' (rechecked before release)' : ''
               }:`,
-          ...findings.map(
-            (finding) =>
-              `  ${finding.kind} ${finding.issue ?? finding.path} — ${finding.agent}${
-                finding.worktree ? ` (${finding.worktree} is gone)` : ''
-              }`
-          ),
+          ...findings.map(formatDoctorFinding),
         ];
         if (anomalies.length > 0) {
           output.push(
@@ -1323,7 +1353,7 @@ export async function run(
           );
         }
         emit({ findings, anomalies }, output.join('\n'));
-        return 0;
+        return findings.some((finding) => finding.files_retained?.length) ? 4 : 0;
       }
 
       case 'import': {

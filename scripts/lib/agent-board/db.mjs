@@ -1545,8 +1545,8 @@ export class Board {
 
   releaseClaim(id, { agent, force = false, reason = null, expected = null, expectedLocks = null } = {}) {
     const who = agent ?? this.identity?.agentId;
-    const at = this.now();
     return this.transaction(() => {
+      const at = this.now();
       this.getIssue(id);
       const claim = this.db.prepare('SELECT * FROM claims WHERE issue_id = ? AND released_at IS NULL').get(id);
       if (!claim) return { id, released: false, reason: 'no live claim' };
@@ -1554,7 +1554,7 @@ export class Board {
         return { id, released: false, reason: 'claim changed since it was inspected' };
       }
       if (expected) {
-        const expired = !isLiveDeadline(claim.lease_until, this.now());
+        const expired = !isLiveDeadline(claim.lease_until, at);
         const gone = claim.worktree ? !existsDir(claim.worktree) : false;
         if (!expired && !gone) return { id, released: false, reason: 'claim is live' };
       }
@@ -1587,10 +1587,11 @@ export class Board {
       if (expected && update.changes === 0) {
         return { id, released: false, reason: 'claim changed since it was inspected' };
       }
-      // The locks go through the pairing table, so a file this agent is still
-      // using for ANOTHER live claim survives. Dropping them by `issue_id` is
-      // what told the next agent a file was free while it was being edited.
-      const freed = this.releaseIssueLocksInTransaction(id, { expectedLocks });
+      const { released: freed, preserved } = this.releaseIssueLocksInTransaction(id, {
+        expectedLocks,
+        preserveForeignTo: who ?? null,
+        at,
+      });
       if (['claimed'].includes(currentStatus(this.db, id))) {
         this.db.prepare('UPDATE issues SET status = ?, updated_at = ? WHERE id = ?').run('open', this.iso(), id);
       }
@@ -1598,9 +1599,9 @@ export class Board {
         issue: id,
         agent: claim.agent_id,
         message: reason ?? 'released',
-        data: { by: who, forced: Boolean(force), files_released: freed },
+        data: { by: who, forced: Boolean(force), files_released: freed, files_retained: preserved },
       });
-      return { id, released: true, files_released: freed };
+      return { id, released: true, files_released: freed, files_retained: preserved };
     });
   }
 
@@ -1808,11 +1809,29 @@ export class Board {
    *
    * Closed is the right cut-off because closing releases the pairings itself:
    * verified, finished work is the one state in which nobody is editing.
+   * Claim release can preserve foreign live pairings so the path stays held.
    */
-  releaseIssueLocksInTransaction(issueId, { expectedLocks = null } = {}) {
+  releaseIssueLocksInTransaction(
+    issueId,
+    { expectedLocks = null, preserveForeignTo = undefined, at = this.now() } = {}
+  ) {
     const pairings = this.db.prepare('SELECT * FROM issue_locks WHERE issue_id = ?').all(issueId);
+    // Omitted means the verified-close cascade; null means the caller identity is unknown.
+    const liveLocks =
+      preserveForeignTo === undefined
+        ? null
+        : new Set(this.liveLocks(at).map((lock) => `${lock.path}\0${lock.agent_id}`));
     const freed = [];
+    const preserved = [];
     for (const pairing of pairings) {
+      if (
+        liveLocks &&
+        (preserveForeignTo === null || pairing.agent_id !== preserveForeignTo) &&
+        liveLocks.has(`${pairing.path}\0${pairing.agent_id}`)
+      ) {
+        preserved.push({ path: pairing.path, agent_id: pairing.agent_id });
+        continue;
+      }
       const expected = expectedLocks?.find((lock) => lock.path === pairing.path && lock.agent_id === pairing.agent_id);
       // A pairing or lock created/renewed since the sweep began is active state.
       // Keep its attribution as well as the lock itself.
@@ -1828,7 +1847,7 @@ export class Board {
         if (!sameLeaseGeneration(lock, expected, ['path', 'agent_id', 'worktree', 'acquired_at', 'expires_at'])) {
           continue;
         }
-        const expired = !isLiveDeadline(lock.expires_at, this.now());
+        const expired = !isLiveDeadline(lock.expires_at, at);
         const gone = lock.worktree ? !existsDir(lock.worktree) : false;
         if (!expired && !gone) continue;
       }
@@ -1873,7 +1892,7 @@ export class Board {
         data: { reason: 'cascade' },
       });
     }
-    return freed;
+    return { released: freed, preserved };
   }
 
   /**
@@ -1898,6 +1917,7 @@ export class Board {
     const who = agent ?? this.identity?.agentId;
     const list = this.canonicalPaths(paths);
     return this.transaction(() => {
+      const at = this.now();
       const released = [];
       const blocked = [];
       for (const path of list) {
@@ -1910,11 +1930,11 @@ export class Board {
             continue;
           }
           if (expected) {
-            const expired = !isLiveDeadline(row.expires_at, this.now());
+            const expired = !isLiveDeadline(row.expires_at, at);
             const gone = row.worktree ? !existsDir(row.worktree) : false;
             if (!expired && !gone) continue;
           }
-          if (row.agent_id !== who && !force) {
+          if (row.agent_id !== who && (!force || isLiveDeadline(row.expires_at, at))) {
             /**
              * Report the holder instead of skipping in silence.
              *
@@ -2348,25 +2368,35 @@ export class Board {
   reopenIssue(id, { agent, reason = null, force = false } = {}) {
     const who = agent ?? this.identity?.agentId;
     return this.transaction(() => {
+      const at = this.now();
       const issue = this.getIssue(id);
-      const claim = this.liveClaimOrNull(id);
+      const claim = this.liveClaimOrNull(id, at);
       if (claim && claim.agent_id !== who && !force) {
         throw new BoardError(`${id} is claimed by ${claim.agent_id}`, { code: 3 });
       }
+      let released = [];
+      let preserved = [];
       if (claim) {
         this.db.prepare('UPDATE claims SET released_at = ? WHERE issue_id = ?').run(this.iso(), id);
-        // A reopened issue is advertised as ready while its own file locks stay
-        // live for the rest of the lease, so the next agent reads "ready", takes
-        // it, and is then refused its own file by the agent who reopened it.
-        this.releaseIssueLocksInTransaction(id);
       }
+      // A reopened issue is advertised as ready while its file locks stay live,
+      // so release this issue's pairings even when its claim already expired.
+      ({ released, preserved } = this.releaseIssueLocksInTransaction(id, {
+        preserveForeignTo: who ?? null,
+        at,
+      }));
       this.db
         .prepare(
           'UPDATE issues SET status = ?, resolver = NULL, resolved_at = NULL, verified_by = NULL, verified_at = NULL, defer_reason = NULL, defer_until = NULL, updated_at = ? WHERE id = ?'
         )
         .run('open', this.iso(), id);
-      this.addEvent('issue.reopen', { issue: id, agent: who, message: reason ?? 'reopened' });
-      return { id, status: 'open' };
+      this.addEvent('issue.reopen', {
+        issue: id,
+        agent: who,
+        message: reason ?? 'reopened',
+        data: { files_released: released, files_retained: preserved },
+      });
+      return { id, status: 'open', files_released: released, files_retained: preserved };
     });
   }
 
@@ -2437,13 +2467,10 @@ export class Board {
       };
       findings.push(finding);
       const expectedLocks = this.db
-        .prepare('SELECT path, agent_id FROM issue_locks WHERE issue_id = ? AND agent_id = ?')
-        .all(claim.issue_id, claim.agent_id)
+        .prepare('SELECT path, agent_id FROM issue_locks WHERE issue_id = ?')
+        .all(claim.issue_id)
         .map(({ path, agent_id }) => locksByOwnerAndPath.get(`${agent_id}\0${path}`))
-        .filter(
-          (lock) =>
-            lock && (!isLiveDeadline(lock.expires_at, at2) || (lock.worktree ? !existsDir(lock.worktree) : false))
-        );
+        .filter(Boolean);
       staleRows.push({ finding, expected: claim, expectedLocks });
     }
     for (const lock of lockRows) {
@@ -2478,7 +2505,11 @@ export class Board {
             expected,
             expectedLocks,
           });
-          if (result.released) releasedFindings.push(finding);
+          if (result.released) {
+            finding.files_released = result.files_released ?? [];
+            finding.files_retained = result.files_retained ?? [];
+            releasedFindings.push(finding);
+          }
         } else if (finding.path) {
           /**
            * NO `force` here, and that is the whole point of the line.
@@ -2539,6 +2570,20 @@ export class Board {
       this.addEvent('doctor.run', {
         message: `${releasedFindings.length} stale holding(s) released`,
       });
+    }
+    // A later stale-lock pass can release a foreign dead-worktree lock that the
+    // claim pass conservatively retained by lease. Report only live pairings
+    // that still remain after the complete sweep.
+    const retainedAt = this.now();
+    for (const finding of releasedFindings) {
+      if (!finding.issue || !finding.files_retained?.length) continue;
+      finding.files_retained = this.db
+        .prepare(
+          'SELECT i.path, i.agent_id, f.expires_at FROM issue_locks i JOIN file_locks f ON f.path = i.path AND f.agent_id = i.agent_id WHERE i.issue_id = ? AND f.released_at IS NULL'
+        )
+        .all(finding.issue)
+        .filter((lock) => isLiveDeadline(lock.expires_at, retainedAt))
+        .map(({ path, agent_id }) => ({ path, agent_id }));
     }
     return releasedFindings;
   }

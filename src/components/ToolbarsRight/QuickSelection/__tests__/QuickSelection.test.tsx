@@ -384,7 +384,7 @@ describe('QuickSelection toolbar', () => {
 
       const hint = screen.getByText(/^Drag over/);
       expect(hint.textContent).toMatch(/Hold Alt\/Option to subtract/);
-      expect(hint.textContent).not.toMatch(/resize|brush tip|constrain.*circle/i);
+      expect(hint.textContent).not.toMatch(/resize|brush tip|hardness|circular|constrain.*circle/i);
     });
   });
 

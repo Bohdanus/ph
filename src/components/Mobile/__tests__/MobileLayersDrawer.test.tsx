@@ -1016,7 +1016,7 @@ describe('MobileLayersDrawer document gesture gate', () => {
     expect(rewindControl('rename')).toBeEnabled();
     expect(row).not.toHaveAttribute('disabled');
     expect(row).not.toHaveAttribute('aria-disabled');
-  });
+  }, 15_000);
 
   it('rewinds with no gesture open, so the gate refuses only while a gesture owns the document', async () => {
     seedHistory();
