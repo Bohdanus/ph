@@ -1267,7 +1267,7 @@ describe('a signal that could not be read is not an empty signal', () => {
       operationState: greenOperationState({ operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }] }),
     });
     const message = squash.failures.find((f) => f.code === 'operation-in-progress').message;
-    expect(message).toMatch(/no command that abandons a squash|No operation marker is set/);
+    expect(message).toMatch(/No safe abort command can be selected for a squash|No operation marker is set/);
     expect(message).not.toMatch(/git status/);
     expect(message).not.toMatch(/git squash --abort/);
   });
@@ -2421,8 +2421,20 @@ describe("the third review's findings, pinned on the disposal side", () => {
       }),
     }).failures.find((f) => f.code === 'operation-in-progress').message;
     expect(message).toContain('SQUASH_MSG');
-    expect(message).toMatch(/no command that abandons a squash/);
+    expect(message).toMatch(/No safe abort command can be selected for a squash/);
     expect(message).not.toContain('No operation marker is set');
+  });
+
+  it('reports an unpaired AUTO_MERGE marker without claiming the operation is known or active', () => {
+    const message = green({
+      operationState: greenOperationState({
+        operations: [{ operation: null, marker: 'AUTO_MERGE', value: null }],
+      }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toContain('AUTO_MERGE marker without a primary operation marker');
+    expect(message).toContain('unpaired AUTO_MERGE marker, which does not identify an operation');
+    expect(message).toContain('owner-checked recovery procedure');
+    expect(message).not.toMatch(/\bnull\b|A git operation is in progress/);
   });
 
   it('still says no marker is set when there is genuinely no marker', () => {

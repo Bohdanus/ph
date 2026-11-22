@@ -28,6 +28,12 @@ import { fileURLToPath } from 'node:url';
 import { readMergeHeadRefs, resolveWorktree } from './main-worktree-guard.mjs';
 import { readOperations } from './lib/git-operation-state.mjs';
 import { samePath } from './lib/path-identity.mjs';
+import {
+  pidExists,
+  processRuntimeScopeToken,
+  processStartToken,
+  recordedProcessIsAlive,
+} from './lib/process-identity.mjs';
 import { isProjectMainWorktree } from './merge-takeover-guard.mjs';
 
 const OWNER_FILE = 'owner.json';
@@ -189,27 +195,27 @@ function alertText(value, max = 120) {
   return safeText(value, max).replace(/[^\x20-\x7e]/g, '?');
 }
 
-function sameRuntime(owner) {
-  return String(owner?.host ?? '').toLowerCase() === hostname().toLowerCase() && owner?.platform === process.platform;
+function sameRuntime(owner, { host = hostname(), platform = process.platform, runtimeScopeToken } = {}) {
+  if (String(owner?.host ?? '').toLowerCase() !== host.toLowerCase() || owner?.platform !== platform) return false;
+  if (platform !== 'linux') return true;
+  const currentScopeToken = runtimeScopeToken === undefined ? processRuntimeScopeToken() : runtimeScopeToken;
+  return typeof owner?.runtimeScopeToken === 'string' && owner.runtimeScopeToken === currentScopeToken;
 }
 
-function pidExists(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error?.code === 'EPERM') return true;
-    if (error?.code === 'ESRCH') return false;
-    return null;
-  }
-}
-
-function recordedPidStates(owner) {
-  if (!sameRuntime(owner)) return { owner: null, child: null };
+export function recordedPidStates(
+  owner,
+  { exists = pidExists, startToken = processStartToken, host, platform, runtimeScopeToken } = {}
+) {
+  if (!sameRuntime(owner, { host, platform, runtimeScopeToken })) return { owner: null, child: null };
   return {
-    owner: Number.isInteger(owner?.pid) && owner.pid > 0 ? pidExists(owner.pid) : null,
-    child: Number.isInteger(owner?.childPid) && owner.childPid > 0 ? pidExists(owner.childPid) : null,
+    owner:
+      Number.isSafeInteger(owner?.pid) && owner.pid > 0
+        ? recordedProcessIsAlive(owner.pid, owner.pidStartToken, { exists, startToken })
+        : null,
+    child:
+      Number.isSafeInteger(owner?.childPid) && owner.childPid > 0
+        ? recordedProcessIsAlive(owner.childPid, owner.childStartToken, { exists, startToken })
+        : null,
   };
 }
 
@@ -242,8 +248,20 @@ export function isOrphanAutoMergeState(state) {
     state?.branch === 'main' &&
     Array.isArray(state.operations) &&
     state.operations.length === 1 &&
-    state.operations[0]?.operation === 'in-progress' &&
+    state.operations[0]?.operation === null &&
     state.operations[0]?.marker === 'AUTO_MERGE'
+  );
+}
+
+export function formatOperationSummary(operations) {
+  return (
+    operations
+      .map((entry) =>
+        typeof entry?.operation === 'string'
+          ? `${entry.operation}:${entry.marker}`
+          : `${entry?.marker ?? 'Unknown'} marker without a primary operation marker`
+      )
+      .join(', ') || 'none'
   );
 }
 
@@ -288,7 +306,7 @@ export function observeOrphanAutoMerge(owner, state, signature, now = Date.now()
 export function resetOrphanAutoMergeFailover(owner, state, signature, now = Date.now()) {
   const next = {
     ...owner,
-    owner: { ...(owner.previousOwner ?? owner.owner), childPid: null },
+    owner: { ...(owner.previousOwner ?? owner.owner), childPid: null, childStartToken: null },
     autoMergeFailoverAttempted: false,
     step: 'replacement creation failed before a new worktree existed; restarting the 30-minute AUTO_MERGE observation',
     heartbeatAt: new Date(now).toISOString(),
@@ -333,8 +351,15 @@ export function canRecoverOrphanAutoMerge(owner, now = Date.now(), pids = record
   );
 }
 
-function alertMarker(paths, minutes) {
-  return join(paths.lockDir, 'alert-' + minutes + 'm.json');
+function alertMarker(paths, key) {
+  const label =
+    typeof key === 'number' && ALERTS.some((alert) => alert.minutes === key)
+      ? key + 'm'
+      : key === 'invalid-timestamp'
+        ? key
+        : null;
+  if (!label) throw new Error('unsupported main landing alert key');
+  return join(paths.lockDir, 'alert-' + label + '.json');
 }
 
 function isValidAlertMarker(alert) {
@@ -367,8 +392,8 @@ function isValidAlertMarker(alert) {
   return false;
 }
 
-function readAlert(paths, minutes) {
-  const file = alertMarker(paths, minutes);
+function readAlert(paths, key) {
+  const file = alertMarker(paths, key);
   if (!existsSync(file)) return null;
   let contents;
   try {
@@ -385,7 +410,8 @@ function readAlert(paths, minutes) {
   return isValidAlertMarker(alert) ? alert : { status: 'corrupt' };
 }
 
-export function claimAlert(paths, owner, minutes) {
+export function claimAlert(paths, owner, key) {
+  if (typeof owner?.leaseId !== 'string' || !owner.leaseId.trim()) return false;
   let controlLock;
   try {
     controlLock = acquireRecoveryControl(paths, owner);
@@ -394,17 +420,19 @@ export function claimAlert(paths, owner, minutes) {
     throw error;
   }
   try {
-    const file = alertMarker(paths, minutes);
-    const existing = readAlert(paths, minutes);
+    const file = alertMarker(paths, key);
+    const existing = readAlert(paths, key);
     if (existing?.status === 'sent') return false;
     if (existing?.status === 'pending') {
       const reporter = {
         host: existing.host,
         platform: existing.platform,
+        runtimeScopeToken: existing.runtimeScopeToken,
         pid: existing.pid,
+        pidStartToken: existing.pidStartToken,
       };
       if (sameRuntime(reporter)) {
-        if (pidExists(reporter.pid) !== false) return false;
+        if (recordedProcessIsAlive(reporter.pid, reporter.pidStartToken, { exists: pidExists }) !== false) return false;
       } else {
         const pendingSince = Date.parse(existing.startedAt ?? '');
         if (!Number.isFinite(pendingSince) || Date.now() - pendingSince < 60_000) return false;
@@ -429,7 +457,9 @@ export function claimAlert(paths, owner, minutes) {
           leaseId: owner.leaseId,
           host: hostname(),
           platform: process.platform,
+          runtimeScopeToken: processRuntimeScopeToken(),
           pid: process.pid,
+          pidStartToken: processStartToken(process.pid),
           startedAt: new Date().toISOString(),
         }),
         { flag: 'wx', mode: 0o600 }
@@ -491,23 +521,45 @@ function alertMessage(owner, minutes) {
   ).replace(/--/g, '- -');
 }
 
-function notifyIfDue(paths, owner, now = Date.now()) {
+function invalidTimestampMessage(owner) {
+  return (
+    'Main landing lease timestamp is invalid or missing: branch=' +
+    alertText(owner.owner?.branch) +
+    ', chat=' +
+    alertText(owner.owner?.chatId) +
+    ', lease=' +
+    alertText(owner.leaseId) +
+    '. Lease age and recovery thresholds are unknown. Preserve the lease and main state while checking owner-session liveness and its process tree.'
+  ).replace(/--/g, '- -');
+}
+
+function deliverClaimedAlert(paths, owner, key, message, postNote) {
+  const file = alertMarker(paths, key);
+  if (postNote(paths, message)) {
+    writeAtomic(file, {
+      status: 'sent',
+      leaseId: owner.leaseId,
+      sentAt: new Date().toISOString(),
+      message,
+    });
+  } else {
+    appendFileSync(join(paths.lockDir, 'alert-failures.log'), new Date().toISOString() + ' ' + message + '\n');
+    rmSync(file, { force: true });
+  }
+}
+
+export function notifyIfDue(paths, owner, now = Date.now(), postNote = boardNote) {
   const elapsed = ageMs(owner, now);
-  if (!Number.isFinite(elapsed)) return;
+  if (!Number.isFinite(elapsed)) {
+    const key = 'invalid-timestamp';
+    if (!claimAlert(paths, owner, key)) return;
+    deliverClaimedAlert(paths, owner, key, invalidTimestampMessage(owner), postNote);
+    return;
+  }
   for (const alert of ALERTS) {
     if (elapsed < alert.minutes * 60_000 || !claimAlert(paths, owner, alert.minutes)) continue;
     const message = alertMessage(owner, alert.minutes);
-    if (boardNote(paths, message)) {
-      writeAtomic(alertMarker(paths, alert.minutes), {
-        status: 'sent',
-        leaseId: owner.leaseId,
-        sentAt: new Date().toISOString(),
-        message,
-      });
-    } else {
-      appendFileSync(join(paths.lockDir, 'alert-failures.log'), new Date().toISOString() + ' ' + message + '\n');
-      rmSync(alertMarker(paths, alert.minutes), { force: true });
-    }
+    deliverClaimedAlert(paths, owner, alert.minutes, message, postNote);
   }
 }
 
@@ -532,9 +584,21 @@ function releaseLock(paths, leaseId) {
 
 function acquireRecoveryControl(paths, owner) {
   const lock = join(paths.lockDir, 'owner-control.lock');
+  const pidStartToken = processStartToken(process.pid);
+  const runtimeScopeToken = processRuntimeScopeToken();
+  if (!pidStartToken) {
+    throw new Error('main landing owner-control lock cannot identify its process; refusing the recovery operation');
+  }
+  if (process.platform === 'linux' && !runtimeScopeToken) {
+    throw new Error(
+      'main landing owner-control lock cannot identify its Linux process scope; refusing the recovery operation'
+    );
+  }
   const record = {
     leaseId: owner.leaseId,
     pid: process.pid,
+    pidStartToken,
+    runtimeScopeToken,
     host: hostname(),
     platform: process.platform,
     startedAt: new Date().toISOString(),
@@ -550,7 +614,9 @@ function acquireRecoveryControl(paths, owner) {
     } catch {
       throw new Error('main landing owner-control lock is unreadable; manual inspection required');
     }
-    const state = sameRuntime(existing) ? pidExists(existing.pid) : null;
+    const state = sameRuntime(existing)
+      ? recordedProcessIsAlive(existing.pid, existing.pidStartToken, { exists: pidExists })
+      : null;
     if (state === false) {
       throw new Error(
         'main landing owner-control lock belongs to a stopped process; inspect it before removing the lock'
@@ -563,14 +629,20 @@ function acquireRecoveryControl(paths, owner) {
 
 function ownerSummary(owner, paths) {
   const state = processState(owner.owner ?? {});
+  const elapsed = ageMs(owner);
+  const ageKnown = Number.isFinite(elapsed);
+  const leaseIdKnown = typeof owner.leaseId === 'string' && owner.leaseId.trim().length > 0;
   return {
     occupied: true,
     mainPath: paths.mainPath,
     gitState: mainGitState(paths),
     ownerControl: readControlLock(paths),
     leaseId: owner.leaseId,
+    leaseIdKnown,
     occupiedSince: owner.occupiedSince,
-    age: formatAge(ageMs(owner)),
+    age: formatAge(elapsed),
+    ageKnown,
+    timestampIntegrityAlert: readAlert(paths, 'invalid-timestamp')?.status ?? 'not sent',
     heartbeatAt: owner.heartbeatAt,
     step: owner.step,
     owner: owner.owner,
@@ -603,6 +675,13 @@ function showStatus(paths, json = false) {
       process.stdout.write(
         'main landing occupied for ' +
           summary.age +
+          [
+            summary.leaseIdKnown ? null : 'missing lease ID',
+            summary.ageKnown ? null : 'invalid or missing lease timestamp',
+          ]
+            .filter(Boolean)
+            .map((warning) => ' (' + warning + ')')
+            .join('') +
           ' by ' +
           safeText(owner.owner?.script) +
           ' on ' +
@@ -683,7 +762,7 @@ function showStatus(paths, json = false) {
         ' has unowned Git state; owner is unknown. branch=' +
         state.branch +
         ', operations=' +
-        (state.operations.map((entry) => entry.operation + ':' + entry.marker).join(', ') || 'none') +
+        formatOperationSummary(state.operations) +
         ', dirty=' +
         state.dirty +
         ', unmerged=' +
@@ -791,8 +870,19 @@ function assertMainAvailable(paths) {
   }
 }
 
-function newOwner(pins, mode = 'landing', mainPath = null) {
+export function newOwner(pins, mode = 'landing', mainPath = null, { startToken = processStartToken } = {}) {
   const now = new Date().toISOString();
+  const pid = mode === 'landing' ? process.pid : null;
+  const pidStartToken = pid === null ? null : startToken(pid);
+  const runtimeScopeToken = processRuntimeScopeToken();
+  if (pid !== null && (typeof pidStartToken !== 'string' || pidStartToken.length === 0)) {
+    throw new Error('main landing cannot identify its owner process; refusing to create an unprotected landing lease');
+  }
+  if (pid !== null && process.platform === 'linux' && !runtimeScopeToken) {
+    throw new Error(
+      'main landing cannot identify its Linux process scope; refusing to create an unprotected landing lease'
+    );
+  }
   return {
     version: 1,
     leaseId: randomUUID(),
@@ -809,8 +899,11 @@ function newOwner(pins, mode = 'landing', mainPath = null) {
     owner: {
       branch: pins.branch,
       chatId: pins.chatId,
-      pid: mode === 'landing' ? process.pid : null,
+      pid,
+      pidStartToken,
+      runtimeScopeToken,
       childPid: null,
+      childStartToken: null,
       host: hostname(),
       platform: process.platform,
       script: mode === 'landing' ? 'scripts/main-landing.mjs' : 'Luna recovery agent',
@@ -980,6 +1073,7 @@ function heartbeat(paths, owner, step = owner.step, childPid = owner.owner.child
     owner.heartbeatAt = new Date().toISOString();
     owner.step = step;
     owner.owner.childPid = childPid ?? null;
+    owner.owner.childStartToken = childPid == null ? null : processStartToken(childPid);
     writeOwner(paths, owner);
   } finally {
     rmSync(controlLock, { force: true });
@@ -1218,7 +1312,7 @@ export async function land(paths, options, cwd, { watcherStarter = startWatcher 
           const isAutoMergeFailure = isOrphanAutoMergeState(state) && Boolean(orphanAutoMergeSignature(paths, state));
           owner = updateOwnedRecord(paths, owner.leaseId, (latest) => ({
             ...latest,
-            owner: { ...latest.owner, childPid: null },
+            owner: { ...latest.owner, childPid: null, childStartToken: null },
             step: 'recovery required: ' + safeText(error.message, 240),
             heartbeatAt: new Date().toISOString(),
             ...(isAutoMergeFailure
@@ -1295,7 +1389,10 @@ function takeover(paths, options) {
         branch,
         chatId,
         pid: null,
+        pidStartToken: null,
+        runtimeScopeToken: processRuntimeScopeToken(),
         childPid: null,
+        childStartToken: null,
         host: hostname(),
         platform: process.platform,
         script: 'Luna recovery agent',
@@ -1383,13 +1480,18 @@ function clearControlLock(paths, options) {
   } catch {
     throw new Error('owner-control lock is unreadable; preserve the owner directory for manual inspection');
   }
-  if (sameRuntime(expected) && pidExists(expected.pid) === true) {
+  if (
+    sameRuntime(expected) &&
+    recordedProcessIsAlive(expected.pid, expected.pidStartToken, { exists: pidExists }) === true
+  ) {
     throw new Error('the owner-control process is still alive; do not clear its lock');
   }
   const latest = JSON.parse(readFileSync(file, 'utf8'));
   if (
     latest.leaseId !== expected.leaseId ||
     latest.pid !== expected.pid ||
+    latest.pidStartToken !== expected.pidStartToken ||
+    latest.runtimeScopeToken !== expected.runtimeScopeToken ||
     latest.host !== expected.host ||
     latest.platform !== expected.platform ||
     latest.startedAt !== expected.startedAt
@@ -1515,6 +1617,14 @@ async function recoverPersistentOrphanAutoMerge(
         throw new Error('the pinned landing owner process tree is still live or cannot be proven stopped');
       }
       assertReviewedPins(currentPaths, pinsFromOwner(current));
+      const pidStartToken = processStartToken(process.pid);
+      const runtimeScopeToken = processRuntimeScopeToken();
+      if (!pidStartToken) {
+        throw new Error('automatic AUTO_MERGE recovery cannot identify its owner process; preserving the lease');
+      }
+      if (process.platform === 'linux' && !runtimeScopeToken) {
+        throw new Error('automatic AUTO_MERGE recovery cannot identify its Linux process scope; preserving the lease');
+      }
       return {
         ...current,
         previousOwner: current.owner,
@@ -1523,7 +1633,10 @@ async function recoverPersistentOrphanAutoMerge(
         owner: {
           ...current.owner,
           pid: process.pid,
+          pidStartToken,
+          runtimeScopeToken,
           childPid: null,
+          childStartToken: null,
           host: hostname(),
           platform: process.platform,
           script: 'automatic stale AUTO_MERGE failover',
@@ -1617,6 +1730,7 @@ async function recoverPersistentOrphanAutoMerge(
       updateOwnedRecord(paths, leaseId, (current) => {
         current.owner = current.previousOwner ?? current.owner;
         current.owner.childPid = null;
+        current.owner.childStartToken = null;
         delete current.previousOwner;
         current.step = 'automatic stale AUTO_MERGE failover failed: ' + message;
         current.heartbeatAt = new Date().toISOString();

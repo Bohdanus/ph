@@ -69,9 +69,10 @@ this pass, the source wins, and the two places it loses are recorded at the end.
 
 - **Combination modes.** `New / Add To / Subtract From / Intersect With` appears on the marquee
   tools, the lasso tools and the Magic Wand. The current Quick Selection page lists three — New,
-  Add to and Subtract from — but broader Adobe pages say any selection tool can intersect, and an
-  Adobe tutorial explicitly includes Quick Selection. Whether Photoshop Quick Selection has an
-  Intersect mode is unresolved; the Quick Selection section records the conflicting sources.
+  Add to and Subtract from. Adobe's current general Intersect page says to use any selection tool,
+  and its selection-combination tutorial explicitly includes Quick Selection with the Intersect
+  button. Adobe's published keyboard-shortcut reference excludes Quick Selection from the Shift+Alt/
+  Option intersect gesture, so the button is documented without that modifier.
 - **Combination-mode modifiers are only partly implemented.**
   A grep for `shiftKey|altKey|metaKey|ctrlKey` across `src/components/Main/*.tsx` returns
   production hits in `CloneStampToolArea`, `EllipticalSelectionToolArea`,
@@ -418,7 +419,8 @@ segment." The data file already listed Shift as Add to Selection, a general sele
 it now has a second Shift row for the Polygonal Lasso's 45° constraint. (b) Ctrl/Command-click
 closure away from the starting point was already in `purpose`, but missing from `modifiers`; it now
 has its own row. The data records the Photoshop behavior while `appNotes` states that the app does
-not implement these gestures. The toolbar tooltip uses only app-supported close methods.
+not implement these gestures. The Photoshop summary uses the current desktop guide's close
+methods; `appNotes` records the app's additional Enter and right-click bindings.
 Alt/Option-double-click belongs to the Magnetic Lasso and remains documented there.
 
 ### Options table
@@ -952,8 +954,9 @@ one Photoshop does not have. Because the control is not a Photoshop control it d
 in the `options` array; it is recorded here and in `appNotes`.
 
 **Also divergent.** The `Mode` dropdown offers only `Add` and `Subtract`, so it has no explicit
-`New` or `Intersect` mode; whether Photoshop Quick Selection has an Intersect mode remains
-unresolved in Adobe’s conflicting documentation. `Sample All Layers` is absent and the stroke reads
+`New` or `Intersect` mode. Photoshop's selection-combination tutorial explicitly includes Quick
+Selection and its Intersect button; Adobe's published keyboard-shortcut reference excludes Quick
+Selection from the Shift+Alt/Option Intersect gesture. `Sample All Layers` is absent and the stroke reads
 the merged composite canvas. `Select and Mask`, `Auto-Enhance` and the tool-preset picker
 are absent, and there is no route from a selection to a layer mask at all. The brush is flat — no hardness, spacing, angle or roundness — and `[`/`]`, the
 Alt-drag size gesture and the live size/opacity readout are not bound. Every traced contour is
@@ -962,7 +965,8 @@ contour model with derived masks rather than a persistent Photoshop-style alpha 
 
 **The modifier gestures are partly implemented.** `QuickSelectionToolArea` temporarily uses Shift
 for Add and Alt/Option for Subtract while the modifier is held, then returns to the options-bar mode
-when released. Shift+Alt intersection remains unsupported because the app has no intersect mode.
+when released. Adobe's published shortcut reference excludes Quick Selection from Shift+Alt/Option
+Intersect; the app does not provide the Intersect button or bracket-key resizing.
 
 **The second row was also a false claim about Photoshop, and is now corrected in the data file.** It
 read "the same gesture Photoshop binds on every brush tool" for a plain `Alt`-drag. Adobe's own
@@ -984,25 +988,19 @@ the `[` row is
 `https://www.adobe.com/learn/photoshop/web/compositing`. The app does not bind either bracket key
 for Quick Selection, independently of what Photoshop's configurable defaults are.
 
-**The bar promised a gesture it did not honour — and the promise is now gone.** This section used
-to be the sharpest finding in the family: the quick-selection bar's `hint` read "Shift and Alt
-drag on the canvas" on both its branches — the Subtract one and the default one, in
-`QuickSelection.tsx` — while the tool area consulted neither key. An on-screen promise to the user,
-not a documentation gap — and the only false claim in the family a user reads without opening
-anything.
+**The hint and this historical finding had drifted apart.** An earlier version of the bar named
+Shift and Alt while the tool area ignored both keys. Commit `7f3b0d19` removed that false promise.
+The current bar now describes the gestures the tool area actually implements: Shift temporarily
+adds while a subtract-mode stroke is in progress, and Alt/Option temporarily subtracts while an
+add-mode stroke is in progress. `QuickSelectionToolArea` samples the modifiers for each pointer
+event and returns to the selected bar mode when the modifier is released. Adobe's current general
+selection instructions describe the same combination gestures for any selection tool.
 
-`7f3b0d19` **removed the promise rather than implementing the gesture**, and this record was not
-updated. The bar's hint is now `Drag over an object to grow the selection along the stroke.`
-(the `hint` in `QuickSelection.tsx`), with a comment directly above it naming Photoshop's Alt-drag
-brush-tip resize and Shift-drag circular constraint as things the app does not do, and saying why
-that is preferable to shipping a guess. The rationale is worth preserving because it is a
-judgement, not an implementation: Photoshop's Alt-drag resize maps _drag distance to size_, not a
-flag, so implementing it badly would replace one false promise with a wrong gesture.
-
-Both `modifiers[]` rows therefore remain unimplemented and are still recorded as such in
-`appNotes`; what is gone is the on-screen claim, and the finding is retained in the data file
-rather than deleted, because a record that says only "this works" is less useful to the next
-reader than one that says "this used to lie here".
+The two `modifiers[]` rows are therefore implemented for Quick Selection and must not be described
+as missing. This support is selection-mode switching during a brush stroke; it does not implement
+brush-tip resizing or another brush-shape gesture. Keep the test and descriptor aligned with these
+specific behaviors rather than treating every modifier gesture used by Photoshop's brush tools as
+a Quick Selection capability.
 
 ### Sources
 

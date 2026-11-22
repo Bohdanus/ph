@@ -131,9 +131,8 @@ describe('toolDescriptions', () => {
       ])
     );
     expect(polygonRows).not.toEqual(expect.arrayContaining([expect.stringMatching(/Alt.*double-click/i)]));
-    expect(polygon.summary).toMatch(/double-click.*right-click.*Enter/i);
-    expect(polygon.summary).not.toMatch(/Ctrl\/Command|starting point/i);
-    expect(polygon.summary).not.toMatch(/Return/i);
+    expect(polygon.summary).toMatch(/close by clicking the start, double-clicking, or Ctrl\/Command-clicking/i);
+    expect(polygon.summary).not.toMatch(/right-click|Enter|Return/i);
     expect(polygon.purpose).toMatch(/Ctrl-clicking on Windows \/ Command-clicking on macOS/i);
     expect(polygon.purpose).not.toMatch(/Enter|Return/i);
     expect(polygon.shortcuts.map((shortcut) => shortcut.keys)).not.toContain('Return');
@@ -152,12 +151,16 @@ describe('toolDescriptions', () => {
         expect.stringMatching(/Alt:.*temporarily subtracts.*while brushing/i),
       ])
     );
-    expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option while brushing to subtract/i);
-    expect(quick.appNotes).toMatch(/Temporary Shift\/Alt gestures.*not implemented/i);
-    expect(quick.appNotes).toMatch(/bracket-key resizing are not implemented/i);
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
-      /whether its Options bar also offers Intersect is unresolved across Adobe sources/i
+      /any selection tool can temporarily add with Shift or subtract with Alt\/Option while dragging; the app implements those temporary modifiers for Quick Selection strokes/i
     );
+    expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
+      /Quick Selection and the Intersect with Selection button/i
+    );
+    expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
+      /excludes Quick Selection from the Shift\+Alt\/Option intersect gesture/i
+    );
+    expect(quick.appNotes).toMatch(/The app has no Intersect mode and does not implement bracket-key resizing/i);
     const quickShortcutKeys = quick.shortcuts.map((shortcut) => shortcut.keys);
     expect(quickShortcutKeys).toContain('[');
     expect(quickShortcutKeys).toContain(']');

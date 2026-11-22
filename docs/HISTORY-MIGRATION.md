@@ -393,3 +393,156 @@ later corrections (`ses_f0e4972affferCVQgMzXvsM3bq`, 2026-09-30, and
 `ses_f08dac9d0ffecDCBGi4vT4mOre`, 2026-10-01), and the explicit replay-budget
 correction (`ses_f0242cc9bffeG7iokG7agnCnMY`, 2026-10-02). Those earlier records
 are historical provenance; the operator rulings above are the active contract.
+
+## Continuation checkpoint — 2026-11-22 00:55 UTC
+
+This is the current continuation record. A prior inspection during this
+continuation found uncommitted changes in the PH-93 worktree to
+`docs/HISTORY-MIGRATION-NEXT.md`, `HANDOFF.md`, and the continuation plan; this
+task branch does not include those edits. Recheck that worktree after a safe
+owner handoff before refreshing its restart guidance; preserve this checkpoint
+in the meantime.
+
+### Verified source state
+
+- The designated local `main` was clean at `3b168574e6f7e33a62347fe80e0271cde00c3807`.
+  The current task branch was created from that tree. The one startup remote
+  reconciliation recorded `origin/main` at
+  `e6b6183e4c507ed6dd18dbf2b5d267926b348ab6`; `main...origin/main` was `24 2`
+  (24 commits only on local `main`, two only on `origin/main`). Do not interpret
+  the tracked remote ref as proof that those two remote-only commits are in
+  this checkout. No second fetch was performed during this continuation.
+  A read-only local-ref check at 00:55 UTC found the same clean main SHA, the
+  same `origin/main` tracking SHA, and the same 24/2 divergence; the task
+  branch's merge base remains that local main SHA. This check did not fetch or
+  query the live remote.
+- Since history insertion-anchor landing `7892d4f82cda40d37ae3421ae30483d725a03c51`,
+  local `main` advanced through the paint-docs landing to the tree above. Its
+  13-file delta was paint documentation, selection/tooling, and landing-test
+  work; it contains no durable-history implementation change. History
+  insertion-anchor evidence remains in the ancestry.
+- The earlier cross-chat reconciliation of Kilo, Codex, and Copilot is recorded
+  in the 2026-11-21 23:31 UTC checkpoint in `docs/HISTORY-MIGRATION-NEXT.md`.
+  That was a local-history search with documented store and timestamp limits;
+  no new broad transcript scan was made for this continuation. The GIMP, Krita,
+  and Aseprite research and its scope limits remain in the prior migration
+  record. Treat those searches as evidence with stated limits, not as proof
+  that no other session or implementation exists.
+- The authority contract remains unchanged: legacy `HistoryItem[]` and
+  `replayHistory()` own logical navigation. Durable replay/materialization is
+  still staged presentation behind its existing source, ownership, frame,
+  failure, and export gates. No admission, authority, publication, or export
+  gate was opened by this checkpoint.
+- PH-71 is closed. PH-93 remains open. At the 00:55 UTC board check, its claim
+  and file locks were absent; the inventory generated at 2026-11-21 23:51 UTC
+  marked its worktree `in-use` based on a then-recent board heartbeat. The
+  inventory snapshot is now stale, and neither it nor the absent claim/locks
+  proves the owner chat and full process tree are dead. Do not inspect or alter its dirty files,
+  duplicate its scope, or reclaim the worktree without an explicit owner
+  handoff or the documented owner-and-process-death recovery proof. The
+  default `repo:state` also reports unrelated worktree-operation markers;
+  preserve them and use the source-scoped landing check for this task.
+
+### Proof added in this continuation
+
+Issue `ph-108` adds one browser differential in `e2e/crop-history.spec.ts`: an
+asymmetric vector triangle with a retained vertical-mirror-only affine, followed
+by a +90-degree document-frame transition to a non-zero fractional frame. An
+untransformed control uses the same source and frame. A second control keeps the
+vertical mirror and fractional frame but uses a 0-degree frame transition. The
+test requires both legacy and durable pixels to differ from the untransformed
+control and from the same-mirror no-rotation control, so both the mirror and
+quarter-turn effects must be observable. It also asserts exact legacy/durable
+composite parity for the transformed case and both controls, frame equality,
+materialized bounds and bitmap dimensions, and exact per-layer frame bytes
+plus tight premultiplied pixels at the affine and frame cursors. The focused test passed as
+`a vector triangle keeps exact parity through a vertical mirror and fractional
+quarter-turn frame` (`1 passed`, 9.7 seconds, run
+`2026-11-22T00-51-10-210Z-39556`, 2026-11-22 00:51 UTC).
+
+This is app-internal legacy-versus-durable parity, not an independent Photoshop
+pixel oracle and not export, source ownership, publication, or authority-cutover
+evidence. Existing component tests for quarter-turn frame changes and vertical
+mirrors did not cover their combination with a vector source and fractional
+frame bounds; the new case closes only that matrix cell for internal parity and
+observable transform effects. `npm run tsc`, `npm run lint:check`, and
+`npm run build` passed on the task branch at 00:51 UTC. Lint reported zero
+errors and 127 warnings. No `src/` production code changed; this slice changes
+one E2E spec and this migration document.
+
+Three cost-free Nemotron responses were checked against the source and current
+tests. One made the blanket claim that neither quarter-turn nor vertical-mirror
+coverage existed; that was false because component cases already existed. The
+specific combined vector, vertical-mirror-only, and fractional quarter-turn
+cell was absent. A second response identified that combined cell as useful and
+correctly warned that legacy-versus-durable parity is not a Photoshop oracle.
+A third response contained only a pseudo tool-call and was rejected as
+incomplete. The model outputs are review leads only; source inspection and the
+passing browser test are the evidence. The scheduled Terra review occurred at
+00:45 UTC; its finding and correction are recorded below.
+
+Luna and Nemotron's earlier read-only source reviews reviewed assertions, not
+browser execution. Source inspection verified that
+`CropParityLayerFixture` dispatches `kind: 'vector'` to a typed tool source with
+no bitmap, and `compareCropRenderers` returns the final transition's legacy and
+durable pixels; the test compares those arrays directly. Nemotron's concerns
+about lacking a correctness oracle are valid limitations and are stated above.
+Its other review points either describe assertions already present or do not
+apply because the target frame is an explicit input to this differential, not
+an output predicted by an independent geometry oracle. Luna suggested calling
+the no-transform control “untransformed”; the fixture and checkpoint now use
+that wording. Nemotron's later documentation reviews flagged ambiguous
+coverage, ownership-snapshot, source-change, and remote-refresh wording. Those
+claims are now narrowed to the specific matrix cell, dated inventory and board
+snapshots, the absence of `src/` changes, and a distinct future continuation.
+The scheduled Terra review at 00:45 UTC found a real test gap: the original
+control changed the mirror but kept the same +90-degree frame transition, so
+the test did not require the quarter-turn itself to affect pixels. The fixture
+now adds a same-mirror, same-frame 0-degree control and asserts that both
+history paths differ from it; the browser run at 00:51 UTC above passed after
+that fix. Terra also caught stale restart guidance, updated below. The bounded
+differential still has no independent Photoshop pixel oracle.
+
+Post-fix Luna and Nemotron reviews confirmed that the new control isolates the
+frame rotation. Luna caught the stale Terra due-time note, which is removed
+from the ordered steps below. Nemotron also questioned whether the identity
+control's parity was explicit; its transition already asserts zero differing
+bytes, and the test now additionally compares its legacy and durable arrays
+directly. A final full-diff Nemotron review at 00:53 UTC returned non-empty text
+with `finish_reason=stop`, `cost=0`, and no remaining concrete defect. The other
+review concerns did not identify a reproducible defect; the three same-page
+renders use deterministic fixtures, and no independent Photoshop correctness
+claim is made.
+
+### Ordered next steps
+
+1. Keep PH-93 untouched until its owner explicitly hands off the dirty work or
+   the documented recovery procedure proves the owner chat and full process
+   tree are dead. Then independently review its source, tests, exact runtime
+   identity/lifetime claims, and resulting authority gates before reconciling
+   its docs.
+2. The 00:45 UTC Terra review found the missing quarter-turn control and stale
+   restart step; both are now corrected. Luna and Nemotron completed read-only
+   re-reviews, and focused E2E, typecheck, lint, and build pass on the current
+   candidate. Keep it unchanged unless a new concrete issue is reproduced.
+   Schedule the next Terra review no earlier than 03:45 UTC.
+3. After this candidate lands, continue with a distinct uncovered history
+   proof cell from the broader
+   source × affine × frame matrix. Keep exact per-layer bounds and pixels, and
+   identify an independent Photoshop or other primary-source oracle wherever
+   making a product-parity claim. Do not convert browser differential parity
+   into a Photoshop-correctness claim.
+4. Do not fetch again during this continuation or push. At the beginning of a
+   distinct future continuation, refresh and reconcile remote drift once
+   before writing more code. For this candidate, retain the recorded
+   two-commit `origin/main` drift. Before local landing, sync the task branch
+   with the current local `main`, inspect the exact candidate, pass the scoped
+   `repo:state -- --for-landing task/history-migration-continuation-20261121`
+   and path-ownership gates, and land only through the pinned owner-tracked
+   wrapper. Recheck local `main`, `origin/main`, parent/tree pins, and status
+   afterward.
+5. Once PH-93 releases them, reconcile this checkpoint into
+   `docs/HISTORY-MIGRATION-NEXT.md`, `HANDOFF.md`, and the continuation plan;
+   remove only stale problem entries whose fixes are verified. Keep the
+   ordered remaining gates and explicit unresolved risks in those docs, not
+   only in chat.
