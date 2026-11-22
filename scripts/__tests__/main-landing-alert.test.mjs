@@ -11,11 +11,14 @@ import {
   formatOperationSummary,
   isOrphanAutoMergeState,
   notifyIfDue,
+  newOwner,
   observeOrphanAutoMerge,
+  recordedPidStates,
   resetOrphanAutoMergeFailover,
   runMergeReleaseAfterLanding,
   startWatcher,
 } from '../main-landing.mjs';
+import { processRuntimeScopeToken } from '../lib/process-identity.mjs';
 
 // Child-process landing fixtures exceed Vitest's default budget on loaded machines.
 vi.setConfig({ testTimeout: 15_000 });
@@ -24,6 +27,114 @@ const tempDirectories = [];
 
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+describe('main landing recorded process identity', () => {
+  it('records a required owner token and starts child identity empty', () => {
+    const startToken = vi.fn((pid) => `process-start-${pid}`);
+    const owner = newOwner({ branch: 'task/example', chatId: 'chat-example' }, 'landing', '/repo/main', { startToken });
+
+    expect(startToken).toHaveBeenCalledWith(process.pid);
+    expect(owner.owner).toMatchObject({
+      pid: process.pid,
+      pidStartToken: `process-start-${process.pid}`,
+      runtimeScopeToken: processRuntimeScopeToken(),
+      childPid: null,
+      childStartToken: null,
+    });
+  });
+
+  it('refuses to create a landing lease without an owner start token', () => {
+    expect(() =>
+      newOwner({ branch: 'task/example', chatId: 'chat-example' }, 'landing', '/repo/main', { startToken: () => null })
+    ).toThrow(/cannot identify its owner process/);
+  });
+
+  it('uses owner and child start tokens without treating unknown probes as stopped', () => {
+    const owner = {
+      host: hostname(),
+      platform: process.platform,
+      runtimeScopeToken: processRuntimeScopeToken(),
+      pid: 101,
+      pidStartToken: 'old-owner-start',
+      childPid: 202,
+      childStartToken: 'current-child-start',
+    };
+    const startToken = (pid) => (pid === 101 ? 'reused-owner-start' : 'current-child-start');
+
+    expect(recordedPidStates(owner, { exists: () => true, startToken })).toEqual({ owner: false, child: true });
+    expect(recordedPidStates(owner, { exists: () => null, startToken })).toEqual({ owner: null, child: null });
+  });
+
+  it('keeps Linux PID probes unknown when the checker is in a different namespace', () => {
+    const exists = vi.fn(() => true);
+    const owner = {
+      host: 'same-host',
+      platform: 'linux',
+      runtimeScopeToken: 'linux:pid:[old-namespace]',
+      pid: 101,
+      pidStartToken: 'old-process',
+      childPid: 202,
+      childStartToken: 'old-child',
+    };
+
+    expect(
+      recordedPidStates(owner, {
+        host: 'same-host',
+        platform: 'linux',
+        runtimeScopeToken: 'linux:pid:[new-namespace]',
+        exists,
+      })
+    ).toEqual({ owner: null, child: null });
+    expect(exists).not.toHaveBeenCalled();
+  });
+});
+
+describe('main landing owner-control process identity', () => {
+  it('clears a reused PID only when the recorded start token differs', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'main-landing-control-reused-pid-'));
+    tempDirectories.push(repo);
+    const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
+    expect(initialized.status).toBe(0);
+
+    for (const [key, value] of [
+      ['ph.mainWorktreeGitDir', join(repo, '.git')],
+      ['ph.mainWorktreePath', repo],
+    ]) {
+      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
+      expect(configured.status).toBe(0);
+    }
+
+    const controlFile = join(repo, '.git', 'main-landing-occupancy', 'owner-control.lock');
+    mkdirSync(join(repo, '.git', 'main-landing-occupancy'), { recursive: true });
+    writeFileSync(
+      controlFile,
+      JSON.stringify({
+        leaseId: 'old-lease',
+        pid: process.pid,
+        pidStartToken: 'different-process-start',
+        runtimeScopeToken: processRuntimeScopeToken(),
+        host: hostname(),
+        platform: process.platform,
+        startedAt: new Date().toISOString(),
+      })
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(import.meta.dirname, '../main-landing.mjs'),
+        'clear-control-lock',
+        '--confirm-control-process-stopped',
+        '--confirm-no-other-recovery',
+      ],
+      { cwd: repo, encoding: 'utf8' }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('stale owner-control lock cleared');
+    expect(existsSync(controlFile)).toBe(false);
+  });
 });
 
 describe('main landing invalid lease timestamps', () => {
@@ -244,6 +355,7 @@ describe('main landing alert claims', () => {
       platform: process.platform,
       pid: process.pid,
     });
+    expect(pending.pidStartToken).toEqual(expect.any(String));
     expect(Number.isFinite(Date.parse(pending.startedAt))).toBe(true);
     expect(claimAlert({ lockDir }, { leaseId: 'second-lease' }, 15)).toBe(false);
     expect(JSON.parse(readFileSync(alertFile, 'utf8'))).toEqual(pending);
@@ -525,14 +637,28 @@ describe('persistent orphan AUTO_MERGE failover', () => {
       autoMergeObservedSince: new Date(0).toISOString(),
       autoMergeLastObservedAt: new Date(now - 1_000).toISOString(),
       owner: { pid: 100, childPid: 101, branch: 'feature', chatId: 'test-chat' },
-      previousOwner: { pid: 1, childPid: 2, branch: 'feature', chatId: 'test-chat' },
+      previousOwner: {
+        pid: 1,
+        pidStartToken: 'owner-start',
+        childPid: 2,
+        childStartToken: 'old-child-start',
+        branch: 'feature',
+        chatId: 'test-chat',
+      },
     };
 
     const reset = resetOrphanAutoMergeFailover(owner, orphan, 'main-a:tree-a', now);
 
     expect(reset.autoMergeFailoverAttempted).toBe(false);
     expect(reset.autoMergeRecoveryReady).toBe(true);
-    expect(reset.owner).toMatchObject({ pid: 1, childPid: null, branch: 'feature', chatId: 'test-chat' });
+    expect(reset.owner).toMatchObject({
+      pid: 1,
+      pidStartToken: 'owner-start',
+      childPid: null,
+      childStartToken: null,
+      branch: 'feature',
+      chatId: 'test-chat',
+    });
     expect(reset.autoMergeObservedSince).toBe(new Date(now).toISOString());
     expect(reset.autoMergeLastObservedAt).toBe(new Date(now).toISOString());
     expect(reset).not.toHaveProperty('previousOwner');
