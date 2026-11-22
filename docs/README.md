@@ -75,6 +75,7 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`../.kilo/plans/durable-replay-authority.md`](../.kilo/plans/durable-replay-authority.md)             | The problem-focused implementation plan for the durable replay authority cutover                     |
 | [`../.kilo/skills/parallel-test-hardening/SKILL.md`](../.kilo/skills/parallel-test-hardening/SKILL.md) | The wave-based workflow for hardening tests with small parallel agents                               |
 | [`../.kilo/skills/kilo-chat-history/SKILL.md`](../.kilo/skills/kilo-chat-history/SKILL.md)             | Kilo-local mirror of the chat-history workflow used by Kilo agents; keep identical to the repo skill |
+| [`../.kilo/skills/pipeline-health/SKILL.md`](../.kilo/skills/pipeline-health/SKILL.md)                 | Kilo-local mirror of the pipeline-health procedure; keep identical to the repo skill                 |
 | [`../README.md`](../README.md)                                                                         | Install, run, test, and the CI jobs — for a new clone                                                |
 | [`WSL-SETUP.md`](WSL-SETUP.md)                                                                         | Set up and run the project inside WSL2 on Windows                                                    |
 | [`../e2e/README.md`](../e2e/README.md)                                                                 | The Playwright suite: helpers, conventions, and how to add a spec                                    |
@@ -97,7 +98,7 @@ skill states a procedure, and an agent profile defines its tool permissions.
 
 Kilo-only skills, excluded from Codex, are `chat-loose-end-scan`, `e2e-hardening-cron`,
 `free-model-agent-rotation`, `free-model-chat-sweep`, `kilo-chat-history`, `overnight-sweep`, and
-`parallel-test-hardening`. `codex-chat-history` is Codex-only and must not be installed in Kilo.
+`parallel-test-hardening`, and `pipeline-health`. `codex-chat-history` is Codex-only and must not be installed in Kilo.
 The Copilot-specific `copilot-chat-history` and `copilot-subagent-launch` remain tracked and
 available in Kilo for Copilot workflows, but are not Codex skills.
 
@@ -118,6 +119,7 @@ available in Kilo for Copilot workflows, but are not Codex skills.
 | [`../.skills/kilo-chat-history.md`](../.skills/kilo-chat-history.md)                   | Locate and query Kilo chat sessions from local SQLite database and legacy JSON stores. Read-only, local-first                                                                                                                                                             |
 | [`../.skills/overnight-sweep.md`](../.skills/overnight-sweep.md)                       | An autonomous, token-conscious pass over documented defects and unfinished work                                                                                                                                                                                           |
 | [`../.skills/parallel-test-hardening.md`](../.skills/parallel-test-hardening.md)       | The wave-based workflow for hardening tests with small parallel agents                                                                                                                                                                                                    |
+| [`../.skills/pipeline-health.md`](../.skills/pipeline-health.md)                       | Triage and minimally fix failing GitHub Actions pipeline gates with verified-free research; preserve gates and hand off unproven failures                                                                                                                                 |
 | [`../.skills/photoshop-tool-creation.md`](../.skills/photoshop-tool-creation.md)       | Build a new Photoshop-faithful tool end to end: research, options bar, implementation, tests, e2e                                                                                                                                                                         |
 | [`../.skills/stale-worktree-reclaim.md`](../.skills/stale-worktree-reclaim.md)         | Find abandoned worktrees, prove the owning session dead, triage into delete/land/defer                                                                                                                                                                                    |
 | [`../.skills/worktree-merge-harvest.md`](../.skills/worktree-merge-harvest.md)         | Land work from free worktrees onto `main`, with reviews and gates                                                                                                                                                                                                         |

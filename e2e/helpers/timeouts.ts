@@ -66,3 +66,6 @@ export const SEARCH_TEST_TIMEOUT_MS = 180_000;
  * routine test budget.
  */
 export const EXPORT_LAYOUT_SWEEP_TEST_TIMEOUT_MS = 120_000;
+
+/** HiDPI preview capture and committed-pixel comparison over the full canvas. */
+export const HIDPI_PIXEL_COMPARISON_TEST_TIMEOUT_MS = 90_000;

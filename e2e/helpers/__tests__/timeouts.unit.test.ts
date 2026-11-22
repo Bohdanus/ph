@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { DEFAULT_TEST_TIMEOUT_MS, PAINT_TOOLS_TEST_TIMEOUT_MS, SEARCH_TEST_TIMEOUT_MS } from '../timeouts';
+import {
+  DEFAULT_TEST_TIMEOUT_MS,
+  HIDPI_PIXEL_COMPARISON_TEST_TIMEOUT_MS,
+  PAINT_TOOLS_TEST_TIMEOUT_MS,
+  SEARCH_TEST_TIMEOUT_MS,
+} from '../timeouts';
 
 const E2E_DIR = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -91,7 +96,7 @@ const navigatesFromABeforeHook = (source: string): boolean =>
  * WHAT THIS LIST IS, precisely. It is every such spec in the tree today, DERIVED by scanning
  * `e2e/` rather than by guessing — `npm run test:e2e:unit` recomputes it from the files on
  * every run. It is NOT a claim that these specs provably do not need a budget; it is a claim
- * that `TEST-FLAKES.md` records no instance of the failure for them. Two of the eleven are
+ * that `TEST-FLAKES.md` records no instance of the failure for them. Two of the twelve are
  * separate for exactly that reason:
  *
  * - `sidebar-flyout.spec.ts` has the recorded 30s failure above. It is listed here rather
@@ -105,8 +110,9 @@ const navigatesFromABeforeHook = (source: string): boolean =>
  *   section it names. That inconsistency is in `TEST-FLAKES.md`, not here, and correcting
  *   it is a change to a document this file does not own.
  *
- * The nine others carry the same one-line reason: no recorded instance, so no named budget
- * yet. Adding a tenth reason without evidence would be inventing one.
+ * The ten others carry the same one-line reason: no recorded instance, so no named budget
+ * yet. The view-menu keyboard spec runs at 2x but has no measured navigation timeout, so it
+ * is recorded here without inventing a larger budget.
  */
 const UNBUDGETED_NAVIGATORS: readonly string[] = [
   'adjustments.spec.ts',
@@ -120,6 +126,7 @@ const UNBUDGETED_NAVIGATORS: readonly string[] = [
   'sidebar-keyboard.spec.ts',
   'sidebar-layout.spec.ts',
   'single-row-column-marquee.spec.ts',
+  'view-menu-keyboard-shortcuts.spec.ts',
 ];
 
 /** The one entry above that `TEST-FLAKES.md` §13 records losing on the bare default. */
@@ -149,11 +156,12 @@ describe('per-test timeouts are named, not inlined', () => {
 
   it('still exports the budgets the specs import', () => {
     // The scan above passes trivially on an empty suite, and a renamed constant would
-    // break the specs at compile time rather than here — so this asserts the two
-    // most-used names resolve to the values the suite was passing inline before.
+    // break the specs at compile time rather than here — so this asserts the named
+    // budgets resolve to the values the suite was using before extraction.
     expect(DEFAULT_TEST_TIMEOUT_MS).toBe(60_000);
     expect(PAINT_TOOLS_TEST_TIMEOUT_MS).toBe(120_000);
     expect(SEARCH_TEST_TIMEOUT_MS).toBe(180_000);
+    expect(HIDPI_PIXEL_COMPARISON_TEST_TIMEOUT_MS).toBe(90_000);
   });
 });
 
