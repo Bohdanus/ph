@@ -1248,7 +1248,10 @@ function isSerializedToolCallText(content) {
       canStartIndentedCode = false;
     }
   }
-  return containsVisibleSerializedToolCall(currentSegment.join('\n'));
+  const visibleText = currentSegment.join('\n');
+  return (
+    hasOpenSerializedToolCallPrefix(stripInlineCodeSpans(visibleText)) || containsVisibleSerializedToolCall(visibleText)
+  );
 }
 
 function isExactZeroCost(cost) {
@@ -1616,7 +1619,8 @@ export async function runKiloCompletion({
       });
 
     const stderrEvents = parseEvents(stderrText).events;
-    const costs = [...events, ...stderrEvents].flatMap((event) =>
+    const processEvents = [...events, ...stderrEvents];
+    const costs = processEvents.flatMap((event) =>
       [event?.part?.cost, event?.cost, event?.error?.cost].filter((cost) => cost !== undefined)
     );
     if (costs.some((cost) => !isExactZeroCost(cost))) {
@@ -1636,10 +1640,11 @@ export async function runKiloCompletion({
     if (timedOut) return { error: `Kilo completion exceeded ${effectiveTimeoutMs} ms` };
     if (outputOverflow) return { error: `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes` };
     if (malformed) return { error: 'Kilo CLI returned malformed JSONL output', exhaustSource: true };
-    if (hasToolActivity([...events, ...stderrEvents]))
+    if (hasToolActivity(processEvents))
       return { error: 'Kilo attempted a tool call; the completion was rejected', exhaustSource: true };
-    if (events.some((event) => event?.type === 'error')) return sanitizedProcessError(events, stderrText, code, signal);
-    if (code !== 0) return sanitizedProcessError(events, stderrText, code, signal);
+    if (processEvents.some((event) => event?.type === 'error'))
+      return sanitizedProcessError(processEvents, stderrText, code, signal);
+    if (code !== 0) return sanitizedProcessError(processEvents, stderrText, code, signal);
     if (inputError) return { error: 'Kilo CLI did not accept the complete prompt' };
 
     const terminal = events.filter((event) => event?.type === 'step_finish').at(-1);

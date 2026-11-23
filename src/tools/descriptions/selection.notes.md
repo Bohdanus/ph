@@ -69,10 +69,12 @@ this pass, the source wins, and the two places it loses are recorded at the end.
 
 - **Combination modes.** `New / Add To / Subtract From / Intersect With` appears on the marquee
   tools, the lasso tools and the Magic Wand. The current Quick Selection page lists three — New,
-  Add to and Subtract from. Adobe's current general Intersect page says to use any selection tool,
-  and its selection-combination tutorial explicitly includes Quick Selection with the Intersect
-  button. Adobe's published keyboard-shortcut reference excludes Quick Selection from the Shift+Alt/
-  Option intersect gesture, so the button is documented without that modifier.
+  Add to and Subtract from. Adobe's current general Intersect page applies its instructions to
+  "any selection tool." Its selection-combination tutorial includes Quick Selection among tools
+  with combination options, then gives general Intersect instructions without showing a
+  Quick Selection-specific Intersect step. Adobe's published keyboard-shortcut reference excludes
+  Quick Selection from the Shift+Alt/Option intersect gesture. The source scopes differ, so the
+  current Quick Selection mode list remains unresolved.
 - **Combination-mode modifiers are only partly implemented.**
   A grep for `shiftKey|altKey|metaKey|ctrlKey` across `src/components/Main/*.tsx` returns
   production hits in `CloneStampToolArea`, `EllipticalSelectionToolArea`,
@@ -680,22 +682,26 @@ The current Quick Selection desktop page (updated 2026-02-23) enumerates `New`, 
 `Subtract from` as its Options-bar modes and does not mention Intersect. That is the current,
 tool-specific account, but its silence does not settle what the Options bar contains.
 
-Two broader Adobe sources point the other way. The current desktop Intersect page (also updated
-2026-02-23) says “Using any selection tool” and instructs the reader to choose `Intersect with
-selection` in the Options bar. An Adobe tutorial explicitly names Quick Selection among the tools
-whose selections can be combined, then gives the same Intersect instruction. A third Adobe source,
-the 2019 keyboard-shortcuts PDF, specifically excludes Quick Selection from the `Shift+Alt` /
-`Shift+Option` Intersect **gesture**. That exclusion is about the shortcut, not proof that the
-Options-bar button is absent.
+Two broader Adobe sources point the other way. The current desktop Intersect page says “Using any
+selection tool” and instructs the reader to choose `Intersect with selection` in the Options bar.
+An Adobe tutorial explicitly names Quick Selection among tools with options for combining
+selections, then gives general Intersect instructions without showing a Quick Selection-specific
+Intersect step. A third Adobe source, the 2019 keyboard-shortcuts PDF, specifically excludes Quick
+Selection from the `Shift+Alt` / `Shift+Option` Intersect **gesture**. That exclusion is about the
+shortcut, not proof that the Options-bar button is absent.
 
-These sources do not resolve whether Photoshop’s Quick Selection Options bar includes Intersect.
-The data therefore records the conflict rather than asserting either four modes or a definitive
-absence. The app’s own dropdown is different evidence: its persistent modes are Add and Subtract.
+The dedicated page and broader instructions have different scopes and do not resolve whether
+Photoshop’s Quick Selection Options bar includes Intersect. The data therefore records the
+ambiguity rather than asserting either four modes or a definitive absence. The app’s own dropdown
+is different evidence: its persistent modes are Add and Subtract.
 
-The mode buttons and held-key gestures are separate controls. Adobe’s current manual-selection
-guide says any selection tool can hold `Shift` while dragging to add and `Alt`/`Option` while
-dragging to subtract. The `modifiers` rows record those Photoshop gestures separately from the
-unresolved Intersect documentation.
+The Options-bar modes and held-key gestures are distinct input paths for selection-combination
+operations: the mode is persistent bar state, while a modifier applies during a drag. Adobe's
+general Intersect guide and selection-combination tutorial present the Intersect button and the
+Shift+Alt/Option gesture as alternatives. The 2019 shortcut reference excludes Quick Selection
+from that gesture. Adobe’s current manual-selection guide says any selection tool can hold `Shift`
+while dragging to add and `Alt`/`Option` while dragging to subtract. The `modifiers` rows record
+those Photoshop gestures separately from the unresolved Quick Selection Intersect support.
 
 ### `W`, and the `Shift+L` badge
 
@@ -954,9 +960,10 @@ one Photoshop does not have. Because the control is not a Photoshop control it d
 in the `options` array; it is recorded here and in `appNotes`.
 
 **Also divergent.** The `Mode` dropdown offers only `Add` and `Subtract`, so it has no explicit
-`New` or `Intersect` mode. Photoshop's selection-combination tutorial explicitly includes Quick
-Selection and its Intersect button; Adobe's published keyboard-shortcut reference excludes Quick
-Selection from the Shift+Alt/Option Intersect gesture. `Sample All Layers` is absent and the stroke reads
+`New` or `Intersect` mode. Photoshop's selection-combination tutorial includes Quick Selection
+among tools with combination options, then gives general Intersect instructions without showing a
+Quick Selection-specific Intersect step. Adobe's published keyboard-shortcut reference excludes
+Quick Selection from the Shift+Alt/Option Intersect gesture. `Sample All Layers` is absent and the stroke reads
 the merged composite canvas. `Select and Mask`, `Auto-Enhance` and the tool-preset picker
 are absent, and there is no route from a selection to a layer mask at all. The brush is flat — no hardness, spacing, angle or roundness — and `[`/`]`, the
 Alt-drag size gesture and the live size/opacity readout are not bound. Every traced contour is

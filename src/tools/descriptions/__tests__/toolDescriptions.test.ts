@@ -172,7 +172,7 @@ describe('toolDescriptions', () => {
       /The app has no Intersect mode and does not implement bracket-key resizing or Shift\+Alt intersection/i
     );
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
-      /current Quick Selection guide lists New, Add to and Subtract from.*general Intersect guide says.*any selection tool.*includes Quick Selection.*selection-combination tutorial explicitly includes Quick Selection.*exact current Options-bar mode list remains unclear.*2019 keyboard reference excludes Quick Selection from the Shift\+Alt\/Option intersect gesture.*app implements both gestures but has no Intersect mode/i
+      /current Quick Selection guide lists New, Add to and Subtract from.*general Intersect guide applies its instructions to.*any selection tool.*tutorial includes Quick Selection among tools with combination options.*general Intersect instructions without showing a Quick Selection-specific Intersect step.*exact current Options-bar mode list remains unclear.*2019 keyboard reference excludes Quick Selection from the Shift\+Alt\/Option intersect gesture.*app implements both gestures but has no Intersect mode/i
     );
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
       /excludes Quick Selection from the Shift\+Alt\/Option intersect gesture/i
@@ -482,6 +482,16 @@ describe('toolDescriptions', () => {
         'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       ])
     );
+  });
+
+  it('qualifies the Sponge saturation behavior and documents its Grayscale contrast behavior', () => {
+    const sponge = toolDescriptions.sponge;
+
+    expect(sponge.summary).toMatch(/color images.*saturation/i);
+    expect(sponge.summary).toMatch(/Grayscale mode.*contrast.*middle gray/i);
+    expect(sponge.summary).not.toMatch(/lightness underneath is untouched/i);
+    expect(sponge.purpose).toMatch(/On color images.*changes saturation/i);
+    expect(sponge.purpose).toMatch(/In Grayscale mode.*changes contrast/i);
   });
 
   describe('modifiers and shortcuts consistency', () => {

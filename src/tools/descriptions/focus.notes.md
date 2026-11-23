@@ -678,7 +678,7 @@ the value itself, and no dwell anywhere in the stroke hook to accumulate more.
 
 ## Sponge Tool
 
-The seventh member of this family, and the only **chroma** operation in it. Where the Dodge and the
+The seventh member of this family, and on color images the only **chroma** operation in it. Where the Dodge and the
 Burn scale a channel towards white or black inside a chosen tonal band, the Sponge scales a pixel's
 distance from its own luminance — which is exactly why its bar carries `Mode` and `Flow` where the
 pair carry `Range` and `Exposure`, and why this family's notes had to be reopened rather than

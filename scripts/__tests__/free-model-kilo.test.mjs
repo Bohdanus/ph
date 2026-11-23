@@ -685,6 +685,8 @@ watcher owner read
 kilo_grep({pattern: "magic.wand|MagicWand", paths: ["src"]})
 kilo_grep({pattern: "selection", paths: ["e2e"]})`,
     ],
+    ['an unfinished tool-call markup prefix', '<tool_call><function=kilo_ls>'],
+    ['an unfinished Kilo function-call prefix', 'kilo_ls('],
     [
       'Kilo JavaScript-style calls separated by comments',
       `kilo_ls /* inspect the source */ ( // keep this call data-only
@@ -1276,11 +1278,45 @@ process.exit(1);`
     }
   });
 
-  it('detects quota errors written only to stderr without exposing the provider message', async () => {
+  it.each([
+    [
+      'a text quota message',
+      "console.error('Free model usage limit reached (HTTP 429): private provider body'); process.exit(1);",
+    ],
+    [
+      'a structured JSONL error status',
+      `process.stderr.write(${JSON.stringify(`${JSON.stringify({ type: 'error', error: { status: 429 } })}\n`)}); process.exitCode = 1;`,
+    ],
+  ])(
+    'detects quota errors written only to stderr from %s without exposing provider details',
+    async (_label, source) => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+      const command = await writeExecutable(join(directory, 'fake-kilo'), source);
+
+      try {
+        const result = await runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' });
+        expect(result).toEqual({
+          error: 'Kilo provider quota or rate limit returned HTTP 429',
+          exhaustSource: true,
+          status: 429,
+        });
+        expect(JSON.stringify(result)).not.toContain('private provider body');
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it('does not accept success-shaped stdout when stderr reports a structured quota error', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
     const command = await writeExecutable(
       join(directory, 'fake-kilo'),
-      "console.error('Free model usage limit reached (HTTP 429): private provider body'); process.exit(1);"
+      `process.stdout.write([
+  JSON.stringify({ type: 'text', part: { text: 'apparently successful response' } }),
+  JSON.stringify({ type: 'step_finish', part: { reason: 'stop' } }),
+].join('\\n') + '\\n');
+process.stderr.write(JSON.stringify({ type: 'error', error: { status: 429 } }) + '\\n');
+process.exitCode = 0;`
     );
 
     try {
@@ -1290,7 +1326,6 @@ process.exit(1);`
         exhaustSource: true,
         status: 429,
       });
-      expect(JSON.stringify(result)).not.toContain('private provider body');
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
