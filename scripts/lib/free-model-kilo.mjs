@@ -1310,8 +1310,9 @@ function sanitizedProcessError(events, stderrDiagnosticText, code, signal) {
   const report = reportedStatus(events, stderrDiagnosticText);
   const status = report.status;
   if (status === 401) return { error: 'Kilo authentication was rejected', exhaustSource: true, status };
-  if (status === 402 || status === 429) {
-    return { error: `Kilo provider quota or rate limit returned HTTP ${status}`, exhaustSource: true, status };
+  if (status === 402) return { error: 'Kilo provider returned HTTP 402', exhaustSource: true, status };
+  if (status === 429) {
+    return { error: 'Kilo provider quota or rate limit returned HTTP 429', exhaustSource: true, status };
   }
   if (report.legacyQuota) {
     return { error: 'Kilo provider quota or rate limit was reached', exhaustSource: true };
