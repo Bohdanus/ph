@@ -427,9 +427,6 @@ describe('EyedropperToolArea', () => {
   });
 
   it('sets the BACKGROUND colour on an Alt/Option click, and the foreground otherwise', () => {
-    // Adobe: "Alt-click (Windows) / Command-Option-click (Mac) to sample to the background color"
-    // (https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html). The modifier
-    // is `altKey` on both platforms, so there is no platform branch to take.
     const toolArea = renderArea();
 
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 0 });
@@ -438,6 +435,22 @@ describe('EyedropperToolArea', () => {
     expect(dispatchMock.mock.calls.map(([action]) => action)).toEqual([
       { type: 'SET_COLOR', payload: '#00ff00' },
       { type: 'SET_BACKGROUND_COLOR', payload: '#00ff00' },
+    ]);
+  });
+
+  it('updates the selected swatch live as the eyedropper is dragged', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(toolArea, { button: -1, pointerId: 7, clientX: 1, clientY: 0 });
+    fireEvent.pointerMove(toolArea, { button: -1, pointerId: 7, clientX: 2, clientY: 1 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 7, clientX: 3, clientY: 0 });
+
+    expect(dispatchMock.mock.calls.map(([action]) => action)).toEqual([
+      { type: 'SET_COLOR', payload: '#ff0000' },
+      { type: 'SET_COLOR', payload: '#00ff00' },
+      { type: 'SET_COLOR', payload: '#0a141e' },
+      { type: 'SET_COLOR', payload: '#ffff00' },
     ]);
   });
 

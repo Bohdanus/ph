@@ -162,6 +162,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
   const imageDataRef = useRef<ImageData | null>(null);
   const accumulatorRef = useRef<QuickSelectionAccumulator | null>(null);
   const baseSelectionIdRef = useRef<string | null>(null);
+  const strokeBaseModeRef = useRef<QuickSelectionToolArgs['mode'] | null>(null);
   const strokeModeRef = useRef<QuickSelectionToolArgs['mode'] | null>(null);
   const strokeToleranceRef = useRef<number>(args?.tolerance ?? 0);
   const selectionChangedRef = useRef(false);
@@ -287,6 +288,14 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     return true;
   }
 
+  function updateStrokeModeFromModifiers(event: PointerEvent<HTMLDivElement>): void {
+    const baseMode = strokeBaseModeRef.current;
+    if (baseMode === null) return;
+
+    strokeModeRef.current =
+      event.shiftKey && !event.altKey ? 'add' : event.altKey && !event.shiftKey ? 'subtract' : baseMode;
+  }
+
   const resetGesture = useCallback(() => {
     if (previewAnimationFrameRef.current !== null) {
       cancelAnimationFrame(previewAnimationFrameRef.current);
@@ -298,6 +307,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     imageDataRef.current = null;
     accumulatorRef.current = null;
     baseSelectionIdRef.current = null;
+    strokeBaseModeRef.current = null;
     strokeModeRef.current = null;
     selectionChangedRef.current = false;
     previewPointsRef.current = null;
@@ -381,7 +391,8 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
       imageDataRef.current = imageData;
       accumulatorRef.current = accumulator;
       baseSelectionIdRef.current = activeSelection?.id ?? null;
-      strokeModeRef.current = args.mode;
+      strokeBaseModeRef.current = args.mode;
+      updateStrokeModeFromModifiers(event);
       strokeToleranceRef.current = args.tolerance;
       seedSamplerRef.current = seedSampler;
       selectionChangedRef.current = false;
@@ -416,6 +427,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
     try {
       const point = getLocalCoords(event);
+      updateStrokeModeFromModifiers(event);
       growStroke(point);
     } catch (error) {
       console.error('Unable to grow Quick Selection stroke', error);
@@ -434,10 +446,11 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
     let selection: Selection | null;
     let selectionChanged: boolean;
-    let shouldClearSubtractedSelection: boolean;
+    let shouldClearEmptiedSelection: boolean;
     try {
       // The release position can carry a seed the last move did not, so the stroke is grown
       // once more before it is read for the commit. Nothing is written by that call.
+      updateStrokeModeFromModifiers(event);
       growStroke(getLocalCoords(event), true);
 
       const accumulator = accumulatorRef.current;
@@ -447,11 +460,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
           ? createQuickSelectionPolygon(accumulator.mask, accumulator.width, accumulator.height)
           : null;
       const hasSelectedPixels = accumulator?.mask.some((pixel) => pixel === 1) ?? false;
-      shouldClearSubtractedSelection =
-        selectionChanged &&
-        !hasSelectedPixels &&
-        strokeModeRef.current === 'subtract' &&
-        baseSelectionIdRef.current !== null;
+      shouldClearEmptiedSelection = selectionChanged && !hasSelectedPixels && baseSelectionIdRef.current !== null;
 
       selection = polygon
         ? polygon.rasterMask
@@ -484,7 +493,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
     if (!selection || !selectionChanged) {
       try {
-        if (shouldClearSubtractedSelection) {
+        if (shouldClearEmptiedSelection) {
           clearSelections();
           selectionDraftStartedRef.current = false;
         } else {

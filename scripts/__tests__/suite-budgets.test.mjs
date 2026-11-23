@@ -88,6 +88,7 @@ const BUDGETED = [
   'free-chat-search-agent.test.mjs',
   'free-model-kilo.test.mjs',
   'free-model-pool.test.mjs',
+  'main-landing-alert.test.mjs',
   'main-worktree-guard.test.mjs',
   'mirror-e2e.test.mjs',
   'merge-release.test.mjs',

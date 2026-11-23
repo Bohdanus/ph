@@ -147,6 +147,64 @@ const ROTATE_OUTER_HOTZONE = 90;
 export const ROTATE_HANDLE_OFFSET = 36;
 const ROTATION_SNAP_INCREMENT = 15;
 
+type OverlayPaintInputs = {
+  canvas: HTMLCanvasElement;
+  canvasWidth: number;
+  canvasHeight: number;
+  imageWidth: number;
+  imageHeight: number;
+  rect: RectXY | null;
+  scale: number;
+  rotation: number;
+  hideBlend: boolean;
+  externalOverlay: boolean;
+  incrementalOverlay: boolean;
+  allowOutsideCanvas: boolean;
+  borderMode: 'always' | 'while-dragging';
+  hideBorder: boolean;
+  hideHandles: boolean;
+  hideRotationHandle: boolean;
+  handlesOutside: boolean;
+  rotationEnabled: boolean;
+  overlayType?: CropOverlayType;
+  overlayOrientation: CropOverlayOrientation;
+  overlayVisibility: CropOverlayVisibility;
+  gridDivisions: number;
+  overlayColor?: string;
+  overlayColorForRect?: (rect: Pos) => string;
+  documentCanvas: HTMLCanvasElement | null;
+};
+
+function sameOverlayPaintInputs(left: OverlayPaintInputs, right: OverlayPaintInputs): boolean {
+  return (
+    left.canvas === right.canvas &&
+    left.canvasWidth === right.canvasWidth &&
+    left.canvasHeight === right.canvasHeight &&
+    left.imageWidth === right.imageWidth &&
+    left.imageHeight === right.imageHeight &&
+    isEqual(left.rect, right.rect) &&
+    left.scale === right.scale &&
+    left.rotation === right.rotation &&
+    left.hideBlend === right.hideBlend &&
+    left.externalOverlay === right.externalOverlay &&
+    left.incrementalOverlay === right.incrementalOverlay &&
+    left.allowOutsideCanvas === right.allowOutsideCanvas &&
+    left.borderMode === right.borderMode &&
+    left.hideBorder === right.hideBorder &&
+    left.hideHandles === right.hideHandles &&
+    left.hideRotationHandle === right.hideRotationHandle &&
+    left.handlesOutside === right.handlesOutside &&
+    left.rotationEnabled === right.rotationEnabled &&
+    left.overlayType === right.overlayType &&
+    left.overlayOrientation === right.overlayOrientation &&
+    left.overlayVisibility === right.overlayVisibility &&
+    left.gridDivisions === right.gridDivisions &&
+    left.overlayColor === right.overlayColor &&
+    left.overlayColorForRect === right.overlayColorForRect &&
+    left.documentCanvas === right.documentCanvas
+  );
+}
+
 const ROTATION_CURSOR_BODY = rotationCursorSvgSource
   .replace(/^\s*<svg\b[^>]*>/, '')
   .replace(/<\/svg>\s*$/, '')
@@ -416,7 +474,6 @@ export function useRect({
   const customAspectRatioRef = useRef<number | null>(null);
   const freshDragModifiersRef = useRef<FreshDragModifiers>({ ...NO_MODIFIERS });
   const rotationRef = useRef(rotation);
-  const lastRotationRef = useRef(rotation);
   const startRotationRef = useRef(rotation);
   const rotationPreviousPointerAngleRef = useRef(0);
   const rotationAccumulatedDeltaRef = useRef(0);
@@ -429,6 +486,7 @@ export function useRect({
   const borderAnimationFrameRef = useRef<number | null>(null);
   const borderDashOffsetRef = useRef(0);
   const overlayPaintModeRef = useRef<'external' | 'incremental' | 'full' | null>(null);
+  const lastPaintedOverlayInputsRef = useRef<OverlayPaintInputs | null>(null);
   const lastIncrementalRectRef = useRef<{
     x: number;
     y: number;
@@ -436,6 +494,9 @@ export function useRect({
     height: number;
     angle: number;
     scale: number;
+    frameWidth: number;
+    frameHeight: number;
+    hideBlend: boolean;
   } | null>(null);
   const incrementalCanvasSizeRef = useRef({ width: 0, height: 0 });
   const gesturePointerIdRef = useRef<number | null>(null);
@@ -490,14 +551,6 @@ export function useRect({
 
   const drawMaskRef = useRef<((hasRectChanged?: boolean) => void) | null>(null);
   const redraw = useCallback(() => drawMaskRef.current?.(), []);
-  const overlayAppearanceRef = useRef({
-    gridDivisions,
-    overlayColor,
-    overlayColorForRect,
-    overlayOrientation,
-    overlayType,
-    overlayVisibility,
-  });
 
   useEffect(() => {
     drawMaskRef.current = drawMask;
@@ -513,35 +566,12 @@ export function useRect({
 
     if (!isEqual(startRectRef.current, rectUnsortedRef.current)) {
       rectUnsortedRef.current = startRectRef.current ? { ...startRectRef.current } : null;
-      drawMaskRef.current?.();
     }
   }, [effectiveAspectRatio, initialRect]);
 
   useEffect(() => {
     rotationRef.current = rotation;
-    if (lastRotationRef.current !== rotation && rectUnsortedRef.current) drawMaskRef.current?.();
-    lastRotationRef.current = rotation;
   }, [rotation]);
-
-  useEffect(() => {
-    const previous = overlayAppearanceRef.current;
-    const changed =
-      previous.gridDivisions !== gridDivisions ||
-      previous.overlayColor !== overlayColor ||
-      previous.overlayColorForRect !== overlayColorForRect ||
-      previous.overlayOrientation !== overlayOrientation ||
-      previous.overlayType !== overlayType ||
-      previous.overlayVisibility !== overlayVisibility;
-    overlayAppearanceRef.current = {
-      gridDivisions,
-      overlayColor,
-      overlayColorForRect,
-      overlayOrientation,
-      overlayType,
-      overlayVisibility,
-    };
-    if (changed && rectUnsortedRef.current) drawMaskRef.current?.();
-  }, [gridDivisions, overlayColor, overlayColorForRect, overlayOrientation, overlayType, overlayVisibility]);
 
   /**
    * The overlay canvas outlives this hook: `Main` renders both overlay canvases
@@ -616,6 +646,50 @@ export function useRect({
     isMouseDown,
     dimensionsRef,
   } = pointerPositionData;
+
+  function currentOverlayPaintInputs(canvas: HTMLCanvasElement): OverlayPaintInputs {
+    return {
+      canvas,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      imageWidth: imageSize.width,
+      imageHeight: imageSize.height,
+      rect: rectUnsortedRef.current ? { ...rectUnsortedRef.current } : null,
+      scale: dimensionsRef.current.scale,
+      rotation,
+      hideBlend: Boolean(hideBlend),
+      externalOverlay,
+      incrementalOverlay,
+      allowOutsideCanvas,
+      borderMode,
+      hideBorder,
+      hideHandles,
+      hideRotationHandle,
+      handlesOutside,
+      rotationEnabled,
+      overlayType,
+      overlayOrientation,
+      overlayVisibility,
+      gridDivisions,
+      overlayColor,
+      overlayColorForRect,
+      documentCanvas: documentCanvasRef?.current ?? null,
+    };
+  }
+
+  // Run after usePointerPosition's effects. A real frame resize can already repaint through its
+  // onResize callback; comparing the complete painted inputs here covers other prop changes
+  // without repainting the same state a second time in this commit.
+  useEffect(() => {
+    const canvas = overlayRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+
+    const current = currentOverlayPaintInputs(ctx.canvas);
+    const previous = lastPaintedOverlayInputsRef.current;
+    if (previous ? sameOverlayPaintInputs(previous, current) : !current.rect && !externalOverlay) return;
+    drawMaskRef.current?.();
+  });
 
   function animateBorder() {
     borderAnimationFrameRef.current = null;
@@ -819,9 +893,13 @@ export function useRect({
         overlayPaintModeRef.current = 'external';
       }
       lastIncrementalRectRef.current = null;
-      if (!rect) return;
+      if (!rect) {
+        lastPaintedOverlayInputsRef.current = currentOverlayPaintInputs(ctx.canvas);
+        return;
+      }
 
       const sortedRect = sortRect(rect);
+      lastPaintedOverlayInputsRef.current = currentOverlayPaintInputs(ctx.canvas);
       onRepaint?.(sortedRect);
       if (hasRectChanged) onChange?.(sortedRect);
       return;
@@ -837,6 +915,7 @@ export function useRect({
       clearCanvasBackingStore(ctx);
       overlayPaintModeRef.current = null;
       lastIncrementalRectRef.current = null;
+      lastPaintedOverlayInputsRef.current = currentOverlayPaintInputs(ctx.canvas);
       return;
     }
 
@@ -866,7 +945,10 @@ export function useRect({
         // prior bounds to restore. Repaint the backing store in either case so no stale pixels can
         // survive outside the current crop.
         previous === null ||
-        previous.angle !== angle;
+        previous.angle !== angle ||
+        previous.frameWidth !== imageSize.width ||
+        previous.frameHeight !== imageSize.height ||
+        previous.hideBlend !== Boolean(hideBlend);
       if (needsBasePaint) {
         clearCanvasBackingStore(ctx);
         if (!hideBlend) {
@@ -1026,10 +1108,24 @@ export function useRect({
       ctx.restore();
     }
 
+    lastPaintedOverlayInputsRef.current = currentOverlayPaintInputs(ctx.canvas);
+
     // todo update status bar - add func on each update
     onRepaint?.(sortedRect);
 
-    if (incrementalOverlay) lastIncrementalRectRef.current = { x, y, width, height, angle, scale };
+    if (incrementalOverlay) {
+      lastIncrementalRectRef.current = {
+        x,
+        y,
+        width,
+        height,
+        angle,
+        scale,
+        frameWidth: imageSize.width,
+        frameHeight: imageSize.height,
+        hideBlend: Boolean(hideBlend),
+      };
+    }
 
     if (hasRectChanged) {
       onChange?.(sortedRect);

@@ -80,6 +80,11 @@ const ALLOWED_UNLISTED = new Map([
       'covers task-specific records, so this review does not need a permanent index row.',
   ],
   [
+    'docs/handoffs/loose-ends-final-20261121-review-and-merge.md',
+    'one-off evidence for a completed review-and-merge; the docs/handoffs/ directory row ' +
+      'covers this record without making it a standing project contract.',
+  ],
+  [
     'docs/handoffs/audit-free-subagent-hardening-review.md',
     'covered by the docs/handoffs/ directory row, which states the ' +
       '<branch>-<topic>.md naming convention. One row per merged branch would make the ' +

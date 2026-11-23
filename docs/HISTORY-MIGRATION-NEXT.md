@@ -5,7 +5,187 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
-## Latest continuation reconciliation — 2026-11-14 18:03 UTC
+## Latest continuation reconciliation — 2026-11-21 23:31 UTC
+
+### Current refs, ownership, and landing state
+
+The designated local `main` worktree is
+`/Users/bkalynovskyi/ph/.kilo/worktrees/landing-main-recovered-20261112` at
+`40910ef2a9b991627c29f7cc7aba484479bd84ab`. The review worktree is
+`/Users/bkalynovskyi/ph/.kilo/worktrees/history-migration-current-20261115-2` on
+`task/history-migration-current-20261115-2`, based on that pin. The current candidate contains five
+intended changes: three tests and two documentation files; no production history source changed.
+
+The one `origin/main` fetch was performed at the start of this continuation. At that point
+`origin/main=e31679a888261612e5efabe7bb3ce8d822a51479`, an ancestor of local `main`, and the local
+comparison was `origin/main...main = 0 19`. After the start snapshot, the shared tracking ref
+advanced. At 2026-11-21 23:11 UTC, both `refs/remotes/origin/main` and read-only `git ls-remote
+--heads origin main` reported `e6b6183e4c507ed6dd18dbf2b5d267926b348ab6`; no second fetch was
+performed. The current local comparison is `main...origin/main = 19 2`.
+
+The post-start remote delta `e31679a..e6b6183` is 17 files (+552/−107), comprising `21169dd0c` and
+its merge `e6b6183e4`. It adds retained-live-lock handling in the agent board and updates
+orchestration/release guidance. Its only migration-adjacent path is
+`src/contexts/__tests__/image-load-save-utils.signatures.test.ts`, where one test timeout changed to
+15 seconds. It changes no history production source, migration document or plan, `HANDOFF.md`, or
+`e2e/crop-history.spec.ts`. Keep that separate process/tooling delta out of this narrow candidate;
+review and sync it in a separate operation. Do not push.
+
+The task branch was fast-forwarded to local `main` pin `40910ef2a9b991627c29f7cc7aba484479bd84ab`
+before edits. At 23:12 UTC, `main:landing -- status` reported the designated landing checkout free.
+The scoped `repo:state -- --for-landing task/history-migration-current-20261115-2` gate exited 0;
+six unrelated worktree-operation findings remain reported and untouched. `swarm check` found no file
+locks on this candidate's five paths. The open `ph-93` text-source issue is a reference, with no
+active claim or file locks; it is the later proof slice, not this candidate's owner.
+
+Local `main` contains the layer insertion-order feature (`e90e4ea2c`, `9d6e146e7`, with its
+supporting layer actions in `cd3a7236c`). The history row retains `insertAfterLayerId`; legacy
+replay and durable conversion/replay both use it. `orderImmediatelyAfter()` throws when that anchor
+is absent. The rest of the durable-history boundary is unchanged: `HistoryItem[]` remains logical
+authority, durable replay remains staged presentation/export with legacy fallback, and the existing
+identity, coverage, freshness, lease, preview, failure, and exact-parity gates stay closed.
+
+### Current proof slice and verified behavior
+
+The insertion-order change added two cases that were not in the prior replay proof matrix:
+
+1. A disabled earlier reorder before an enabled create that points at a layer by
+   `insertAfterLayerId`. Both full folds skip the disabled reorder, then derive the create from the
+   same current layer set. This is supported by source inspection, not inferred from the earlier
+   Terra report. The new parity case requires exact legacy/durable results at every cursor, the
+   explicit cursor-1 order `layer-a, layer-b, layer-c`, tip order
+   `layer-a, inserted, layer-b, layer-c`, and a disabled durable reorder operation.
+2. Disabling a create that a later enabled create still uses as its insertion anchor. The history
+   panel eye action reaches `useHistory.toggleDisabled()`. Legacy replay throws on the missing
+   anchor before `APPLY_HISTORY_REPLAY`, so no changed timeline, cursor, or layer state is dispatched.
+   The catch logs the error and dispatches `SET_DURABLE_STATUS` with an unavailable diagnostic for
+   the dependent target row. The real reducer preserves legacy history/runtime fields while clearing
+   the durable projection; the hook and StoreContext tests pin those separate boundaries. This does
+   not select a cascade, skip, or append-at-top policy for this product-specific case.
+
+This proof slice changes tests and documentation only. It does not publish the failed toggle,
+change converter or presentation policy, or relax any ownership/admission gate. The missing-anchor
+case remains an explicit UX contract question: the visible refusal should be made understandable,
+and the product behavior for disabling a referenced create should be chosen before changing replay
+semantics.
+
+### Cross-chat reconciliation and limits
+
+The local Kilo database scan covered 7,973 sessions under `/Users/bkalynovskyi/ph`, including 1,097
+updated since 2026-11-15. The bounded recent text query found 14 matching sessions. The 2026-11-20
+`ses_e0517b221ffe7TydYLpm2PLkEH` History/Replay review reiterates the staged authority contract and
+the typed text-source ownership slice; it is review text, not implementation or runtime evidence.
+The `ses_e068661e0ffeBUzlojr4nvHinB` test inventory reports 48 `useHistory.test.tsx` cases but does
+not cover the insertion-anchor toggle sequence. Other recent matches were loose-end batches or
+unrelated crop-history reviews. The older `ses_e23419c89ffe16oXioMbLaX7SJ` PH-71/PH-93 audit agrees
+with the documented order: close the bounded diagnostic first, then continue source ownership.
+Kilo results are leads; source and tests above decide the current behavior.
+
+The Codex state index reports `backfill_state=complete`; its current-project index contains 72
+threads updated since 2026-11-15. The recent rollout-content scan found this active root
+`01a1791a-beaf-7eb2-8c7c-e10b483cf962` and no newer independent history-migration implementation.
+The older planning root `01a17f24-9224-7aa0-a412-3afafa09f797` asks for a durable next-step plan and
+implementation from current main; that plan is this document's text-source ownership sequence.
+Codex searches covered local indexed rollouts only, not remote or synced history.
+
+Copilot Chronicle has 19 local sessions and none mapped to this exact project path; the matching
+workspace-storage journals contain only root records with empty request arrays, and the global
+Copilot transcript folder is empty. Agent Host has a 2026-11-05 parent session
+`copilotcli:/3dae0b34-2298-4d9e-ba96-34a461ee811d` on
+`audit/stale-harvest-followup-20261103` with 16 history-related subagent titles. The parent has 23
+persisted local-turn rows, all with `failed` status. Six of the 16 history-related titles map to
+persisted local-turn rows and all six have `state=error`; one retained tool-call parts but no
+assistant response text. The other ten titles have no persisted local-turn row. These titles provide
+no usable review findings. The current session cache adds no migration evidence. Remote/synced
+sessions and other VS Code profiles were not inspected; no absence claim extends to those stores.
+
+### Open-source editor references
+
+The [GIMP undo-system overview](https://developer.gimp.org/core/specifications/undo/) describes
+image actions with undo data, grouped actions, and clearing redo when a new action is pushed. The
+[GIMP manual](https://docs.gimp.org/3.0/en/gimp-concepts-undo.html) describes image-scoped history
+that is not saved in XCF. The [Krita Undo History docker](https://docs.krita.org/en/reference_manual/dockers/undo_history.html)
+supports moving to a prior state and cumulative stroke grouping; its [Snapshot docker](https://docs.krita.org/en/reference_manual/dockers/snapshot_docker.html)
+stores a separate document snapshot and discards the undo stack when switching snapshots. These
+references reinforce keeping timeline navigation, grouped edits, and document snapshots as
+separate contracts. They do not define this app's per-row disabled-entry behavior.
+
+### Validation and review history
+
+At 2026-11-21 22:58 UTC, the focused validation passed 3 files and 101 tests; `npm run tsc`,
+`npm run build`, and `npm run lint:check` passed. Lint reported 127 warnings and no errors;
+formatting and `git diff --check` passed. These commands ran in the task worktree. No history
+production source or admission/authority gate changed.
+
+Four free Nemotron 3 Ultra reviews were completed on two successive candidate drafts. All usable
+outputs were non-empty, `finish_reason=stop`, and reported `cost=0`; Kilo was skipped due its
+recorded HTTP 429 cooldown, so all completed calls used the exact OpenRouter
+`nvidia/nemotron-3-ultra-550b-a55b:free` route. The first draft review used 13,809 prompt and 2,876
+completion tokens across two OpenRouter requests (the 4,096-token response hit `length` and the
+runner retried at 6,144). It alleged a cursor-1 gap and possibly absent disabled operation; local
+normalizers and converter disproved those claims. We made the test more explicit with expected order
+at baseline, cursor 1, and tip, and required the durable row with an exact operation kind. The next
+parity review used 16,669 prompt and 3,597 completion tokens and found no actionable issue, though
+one explanatory sentence incorrectly attributed the missing-anchor throw to durable conversion; the
+source shows it comes from legacy replay before durable conversion. The toggle/reducer review used
+14,996 prompt and 4,711 completion tokens and found no actionable issue. The documentation review
+used 14,685 prompt and 6,649 completion tokens; its branch/worktree and completed-step findings were
+fixed, and its case-specific assertion finding was fixed with a declared expected disabled entry.
+Its recommendation to remove the detailed Copilot scan counts was not adopted because these are
+reproducible coverage details with explicit failure/no-output limits, not positive review findings.
+These are model leads; each technical claim above was checked against source, tests, or the scan
+record. Two final exact-tree reviews were completed on the refined tests and the documentation as it
+stood before the mid-run origin update was recorded. The test review used the exact OpenRouter
+`nvidia/nemotron-3-ultra-550b-a55b:free` route, returned non-empty text with `finish_reason=stop`,
+reported `cost=0`, and used 21,547 prompt and 7,458 completion tokens in one OpenRouter request (no
+Kilo request). It found no actionable test issue and confirmed the exact cursor matrix, non-vacuous
+disabled-entry assertion, actual legacy replay failure path, and unchanged gates. The docs review
+used the same route, returned non-empty text with `finish_reason=stop`, reported `cost=0`, and used
+16,522 prompt and 5,018 completion tokens in one OpenRouter request (no Kilo request). It found no
+actionable documentation issue in that reviewed version.
+
+After adding the mid-run drift record, two separately prompted, tool-free reviews used the same
+exact OpenRouter Nemotron `:free` route. Review one returned non-empty text with
+`finish_reason=stop`, reported `cost=0`, used 5,512 prompt and 11,056 completion tokens, and
+attempted two OpenRouter requests (the initial 8,192-token response hit `length`; the runner retried
+at 12,288). It flagged both new links as having malformed heading anchors. I ran
+`github-slugger@2.0.0` against the exact heading locally; it emitted
+`latest-continuation-reconciliation--2026-11-21-2331-utc`, exactly matching both targets, so those
+findings were false positives and no anchor change was needed. Review two returned non-empty text
+with `finish_reason=stop`, reported `cost=0`, used 5,154 prompt and 4,994 completion tokens in one
+OpenRouter request, and found no actionable issue. Both calls skipped Kilo due its recorded HTTP 429
+cooldown. The two substantive updates—the post-start remote drift and restart sequence—were covered
+by these exact-tree reviews. The review-ledger note itself was added afterward and checked locally
+against saved runner outputs and the slugger result. Remaining pre-landing work is pin, ownership,
+and scoped-gate revalidation.
+
+### Ordered next steps
+
+1. Recheck the worktree mappings, clean designated `main`, local `main` and candidate pins, current
+   swarm path locks, and the scoped `repo:state -- --for-landing
+task/history-migration-current-20261115-2` gate (require exit 0). Confirm the landing wrapper is
+   free. Stage only the five documented candidate paths; commit with `Chat:
+01a1791a-beaf-7eb2-8c7c-e10b483cf962`, then land locally through the pinned `main:landing`
+   wrapper with the required `Branch: task/history-migration-current-20261115-2` trailer. Verify
+   both parents, landed tree, and clean local `main`. Do not push. If the shared remote advances
+   again, record and review that drift separately instead of silently widening this candidate.
+2. Keep the referenced-anchor toggle fail-closed. Decide and document its user-facing refusal before
+   any behavior change; never silently drop the dependent layer or treat a missing anchor as top
+   insertion.
+3. After this proof slice lands, resume open issue `ph-93` in a fresh worktree from the then-current
+   approved local `main`. Recheck the issue and producer ownership first. Trace `commitDirtyTool` →
+   `replaceLayerSource` → `REPLACE_LAYER_SOURCE_ACTION`; prove append and navigation fallback,
+   bitmap/tmpCanvas identity and resource lifetime, stale/refused work, draw failures and preview
+   interleaving, plus exact production canvas, PNG, and PSD pixels. Keep `ownership-unproven` closed
+   until the proof passes; do not infer disposable ownership for the immutable text action.
+4. Continue the fractional-frame matrix as a separate gate. Preserve exact-zero comparisons for
+   runtime, PNG, PSD layers, and PSD composite; do not promote refused adapter measurements or
+   change frame publication from those diagnostics.
+5. Treat whole-document replacement teardown and any durable logical undo/redo authority cutover as
+   later architectural work. Revisit cutover only after every surface has explicit identity,
+   coverage, freshness, lease, preview, failure, and fallback proofs.
+
+## Historical continuation reconciliation — 2026-11-14 18:03 UTC (superseded)
 
 The designated local `main` worktree `.kilo/worktrees/landing-main-recovered-20261112` is clean at
 `326d517478baeba0c4a28cccea2262a7e3e61bbc`, after the local main landing completed. The main delta
@@ -957,13 +1137,12 @@ The implementation slices and acceptance gates remain governed by the
 The current-state audit and its resolved/open findings are recorded in
 [History Migration Audit — 2026-11-07](HISTORY-MIGRATION-AUDIT-20261107.md).
 
-The latest refs, ancestry, and migration-specific cross-chat reconciliation are in
-[Latest continuation reconciliation — 2026-11-14 18:03 UTC](#latest-continuation-reconciliation--2026-11-14-1803-utc).
-The diagnostic candidate has already been synced to the clean designated local main. After the
-final docs correction is reviewed, refresh the candidate tip/tree, verify the pinned landing
-preconditions, and land through the pinned wrapper. After that diagnostic claim is closed, start the separate typed text
-source-ownership slice described in HANDOFF §1; verify its owner before editing and do not change the
-`ownership-unproven` gate until its integration, lifecycle, failure, and production export proofs
-pass. Continue the wider fractional-frame matrix independently. Only after every presentation
-surface has explicit identity, coverage, freshness, lease, preview, and fallback proofs should
-durable replay be considered for logical undo/redo authority.
+The latest refs, ancestry, current proof status, and migration-specific cross-chat reconciliation
+are in [Latest continuation reconciliation — 2026-11-21 23:31 UTC](#latest-continuation-reconciliation--2026-11-21-2331-utc).
+This reconciliation is a timestamped pre-landing snapshot. Revalidate live refs and landing ownership
+before acting on its pending local landing step; do not infer a completed landing from this note.
+After this proof slice lands, proceed to the typed text-source ownership work in HANDOFF §1 without
+changing `ownership-unproven` until its integration, lifecycle, failure, and production canvas/PNG/PSD
+proofs pass. Continue the wider fractional-frame matrix independently. Only after every
+presentation surface has explicit identity, coverage, freshness, lease, preview, failure, and
+fallback proofs should durable replay be considered for logical undo/redo authority.

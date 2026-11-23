@@ -47,10 +47,10 @@
  * ------------------------------
  * `AUTO_MERGE` — written by merge, cherry-pick AND revert, so it would report the
  * same operation three times under one marker. It is NOT a row in the table; instead
- * `readOperations` has a fallback that checks for it ONLY when no primary marker is
- * found, reporting an unnamed `in-progress` operation. That covers the interrupted-
- * merge shape — `AUTO_MERGE` present with no `MERGE_HEAD`, `CHERRY_PICK_HEAD`, etc. —
- * where silence would read as clean and the unmerged index would be the only warning.
+ * `readOperations` checks for it ONLY when no primary marker is found, reporting the
+ * marker with `operation: null`. The marker alone cannot establish whether an
+ * operation is active or stale, or identify which operation produced it. Keeping it
+ * visible prevents silence from reading as clean without asserting activity.
  * `MERGE_MSG` — written before the conflict and, on the git measured here, removed
  * with `MERGE_HEAD`; either way a report keyed on it would be reporting a message
  * file rather than an operation.
@@ -123,7 +123,7 @@ function readMarkerValue(gitDir, marker) {
 }
 
 /**
- * The operations in progress in ONE worktree, given its git directory.
+ * Git operation markers in ONE worktree, given its git directory.
  *
  * PURE WITH RESPECT TO THE FILESYSTEM, and separated from `scanRepository` so a
  * test can build a directory shape on disk and read it without a repository, a git
@@ -159,21 +159,19 @@ export function readOperations(gitDir) {
     });
   }
 
-  // FALLBACK: detect the interrupted-merge shape. `AUTO_MERGE` is written by merge,
-  // cherry-pick AND revert, so it cannot distinguish them and is not in the table.
-  // But when ALL primary markers are absent and AUTO_MERGE remains, the operation
-  // state is incomplete — `MERGE_HEAD` was removed by hand or never written by a
-  // `git merge --squash`, while the resolution state in the index and the file git
-  // uses to mark the in-progress operation are still there. That is the hazard:
-  // a report that says "nothing" reads as clean and licenses removing the worktree
-  // directory that holds the only copy. Report it as unnamed so the gap is visible;
-  // `abortCommand` returns null for the unnamed case. Only fires when found.length
-  // is 0, so a real merge/cherry-pick/revert is always named correctly first.
+  // FALLBACK: surface an unpaired AUTO_MERGE marker. `AUTO_MERGE` is written by
+  // merge, cherry-pick AND revert, so it cannot distinguish them and is not in the
+  // table. With all primary markers absent, the marker alone cannot tell us whether
+  // an operation is incomplete or the marker is stale. Keep the finding visible so
+  // the worktree is not reported clean; leave `operation` null and let the owner-aware
+  // recovery procedure decide what the artifact means. `abortCommand` returns null
+  // when no operation is identified. Only fires when found.length is 0, so a real
+  // merge/cherry-pick/revert is always named correctly first.
   if (found.length === 0 && existsSync(join(gitDir, 'AUTO_MERGE'))) {
-    found.push({ operation: 'in-progress', marker: 'AUTO_MERGE', value: null });
+    found.push({ operation: null, marker: 'AUTO_MERGE', value: null });
   }
 
-  return found.sort((a, b) => a.operation.localeCompare(b.operation));
+  return found.sort((a, b) => (a.operation ?? '').localeCompare(b.operation ?? ''));
 }
 
 /**
@@ -200,12 +198,9 @@ export function readOperations(gitDir) {
  *   command, which is the truth and is actionable — commit it or reset by hand.
  */
 export function abortCommand(operation) {
-  // `in-progress` is the unnamed fallback from an `AUTO_MERGE` with no primary
-  // marker: the operation could be a merge, cherry-pick, or revert, and git
-  // cannot tell us which. Returning a guessed command would hand the operator
-  // one that fatals — `git in-progress --abort` — so this returns null and the
-  // caller advises by hand.
-  if (operation.operation === 'in-progress') return null;
+  // A marker-only entry has no identified operation. Returning a guessed command
+  // would be unsafe, so this returns null and the caller advises by hand.
+  if (typeof operation?.operation !== 'string') return null;
   if (operation.operation === 'bisect') return 'git bisect reset';
   // `rebase-apply` is `git am`, whose abandon is `git am --abort`.
   if (operation.operation === 'rebase')
