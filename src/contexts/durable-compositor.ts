@@ -107,7 +107,9 @@ async function drawDirectAffineSourceLayer(
   request: MaterializationRequest
 ): Promise<boolean> {
   if (
-    (layer.snapshot.source.kind !== 'raster' && layer.snapshot.source.kind !== 'vector') ||
+    (layer.snapshot.source.kind !== 'raster' &&
+      layer.snapshot.source.kind !== 'vector' &&
+      layer.snapshot.source.kind !== 'blank') ||
     !hasOnlyAffineOperations(layer)
   ) {
     return false;

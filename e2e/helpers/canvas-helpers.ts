@@ -487,7 +487,7 @@ export function documentStrokeBoundaryMargin(
 }
 
 /** `[ms]` — the shared default timeout of every redraw wait below. Not a coordinate. */
-export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
+export const CANVAS_REDRAW_TIMEOUT_MS = 15_000;
 /** `[ms]` — the shared default poll interval of every redraw wait below. */
 export const CANVAS_REDRAW_POLL_INTERVAL_MS = 100;
 

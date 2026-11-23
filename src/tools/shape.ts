@@ -394,14 +394,15 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
 };
 
 export const shape =
-  ({ size }: CreatorToolParams): ((args: ToolArgs) => ToolResult) =>
+  ({ size, backingScale = 1 }: CreatorToolParams): ((args: ToolArgs) => ToolResult) =>
   (args) => {
     if (!('figure' in args)) {
       throw new Error(`Tool "${args.toolName}" does not provide shape arguments`);
     }
 
-    const canvas = new OffscreenCanvas(size.width, size.height);
+    const canvas = new OffscreenCanvas(size.width * backingScale, size.height * backingScale);
     const ctx = canvas.getContext('2d')!;
+    ctx.setTransform(backingScale, 0, 0, backingScale, 0, 0);
     const shapeArgs = { ...args, toolName: 'shape', figure: normalizeFigure(args.figure) } as ShapeToolArgs;
 
     // `setShapeCtx` writes stroke, fill, alpha and the dash and leaves them on the context, so
