@@ -9,6 +9,7 @@ import { replayHistory } from './history-replay.ts';
 import {
   OPEN_DOCUMENT_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
   SET_LAYER_OPACITY_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
@@ -33,6 +34,7 @@ export function getHistoryItemTitle(item: HistoryItem) {
 
   if (actionName === SET_DOCUMENT_FRAME_ACTION) return 'crop';
   if (actionName === SET_LAYER_OPACITY_ACTION) return 'set layer opacity';
+  if (actionName === SET_LAYER_FILL_OPACITY_ACTION) return 'set layer fill opacity';
 
   return actionName;
 }

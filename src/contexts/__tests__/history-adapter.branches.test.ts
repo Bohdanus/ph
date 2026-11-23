@@ -37,6 +37,7 @@ import {
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
@@ -1573,6 +1574,7 @@ describe('deriveSetLayerPropertiesEntry', () => {
     { label: 'hide', actionName: HIDE_LAYER_ACTION },
     { label: 'rename', actionName: RENAME_LAYER_ACTION },
     { label: 'set opacity', actionName: SET_LAYER_OPACITY_ACTION },
+    { label: 'set Fill opacity', actionName: SET_LAYER_FILL_OPACITY_ACTION },
     { label: 'set blend mode', actionName: SET_LAYER_BLEND_MODE_ACTION },
     { label: 'lock', actionName: LOCK_LAYER_ACTION },
     { label: 'unlock', actionName: UNLOCK_LAYER_ACTION },
@@ -1614,6 +1616,12 @@ describe('deriveSetLayerPropertiesEntry', () => {
       actionName: SET_LAYER_OPACITY_ACTION,
       args: { opacity: 0.25 },
       patch: { opacity: 0.25 },
+    },
+    {
+      label: 'a Fill opacity update',
+      actionName: SET_LAYER_FILL_OPACITY_ACTION,
+      args: { fillOpacity: 0.42 },
+      patch: { fillOpacity: 0.42 },
     },
     {
       label: 'a supported blend mode update',
@@ -1684,6 +1692,20 @@ describe('deriveSetLayerPropertiesEntry', () => {
           actionName: SET_LAYER_OPACITY_ACTION,
           layerId: 'layer-1',
           args: { opacity },
+        })
+      ).toBeNull();
+    }
+  );
+
+  it.each([undefined, null, '0.5', Number.NaN, Number.POSITIVE_INFINITY, -0.01, 1.01])(
+    'derives nothing from an invalid Fill opacity value (%s)',
+    (fillOpacity) => {
+      expect(
+        deriveSetLayerPropertiesEntry({
+          id: 'fill-opacity',
+          actionName: SET_LAYER_FILL_OPACITY_ACTION,
+          layerId: 'layer-1',
+          args: { fillOpacity },
         })
       ).toBeNull();
     }

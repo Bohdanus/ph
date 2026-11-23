@@ -103,17 +103,20 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
       ) {
         warn('Custom blending ranges (Blend If) are unsupported; appearance may differ.');
       }
-      if (source.fillOpacity !== undefined && source.fillOpacity !== 1) {
-        warn('Fill opacity is approximated as layer opacity; appearance may differ.');
-      }
       const ownLock = !!source.transparencyProtected || Object.values(source.protected ?? {}).some(Boolean);
       if (ownLock) warn('Photoshop lock flags are represented by a single full-layer lock.');
       const nextVisible = visible && !source.hidden;
-      const nextOpacity = opacity * (source.opacity ?? 1) * (source.fillOpacity ?? 1);
+      const nextOpacity = opacity * (source.opacity ?? 1);
+      const nextFillOpacity = source.fillOpacity ?? 1;
       const nextLocked = locked || ownLock;
       if (source.children) {
+        if (nextFillOpacity !== 1) {
+          warn(
+            'Group Fill opacity is approximated as layer opacity when the group is flattened; appearance may differ.'
+          );
+        }
         warn('Group flattened to leaf layers; group isolation, blending and opacity fidelity are not preserved.');
-        visit(source.children, nextVisible, nextOpacity, nextLocked);
+        visit(source.children, nextVisible, nextOpacity * nextFillOpacity, nextLocked);
         continue;
       }
       const width = (source.right ?? 0) - (source.left ?? 0);
@@ -146,6 +149,7 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
         isBedrock: false,
         visible: nextVisible,
         opacity: nextOpacity,
+        fillOpacity: nextFillOpacity,
         locked: nextLocked,
         blendMode: blendMode ?? 'source-over',
         order: Object.keys(layers).length,
@@ -179,6 +183,7 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
         isBedrock: false,
         visible: true,
         opacity: 1,
+        fillOpacity: 1,
         locked: false,
         blendMode: 'source-over',
         order: 0,
@@ -216,47 +221,55 @@ export async function savePsd(layers: LayersRecord, size: Size, frame?: Document
     const width = Math.ceil(localX + presentation.width) - left;
     const height = Math.ceil(localY + presentation.height) - top;
     validateSize({ width, height });
+    const layerFillOpacity = layer.fillOpacity ?? 1;
     if (!Number.isFinite(layer.order) || !Number.isFinite(layer.opacity) || layer.opacity < 0 || layer.opacity > 1) {
       throw new Error(`Invalid PSD layer order or opacity: ${layer.name}`);
+    }
+    if (!Number.isFinite(layerFillOpacity) || layerFillOpacity < 0 || layerFillOpacity > 1) {
+      throw new Error(`Invalid PSD layer fill opacity: ${layer.name}`);
     }
     const blendMode = LAYER_BLEND_MODES.find(({ value }) => value === layer.blendMode)?.psd as BlendMode | undefined;
     if (!blendMode) throw new Error(`Unsupported PSD export blend mode: ${layer.blendMode}`);
     pixels += width * height;
     if (pixels > maxPixels) throw new Error('PSD exceeds the 64 megapixel total raster budget');
-    return { layer, blendMode, left, top, width, height };
+    return { layer, fillOpacity: layerFillOpacity, blendMode, left, top, width, height };
   });
   const { writePsd } = await import('ag-psd');
   const { canvas, ctx } = canvas2d(exportSize.width, exportSize.height);
-  const children = prepared.map(({ layer, blendMode, left, top, width, height }): PsdLayer => {
-    const source = layer.tmpCanvas ?? layer.bitmap;
-    const raster = canvas2d(source ? width : 1, source ? height : 1);
-    // Rasterize fractional editor geometry inside enclosing integer PSD bounds.
-    if (source) {
-      drawLayerSource(raster.ctx, layer, layer.pos, {
-        x: documentFrame.x + left,
-        y: documentFrame.y + top,
-        width,
-        height,
-      });
+  const children = prepared.map(
+    ({ layer, fillOpacity: layerFillOpacity, blendMode, left, top, width, height }): PsdLayer => {
+      const source = layer.tmpCanvas ?? layer.bitmap;
+      const raster = canvas2d(source ? width : 1, source ? height : 1);
+      // Rasterize fractional editor geometry inside enclosing integer PSD bounds.
+      if (source) {
+        drawLayerSource(raster.ctx, layer, layer.pos, {
+          x: documentFrame.x + left,
+          y: documentFrame.y + top,
+          width,
+          height,
+        });
+      }
+      // PSD stores opacity in one byte; composite uses the same quantized value.
+      const opacity = Math.round(layer.opacity * 255) / 255;
+      const fillOpacity = Math.round(layerFillOpacity * 255) / 255;
+      if (layer.visible) {
+        ctx.globalAlpha = opacity * fillOpacity;
+        ctx.globalCompositeOperation = layer.blendMode;
+        ctx.drawImage(raster.canvas, left, top);
+      }
+      return {
+        name: layer.name,
+        left,
+        top,
+        canvas: raster.canvas,
+        hidden: !layer.visible,
+        opacity,
+        fillOpacity,
+        blendMode,
+        transparencyProtected: layer.locked,
+        protected: { transparency: false, composite: layer.locked, position: layer.locked },
+      };
     }
-    // PSD stores opacity in one byte; composite uses the same quantized value.
-    const opacity = Math.round(layer.opacity * 255) / 255;
-    if (layer.visible) {
-      ctx.globalAlpha = opacity;
-      ctx.globalCompositeOperation = layer.blendMode;
-      ctx.drawImage(raster.canvas, left, top);
-    }
-    return {
-      name: layer.name,
-      left,
-      top,
-      canvas: raster.canvas,
-      hidden: !layer.visible,
-      opacity,
-      blendMode,
-      transparencyProtected: layer.locked,
-      protected: { transparency: false, composite: layer.locked, position: layer.locked },
-    };
-  });
+  );
   return writePsd({ ...exportSize, canvas, children }, { trimImageData: false, noBackground: true });
 }

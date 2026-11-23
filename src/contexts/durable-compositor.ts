@@ -136,7 +136,7 @@ async function drawDirectAffineSourceLayer(
 
     context.save();
     try {
-      context.globalAlpha = layer.snapshot.opacity;
+      context.globalAlpha = layer.snapshot.opacity * layer.snapshot.fillOpacity;
       context.globalCompositeOperation = layer.snapshot.blendMode;
       drawEvaluatedPresentation(context, source.bitmap, evaluation, { kind: 'document', frame });
     } finally {
@@ -224,7 +224,7 @@ export async function composeDurableDocument(
 
       context.save();
       try {
-        context.globalAlpha = layer.opacity;
+        context.globalAlpha = layer.opacity * replayLayer.snapshot.fillOpacity;
         context.globalCompositeOperation = layer.blendMode;
         context.drawImage(
           layer.bitmap as CanvasImageSource,
