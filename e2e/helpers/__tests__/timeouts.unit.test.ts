@@ -96,23 +96,22 @@ const navigatesFromABeforeHook = (source: string): boolean =>
  * WHAT THIS LIST IS, precisely. It is every such spec in the tree today, DERIVED by scanning
  * `e2e/` rather than by guessing — `npm run test:e2e:unit` recomputes it from the files on
  * every run. It is NOT a claim that these specs provably do not need a budget; it is a claim
- * that `TEST-FLAKES.md` records no instance of the failure for them. Two of the twelve are
+ * that `TEST-FLAKES.md` records no instance of the failure for them. Two of the eleven are
  * separate for exactly that reason:
  *
  * - `sidebar-flyout.spec.ts` has the recorded 30s failure above. It is listed here rather
  *   than fixed because another agent owns that file, so the guard has to agree with the tree
  *   as it stands today. The fix belongs there, not here.
  * - `flyout-longpress-race.spec.ts` is recorded by `TEST-FLAKES.md`'s own file index
- *   (line 879) as a CPU-contention flake, which is a different mechanism from this one and
+ *   as a CPU-contention flake, which is a different mechanism from this one and
  *   is called out so the next reader does not read its entry here as the same finding. The
  *   index attributes it to §8, and §8's own title is "A third, NAMED observation — the
  *   paint-bucket contiguous test"; the attribution is the index's, and it disagrees with the
  *   section it names. That inconsistency is in `TEST-FLAKES.md`, not here, and correcting
  *   it is a change to a document this file does not own.
  *
- * The ten others carry the same one-line reason: no recorded instance, so no named budget
- * yet. The view-menu keyboard spec runs at 2x but has no measured navigation timeout, so it
- * is recorded here without inventing a larger budget.
+ * The nine others carry the same one-line reason: no recorded instance, so no named budget
+ * yet.
  */
 const UNBUDGETED_NAVIGATORS: readonly string[] = [
   'adjustments.spec.ts',
@@ -126,7 +125,6 @@ const UNBUDGETED_NAVIGATORS: readonly string[] = [
   'sidebar-keyboard.spec.ts',
   'sidebar-layout.spec.ts',
   'single-row-column-marquee.spec.ts',
-  'view-menu-keyboard-shortcuts.spec.ts',
 ];
 
 /** The one entry above that `TEST-FLAKES.md` §13 records losing on the bare default. */

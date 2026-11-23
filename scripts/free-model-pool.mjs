@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
+import { accessSync, constants, realpathSync, readdirSync, statSync } from 'node:fs';
 import { readdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import path from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { resolveKiloCli, runKiloCompletion } from './lib/free-model-kilo.mjs';
 import {
@@ -43,6 +45,8 @@ const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_KEY_INFO = 'https://openrouter.ai/api/v1/key';
 const OPENCODE_MODELS = 'https://opencode.ai/inference/v1/models';
+const FREE_MODEL_PROJECT_ROOT = resolve(import.meta.dirname, '..');
+const DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS = ['.com', '.exe', '.bat', '.cmd'];
 const GROQ_MODELS = 'https://api.groq.com/openai/v1/models';
 const GROQ_CHAT = 'https://api.groq.com/openai/v1/chat/completions';
 export const CONTROL_PLANE_TIMEOUT_MS = 15_000;
@@ -102,8 +106,6 @@ const GROQ_KEY_PROBE_TTL_MS = 60 * 60 * 1000;
 
 const OPENCODE_RUNTIME_ENV_KEYS = [
   'PATH',
-  'HOME',
-  'USERPROFILE',
   'USER',
   'LOGNAME',
   'TMPDIR',
@@ -114,11 +116,6 @@ const OPENCODE_RUNTIME_ENV_KEYS = [
   'LC_CTYPE',
   'TERM',
   'NO_COLOR',
-  'XDG_CONFIG_HOME',
-  'XDG_DATA_HOME',
-  'XDG_CACHE_HOME',
-  'APPDATA',
-  'LOCALAPPDATA',
   'PROGRAMDATA',
   'SYSTEMROOT',
   'WINDIR',
@@ -130,10 +127,311 @@ function increasedNemotronMaxTokens(maxTokens) {
   return increased > maxTokens ? increased : null;
 }
 
-function opencodeRuntimeEnvironment(environment) {
-  return Object.fromEntries(
-    OPENCODE_RUNTIME_ENV_KEYS.flatMap((key) => (typeof environment[key] === 'string' ? [[key, environment[key]]] : []))
+function canonicalPath(candidate, pathApi) {
+  const absolute = pathApi.resolve(candidate);
+  try {
+    return realpathSync.native(absolute);
+  } catch {
+    return absolute;
+  }
+}
+
+function environmentValue(environment, name, platform) {
+  let value = environment[name];
+  if (platform === 'win32' && typeof value !== 'string') {
+    const key = Object.keys(environment)
+      .sort()
+      .find((candidate) => candidate.toUpperCase() === name.toUpperCase());
+    value = key === undefined ? undefined : environment[key];
+  }
+  return typeof value === 'string' ? value : undefined;
+}
+
+function pathIsWithin(root, candidate, pathApi, platform) {
+  const normalizedRoot = pathApi.resolve(root);
+  const normalizedCandidate = pathApi.resolve(candidate);
+  const comparedRoot = platform === 'win32' ? normalizedRoot.toLowerCase() : normalizedRoot;
+  const comparedCandidate = platform === 'win32' ? normalizedCandidate.toLowerCase() : normalizedCandidate;
+  const relative = pathApi.relative(comparedRoot, comparedCandidate);
+  return (
+    relative === '' || (!pathApi.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${pathApi.sep}`))
   );
+}
+
+function isAncestorNodeModulesBin(directory, projectRoot, pathApi, platform) {
+  if (pathApi.basename(directory).toLowerCase() !== '.bin') return false;
+  const nodeModules = pathApi.dirname(directory);
+  if (pathApi.basename(nodeModules).toLowerCase() !== 'node_modules') return false;
+  return pathIsWithin(pathApi.dirname(nodeModules), projectRoot, pathApi, platform);
+}
+
+function pathComparisonKey(candidate, platform) {
+  return platform === 'win32' ? candidate.toLowerCase() : candidate;
+}
+
+function windowsExecutableExtensions(command, environment, pathApi) {
+  const allowed = new Set(DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS);
+  const commandExtension = pathApi.extname(command).toLowerCase();
+  if (commandExtension) return allowed.has(commandExtension) ? [''] : [];
+  const configured =
+    environmentValue(environment, 'PATHEXT', 'win32') || DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS.join(';');
+  return configured
+    .split(';')
+    .map((extension) => extension.trim().toLowerCase())
+    .map((extension) => (extension.startsWith('.') ? extension : `.${extension}`))
+    .filter((extension) => allowed.has(extension));
+}
+
+function resolveExplicitOpenCodePath(command, environment, cwd, pathApi, platform) {
+  const resolved = pathApi.resolve(cwd, command);
+  if (platform !== 'win32' || pathApi.extname(resolved)) return resolved;
+  for (const extension of windowsExecutableExtensions(resolved, environment, pathApi)) {
+    const candidate = `${resolved}${extension}`;
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Missing and inaccessible explicit candidates are skipped in PATHEXT order.
+    }
+  }
+  return null;
+}
+
+function missingPathError(error) {
+  return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+}
+
+function excludedOpenCodePaths(projectRoot, pathApi, platform) {
+  const directories = [];
+  const executables = new Set();
+  let complete = true;
+  let ancestor = pathApi.resolve(projectRoot);
+  while (true) {
+    const bin = pathApi.join(ancestor, 'node_modules', '.bin');
+    let binStat;
+    try {
+      binStat = statSync(bin);
+    } catch (error) {
+      if (!missingPathError(error)) complete = false;
+    }
+    if (binStat?.isDirectory()) {
+      try {
+        const canonicalBin = realpathSync.native(bin);
+        directories.push(canonicalBin);
+        for (const entry of readdirSync(bin)) {
+          const candidate = pathApi.join(bin, entry);
+          try {
+            const stat = statSync(candidate);
+            if (stat.isFile()) {
+              executables.add(pathComparisonKey(realpathSync.native(candidate), platform));
+            }
+          } catch (error) {
+            if (!missingPathError(error)) complete = false;
+          }
+        }
+      } catch {
+        // If an ancestor bin cannot be inspected, bare lookup must fail closed.
+        complete = false;
+      }
+    }
+    const parent = pathApi.dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
+  return { directories, executables, complete };
+}
+
+function openCodeProjectRoots(cwd, projectRoot, pathApi, platform) {
+  const roots = new Map();
+  for (const candidate of [projectRoot, cwd]) {
+    const resolved = pathApi.resolve(candidate);
+    for (const root of [resolved, canonicalPath(resolved, pathApi)]) {
+      roots.set(pathComparisonKey(root, platform), root);
+    }
+  }
+  return [...roots.values()];
+}
+
+function excludedOpenCodePathsForRoots(projectRoots, pathApi, platform) {
+  const directories = [];
+  const executables = new Set();
+  let complete = true;
+  for (const projectRoot of projectRoots) {
+    const current = excludedOpenCodePaths(projectRoot, pathApi, platform);
+    directories.push(...current.directories);
+    for (const executable of current.executables) executables.add(executable);
+    complete &&= current.complete;
+  }
+  return { directories, executables, complete };
+}
+
+function isExcludedOpenCodePath(candidate, excluded, pathApi, platform) {
+  if (excluded.executables.has(pathComparisonKey(candidate, platform))) return true;
+  return excluded.directories.some((directory) => pathIsWithin(directory, candidate, pathApi, platform));
+}
+
+function filterOpenCodePathWithExclusions(
+  pathValue,
+  { cwd = process.cwd(), projectRoot = FREE_MODEL_PROJECT_ROOT, platform = process.platform },
+  excluded
+) {
+  if (typeof pathValue !== 'string') return undefined;
+  const pathApi = platform === 'win32' ? path.win32 : path;
+  const pathDelimiter = pathApi.delimiter;
+  const projectRoots = openCodeProjectRoots(cwd, projectRoot, pathApi, platform);
+  const canonicalRoots = projectRoots.map((root) => canonicalPath(root, pathApi));
+  const unique = new Set();
+  const trusted = [];
+  for (const entry of pathValue.split(pathDelimiter)) {
+    const directory = pathApi.resolve(cwd, entry || '.');
+    // Exclude lexical project paths even when a repository-owned symlink points
+    // outside either checkout. Also check the resolved target to catch aliases
+    // that point into a protected checkout from an external PATH entry.
+    if (
+      projectRoots.some(
+        (root) =>
+          pathIsWithin(root, directory, pathApi, platform) ||
+          isAncestorNodeModulesBin(directory, root, pathApi, platform)
+      )
+    ) {
+      continue;
+    }
+    let canonical;
+    try {
+      canonical = realpathSync.native(directory);
+      if (!statSync(canonical).isDirectory()) continue;
+    } catch {
+      // Do not forward missing paths or aliases that could resolve later.
+      continue;
+    }
+    if (
+      canonicalRoots.some(
+        (root) =>
+          pathIsWithin(root, canonical, pathApi, platform) ||
+          isAncestorNodeModulesBin(canonical, root, pathApi, platform)
+      ) ||
+      isExcludedOpenCodePath(canonical, excluded, pathApi, platform) ||
+      canonical.includes(pathDelimiter)
+    ) {
+      continue;
+    }
+    const key = pathComparisonKey(canonical, platform);
+    if (unique.has(key)) continue;
+    unique.add(key);
+    trusted.push(canonical);
+  }
+  return trusted.join(pathDelimiter);
+}
+
+export function filterOpenCodePath(
+  pathValue,
+  { cwd = process.cwd(), projectRoot = FREE_MODEL_PROJECT_ROOT, platform = process.platform } = {}
+) {
+  if (typeof pathValue !== 'string') return undefined;
+  const pathApi = platform === 'win32' ? path.win32 : path;
+  const projectRoots = openCodeProjectRoots(cwd, projectRoot, pathApi, platform);
+  const excluded = excludedOpenCodePathsForRoots(projectRoots, pathApi, platform);
+  if (!excluded.complete) return '';
+  return filterOpenCodePathWithExclusions(pathValue, { cwd, projectRoot, platform }, excluded);
+}
+
+export function resolveOpenCodeCommand(
+  command,
+  {
+    environment = process.env,
+    cwd = process.cwd(),
+    projectRoot = FREE_MODEL_PROJECT_ROOT,
+    platform = process.platform,
+  } = {}
+) {
+  if (typeof command !== 'string' || command.length === 0) return null;
+  const pathApi = platform === 'win32' ? path.win32 : path;
+  if (pathApi.isAbsolute(command)) {
+    return resolveExplicitOpenCodePath(command, environment, cwd, pathApi, platform);
+  }
+  const containsPath =
+    command.includes(pathApi.sep) || (platform === 'win32' && (command.includes('/') || /^[a-z]:/iu.test(command)));
+  if (containsPath) return resolveExplicitOpenCodePath(command, environment, cwd, pathApi, platform);
+
+  const callerPath = environmentValue(environment, 'PATH', platform);
+  if (typeof callerPath !== 'string' || callerPath.length === 0) return null;
+  const projectRoots = openCodeProjectRoots(cwd, projectRoot, pathApi, platform);
+  const excluded = excludedOpenCodePathsForRoots(projectRoots, pathApi, platform);
+  if (!excluded.complete) return null;
+  const searchPath = filterOpenCodePathWithExclusions(callerPath, { cwd, projectRoot, platform }, excluded);
+  if (!searchPath) return null;
+  const extensions = platform === 'win32' ? windowsExecutableExtensions(command, environment, pathApi) : [''];
+  const candidates = extensions.map((extension) => `${command}${extension}`);
+  const canonicalRoots = projectRoots.map((root) => canonicalPath(root, pathApi));
+  for (const directory of searchPath.split(pathApi.delimiter)) {
+    for (const candidateName of candidates) {
+      const candidate = pathApi.join(directory, candidateName);
+      try {
+        const candidateStat = statSync(candidate);
+        if (!candidateStat.isFile()) continue;
+        // A hard link to any protected project file can live outside the tree,
+        // so path checks cannot identify an existing alias. Reject multiply
+        // linked PATH candidates without a recursive project scan. This does
+        // not pin the inode through spawn against concurrent filesystem writes.
+        if (!Number.isSafeInteger(candidateStat.nlink) || candidateStat.nlink !== 1) continue;
+        const canonical = realpathSync.native(candidate);
+        if (
+          canonicalRoots.some(
+            (root) =>
+              pathIsWithin(root, canonical, pathApi, platform) ||
+              isAncestorNodeModulesBin(pathApi.dirname(canonical), root, pathApi, platform)
+          )
+        ) {
+          continue;
+        }
+        if (isExcludedOpenCodePath(canonical, excluded, pathApi, platform)) continue;
+        if (platform !== 'win32') accessSync(canonical, constants.X_OK);
+        // The Windows shim uses the filename extension to choose between
+        // CreateProcess and cmd.exe. Reject aliases whose target would change
+        // that dispatch, then pass only the canonical target to avoid following
+        // a mutable PATH symlink again after validation.
+        if (
+          platform === 'win32' &&
+          pathApi.extname(candidate).toLowerCase() !== pathApi.extname(canonical).toLowerCase()
+        ) {
+          continue;
+        }
+        return canonical;
+      } catch {
+        // A missing, unreadable, or non-executable PATH entry is not a candidate.
+      }
+    }
+  }
+  return null;
+}
+
+function opencodeRuntimeEnvironment(environment, isolatedHome, platform, callerCwd) {
+  const runtime = Object.fromEntries(
+    OPENCODE_RUNTIME_ENV_KEYS.flatMap((key) => {
+      const value = environmentValue(environment, key, platform);
+      return typeof value === 'string' ? [[key, value]] : [];
+    })
+  );
+  if (typeof runtime.PATH === 'string') {
+    runtime.PATH = filterOpenCodePath(runtime.PATH, {
+      cwd: callerCwd,
+      projectRoot: FREE_MODEL_PROJECT_ROOT,
+      platform,
+    });
+  }
+  return {
+    ...runtime,
+    HOME: isolatedHome,
+    XDG_CONFIG_HOME: join(isolatedHome, 'xdg-config'),
+    XDG_DATA_HOME: join(isolatedHome, 'xdg-data'),
+    XDG_CACHE_HOME: join(isolatedHome, 'xdg-cache'),
+    ...(platform === 'win32'
+      ? {
+          USERPROFILE: isolatedHome,
+          APPDATA: join(isolatedHome, 'AppData', 'Roaming'),
+          LOCALAPPDATA: join(isolatedHome, 'AppData', 'Local'),
+        }
+      : {}),
+  };
 }
 
 async function loadGroqKeyProbeCache() {
@@ -1037,8 +1335,20 @@ const OPENCODE_TOOL_DENY_CONFIG = JSON.stringify({
     skill: 'deny',
     lsp: 'deny',
   },
+  // Keep tool invocation and separately configured extension sources disabled.
   // V2 policies are hard denies and take precedence over saved approvals.
-  policies: [{ action: 'tool.use', resource: '*', effect: 'deny' }],
+  policies: [
+    { action: 'provider.use', resource: '*', effect: 'deny' },
+    { action: 'provider.use', resource: 'opencode', effect: 'allow' },
+    { action: 'integration.connect', resource: '*', effect: 'deny' },
+    { action: 'integration.use', resource: '*', effect: 'deny' },
+    { action: 'integration.use', resource: 'opencode', effect: 'allow' },
+    { action: 'tool.use', resource: '*', effect: 'deny' },
+    { action: 'mcp.use', resource: '*', effect: 'deny' },
+    { action: 'skill.use', resource: '*', effect: 'deny' },
+    { action: 'plugin.use', resource: '*', effect: 'deny' },
+    { action: 'websearch.use', resource: '*', effect: 'deny' },
+  ],
 });
 
 export async function runOpenCodeCompletion({
@@ -1048,6 +1358,7 @@ export async function runOpenCodeCompletion({
   maxTokens,
   timeoutMs,
   providerOwned = false,
+  environment = process.env,
   spawnImpl = spawn,
   platform = process.platform,
   terminateWindowsProcessTreeImpl = terminateWindowsProcessTree,
@@ -1086,17 +1397,31 @@ export async function runOpenCodeCompletion({
   ) {
     return { error: 'Invalid OpenCode timeout' };
   }
+  const callerCwd = process.cwd();
   const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-'));
   const promptPath = join(directory, 'request.txt');
   try {
     await writeFile(promptPath, prompt, { encoding: 'utf8', mode: 0o600 });
     const env = {
-      ...opencodeRuntimeEnvironment(process.env),
+      ...opencodeRuntimeEnvironment(environment, directory, platform, callerCwd),
       OPENCODE_CONFIG_CONTENT: OPENCODE_TOOL_DENY_CONFIG,
+      OPENCODE_PURE: '1',
+      OPENCODE_DISABLE_PROJECT_CONFIG: '1',
       OPENCODE_DISABLE_AUTOUPDATE: '1',
       OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
       OPENCODE_DISABLE_PRUNE: '1',
     };
+    const resolvedCommand = resolveOpenCodeCommand(command, {
+      environment,
+      cwd: callerCwd,
+      projectRoot: FREE_MODEL_PROJECT_ROOT,
+      platform,
+    });
+    if (!resolvedCommand) {
+      const error = new Error(`OpenCode CLI was not found outside the project paths: ${command}`);
+      error.code = 'ENOENT';
+      throw error;
+    }
     const events = await new Promise((resolve, reject) => {
       const args = [
         '--standalone',
@@ -1110,7 +1435,7 @@ export async function runOpenCodeCompletion({
         promptPath,
         `Answer the attached request concisely (about ${profile.maxTokens} tokens or fewer). Do not use tools.`,
       ];
-      const commandShim = resolveCommandShim(command, args, { env, cwd: directory });
+      const commandShim = resolveCommandShim(resolvedCommand, args, { env, cwd: directory });
       const child = spawnImpl(commandShim.command, commandShim.args, {
         cwd: directory,
         env,
@@ -1301,34 +1626,39 @@ export async function runOpenCodeCompletion({
     ) {
       return { error: 'OpenCode reported an error or attempted a tool call' };
     }
-    const explicitTerminal = events.some(
-      (event) => event.type === 'done' || (event.type === 'step_finish' && event.part?.reason === 'stop')
-    );
-    // OpenCode V2 can exit cleanly after final text without emitting its final step_finish event.
-    const cleanFreeTextExit =
-      model.endsWith('-free') && events.some((event) => event.type === 'text' && event.part?.text?.trim());
-    const terminal = explicitTerminal || cleanFreeTextExit;
+    const finishedSteps = events.filter((event) => event.type === 'step_finish');
+    const finalStep = finishedSteps.at(-1);
+    const finalStepReason =
+      typeof finalStep?.part?.reason === 'string' ? finalStep.part.reason.trim().toLowerCase() : null;
+    const explicitTerminal = events.some((event) => event.type === 'done') || finalStepReason === 'stop';
     const content = events
       .filter((event) => event.type === 'text' && typeof event.part?.text === 'string')
       .map((event) => event.part.text)
       .join('');
-    const finishedSteps = events.filter((event) => event.type === 'step_finish');
-    if (!terminal || !content.trim()) return { error: 'OpenCode did not return a complete non-empty response' };
-    const tokens = finishedSteps.at(-1)?.part?.tokens;
+    const tokens = finalStep?.part?.tokens;
+    const usage = tokens
+      ? {
+          input_tokens: tokens.input,
+          output_tokens: tokens.output,
+          reasoning_tokens: tokens.reasoning,
+          ...(reportedCosts.length > 0 ? { cost: reportedCosts.reduce((total, cost) => total + Number(cost), 0) } : {}),
+        }
+      : null;
+    if (finalStepReason === 'length') return { model, content, finishReason: 'length', usage };
+    // OpenCode V2 can exit cleanly after final text without emitting its final step_finish event.
+    const cleanFreeTextExit =
+      model.endsWith('-free') &&
+      finishedSteps.length === 0 &&
+      events.some((event) => event.type === 'text' && event.part?.text?.trim());
+    const terminal = explicitTerminal || cleanFreeTextExit;
+    if (!terminal || !content.trim() || (finalStepReason !== null && finalStepReason !== 'stop')) {
+      return { error: 'OpenCode did not return a complete non-empty response' };
+    }
     return {
       model,
       content,
       finishReason: 'stop',
-      usage: tokens
-        ? {
-            input_tokens: tokens.input,
-            output_tokens: tokens.output,
-            reasoning_tokens: tokens.reasoning,
-            ...(reportedCosts.length > 0
-              ? { cost: reportedCosts.reduce((total, cost) => total + Number(cost), 0) }
-              : {}),
-          }
-        : null,
+      usage,
     };
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -1873,11 +2203,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
       }
       if (candidate.source === 'opencode') {
         try {
+          const effectiveMaxTokens = candidate.maxTokensOverride ?? routeMaxTokens;
           const result = await runOpenCode({
             command: opencodeCommand,
             model: candidate.model,
             prompt,
-            maxTokens: routeMaxTokens,
+            maxTokens: effectiveMaxTokens,
             timeoutMs: routeTimeoutMs,
             ...(candidate.providerOwned === true ? { providerOwned: true } : {}),
           });
@@ -1885,6 +2216,24 @@ export async function completeWithFreeModel(prompt, options = {}) {
             await stopForReportedCost(candidate);
           }
           if (isContentPolicyError(result)) stopForContentPolicy(candidate);
+          if (result?.finishReason === 'length') {
+            const isNemotron = candidate.model === NEMOTRON_3_ULTRA_FREE_MODEL;
+            const alreadyRetried = candidate.nemotronTokenRetry === true;
+            const increasedTokens = increasedNemotronMaxTokens(routeMaxTokens);
+            if (isNemotron && !alreadyRetried && increasedTokens !== null) {
+              stderr.write(
+                `Nemotron 3 Ultra finish_reason=length; retrying with ${increasedTokens} tokens (was ${effectiveMaxTokens}).\n`
+              );
+              available.splice(candidateIndex + 1, 0, {
+                ...candidate,
+                nemotronTokenRetry: true,
+                maxTokensOverride: increasedTokens,
+              });
+              continue;
+            }
+            errors.push(`opencode/${candidate.model}: incomplete completion (finish_reason=length)`);
+            continue;
+          }
           if (result?.content && result.finishReason === 'stop') {
             const resolvedModel = result.model ?? candidate.model;
             if (!available.some((entry) => entry.source === 'opencode' && entry.model === resolvedModel)) {

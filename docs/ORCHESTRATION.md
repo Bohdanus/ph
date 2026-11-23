@@ -37,9 +37,10 @@ save you the next one.
 
 **Most of the rules below were written after the incident that motivated them**, so
 "documented but still violated" is usually the wrong diagnosis — the rule did not exist yet.
-The two that were genuine compliance failures against auto-injected `AGENTS.md` both needed
-programs rather than paragraphs, and both are described where they live: a `release --force`
-that dropped the caller's own locks, and a weakened assertion.
+The two genuine compliance failures against auto-injected `AGENTS.md` needed programs as well
+as paragraphs. Releasing a claim now preserves live file locks held by other identities; the
+separate self-close identity limitation remains known and unfixed because board identities are
+unauthenticated strings.
 
 ## The task lifecycle
 
@@ -1421,20 +1422,19 @@ heartbeat` still exists and is still correct — it is the only thing that can
   flag as `true` rather than rejecting it, so it is silently ignored and you get the same
   refusal, which reads as the flag having been considered and rejected.
 
-- **`--force` on a release hands back locks, and it hands back YOURS.** `release
---force` skips exactly one guard — `claim.agent_id !== who` — and the claim's file
-  locks go with it, because they are released **by issue pairing rather than by actor**: every
-  `issue_locks` row for that issue is dropped, and a lock is freed whenever no other issue
-  that is not yet closed still pairs that same `(path, agent_id)`. One identity can therefore
-  release locks another identity acquired, and nothing checks who owns the pairing. Recorded
-  shape, in one minute in one shell: five paths taken as `main`, then
-  `AGENT_BOARD_AGENT=fix/… release` refused with `is claimed by main, not by fix/…`, and
-  `release --force` dropped the five locks the same session had taken twenty-three seconds
-  earlier. **Set `AGENT_BOARD_AGENT` once in the shell's environment**, not per command, so
-  every invocation in it is the same agent — `resolveIdentity` reads the variable _before_ the
-  branch, and the only time-varying terms in that chain (`KILO_RUN_ID`, `process.pid`) are
-  unreachable inside a checkout that has one. `--force` on `unlock` is the same trade on files,
-  with no pairing table to soften it.
+- **Releasing a claim or reopening an issue cannot silently steal another identity's live file
+  lock.** Claim release and reopen free locks owned by the caller and keep other live lock rows
+  paired with the issue; the CLI reports this partial release with exit 4 and JSON includes
+  `files_retained` entries shaped as `{path, agent_id}`, where `path` is the canonical repo-relative
+  path. `unlock --force`
+  also reports foreign live locks as blocked; a foreign lock with a parseable expired lease can
+  be released with force. An unparseable lease stays live. If a holder is confirmed dead while its
+  lease is still live, perform recovery under that resource's recorded holder identity only after
+  verifying its process tree has stopped. `doctor` includes retained locks in the released-claim
+  finding and exits 4 when a stale claim is released but another identity's live lock remains.
+  These identity strings are not authentication. Keep one identity for routine commands; for a
+  manual recovery, set `AGENT_BOARD_AGENT=<holder>` inline on that command so the override cannot
+  leak into later operations.
 - **`--agent <id>` is unauthenticated, and it DEFEATS the self-close check.** The
   guard compares the string you pass, not who you are, so `npm run swarm -- close
 <id> --agent somebody-else` closes an issue you resolved yourself. **Use `--agent`
@@ -1505,11 +1505,13 @@ still report a row when separate evidence, such as a missing holder worktree,
 makes it reclaimable. The raw `lease_until` and `expires_at` values are available
 through `swarm export`, which includes all claim and lock rows. Do not clear a
 row just because its deadline is malformed. First preserve its work and verify
-the holder's process tree has stopped. Then use `swarm release <issue> --force`
-for a claim or `swarm unlock <path> --force` for a file lock only after checking
-each affected holder. The normal writers still use `msFromNow`; this is a
-defensive boundary for corrupt or manually altered database rows, not a
-supported deadline format.
+the holder's process tree has stopped. Then release each claim or file lock under
+its own recorded holder identity. For a claim, use
+`AGENT_BOARD_AGENT=<claim-holder> npm run swarm -- release <issue> --reason "malformed deadline"`;
+for a file lock, use `AGENT_BOARD_AGENT=<lock-holder> npm run swarm -- unlock <path>`.
+A foreign identity cannot force-clear a live or unparseable file lock. The normal
+writers still use `msFromNow`; this is a defensive boundary for corrupt or manually
+altered database rows, not a supported deadline format.
 
 `swarm doctor --dry-run --json` also returns an `anomalies` list for active
 claims and locks with unreadable deadlines. These rows remain reserved because
@@ -1593,7 +1595,10 @@ tails. That is why these are not optional politeness:
 <paths you will touch>`, or `npm run swarm -- hold <path>` for a path with no
   issue. Run `npm run swarm -- check <paths>` before you edit anything a brief, a
   handoff, or a sibling subagent names. `check` exits 1 on a path somebody else
-  holds, and `claim`/`hold` exit 4; both name the holder.
+  holds, and `claim`/`hold` exit 4; both name the holder. `unlock` exits 4 when
+  a foreign live lock remains, and `release` exits 4 when it opens the issue but
+  retains another identity's live file lock. `reopen` exits 4 when it reopens an issue but retains
+  another identity's live file lock.
 - **Claim the merge, not just the files.** A branch that is about to land carries
   a hazard to every path in it, and no file claim expresses that. `npm run swarm
 -- note` the branch and the paths _before_ you start resolving.
@@ -1898,9 +1903,12 @@ Then preview stale claims and locks with `npm run swarm -- doctor --dry-run`.
 `npm run swarm -- doctor` releases claims from missing worktrees, expired leases,
 and expired file locks. If the worktree still exists but the session is confirmed
 dead in Agent Manager/session state and no process is writing, release its claim
-with `npm run swarm -- release <issue> --force --reason "agent died; worktree
-inspected"`. Do not force-release a live lease merely because a network-lost
-session is quiet.
+under its recorded holder identity with `AGENT_BOARD_AGENT=<holder> npm run swarm
+-- release <issue> --reason "agent died; worktree inspected"`. Do not force-release
+a live lease merely because a network-lost session is quiet. If exit 4 reports
+retained file locks, verify each holder separately and release each path under
+that lock's recorded identity with `AGENT_BOARD_AGENT=<lock-holder> npm run swarm
+-- unlock <path>`.
 
 Keep the worktree while salvaging uncommitted changes; never use `git stash`.
 After preservation or discard, remove only an accounted-for worktree and refresh

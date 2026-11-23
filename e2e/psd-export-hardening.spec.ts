@@ -120,13 +120,13 @@ async function exportPsd(
   return target;
 }
 
-function verifyPsdBasics(psd: any, expectedWidth: number, expectedHeight: number, minLayers: number) {
+function verifyPsdBasics(psd: any, expectedWidth: number, expectedHeight: number, expectedLayerCount: number) {
   expect(psd.width).toBe(expectedWidth);
   expect(psd.height).toBe(expectedHeight);
   expect(psd.colorMode).toBe(3); // RGB
   expect(psd.bitsPerChannel).toBe(8);
   expect(psd.channels).toBe(3);
-  expect(psd.children!.length).toBeGreaterThanOrEqual(minLayers);
+  expect(psd.children!.length).toBe(expectedLayerCount);
   expect(psd.imageData).toBeDefined();
   expect(psd.imageData!.width).toBe(expectedWidth);
   expect(psd.imageData!.height).toBe(expectedHeight);
@@ -150,17 +150,148 @@ function verifyLayerPixels(layer: any, layerName: string) {
   expect(hasNonZero).toBe(true);
 }
 
-function expectLayerContainsColor(layer: any, layerName: string, hex: string) {
-  const expected = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
-  const { data } = layer.imageData!;
-  let found = false;
-  for (let index = 0; index < data.length; index += 4) {
-    if (data[index + 3] > 0 && expected.every((channel, offset) => Math.abs(data[index + offset] - channel) <= 2)) {
-      found = true;
+function expectCompositeMatchesDisjointNormalLayers(psd: any, expectedLayerNames: string[]) {
+  const layers = psd.children ?? [];
+  expect(layers.map((layer: any) => layer.name)).toEqual(expectedLayerNames);
+  const background = layers[0];
+  expect(background.name).toBe('Blank 1');
+  expect(background.left).toBe(0);
+  expect(background.top).toBe(0);
+  expect(background.right).toBe(psd.width);
+  expect(background.bottom).toBe(psd.height);
+  expect(background.opacity).toBe(1);
+  expect(background.hidden).toBe(false);
+  expect(background.clipping).toBe(false);
+  expect(background.blendMode).toBe('normal');
+  expect(background.imageData, 'Blank 1 must have a decoded raster').toBeDefined();
+  expect(background.imageData!.width).toBe(psd.width);
+  expect(background.imageData!.height).toBe(psd.height);
+  const backgroundData = background.imageData!.data;
+  let backgroundIsOpaqueWhite = true;
+  for (let offset = 0; offset < backgroundData.length; offset += 4) {
+    if (
+      backgroundData[offset] !== 255 ||
+      backgroundData[offset + 1] !== 255 ||
+      backgroundData[offset + 2] !== 255 ||
+      backgroundData[offset + 3] !== 255
+    ) {
+      backgroundIsOpaqueWhite = false;
       break;
     }
   }
-  expect(found, `Layer "${layerName}" should contain its requested ${hex} stroke`).toBe(true);
+  expect(backgroundIsOpaqueWhite, 'Blank 1 must be an opaque white layer in this fixture').toBe(true);
+
+  for (let left = 1; left < layers.length; left++) {
+    for (let right = left + 1; right < layers.length; right++) {
+      const first = layers[left];
+      const second = layers[right];
+      const boundsOverlap =
+        first.left < second.right &&
+        first.right > second.left &&
+        first.top < second.bottom &&
+        first.bottom > second.top;
+      expect(boundsOverlap, `Draw layers "${first.name}" and "${second.name}" must not overlap`).toBe(false);
+    }
+  }
+
+  const expected = {
+    width: psd.width,
+    height: psd.height,
+    data: new Uint8ClampedArray(psd.width * psd.height * 4),
+  };
+
+  for (const layer of layers) {
+    expect(layer.imageData, `Layer "${layer.name}" must have imageData`).toBeDefined();
+    expect(layer.blendMode, `Layer "${layer.name}" must use normal blending for this oracle`).toBe('normal');
+    expect(layer.hidden, `Layer "${layer.name}" must be visible for this oracle`).toBe(false);
+    expect(layer.clipping, `Layer "${layer.name}" must not be clipped for this oracle`).toBe(false);
+
+    const { data, width, height } = layer.imageData!;
+    expect(width).toBe(layer.right - layer.left);
+    expect(height).toBe(layer.bottom - layer.top);
+    expect(data.length).toBe(width * height * 4);
+    expect(layer.opacity, `Layer "${layer.name}" must preserve full layer opacity`).toBe(1);
+    const layerOpacity = layer.opacity;
+
+    // This fixture has one opaque white background and disjoint normal-blend paint layers, so
+    // at most one partially transparent paint pixel is composited over the background.
+    for (let layerY = 0; layerY < height; layerY++) {
+      const documentY = layer.top + layerY;
+      if (documentY < 0 || documentY >= psd.height) continue;
+
+      for (let layerX = 0; layerX < width; layerX++) {
+        const documentX = layer.left + layerX;
+        if (documentX < 0 || documentX >= psd.width) continue;
+
+        const sourceOffset = (layerY * width + layerX) * 4;
+        const targetOffset = (documentY * psd.width + documentX) * 4;
+        const sourceAlpha = (data[sourceOffset + 3] / 255) * layerOpacity;
+        if (sourceAlpha === 0) continue;
+
+        const targetAlpha = expected.data[targetOffset + 3] / 255;
+        const outputAlpha = sourceAlpha + targetAlpha * (1 - sourceAlpha);
+        for (let channel = 0; channel < 3; channel++) {
+          expected.data[targetOffset + channel] = Math.round(
+            (data[sourceOffset + channel] * sourceAlpha +
+              expected.data[targetOffset + channel] * targetAlpha * (1 - sourceAlpha)) /
+              outputAlpha
+          );
+        }
+        expected.data[targetOffset + 3] = Math.round(outputAlpha * 255);
+      }
+    }
+  }
+
+  expectImageDataExactlyEqual(psd.imageData, expected, 'PSD composite reconstructed from its layers');
+}
+
+function layerPixelAtDocumentPoint(layer: any, x: number, y: number, label: string) {
+  expect(x, `${label}: document x must be inside the layer bounds`).toBeGreaterThanOrEqual(layer.left);
+  expect(x, `${label}: document x must be inside the layer bounds`).toBeLessThan(layer.right);
+  expect(y, `${label}: document y must be inside the layer bounds`).toBeGreaterThanOrEqual(layer.top);
+  expect(y, `${label}: document y must be inside the layer bounds`).toBeLessThan(layer.bottom);
+  const localX = x - layer.left;
+  const localY = y - layer.top;
+  const offset = (localY * layer.imageData.width + localX) * 4;
+  return Array.from(layer.imageData.data.slice(offset, offset + 4)) as [number, number, number, number];
+}
+
+function expectLayerPixelColor(
+  layer: any,
+  layerName: string,
+  x: number,
+  y: number,
+  expectedRgb: [number, number, number]
+) {
+  expect(layer, `Layer "${layerName}" must exist`).toBeDefined();
+  const pixel = layerPixelAtDocumentPoint(layer, x, y, `Layer "${layerName}" pixel at (${x},${y})`);
+  expect(pixel.slice(0, 3), `Layer "${layerName}" RGB at (${x},${y})`).toEqual(expectedRgb);
+  expect(pixel[3], `Layer "${layerName}" alpha at (${x},${y})`).toBeGreaterThan(0);
+}
+
+function expectImageDataExactlyEqual(actual: any, expected: any, description: string) {
+  expect(actual, `${description}: actual imageData must exist`).toBeDefined();
+  expect(expected, `${description}: expected imageData must exist`).toBeDefined();
+  expect(actual.width, `${description}: width`).toBe(expected.width);
+  expect(actual.height, `${description}: height`).toBe(expected.height);
+  expect(actual.data.length, `${description}: RGBA byte length`).toBe(expected.data.length);
+
+  let differentBytes = 0;
+  let maximumChannelDifference = 0;
+  let firstDifference = -1;
+  for (let index = 0; index < actual.data.length; index++) {
+    const difference = Math.abs(actual.data[index] - expected.data[index]);
+    if (difference === 0) continue;
+    differentBytes++;
+    maximumChannelDifference = Math.max(maximumChannelDifference, difference);
+    if (firstDifference === -1) firstDifference = index;
+  }
+  expect(
+    differentBytes,
+    differentBytes === 0
+      ? description
+      : `${description}: ${differentBytes}/${actual.data.length} RGBA bytes differ (max channel delta ${maximumChannelDifference}; first byte ${firstDifference}: ${actual.data[firstDifference]} vs ${expected.data[firstDifference]})`
+  ).toBe(0);
 }
 
 function verifyCompositePixels(psd: any) {
@@ -473,20 +604,26 @@ test.describe('PSD Export Hardening: Pixel Data Integrity', () => {
         expect(hasOpaque).toBe(true);
       }
     }
-    expectLayerContainsColor(
+    expectLayerPixelColor(
       psd.children!.find((layer: any) => layer.name === 'draw 2'),
       'draw 2',
-      '#201010'
+      400,
+      100,
+      [32, 16, 16]
     );
-    expectLayerContainsColor(
+    expectLayerPixelColor(
       psd.children!.find((layer: any) => layer.name === 'draw 3'),
       'draw 3',
-      '#102010'
+      200,
+      300,
+      [16, 32, 16]
     );
-    expectLayerContainsColor(
+    expectLayerPixelColor(
       psd.children!.find((layer: any) => layer.name === 'draw 4'),
       'draw 4',
-      '#101020'
+      400,
+      300,
+      [16, 16, 32]
     );
   });
 
@@ -510,15 +647,28 @@ test.describe('PSD Export Hardening: Pixel Data Integrity', () => {
     });
 
     verifyCompositePixels(psd);
-
-    // Verify composite has content from all three layers (non-transparent pixels)
-    const { data } = psd.imageData!;
-    let nonTransparentCount = 0;
-    for (let i = 3; i < data.length; i += 4) {
-      if (data[i] > 0) nonTransparentCount++;
-    }
-    // Should have pixels from all three strokes
-    expect(nonTransparentCount).toBeGreaterThan(0);
+    expectCompositeMatchesDisjointNormalLayers(psd, ['Blank 1', 'draw 2', 'draw 3', 'draw 4']);
+    expectLayerPixelColor(
+      psd.children!.find((layer) => layer.name === 'draw 2'),
+      'draw 2',
+      200,
+      100,
+      [32, 16, 16]
+    );
+    expectLayerPixelColor(
+      psd.children!.find((layer) => layer.name === 'draw 3'),
+      'draw 3',
+      500,
+      200,
+      [16, 32, 16]
+    );
+    expectLayerPixelColor(
+      psd.children!.find((layer) => layer.name === 'draw 4'),
+      'draw 4',
+      200,
+      300,
+      [16, 16, 32]
+    );
   });
 
   test('Alpha channel data is correct', async ({ page }, testInfo) => {
@@ -537,34 +687,39 @@ test.describe('PSD Export Hardening: Pixel Data Integrity', () => {
       skipCompositeImageData: false,
     });
 
-    // Check alpha channel in composite
+    expectCompositeMatchesDisjointNormalLayers(psd, ['Blank 1', 'draw 2']);
+
     const { data, width, height } = psd.imageData!;
-    let hasOpaque = false;
-    let allAlphaValid = true;
-    for (let i = 3; i < data.length; i += 4) {
-      const alpha = data[i];
-      if (alpha === 255) hasOpaque = true;
-      if (alpha < 0 || alpha > 255) allAlphaValid = false;
-    }
-    expect(hasOpaque).toBe(true);
-    expect(allAlphaValid).toBe(true);
     expect(width).toBe(psd.width);
     expect(height).toBe(psd.height);
-
-    // Check alpha in layers
-    for (const layer of psd.children!) {
-      if (layer.name?.startsWith('draw ')) {
-        const { data: layerData } = layer.imageData!;
-        let layerHasOpaque = false;
-        for (let i = 3; i < layerData.length; i += 4) {
-          if (layerData[i] > 0) {
-            layerHasOpaque = true;
-            break;
-          }
-        }
-        expect(layerHasOpaque).toBe(true);
+    let compositeIsOpaque = true;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] !== 255) {
+        compositeIsOpaque = false;
+        break;
       }
     }
+    expect(compositeIsOpaque, 'the opaque white Blank 1 must make the PSD composite opaque').toBe(true);
+
+    const paint = psd.children![1];
+    const paintData = paint.imageData!.data;
+    let hasTransparentPixels = false;
+    let hasPaintedPixels = false;
+    let hasPartialAlpha = false;
+    for (let i = 3; i < paintData.length; i += 4) {
+      if (paintData[i] === 0) hasTransparentPixels = true;
+      else hasPaintedPixels = true;
+      if (paintData[i] > 0 && paintData[i] < 255) hasPartialAlpha = true;
+    }
+    expect(hasTransparentPixels, 'the paint layer must retain transparency outside the stroke').toBe(true);
+    expect(hasPaintedPixels, 'the paint layer must contain the stroke').toBe(true);
+    expect(hasPartialAlpha, 'the paint layer must retain antialiased or translucent edge pixels').toBe(true);
+
+    const strokeCenter = layerPixelAtDocumentPoint(paint, 400, 300, 'stroke center');
+    expect(strokeCenter.slice(0, 3)).toEqual([32, 16, 16]);
+    expect(strokeCenter[3], 'the stroke center must preserve its nonzero alpha').toBeGreaterThan(0);
+    const transparentPoint = layerPixelAtDocumentPoint(paint, 200, 390, 'point away from stroke');
+    expect(transparentPoint[3]).toBe(0);
   });
 });
 
@@ -699,6 +854,7 @@ test.describe('PSD Export Hardening: Edge Cases', () => {
     expect(psd2.width).toBe(psd1.width);
     expect(psd2.height).toBe(psd1.height);
     expect(psd2.children!.length).toBe(psd1.children!.length);
+    expectImageDataExactlyEqual(psd2.imageData, psd1.imageData, 'Repeated exports of an unchanged document');
 
     for (let i = 0; i < psd1.children!.length; i++) {
       const l1 = psd1.children![i];
@@ -762,6 +918,7 @@ test.describe('PSD Export Hardening: Round-trip Compatibility', () => {
     expect(psd2.bitsPerChannel).toBe(psd1.bitsPerChannel);
     expect(psd2.channels).toBe(psd1.channels);
     expect(psd2.children!.length).toBe(psd1.children!.length);
+    expectImageDataExactlyEqual(psd2.imageData, psd1.imageData, 'ag-psd PSD read/write round-trip');
 
     for (let i = 0; i < psd1.children!.length; i++) {
       const l1 = psd1.children![i];

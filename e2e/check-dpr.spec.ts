@@ -114,6 +114,7 @@ test.describe('Device pixel ratio', () => {
   });
 
   test('committing a Draw stroke preserves the live HiDPI preview pixels', async ({ page }) => {
+    // The assertion compares both full-size backing stores at every device pixel.
     test.setTimeout(HIDPI_PIXEL_COMPARISON_TEST_TIMEOUT_MS);
     await page.goto('/');
     await expect(getWorkspaceCanvas(page)).toBeVisible();

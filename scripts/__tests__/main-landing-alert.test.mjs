@@ -1,9 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import {
   canRecoverOrphanAutoMerge,
@@ -11,19 +25,68 @@ import {
   formatOperationSummary,
   isOrphanAutoMergeState,
   notifyIfDue,
+  readFailureLogLock,
   newOwner,
   observeOrphanAutoMerge,
   recordedPidStates,
   resetOrphanAutoMergeFailover,
   runMergeReleaseAfterLanding,
   startWatcher,
+  watch,
 } from '../main-landing.mjs';
-import { processRuntimeScopeToken } from '../lib/process-identity.mjs';
+import { registerMainWorktree } from '../main-worktree-guard.mjs';
+import { processRuntimeScopeToken, processStartToken } from '../lib/process-identity.mjs';
 
 // Child-process landing fixtures exceed Vitest's default budget on loaded machines.
 vi.setConfig({ testTimeout: 15_000 });
 
 const tempDirectories = [];
+
+function runNodeChild(scriptPath, environment) {
+  const child = spawn(process.execPath, [scriptPath], {
+    env: { ...process.env, ...environment },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => {
+    stderr = (stderr + chunk).slice(-4096);
+  });
+  return new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error('failure-log worker exited with ' + code + ' (' + signal + '): ' + stderr));
+    });
+  });
+}
+
+function alternatePathCase(path) {
+  const index = path.search(/[A-Za-z]/);
+  if (index < 0) return path;
+  const character = path[index];
+  const replacement = character === character.toLowerCase() ? character.toUpperCase() : character.toLowerCase();
+  return path.slice(0, index) + replacement + path.slice(index + 1);
+}
+
+function sameDirectoryIdentity(left, right) {
+  try {
+    const leftStats = statSync(left, { bigint: true });
+    const rightStats = statSync(right, { bigint: true });
+    return (
+      leftStats.isDirectory() &&
+      rightStats.isDirectory() &&
+      leftStats.dev !== 0n &&
+      rightStats.dev !== 0n &&
+      leftStats.ino !== 0n &&
+      rightStats.ino !== 0n &&
+      leftStats.dev === rightStats.dev &&
+      leftStats.ino === rightStats.ino
+    );
+  } catch {
+    return false;
+  }
+}
 
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
@@ -97,13 +160,7 @@ describe('main landing owner-control process identity', () => {
     const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
     expect(initialized.status).toBe(0);
 
-    for (const [key, value] of [
-      ['ph.mainWorktreeGitDir', join(repo, '.git')],
-      ['ph.mainWorktreePath', repo],
-    ]) {
-      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
-      expect(configured.status).toBe(0);
-    }
+    expect(registerMainWorktree(repo, { required: true })).toBe(true);
 
     const controlFile = join(repo, '.git', 'main-landing-occupancy', 'owner-control.lock');
     mkdirSync(join(repo, '.git', 'main-landing-occupancy'), { recursive: true });
@@ -137,20 +194,56 @@ describe('main landing owner-control process identity', () => {
   });
 });
 
-describe('main landing invalid lease timestamps', () => {
+describe('main landing invalid lease timestamps and bounded failure logging', () => {
+  it('classifies a replaced single-link lock inode as a retryable change', () => {
+    const closed = vi.fn();
+    const read = vi.fn();
+    const result = readFailureLogLock('fixture-lock', {
+      lstatImpl: () => ({ isFile: () => true, isSymbolicLink: () => false, nlink: 1, dev: 7, ino: 11 }),
+      openImpl: () => 23,
+      fstatImpl: () => ({ isFile: () => true, nlink: 1, dev: 7, ino: 12, size: 20 }),
+      readImpl: read,
+      closeImpl: closed,
+    });
+
+    expect(result).toEqual({ status: 'changing' });
+    expect(read).not.toHaveBeenCalled();
+    expect(closed).toHaveBeenCalledWith(23);
+  });
+
+  it('classifies an unlinked lock inode as a retryable change', () => {
+    const closed = vi.fn();
+    const result = readFailureLogLock('fixture-lock', {
+      lstatImpl: () => ({ isFile: () => true, isSymbolicLink: () => false, nlink: 1, dev: 7, ino: 11 }),
+      openImpl: () => 23,
+      fstatImpl: () => ({ isFile: () => true, nlink: 0, dev: 7, ino: 11, size: 20 }),
+      closeImpl: closed,
+    });
+
+    expect(result).toEqual({ status: 'changing' });
+    expect(closed).toHaveBeenCalledWith(23);
+  });
+
+  it('still refuses a descriptor that became hard-linked during inspection', () => {
+    const closed = vi.fn();
+    expect(() =>
+      readFailureLogLock('fixture-lock', {
+        lstatImpl: () => ({ isFile: () => true, isSymbolicLink: () => false, nlink: 1, dev: 7, ino: 11 }),
+        openImpl: () => 23,
+        fstatImpl: () => ({ isFile: () => true, nlink: 2, dev: 7, ino: 11, size: 20 }),
+        closeImpl: closed,
+      })
+    ).toThrow('main landing failure log lock is not a single-link regular file');
+    expect(closed).toHaveBeenCalledWith(23);
+  });
+
   it('shows a missing lease ID and invalid timestamp in status without creating an alert marker', () => {
     const repo = mkdtempSync(join(tmpdir(), 'main-landing-invalid-status-'));
     tempDirectories.push(repo);
     const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
     expect(initialized.status).toBe(0);
 
-    for (const [key, value] of [
-      ['ph.mainWorktreeGitDir', join(repo, '.git')],
-      ['ph.mainWorktreePath', repo],
-    ]) {
-      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
-      expect(configured.status).toBe(0);
-    }
+    expect(registerMainWorktree(repo, { required: true })).toBe(true);
 
     const lockDir = join(repo, '.git', 'main-landing-occupancy');
     mkdirSync(lockDir);
@@ -179,14 +272,16 @@ describe('main landing invalid lease timestamps', () => {
     expect(existsSync(join(lockDir, 'alert-invalid-timestamp.json'))).toBe(false);
   });
 
-  it('posts one integrity diagnostic without applying duration thresholds or changing the lease', () => {
+  it('posts one integrity diagnostic without claiming a duration threshold or changing the lease', () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-invalid-time-'));
     tempDirectories.push(lockDir);
     const timestamp = '2026-11-17T12:45:02.3NZ';
     const owner = {
       leaseId: 'invalid-time-lease',
       occupiedSince: timestamp,
+      ownerSince: timestamp,
       startedAt: timestamp,
+      heartbeatAt: timestamp,
       owner: { branch: 'task/example', chatId: 'example-chat' },
     };
     const original = structuredClone(owner);
@@ -207,6 +302,7 @@ describe('main landing invalid lease timestamps', () => {
     notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), postNote);
 
     expect(postNote).toHaveBeenCalledTimes(1);
+    expect(postNote.mock.calls[0][1]).toContain('timestamp is invalid or missing');
     expect(postNote.mock.calls[0][1]).toContain('Lease age and recovery thresholds are unknown');
     expect(postNote.mock.calls[0][1]).toContain('Preserve the lease and main state');
     expect(JSON.parse(readFileSync(markerFile, 'utf8'))).toMatchObject({
@@ -222,7 +318,7 @@ describe('main landing invalid lease timestamps', () => {
     expect(postNote).toHaveBeenCalledTimes(1);
   });
 
-  it('retries the integrity diagnostic after delivery fails and stops after success', () => {
+  it('retries a failed integrity diagnostic after removing its pending marker', () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-invalid-time-retry-'));
     tempDirectories.push(lockDir);
     const owner = {
@@ -231,15 +327,14 @@ describe('main landing invalid lease timestamps', () => {
       owner: { branch: 'task/example', chatId: 'example-chat' },
     };
     const postNote = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
-    const paths = { lockDir };
-
-    notifyIfDue(paths, owner, Date.parse('2026-11-17T16:45:02.000Z'), postNote);
-
     const alertFile = join(lockDir, 'alert-invalid-timestamp.json');
-    expect(existsSync(alertFile)).toBe(false);
-    expect(readFileSync(join(lockDir, 'alert-failures.log'), 'utf8')).toContain('Main landing lease timestamp');
 
-    notifyIfDue(paths, owner, Date.parse('2026-11-17T16:45:32.000Z'), postNote);
+    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), postNote);
+
+    expect(existsSync(alertFile)).toBe(false);
+    expect(readFileSync(join(lockDir, 'alert-failures.log'), 'utf8').trim().split('\n')).toHaveLength(1);
+
+    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:32.000Z'), postNote);
 
     expect(postNote).toHaveBeenCalledTimes(2);
     expect(JSON.parse(readFileSync(alertFile, 'utf8'))).toMatchObject({
@@ -247,7 +342,7 @@ describe('main landing invalid lease timestamps', () => {
       leaseId: owner.leaseId,
     });
 
-    notifyIfDue(paths, owner, Date.parse('2026-11-17T16:46:02.000Z'), postNote);
+    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:46:02.000Z'), postNote);
 
     expect(postNote).toHaveBeenCalledTimes(2);
   });
@@ -279,86 +374,6 @@ describe('main landing invalid lease timestamps', () => {
     expect(existsSync(join(lockDir, 'alert-15m.json'))).toBe(false);
     expect(existsSync(join(lockDir, 'alert-240m.json'))).toBe(false);
   });
-});
-
-describe('main landing duration alerts', () => {
-  it('bounds failure history while retaining the latest entries', () => {
-    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-duration-log-'));
-    tempDirectories.push(lockDir);
-    const logFile = join(lockDir, 'alert-failures.log');
-    writeFileSync(logFile, Array.from({ length: 160 }, (_, index) => 'old failure ' + index).join('\n') + '\n');
-    const owner = {
-      leaseId: 'bounded-log-lease',
-      occupiedSince: '2026-11-17T12:45:02.000Z',
-      owner: { branch: 'task/example', chatId: 'example-chat' },
-    };
-
-    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false);
-
-    const log = readFileSync(logFile, 'utf8');
-    const lines = log.split(/\r?\n/).filter(Boolean);
-    expect(lines).toHaveLength(128);
-    expect(log).not.toContain('old failure 0\n');
-    expect(log).toContain('old failure 159');
-    expect(lines.slice(-2)).toEqual(
-      expect.arrayContaining([expect.stringContaining('15 minutes'), expect.stringContaining('4 hours')])
-    );
-    expect(Buffer.byteLength(log)).toBeLessThanOrEqual(256 * 1024);
-  });
-
-  it('caps large UTF-8 failure logs without leaving a partial leading line', () => {
-    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-duration-log-bytes-'));
-    tempDirectories.push(lockDir);
-    const logFile = join(lockDir, 'alert-failures.log');
-    writeFileSync(
-      logFile,
-      Array.from({ length: 180 }, (_, index) => 'old failure ' + index + ' ' + '🧪'.repeat(1000)).join('\n') + '\n'
-    );
-    const owner = {
-      leaseId: 'bounded-byte-log-lease',
-      occupiedSince: '2026-11-17T12:45:02.000Z',
-      owner: { branch: 'task/example', chatId: 'example-chat' },
-    };
-
-    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false);
-
-    const log = readFileSync(logFile, 'utf8');
-    expect(Buffer.byteLength(log)).toBeLessThanOrEqual(256 * 1024);
-    expect(log).not.toContain('�');
-    const lines = log.split(/\r?\n/).filter(Boolean);
-    expect(log).not.toContain('old failure 0');
-    expect(log).toContain('old failure 179');
-    expect(lines[0]).toMatch(/^old failure \d+ 🧪/u);
-    expect(lines.slice(-2)).toEqual(
-      expect.arrayContaining([expect.stringContaining('15 minutes'), expect.stringContaining('4 hours')])
-    );
-  });
-
-  it('clears a failed alert claim even when failure logging fails', () => {
-    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-duration-log-error-'));
-    tempDirectories.push(lockDir);
-    const owner = {
-      leaseId: 'failed-log-lease',
-      occupiedSince: '2026-11-17T12:45:02.000Z',
-      owner: { branch: 'task/example', chatId: 'example-chat' },
-    };
-    const alertFile = join(lockDir, 'alert-15m.json');
-    const paths = { lockDir };
-    const postNote = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        paths.lockDir = join(lockDir, 'missing-log-directory');
-        return false;
-      })
-      .mockReturnValueOnce(true);
-
-    expect(() => notifyIfDue(paths, owner, Date.parse('2026-11-17T13:45:02.000Z'), postNote)).toThrow();
-    expect(existsSync(alertFile)).toBe(false);
-    paths.lockDir = lockDir;
-    notifyIfDue(paths, owner, Date.parse('2026-11-17T13:45:02.000Z'), postNote);
-    expect(postNote).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(readFileSync(alertFile, 'utf8'))).toMatchObject({ status: 'sent', leaseId: owner.leaseId });
-  });
 
   it('uses the injected delivery function for each elapsed threshold', () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-duration-alert-'));
@@ -384,10 +399,380 @@ describe('main landing duration alerts', () => {
     }
     expect(existsSync(join(lockDir, 'alert-invalid-timestamp.json'))).toBe(false);
   });
+
+  it('bounds failure history by line count while retaining the newest entries', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-invalid-time-log-'));
+    tempDirectories.push(lockDir);
+    const logFile = join(lockDir, 'alert-failures.log');
+    writeFileSync(logFile, Array.from({ length: 160 }, (_, index) => 'old failure ' + index).join('\n') + '\n');
+    const owner = {
+      leaseId: 'bounded-log-lease',
+      occupiedSince: '2026-11-17T12:45:02.000Z',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+
+    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false);
+
+    const log = readFileSync(logFile, 'utf8');
+    const lines = log.trimEnd().split('\n');
+    expect(lines).toHaveLength(128);
+    expect(log).not.toContain('old failure 0\n');
+    expect(log).toContain('old failure 159');
+    expect(lines.slice(-2)).toEqual(
+      expect.arrayContaining([expect.stringContaining('15 minutes'), expect.stringContaining('4 hours')])
+    );
+    expect(Buffer.byteLength(log)).toBeLessThanOrEqual(256 * 1024);
+  });
+
+  it('caps large UTF-8 failure logs without preserving a partial line or character', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-invalid-time-log-bytes-'));
+    tempDirectories.push(lockDir);
+    const logFile = join(lockDir, 'alert-failures.log');
+    writeFileSync(
+      logFile,
+      Array.from({ length: 180 }, (_, index) => 'old failure ' + index + ' ' + '🧪'.repeat(1000)).join('\n') + '\n'
+    );
+    const owner = {
+      leaseId: 'bounded-byte-log-lease',
+      occupiedSince: '2026-11-17T12:45:02.000Z',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+
+    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false);
+
+    const log = readFileSync(logFile, 'utf8');
+    expect(Buffer.byteLength(log)).toBeLessThanOrEqual(256 * 1024);
+    expect(log).not.toContain('�');
+    expect(log).not.toContain('old failure 0');
+    expect(log).toContain('old failure 179');
+    const lines = log.split(/\r?\n/).filter(Boolean);
+    expect(lines[0]).toMatch(/^old failure \d+ 🧪/u);
+    expect(lines.slice(-2)).toEqual(
+      expect.arrayContaining([expect.stringContaining('15 minutes'), expect.stringContaining('4 hours')])
+    );
+  });
+
+  it('preserves both failure records when distinct alert deliveries log concurrently', async () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-concurrent-log-'));
+    tempDirectories.push(lockDir);
+    const readyDir = join(lockDir, 'ready');
+    mkdirSync(readyDir);
+    const logFile = join(lockDir, 'alert-failures.log');
+    writeFileSync(
+      logFile,
+      Array.from({ length: 128 }, (_, index) => 'old failure ' + index + ' ' + 'x'.repeat(500)).join('\n') + '\n'
+    );
+    const workerPath = join(lockDir, 'failure-log-worker.mjs');
+    const mainLandingModule = pathToFileURL(join(process.cwd(), 'scripts', 'main-landing.mjs')).href;
+    writeFileSync(
+      workerPath,
+      `import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { notifyIfDue } from ${JSON.stringify(mainLandingModule)};
+
+const lockDir = process.env.FAILURE_LOG_DIR;
+const readyDir = process.env.FAILURE_LOG_READY_DIR;
+const owner = {
+  leaseId: 'concurrent-failure-log-lease',
+  occupiedSince: '2026-11-17T12:00:00.000Z',
+  owner: { branch: 'task/example', chatId: 'example-chat' },
+};
+const waitCell = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+const postNote = (_paths, message) => {
+  writeFileSync(join(readyDir, process.pid + '.ready'), message);
+  const deadline = Date.now() + 5000;
+  while (readdirSync(readyDir).filter((name) => name.endsWith('.ready')).length < 2) {
+    if (Date.now() >= deadline) {
+      const ready = readdirSync(readyDir).filter((name) => name.endsWith('.ready')).map((name) => ({ name, message: readFileSync(join(readyDir, name), 'utf8') }));
+      throw new Error('both alert writers did not reach the barrier: ' + JSON.stringify(ready));
+    }
+    Atomics.wait(waitCell, 0, 0, 2);
+  }
+  return false;
+};
+
+notifyIfDue(
+  { lockDir },
+  owner,
+  Date.parse('2026-11-17T16:00:00.000Z'),
+  postNote
+);
+`,
+      'utf8'
+    );
+
+    const environment = { FAILURE_LOG_DIR: lockDir, FAILURE_LOG_READY_DIR: readyDir };
+    let firstWriterError;
+    const firstWriter = runNodeChild(workerPath, environment).catch((error) => {
+      firstWriterError = error;
+    });
+    const startDeadline = Date.now() + 4000;
+    while (!readdirSync(readyDir).some((name) => name.endsWith('.ready'))) {
+      if (firstWriterError) throw firstWriterError;
+      if (Date.now() >= startDeadline) {
+        await firstWriter;
+        throw new Error('first alert writer did not reach the barrier');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    if (firstWriterError) throw firstWriterError;
+    await Promise.all([firstWriter, runNodeChild(workerPath, environment)]);
+    if (firstWriterError) throw firstWriterError;
+
+    const log = readFileSync(logFile, 'utf8');
+    const lines = log.trimEnd().split('\n');
+    expect(lines).toHaveLength(128);
+    expect(log).toContain('Main landing occupied for at least 15 minutes');
+    expect(log).toContain('Main landing occupied for at least 4 hours');
+    expect(existsSync(join(lockDir, 'alert-failures.lock'))).toBe(false);
+  }, 15_000);
+
+  it('reclaims a failure-log lock when its PID start token proves that PID was reused', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-stale-log-lock-'));
+    tempDirectories.push(lockDir);
+    const currentStartToken = processStartToken(process.pid);
+    expect(currentStartToken).toBeTruthy();
+    writeFileSync(
+      join(lockDir, 'alert-failures.lock'),
+      JSON.stringify({
+        token: '123e4567-e89b-42d3-a456-426614174000',
+        pid: process.pid,
+        pidStartToken: 'different-process-start',
+        runtimeScopeToken: processRuntimeScopeToken(),
+        host: hostname(),
+        platform: process.platform,
+        startedAt: new Date().toISOString(),
+      }) + '\n'
+    );
+    const owner = {
+      leaseId: 'stale-log-lock-lease',
+      occupiedSince: '2026-11-17T12:45:02.3NZ',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+
+    notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false);
+
+    expect(readFileSync(join(lockDir, 'alert-failures.log'), 'utf8')).toContain(
+      'Main landing lease timestamp is invalid'
+    );
+    expect(existsSync(join(lockDir, 'alert-failures.lock'))).toBe(false);
+    expect(existsSync(join(lockDir, 'owner-control.lock'))).toBe(false);
+  }, 15_000);
+
+  it('preserves a legacy failure-log lock that has no process identity token', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-legacy-log-lock-'));
+    tempDirectories.push(lockDir);
+    const lockFile = join(lockDir, 'alert-failures.lock');
+    writeFileSync(
+      lockFile,
+      JSON.stringify({
+        token: '123e4567-e89b-42d3-a456-426614174002',
+        pid: process.pid,
+        host: hostname(),
+        platform: process.platform,
+        startedAt: new Date().toISOString(),
+      }) + '\n'
+    );
+    const owner = {
+      leaseId: 'legacy-log-lock-lease',
+      occupiedSince: '2026-11-17T12:45:02.3NZ',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+
+    expect(() => notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false)).toThrow(
+      'main landing failure log lock is held or its process liveness is unknown'
+    );
+    expect(existsSync(lockFile)).toBe(true);
+    expect(existsSync(join(lockDir, 'owner-control.lock'))).toBe(false);
+    expect(existsSync(join(lockDir, 'alert-invalid-timestamp.json'))).toBe(false);
+  }, 15_000);
+
+  it('reports live contention when an unreadable failure-log lock is replaced during retry', async () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-changing-log-lock-'));
+    tempDirectories.push(lockDir);
+    const lockFile = join(lockDir, 'alert-failures.lock');
+    const readyFile = join(lockDir, 'worker-ready');
+    const replacementFile = join(lockDir, 'live-lock.tmp');
+    const workerPath = join(lockDir, 'failure-log-lock-worker.mjs');
+    const mainLandingModule = pathToFileURL(join(process.cwd(), 'scripts', 'main-landing.mjs')).href;
+    writeFileSync(lockFile, '{ malformed lock');
+    writeFileSync(
+      workerPath,
+      `import { writeFileSync } from 'node:fs';
+import { notifyIfDue } from ${JSON.stringify(mainLandingModule)};
+
+writeFileSync(process.env.FAILURE_LOG_READY_FILE, 'started');
+try {
+  notifyIfDue(
+    { lockDir: process.env.FAILURE_LOG_DIR },
+    { leaseId: 'changing-log-lock-lease', occupiedSince: 'invalid', owner: { branch: 'task/example' } },
+    Date.now(),
+    () => false
+  );
+} catch (error) {
+  process.stderr.write('LOCK_RESULT:' + error.message);
+  process.exitCode = 1;
+}
+`,
+      'utf8'
+    );
+    const workerResult = runNodeChild(workerPath, {
+      FAILURE_LOG_DIR: lockDir,
+      FAILURE_LOG_READY_FILE: readyFile,
+    }).then(
+      () => ({ ok: true }),
+      (error) => ({ error })
+    );
+    const readyDeadline = Date.now() + 4000;
+    while (!existsSync(readyFile) && Date.now() < readyDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(existsSync(readyFile)).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 75));
+
+    writeFileSync(
+      replacementFile,
+      JSON.stringify({
+        token: '123e4567-e89b-42d3-a456-426614174001',
+        pid: process.pid,
+        pidStartToken: processStartToken(process.pid),
+        runtimeScopeToken: processRuntimeScopeToken(),
+        host: hostname(),
+        platform: process.platform,
+        startedAt: new Date().toISOString(),
+      }) + '\n'
+    );
+    renameSync(replacementFile, lockFile);
+
+    const result = await workerResult;
+    expect(result).toHaveProperty('error');
+    expect(result.error?.message).toContain('lock is held or its process liveness is unknown');
+    expect(result.error?.message).not.toContain('lock is unreadable');
+  }, 15_000);
+
+  it.skipIf(process.platform === 'win32')(
+    'replaces a symlinked failure log without importing its target contents',
+    () => {
+      const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-invalid-time-log-link-'));
+      tempDirectories.push(lockDir);
+      const targetFile = join(lockDir, 'outside.log');
+      const logFile = join(lockDir, 'alert-failures.log');
+      writeFileSync(targetFile, 'private target contents\n');
+      symlinkSync(targetFile, logFile);
+      const owner = {
+        leaseId: 'symlink-log-lease',
+        occupiedSince: '2026-11-17T12:45:02.3NZ',
+        owner: { branch: 'task/example', chatId: 'example-chat' },
+      };
+
+      notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false);
+
+      expect(lstatSync(logFile).isSymbolicLink()).toBe(false);
+      expect(readFileSync(logFile, 'utf8')).toContain('Main landing lease timestamp is invalid');
+      expect(readFileSync(logFile, 'utf8')).not.toContain('private target contents');
+      expect(readFileSync(targetFile, 'utf8')).toBe('private target contents\n');
+    }
+  );
+
+  it.skipIf(process.platform === 'win32')('refuses a symlinked failure-log lock without touching its target', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-log-lock-link-'));
+    tempDirectories.push(lockDir);
+    const targetFile = join(lockDir, 'outside-lock.json');
+    const lockFile = join(lockDir, 'alert-failures.lock');
+    writeFileSync(
+      targetFile,
+      JSON.stringify({
+        token: '123e4567-e89b-42d3-a456-426614174000',
+        pid: process.pid,
+        host: hostname(),
+        platform: process.platform,
+        startedAt: new Date().toISOString(),
+      }) + '\n'
+    );
+    symlinkSync(targetFile, lockFile);
+    const owner = {
+      leaseId: 'symlink-log-lock-lease',
+      occupiedSince: '2026-11-17T12:45:02.3NZ',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+
+    expect(() => notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false)).toThrow(
+      'main landing failure log lock is not a single-link regular file'
+    );
+    expect(lstatSync(lockFile).isSymbolicLink()).toBe(true);
+    expect(readFileSync(targetFile, 'utf8')).toContain('123e4567-e89b-42d3-a456-426614174000');
+    expect(existsSync(join(lockDir, 'alert-invalid-timestamp.json'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'replaces a hard-linked failure log without importing its target contents',
+    () => {
+      const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-invalid-time-log-hardlink-'));
+      tempDirectories.push(lockDir);
+      const targetFile = join(lockDir, 'outside.log');
+      const logFile = join(lockDir, 'alert-failures.log');
+      writeFileSync(targetFile, 'private target contents\n');
+      linkSync(targetFile, logFile);
+      const owner = {
+        leaseId: 'hardlink-log-lease',
+        occupiedSince: '2026-11-17T12:45:02.3NZ',
+        owner: { branch: 'task/example', chatId: 'example-chat' },
+      };
+
+      notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false);
+
+      expect(lstatSync(logFile).isSymbolicLink()).toBe(false);
+      expect(readFileSync(logFile, 'utf8')).toContain('Main landing lease timestamp is invalid');
+      expect(readFileSync(logFile, 'utf8')).not.toContain('private target contents');
+      expect(readFileSync(targetFile, 'utf8')).toBe('private target contents\n');
+    }
+  );
+
+  it('clears a failed alert claim when failure logging itself fails', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-invalid-time-log-error-'));
+    tempDirectories.push(lockDir);
+    mkdirSync(join(lockDir, 'alert-failures.log'));
+    const owner = {
+      leaseId: 'failed-log-lease',
+      occupiedSince: '2026-11-17T12:45:02.3NZ',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+    const alertFile = join(lockDir, 'alert-invalid-timestamp.json');
+
+    expect(() => notifyIfDue({ lockDir }, owner, Date.parse('2026-11-17T16:45:02.000Z'), () => false)).toThrow();
+    expect(existsSync(alertFile)).toBe(false);
+  });
+
+  it('retries an alert after failure-log persistence fails and clears its pending marker', () => {
+    const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-duration-log-retry-'));
+    tempDirectories.push(lockDir);
+    const owner = {
+      leaseId: 'retry-after-log-failure',
+      occupiedSince: '2026-11-17T12:45:02.000Z',
+      owner: { branch: 'task/example', chatId: 'example-chat' },
+    };
+    const alertFile = join(lockDir, 'alert-15m.json');
+    const paths = { lockDir };
+    const postNote = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        paths.lockDir = join(lockDir, 'missing-log-directory');
+        return false;
+      })
+      .mockReturnValueOnce(true);
+
+    expect(() => notifyIfDue(paths, owner, Date.parse('2026-11-17T13:45:02.000Z'), postNote)).toThrow();
+    expect(existsSync(alertFile)).toBe(false);
+    paths.lockDir = lockDir;
+    notifyIfDue(paths, owner, Date.parse('2026-11-17T13:45:02.000Z'), postNote);
+
+    expect(postNote).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(readFileSync(alertFile, 'utf8'))).toMatchObject({ status: 'sent', leaseId: owner.leaseId });
+  });
 });
 
 describe('main landing alert claims', () => {
-  it('rejects alert marker keys outside the supported threshold and integrity markers', () => {
+  it('rejects alert marker keys outside the supported thresholds and integrity marker', () => {
     const lockDir = mkdtempSync(join(tmpdir(), 'main-landing-alert-key-'));
     tempDirectories.push(lockDir);
 
@@ -433,7 +818,6 @@ describe('main landing alert claims', () => {
       platform: process.platform,
       pid: process.pid,
     });
-    expect(pending.pidStartToken).toEqual(expect.any(String));
     expect(Number.isFinite(Date.parse(pending.startedAt))).toBe(true);
     expect(claimAlert({ lockDir }, { leaseId: 'second-lease' }, 15)).toBe(false);
     expect(JSON.parse(readFileSync(alertFile, 'utf8'))).toEqual(pending);
@@ -606,6 +990,22 @@ describe('persistent orphan AUTO_MERGE failover', () => {
     operations: [{ operation: null, marker: 'AUTO_MERGE', value: null }],
   };
 
+  it('completes owner-read retries when failure logging is unavailable', async () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'main-landing-watcher-log-failure-'));
+    tempDirectories.push(fixtureRoot);
+    const readOwnerImpl = vi.fn(() => {
+      throw new Error('owner record unavailable');
+    });
+    const sleep = vi.fn(async () => {});
+
+    await expect(
+      watch({ lockDir: join(fixtureRoot, 'missing', 'lock') }, 'watcher-lease', { sleep, readOwnerImpl })
+    ).resolves.toBe(1);
+
+    expect(readOwnerImpl).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(3);
+  }, 15_000);
+
   it('recognizes only a main checkout with an unpaired AUTO_MERGE marker', () => {
     expect(isOrphanAutoMergeState(orphan)).toBe(true);
     expect(isOrphanAutoMergeState({ branch: 'main', operations: [] })).toBe(false);
@@ -636,13 +1036,7 @@ describe('persistent orphan AUTO_MERGE failover', () => {
     const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
     expect(initialized.status).toBe(0);
 
-    for (const [key, value] of [
-      ['ph.mainWorktreeGitDir', join(repo, '.git')],
-      ['ph.mainWorktreePath', repo],
-    ]) {
-      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
-      expect(configured.status).toBe(0);
-    }
+    expect(registerMainWorktree(repo, { required: true })).toBe(true);
     writeFileSync(join(repo, '.git', 'AUTO_MERGE'), 'unpaired marker\n');
 
     const result = spawnSync(process.execPath, [join(import.meta.dirname, '../main-landing.mjs'), 'status', '--json'], {
@@ -656,6 +1050,87 @@ describe('persistent orphan AUTO_MERGE failover', () => {
       branch: 'main',
       operations: [{ operation: null, marker: 'AUTO_MERGE', value: null }],
     });
+  });
+
+  it('validates the registered main repository from a linked task worktree', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'main-landing-identity-'));
+    tempDirectories.push(fixtureRoot);
+    const repo = join(fixtureRoot, 'repo');
+    const foreignRepo = join(fixtureRoot, 'foreign-repo');
+    const taskWorktree = join(fixtureRoot, 'task-worktree');
+    mkdirSync(repo);
+    mkdirSync(foreignRepo);
+
+    const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
+    expect(initialized.status).toBe(0);
+    const foreignInitialized = spawnSync('git', ['init', '-b', 'main', foreignRepo], { encoding: 'utf8' });
+    expect(foreignInitialized.status).toBe(0);
+    writeFileSync(join(repo, 'fixture.txt'), 'tracked fixture\n');
+    const added = spawnSync('git', ['-C', repo, 'add', 'fixture.txt'], { encoding: 'utf8' });
+    expect(added.status).toBe(0);
+    const committed = spawnSync(
+      'git',
+      ['-C', repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'fixture'],
+      { encoding: 'utf8' }
+    );
+    expect(committed.status).toBe(0);
+    const linked = spawnSync('git', ['-C', repo, 'worktree', 'add', '-b', 'task/landing-identity', taskWorktree], {
+      encoding: 'utf8',
+    });
+    expect(linked.status).toBe(0);
+
+    expect(registerMainWorktree(repo, { required: true })).toBe(true);
+
+    const alternateRepoPath = alternatePathCase(repo);
+    const alternateGitDir = alternatePathCase(join(repo, '.git'));
+    const caseOnlyAliasWorks =
+      process.platform === 'darwin' &&
+      sameDirectoryIdentity(repo, alternateRepoPath) &&
+      sameDirectoryIdentity(join(repo, '.git'), alternateGitDir);
+    if (caseOnlyAliasWorks) {
+      for (const [key, value] of [
+        ['ph.mainWorktreeGitDir', alternateGitDir],
+        ['ph.mainWorktreePath', alternateRepoPath],
+      ]) {
+        const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
+        expect(configured.status).toBe(0);
+      }
+    }
+
+    const mainLandingScript = join(import.meta.dirname, '../main-landing.mjs');
+    const validTaskStatus = spawnSync(process.execPath, [mainLandingScript, 'status', '--json'], {
+      cwd: taskWorktree,
+      encoding: 'utf8',
+    });
+    expect(validTaskStatus.status).toBe(0);
+
+    const staleIdentity = spawnSync(
+      'git',
+      ['-C', repo, 'config', '--local', 'ph.mainWorktreeIdentity', 'stale-main-worktree-identity'],
+      { encoding: 'utf8' }
+    );
+    expect(staleIdentity.status).toBe(0);
+    const staleIdentityStatus = spawnSync(process.execPath, [mainLandingScript, 'status', '--json'], {
+      cwd: taskWorktree,
+      encoding: 'utf8',
+    });
+    expect(staleIdentityStatus.status).not.toBe(0);
+    expect(staleIdentityStatus.stderr).toContain('registered main worktree identity does not match');
+    expect(registerMainWorktree(repo, { required: true })).toBe(true);
+
+    for (const [key, value] of [
+      ['ph.mainWorktreeGitDir', join(foreignRepo, '.git')],
+      ['ph.mainWorktreePath', foreignRepo],
+    ]) {
+      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
+      expect(configured.status).toBe(0);
+    }
+    const foreignTaskStatus = spawnSync(process.execPath, [mainLandingScript, 'status', '--json'], {
+      cwd: taskWorktree,
+      encoding: 'utf8',
+    });
+    expect(foreignTaskStatus.status).not.toBe(0);
+    expect(foreignTaskStatus.stderr).toContain('registered main worktree does not belong to this repository');
   });
 
   it('requires the same main and AUTO_MERGE tree to be observed continuously for 30 minutes', () => {
@@ -715,28 +1190,14 @@ describe('persistent orphan AUTO_MERGE failover', () => {
       autoMergeObservedSince: new Date(0).toISOString(),
       autoMergeLastObservedAt: new Date(now - 1_000).toISOString(),
       owner: { pid: 100, childPid: 101, branch: 'feature', chatId: 'test-chat' },
-      previousOwner: {
-        pid: 1,
-        pidStartToken: 'owner-start',
-        childPid: 2,
-        childStartToken: 'old-child-start',
-        branch: 'feature',
-        chatId: 'test-chat',
-      },
+      previousOwner: { pid: 1, childPid: 2, branch: 'feature', chatId: 'test-chat' },
     };
 
     const reset = resetOrphanAutoMergeFailover(owner, orphan, 'main-a:tree-a', now);
 
     expect(reset.autoMergeFailoverAttempted).toBe(false);
     expect(reset.autoMergeRecoveryReady).toBe(true);
-    expect(reset.owner).toMatchObject({
-      pid: 1,
-      pidStartToken: 'owner-start',
-      childPid: null,
-      childStartToken: null,
-      branch: 'feature',
-      chatId: 'test-chat',
-    });
+    expect(reset.owner).toMatchObject({ pid: 1, childPid: null, branch: 'feature', chatId: 'test-chat' });
     expect(reset.autoMergeObservedSince).toBe(new Date(now).toISOString());
     expect(reset.autoMergeLastObservedAt).toBe(new Date(now).toISOString());
     expect(reset).not.toHaveProperty('previousOwner');

@@ -155,6 +155,22 @@ async function readCanvasDataUrl(page: Page): Promise<string> {
   return getWorkspaceCanvas(page).evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));
 }
 
+function expectCompositePixelsExactlyEqual(actual: any, expected: any, description: string) {
+  expect(actual, `${description}: actual composite must exist`).toBeDefined();
+  expect(expected, `${description}: expected composite must exist`).toBeDefined();
+  expect(actual.width, `${description}: width`).toBe(expected.width);
+  expect(actual.height, `${description}: height`).toBe(expected.height);
+  expect(actual.data.length, `${description}: RGBA byte length`).toBe(expected.data.length);
+
+  const firstDifferingByte = actual.data.findIndex((value: number, index: number) => value !== expected.data[index]);
+  expect(
+    firstDifferingByte,
+    firstDifferingByte === -1
+      ? description
+      : `${description}: RGBA byte ${firstDifferingByte} differs (${actual.data[firstDifferingByte]} vs ${expected.data[firstDifferingByte]})`
+  ).toBe(-1);
+}
+
 async function verifyLayerStructureInPsd(psdPath: string, expectedLayers: Array<{ name: string; hasPixels: boolean }>) {
   initializePsdCanvas();
   const file = await readFile(psdPath);
@@ -169,11 +185,10 @@ async function verifyLayerStructureInPsd(psdPath: string, expectedLayers: Array<
   expect(psd.bitsPerChannel).toBe(8);
 
   const layers = psd.children ?? [];
-  expect(layers.length).toBeGreaterThanOrEqual(expectedLayers.length);
+  expect(layers.map((layer) => layer.name ?? null)).toEqual(expectedLayers.map((layer) => layer.name));
 
-  for (const expected of expectedLayers) {
-    const layer = layers.find((l) => l.name === expected.name);
-    expect(layer, `Layer "${expected.name}" not found in PSD`).toBeDefined();
+  for (const [index, expected] of expectedLayers.entries()) {
+    const layer = layers[index];
 
     if (expected.hasPixels) {
       expect(layer!.imageData, `Layer "${expected.name}" should have pixel data`).toBeDefined();
@@ -625,7 +640,7 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     const multiplyLayer = layers.find((l) => l.name === 'draw 5'); // dark overlay with multiply
     expect(multiplyLayer).toBeDefined();
     expect(multiplyLayer!.blendMode).toBe('multiply');
-    expect(multiplyLayer!.opacity).toBeCloseTo(0.4, 1);
+    expect(multiplyLayer!.opacity).toBeCloseTo(0.4, 2);
 
     // Verify composite
     const composite = psd.imageData!;
@@ -857,6 +872,7 @@ test.describe('Photoshop Workflow: PSD Export Hardening', () => {
     expect(psd2.colorMode).toBe(psd1.colorMode);
     expect(psd2.bitsPerChannel).toBe(psd1.bitsPerChannel);
     expect(psd2.children!.length).toBe(psd1.children!.length);
+    expectCompositePixelsExactlyEqual(psd2.imageData, psd1.imageData, 'ag-psd PSD read/write round-trip');
 
     for (let i = 0; i < psd1.children!.length; i++) {
       const l1 = psd1.children![i];
@@ -925,7 +941,7 @@ test.describe('Photoshop Workflow: PSD Export Hardening', () => {
 
     expect(psd.width).toBe(1600);
     expect(psd.height).toBe(1200);
-    expect(psd.children!.length).toBeGreaterThanOrEqual(3); // Blank 1 + 2 strokes
+    expect(psd.children!.length).toBe(3); // Blank 1 + 2 strokes
     expect(psd.imageData!.width).toBe(1600);
     expect(psd.imageData!.height).toBe(1200);
 

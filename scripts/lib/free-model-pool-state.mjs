@@ -20,6 +20,7 @@ export const MODEL_FAILURE_QUARANTINE_HOURS = 168;
 export const OPENROUTER_RATE_LIMIT_FAILURE_THRESHOLD = 3;
 export const MODEL_FAILURE_THRESHOLD = 250;
 const MAX_TRACKED_MODELS = 512;
+const MAX_SUPPORTED_STATE_EPOCH_MS = Date.parse('9999-12-31T23:59:59.999Z');
 
 const WORKTREE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const WORKTREES_MARKER = `${sep}.kilo${sep}worktrees${sep}`;
@@ -37,7 +38,9 @@ const emptyState = () => ({
 });
 
 function validateNow(now) {
-  if (!Number.isFinite(now) || now < 0) throw new Error('Free-model pool time must be a non-negative epoch value');
+  if (!Number.isSafeInteger(now) || now < 0 || now > MAX_SUPPORTED_STATE_EPOCH_MS) {
+    throw new Error('Free-model pool time must be a supported non-negative integer epoch value');
+  }
 }
 
 function validUtcDate(value) {
@@ -110,11 +113,18 @@ export async function readFreeModelPoolState(filePath = DEFAULT_POOL_STATE_FILE,
 }
 
 function pruneFailureTimes(state, now) {
-  const failureCutoff = now - MODEL_FAILURE_WINDOW_MS;
-  const rateLimitCutoff = now - OPENROUTER_RATE_LIMIT_WINDOW_MS;
   for (const [key, entry] of Object.entries(state.modelFailures)) {
-    entry.failures = entry.failures.filter((timestamp) => timestamp >= failureCutoff && timestamp <= now);
-    entry.rateLimits = entry.rateLimits.filter((timestamp) => timestamp >= rateLimitCutoff && timestamp <= now);
+    // A caller can capture `now` before waiting for the write lock. A newer
+    // observation may already be persisted when that older caller acquires it.
+    const entryNow = Math.max(now, ...entry.failures, ...entry.rateLimits);
+    const failureCutoff = entryNow - MODEL_FAILURE_WINDOW_MS;
+    const rateLimitCutoff = entryNow - OPENROUTER_RATE_LIMIT_WINDOW_MS;
+    entry.failures = entry.failures
+      .filter((timestamp) => timestamp >= failureCutoff && timestamp <= entryNow)
+      .sort((left, right) => left - right);
+    entry.rateLimits = entry.rateLimits
+      .filter((timestamp) => timestamp >= rateLimitCutoff && timestamp <= entryNow)
+      .sort((left, right) => left - right);
     if (entry.failures.length === 0 && entry.rateLimits.length === 0) delete state.modelFailures[key];
   }
 }
@@ -169,7 +179,11 @@ export async function markOpenRouterQuotaExhausted({
 } = {}) {
   const date = utcDate(now);
   await updateState({ stateFile, quarantineFile }, (state) => {
-    state.openRouterExhaustedUtcDate = date;
+    // Quota requests can finish out of order across UTC midnight. Keep a newer
+    // exhausted day if a delayed prior-day response acquires the state lock later.
+    if (state.openRouterExhaustedUtcDate === null || date >= state.openRouterExhaustedUtcDate) {
+      state.openRouterExhaustedUtcDate = date;
+    }
   });
   return date;
 }
@@ -201,7 +215,7 @@ export async function clearExpiredOpenRouterQuota({
 } = {}) {
   const today = utcDate(now);
   return updateState({ stateFile, quarantineFile }, (state) => {
-    if (state.openRouterExhaustedUtcDate === null || state.openRouterExhaustedUtcDate === today) return false;
+    if (state.openRouterExhaustedUtcDate === null || state.openRouterExhaustedUtcDate >= today) return false;
     state.openRouterExhaustedUtcDate = null;
     return true;
   });
@@ -228,9 +242,17 @@ export async function recordModelFailure({
     pruneFailureTimes(state, now);
     const key = quarantineKey(source, model);
     const entry = (state.modelFailures[key] ??= { failures: [], rateLimits: [] });
-    if (operatorManaged && entry.failures.length >= MODEL_FAILURE_THRESHOLD) entry.failures.shift();
-    entry.failures.push(now);
-    if (rateLimit) entry.rateLimits.push(now);
+    const observationNow = Math.max(now, entry.failures.at(-1) ?? now, entry.rateLimits.at(-1) ?? now);
+    if (now >= observationNow - MODEL_FAILURE_WINDOW_MS) {
+      if (operatorManaged && entry.failures.length >= MODEL_FAILURE_THRESHOLD) entry.failures.shift();
+      entry.failures.push(now);
+      entry.failures.sort((left, right) => left - right);
+    }
+    if (rateLimit && now >= observationNow - OPENROUTER_RATE_LIMIT_WINDOW_MS) {
+      entry.rateLimits.push(now);
+      entry.rateLimits.sort((left, right) => left - right);
+    }
+    const decisionNow = Math.max(now, entry.failures.at(-1) ?? now, entry.rateLimits.at(-1) ?? now);
     const failureCount = entry.failures.length;
     const rateLimitCount = entry.rateLimits.length;
     let quarantineHours = null;
@@ -244,8 +266,8 @@ export async function recordModelFailure({
     }
     if (operatorManaged) quarantineHours = null;
     if (quarantineHours !== null) {
-      const quarantineState = await loadQuarantineStateLocked(quarantineFile, now);
-      upsertQuarantine(quarantineState, { source, model, reason, hours: quarantineHours, now });
+      const quarantineState = await loadQuarantineStateLocked(quarantineFile, decisionNow);
+      upsertQuarantine(quarantineState, { source, model, reason, hours: quarantineHours, now: decisionNow });
       await saveQuarantineState(quarantineState);
       delete state.modelFailures[key];
     }
