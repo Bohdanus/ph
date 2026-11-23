@@ -47,6 +47,7 @@ forgotten it. Two rows have weaker coverage than the table implies:
 
 ```bash
 npm run test            # vitest, jsdom - app unit tests
+npm run test:performance # dedicated one-worker flood-fill scaling spec
 npm run test:e2e:unit   # vitest, node - unit tests for the e2e helpers
 npm run test:e2e        # playwright, HEADLESS - starts its OWN server on a port it picks
 npm run test:e2e:verbose # like test:e2e, but streams suite output live
@@ -108,8 +109,10 @@ drop.
 - **The installed `tsc` launcher IS A GUARD, NOT THE COMPILER.** `npm install` points the POSIX `node_modules/.bin/tsc` symlink at `scripts/tsc-guard.mjs`; on Windows it rewrites npm's `tsc.cmd` and `tsc.ps1` launchers and adds the extensionless bin marker `npm exec` searches for, without requiring symlink privileges. Thus `npx tsc` and `tsc` on an npm script's PATH hit the guard. It **refuses any invocation that is not build mode** (with a short whitelist of flags that print, and a refusal for `--noCheck`, which is a build that checks nothing), exits 1, and names `npm run tsc` and `npx tsc -b <project>` instead. Build mode takes a project as its argument, so the narrow check is never lost — that is what makes an unconditional refusal honest rather than merely strict. `kilo.jsonc` denies `npx tsc` at the permission layer for the same reason, and re-allows the two build-mode spellings; the guard is the layer that also covers the other spellings.
   - **The shim is bypassed by invoking the compiler file directly.** `node node_modules/typescript/bin/tsc` runs the unguarded compiler against the empty root solution, so it is not a typecheck. Use `npm run tsc`.
   - **If `npx tsc` ever exits 0 again, the guard is missing, not the rule.** npm relinks bins with `force: true` from inside `reify`, and only `install` and `ci` re-run `prepare` afterwards, so a reifying command can silently restore the plain compiler launcher. `npm rebuild` is the one measured end to end; `update`, `dedupe`, `prune` and `audit fix` share that code path but were NOT each observed to clobber (an audit found `dedupe` and `prune` did not), so treat the list as the risk surface rather than as observations. That cannot be prevented inside `node_modules`, so it is made LOUD instead: `scripts/__tests__/tsc-guard.test.mjs` resolves the same launcher npm would and fails when it has the wrong target. **Run `npm install` to repair; do not "fix" the failing test.**
-- `npm run test` is `pool: 'vmThreads'`, `maxWorkers: 4` — a timing-sensitive
-  test that only fails in a full run is usually the pool, not the code.
+- `npm run test` is `pool: 'vmThreads'`, `maxWorkers: 4`. Flood-fill scaling is a
+  timing-sensitive measurement, so its dedicated spec is excluded from the parallel suite
+  and run through `npm run test:performance` with one Vitest worker after the unit suite in
+  the push gate and Linux app CI job. The 900/2250 dimensions compare 6.25-fold pixel growth using Node 24 per-thread CPU time; the small-size batch is repeated until it measures at least 16ms, then both sizes use the same repeat count with a 24x median paired-ratio bound.
 - `npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`:
   it starts its **own** dev server on a port it picks, makes attaching to any other
   server impossible, writes the run's output to its own directory, records its
@@ -226,7 +229,7 @@ a failing check.
 - `test:e2e:unit` is a Node Vitest suite for e2e helpers, not a browser run or
   commit-gate step. It is the blocking `e2e-unit` CI job; run it when touching
   `e2e/`.
-- **The commit gate runs no app unit test, and that is deliberate.** `npm run test` is the whole-tree check: run it on demand, and `gate:push` runs it for you. The scoped fan-out that used to sit in the gate is a command now — see below. Accepted cost: a test that was already failing before the commit started is caught at push, in CI, or when someone runs `npm run test` — and this repo's worktrees are full of commits that needed exactly that catch.
+- **The commit gate runs no app unit test, and that is deliberate.** `npm run test` is the whole-tree unit check; `gate:push` runs it followed by the dedicated `npm run test:performance` scaling spec. Run either script on demand. The scoped fan-out that used to sit in the gate is a command now — see below. Accepted cost: a test that was already failing before the commit started is caught at push, in CI, or when someone runs the suite.
 - `*.{ts,tsx}` uses ESLint + Prettier;
   `*.{js,jsx,mjs,cjs,scss,css,jsonc,yml,yaml,md,json}` uses Prettier only. **Do
   not add ESLint for the latter group**: no config covers it, and doing so breaks

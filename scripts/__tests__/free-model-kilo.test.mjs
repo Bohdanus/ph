@@ -1462,6 +1462,36 @@ process.exitCode = 1;`
     }
   });
 
+  it.each([
+    ['a generic error before a quota response', [400, 429], 429],
+    ['a generic error after a quota response', [429, 400], 429],
+    ['a quota response after authentication rejection', [401, 429], 401],
+  ])(
+    'preserves the first source-exhausting status across error events: %s',
+    async (_label, statuses, expectedStatus) => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+      const events = statuses.map((status) => JSON.stringify({ type: 'error', error: { status } }));
+      const command = await writeExecutable(
+        join(directory, 'fake-kilo'),
+        `process.stdout.write(${JSON.stringify(`${events.join('\n')}\n`)}); process.exitCode = 1;`
+      );
+
+      try {
+        const expected =
+          expectedStatus === 401
+            ? { error: 'Kilo authentication was rejected', exhaustSource: true, status: 401 }
+            : {
+                error: `Kilo provider quota or rate limit returned HTTP ${expectedStatus}`,
+                exhaustSource: true,
+                status: expectedStatus,
+              };
+        await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual(expected);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('preserves a Kilo quota response when the child closes stdin', async () => {
     const spawnImpl = () => {
       const child = new EventEmitter();

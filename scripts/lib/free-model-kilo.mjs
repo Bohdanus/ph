@@ -620,10 +620,16 @@ function reportedStatus(events, stderrText = '') {
   };
   let status = null;
   let legacyQuota = isLegacyQuotaMessage(stderrText) || legacyQuotaStatusFromText(stderrText) !== null;
+  const isSourceExhaustingStatus = (value) => value === 401 || value === 402 || value === 429;
   for (const event of events) {
     if (event?.type === 'error') {
       const result = visit(event);
-      if (status === null && result.status !== null) status = result.status;
+      if (
+        result.status !== null &&
+        (status === null || (isSourceExhaustingStatus(result.status) && !isSourceExhaustingStatus(status)))
+      ) {
+        status = result.status;
+      }
       legacyQuota ||= result.legacyQuota;
     }
   }

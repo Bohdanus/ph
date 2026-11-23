@@ -130,6 +130,9 @@ jobs:
       - name: Test
         run: npm run test -- --coverage
 
+      - name: Flood-fill scaling guard
+        run: npm run test:performance
+
       - name: Upload app coverage
         # The report is the point of `--coverage`; without an upload the run
         # computes lcov and throws it away, and a coverage regression can only be
