@@ -77,6 +77,28 @@ required for cross-module, persistence, migration, or high-risk changes.
   diff, status, scoped `repo:state --for-landing`, liveness, and `git cherry` immediately before
   landing; use the full `repo:state` report when examining or disposing of worktrees.
 
+### Subagent result handling
+
+- Split broad research into bounded, non-overlapping tasks with explicit evidence scopes and
+  deliverables. Ask each task for concise evidence, the scope checked, and an explicit findings or
+  no-findings conclusion; the coordinator verifies and reconciles the results.
+- A host-reported error, missing or empty output, or truncated response is inconclusive, not a
+  successful no-findings result. Inspect the host-reported completion or error state and any
+  available complete output before relying on the result. A non-empty response that does not
+  address its assigned evidence scope is also inconclusive for that scope.
+- Record the status and evidence actually returned. Do not infer a cause or a general failure rate
+  from one incident. A no-findings answer should identify what it checked so its scope can be
+  verified.
+- Keep host-managed subagent results from `agent_manager` distinct from text-only
+  `scripts/free-model-pool.mjs` completions. The completion runner validates complete, non-empty
+  output and applies its documented route behavior. `scripts/free-subagent-launcher.mjs` returns
+  the host result and does not automatically retry the task. Its task payload has no `maxTokens` or
+  timeout field, so completion-runner token and timeout settings are not a numeric budget for
+  host-managed tasks.
+- If follow-up is warranted, dispatch a narrower, non-overlapping task only after confirming that
+  the earlier task has stopped and checking current route eligibility. Do not repeat an unchanged
+  brief as an assumed recovery strategy.
+
 ### Tool limits
 
 `main-worktree-guard` is post-write; worktrees must exist before fan-out. Swarm leases renew on
@@ -735,6 +757,10 @@ git's own markers — `MERGE_HEAD`, `SQUASH_MSG`, `CHERRY_PICK_HEAD`, `REVERT_HE
 entry from an ordinary edit. `git ls-files -u` separates them too and returns the same
 paths; `-U` was chosen because its output is already one path per record.
 `--json` prints the same findings for a caller that wants them as data.
+For an `AUTO_MERGE` marker without a primary operation marker, the JSON keeps the marker visible
+but sets `operation` to `null`; the marker does not establish that an operation is active or which
+operation produced it. This shape is used in both `repo:state --json` findings and
+`main:landing status --json` operations. Consumers must not infer activity from the array entry.
 
 **It exits non-zero when it could not look, not only when it found something.** A
 roster it could not read, or a worktree it could not describe, is reported as

@@ -55,41 +55,96 @@ function listPlaywrightSpecs(directory: string): string[] {
   });
 }
 
+function unwrapExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function staticMemberName(expression: ts.Expression): string | undefined {
+  const current = unwrapExpression(expression);
+  if (ts.isPropertyAccessExpression(current)) return current.name.text;
+  if (!ts.isElementAccessExpression(current) || !current.argumentExpression) return undefined;
+
+  const argument = unwrapExpression(current.argumentExpression);
+  return ts.isStringLiteralLike(argument) ? argument.text : undefined;
+}
+
+function isImportedTestApi(
+  expression: ts.Expression,
+  testNames: Set<string>,
+  testNamespaceNames: Set<string>
+): boolean {
+  const current = unwrapExpression(expression);
+  if (ts.isIdentifier(current)) return testNames.has(current.text);
+  if (!ts.isPropertyAccessExpression(current) && !ts.isElementAccessExpression(current)) return false;
+
+  const exportedName = staticMemberName(current);
+  if (exportedName !== 'test' && exportedName !== 'default') return false;
+  const namespace = unwrapExpression(current.expression);
+  return ts.isIdentifier(namespace) && testNamespaceNames.has(namespace.text);
+}
+
+function isHeadlessPropertyName(name: ts.PropertyName): boolean {
+  const current = ts.isComputedPropertyName(name) ? unwrapExpression(name.expression) : name;
+  return (ts.isIdentifier(current) || ts.isStringLiteralLike(current)) && current.text === 'headless';
+}
+
 function findPerSpecHeadedOverrides(source: string, fileName: string): string[] {
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const testNames = new Set<string>();
+  const testNamespaceNames = new Set<string>();
 
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
     const moduleName = statement.moduleSpecifier.text;
-    if (moduleName !== '@playwright/test' && !/\/fixtures\/extended-test(?:\.ts)?$/.test(moduleName)) continue;
-    const bindings = statement.importClause?.namedBindings;
-    if (!bindings || !ts.isNamedImports(bindings)) continue;
-    for (const element of bindings.elements) {
-      if ((element.propertyName?.text ?? element.name.text) === 'test') testNames.add(element.name.text);
+    const isExtendedTestModule = /\/fixtures\/extended-test(?:\.(?:ts|js))?$/.test(moduleName);
+    if (moduleName !== '@playwright/test' && !isExtendedTestModule) continue;
+
+    const importClause = statement.importClause;
+    if (!importClause || importClause.isTypeOnly) continue;
+    if (importClause.name) testNames.add(importClause.name.text);
+
+    const bindings = importClause.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) {
+      testNamespaceNames.add(bindings.name.text);
+    } else if (bindings && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        if (element.isTypeOnly) continue;
+        const importedName = element.propertyName?.text ?? element.name.text;
+        if (importedName === 'test' || importedName === 'default') testNames.add(element.name.text);
+      }
     }
   }
 
   const violations: string[] = [];
   const visit = (node: ts.Node) => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      node.expression.name.text === 'use' &&
-      ts.isIdentifier(node.expression.expression) &&
-      testNames.has(node.expression.expression.text)
-    ) {
-      const options = node.arguments[0];
-      if (options && ts.isObjectLiteralExpression(options)) {
-        for (const property of options.properties) {
-          if (
-            ts.isPropertyAssignment(property) &&
-            ((ts.isIdentifier(property.name) && property.name.text === 'headless') ||
-              (ts.isStringLiteral(property.name) && property.name.text === 'headless')) &&
-            property.initializer.kind === ts.SyntaxKind.FalseKeyword
-          ) {
-            const { line } = sourceFile.getLineAndCharacterOfPosition(property.getStart(sourceFile));
-            violations.push(`${fileName}:${line + 1}`);
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapExpression(node.expression);
+      if (
+        (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+        staticMemberName(callee) === 'use' &&
+        isImportedTestApi(callee.expression, testNames, testNamespaceNames)
+      ) {
+        const options = node.arguments[0] && unwrapExpression(node.arguments[0]);
+        if (options && ts.isObjectLiteralExpression(options)) {
+          for (const property of options.properties) {
+            if (
+              ts.isPropertyAssignment(property) &&
+              isHeadlessPropertyName(property.name) &&
+              unwrapExpression(property.initializer).kind === ts.SyntaxKind.FalseKeyword
+            ) {
+              const { line } = sourceFile.getLineAndCharacterOfPosition(property.getStart(sourceFile));
+              violations.push(`${fileName}:${line + 1}`);
+            }
           }
         }
       }
@@ -112,10 +167,47 @@ describe('Playwright spec browser-mode policy', () => {
   });
 
   it('recognizes the shared test API from nested specs and direct Playwright imports', () => {
-    for (const moduleName of ['../fixtures/extended-test', '@playwright/test']) {
+    for (const moduleName of ['../fixtures/extended-test', '../fixtures/extended-test.js', '@playwright/test']) {
       const source = [`import { test } from '${moduleName}';`, 'test.use({ headless: false });'].join('\n');
       expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual(['nested/sample.spec.ts:2']);
     }
+  });
+
+  it('recognizes default, named-default, and namespace imports of the test API', () => {
+    const cases = [
+      ["import fixtureTest from '../fixtures/extended-test';", 'fixtureTest.use({ headless: false });'],
+      [
+        "import { default as fixtureTest } from '../fixtures/extended-test.js';",
+        'fixtureTest.use({ headless: false });',
+      ],
+      ["import playwrightTest from '@playwright/test';", 'playwrightTest.use({ headless: false });'],
+      ["import { default as playwrightTest } from '@playwright/test';", 'playwrightTest.use({ headless: false });'],
+      ["import * as fixture from '../fixtures/extended-test';", 'fixture.default.use({ headless: false });'],
+      ["import * as playwright from '@playwright/test';", 'playwright.test.use({ headless: false });'],
+      ["import * as playwright from '@playwright/test';", "playwright['test']['use']({ headless: false });"],
+    ];
+
+    for (const [importStatement, useStatement] of cases) {
+      const source = [importStatement, useStatement].join('\n');
+      expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual(['nested/sample.spec.ts:2']);
+    }
+  });
+
+  it('recognizes bracket access and transparent wrappers around literal options', () => {
+    const source = [
+      "import { test } from '../fixtures/extended-test';",
+      "test['use'](({ ['headless']: (false as boolean) } as const));",
+    ].join('\n');
+
+    expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual(['nested/sample.spec.ts:2']);
+  });
+
+  it('does not treat type-only imports as runtime test APIs', () => {
+    const source = ["import type { test } from '../fixtures/extended-test';", 'test.use({ headless: false });'].join(
+      '\n'
+    );
+
+    expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual([]);
   });
 
   it('derives all Playwright specs and rejects per-spec headed overrides', () => {

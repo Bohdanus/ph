@@ -326,15 +326,26 @@ describe('readOperations reads what git actually writes', () => {
     expect(readOperations(resolveGitDir(repo))).toEqual([]);
   });
 
-  it('reports AUTO_MERGE as an unnamed in-progress operation when no primary marker exists', () => {
+  it('reports AUTO_MERGE as an unpaired marker with no identified operation', () => {
     // The interrupted-merge shape: `AUTO_MERGE` and `MERGE_MSG` present with no
     // `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, or any rebase/bisect marker.
     // A hand-written fixture is legitimate here because the claim is "this file,
     // when present alone, is reported" — not "git creates this file", which the
     // real-merge cases above prove for the primary markers.
     expect(readOperations(makeGitDirWith({ AUTO_MERGE: 'resolve in f.txt\n', MERGE_MSG: 'Merge branch x\n' }))).toEqual(
-      [{ operation: 'in-progress', marker: 'AUTO_MERGE', value: null }]
+      [{ operation: null, marker: 'AUTO_MERGE', value: null }]
     );
+  });
+
+  it('prefers a primary operation marker and does not add the AUTO_MERGE fallback', () => {
+    expect(
+      readOperations(
+        makeGitDirWith({
+          AUTO_MERGE: 'resolved tree\n',
+          MERGE_HEAD: 'deadbeef\n',
+        })
+      )
+    ).toEqual([{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbeef' }]);
   });
 
   it('reports nothing for a directory that is not a git directory', () => {
@@ -428,12 +439,12 @@ describe('abortCommand names a command that exists', () => {
     ]);
   });
 
-  it('returns null for the unnamed in-progress operation, because no command can name an unknown', () => {
-    // AUTO_MERGE is written by merge, cherry-pick AND revert. The fallback in
-    // readOperations reports the operation as `in-progress` without claiming which.
-    // `abortCommand` must not guess — `git in-progress --abort` is not a command, and
-    // handing it to the operator is the same defect as a report that calls the state clean.
-    expect(abortCommand({ operation: 'in-progress', marker: 'AUTO_MERGE' })).toBeNull();
+  it('returns null for an unpaired marker with no identified operation', () => {
+    // AUTO_MERGE has no primary marker to establish which operation it came from.
+    // `abortCommand` must not guess at a destructive recovery command.
+    expect(abortCommand({ operation: null, marker: 'AUTO_MERGE' })).toBeNull();
+    expect(abortCommand({ operation: null })).toBeNull();
+    expect(abortCommand()).toBeNull();
   });
 });
 
@@ -618,21 +629,21 @@ describe('findings separates the two shapes that need opposite remedies', () => 
     expect(findings([mergeInProgress])[0]).toMatchObject({ destructive: true });
   });
 
-  it('does not call an unnamed AUTO_MERGE-destructive, because there is no command to name', () => {
+  it('does not call an unpaired AUTO_MERGE marker destructive, because no operation is identified', () => {
     // The interrupted-merge shape: AUTO_MERGE present without a primary marker.
     // `findings` must still include the worktree (it has unmerged paths), but it
     // must not print a `CAREFUL: … DISCARDS` block, because `abortCommand` returns
-    // null for the unnamed operation and no specific discard command exists.
-    const inProgress = {
+    // null for the marker-only finding and no specific discard command exists.
+    const markerOnly = {
       name: 'w',
       path: '/w',
       branch: null,
       present: true,
-      operations: [{ operation: 'in-progress', marker: 'AUTO_MERGE', value: null }],
+      operations: [{ operation: null, marker: 'AUTO_MERGE', value: null }],
       unmerged: ['f.txt'],
       readError: null,
     };
-    const f = findings([inProgress])[0];
+    const f = findings([markerOnly])[0];
     expect(f).toMatchObject({ destructive: false });
     expect(f.operations).toHaveLength(1);
     expect(f.operations[0].marker).toBe('AUTO_MERGE');
@@ -727,7 +738,7 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.err).not.toContain('orphan');
     expect(r.err).not.toContain('mid-operation');
     expect(r.err).toContain('f.txt');
-    // No abort command is named for the unnamed operation, so no destructive
+    // No abort command is named for a marker without an identified operation, so no destructive
     // warning fires — the operator is told to decide by hand.
     expect(r.err).not.toContain('CAREFUL');
     expect(r.err).not.toContain('DISCARDS resolution state');
@@ -781,6 +792,29 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.code).toBe(1);
     expect(r.err).toContain('AUTO_MERGE');
     expect(r.err).not.toContain('repo:state:recover-auto-merge');
+  });
+
+  it('serializes AUTO_MERGE-only findings without claiming an operation is in progress', () => {
+    const repo = makeRepo();
+    const path = addWorktree(repo, 'linked');
+    const tree = git(path, 'rev-parse', 'HEAD^{tree}');
+    writeFileSync(join(resolveGitDir(path), 'AUTO_MERGE'), `${tree}\n`);
+
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, '../repo-state-gate.mjs'), '--json'], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: GIT_ENV,
+    });
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      scanned: 2,
+      ok: true,
+      findings: [
+        {
+          operations: [{ operation: null, marker: 'AUTO_MERGE', value: null }],
+        },
+      ],
+    });
   });
 
   it('keeps unrelated worktree operations visible without blocking a pinned landing scope', () => {
@@ -861,7 +895,7 @@ describe('the report says which remedy applies, and warns about the destructive 
         branch: 'main',
         present: true,
         gitDir: '/preserved-main/.git',
-        operations: [{ operation: 'in-progress', marker: 'AUTO_MERGE', value: null }],
+        operations: [{ operation: null, marker: 'AUTO_MERGE', value: null }],
         unmerged: [],
       },
     ];
@@ -1023,6 +1057,47 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(recovery.code).toBe(0);
     expect(recovery.out).toContain('designated-main orphan AUTO_MERGE');
     expect(existsSync(marker)).toBe(true);
+  });
+
+  it('keeps an unrelated marker-only AUTO_MERGE visible without blocking a pinned landing scope', () => {
+    const repo = makeRepo();
+    addWorktree(repo, 'candidate');
+    const unrelated = addWorktree(repo, 'unrelated');
+    const tree = git(unrelated, 'rev-parse', 'HEAD^{tree}');
+    writeFileSync(join(resolveGitDir(unrelated), 'AUTO_MERGE'), `${tree}\n`);
+
+    const r = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('landing scope clear for wt/candidate');
+    expect(r.err).toContain('AUTO_MERGE marker has no primary operation marker');
+    expect(r.err).toContain('LANDING SCOPE: unrelated worktree; preserved and non-blocking');
+  });
+
+  it('blocks a selected candidate whose only operation marker is AUTO_MERGE', () => {
+    const repo = makeRepo();
+    const candidate = addWorktree(repo, 'candidate');
+    const tree = git(candidate, 'rev-parse', 'HEAD^{tree}');
+    writeFileSync(join(resolveGitDir(candidate), 'AUTO_MERGE'), `${tree}\n`);
+
+    const r = report(repo, {
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: realpathSync(repo),
+        mainGitDir: resolveGitDir(repo),
+      },
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('landing scope BLOCKED for wt/candidate');
+    expect(r.err).toContain('AUTO_MERGE marker has no primary operation marker');
+    expect(r.err).toContain('BLOCKS selected landing');
   });
 
   it('emits findings as JSON with no prose mixed in', () => {

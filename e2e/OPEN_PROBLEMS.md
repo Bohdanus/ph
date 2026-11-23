@@ -43,12 +43,20 @@ breakage or unmaintainable. **P3** = cosmetic / robustness.
 
 ## Observed failures
 
-The latest full headless run (2026-11-18) reported 695 passed and 9 failed. The
+The latest local full headless run (2026-11-18) reported 695 passed and 9 failed. The
 text-overlay geometry assertion has since been corrected and its focused E2E passes;
 the seven export-baseline mismatches and the Windows cleanup failure remain
 unresolved. This is one machine's observation, not a baseline; run
 `npm run test:e2e` for the current result. The open findings below describe
 independent weaknesses in the suite and remain work even when a full run passes.
+
+The latest mirror CI run, [45028865898](https://github.com/Bohdanus/ph/actions/runs/45028865898),
+tested `5c970cdf0bf4f6c9de4a800ef688868821bf8a57` and failed the HiDPI Draw preview comparison
+and PNG save/re-import pixel comparison on all three operating systems, the Move replay raster
+signature check on all three, crop-history frame parity on macOS, and all seven export visual
+cases on Windows. The attempt reports show all three retries failed for each reported test.
+These are observations from that mirror run, not a current baseline or a root-cause diagnosis;
+the source-side CI workflow was unavailable for this run.
 
 ### Windows-only — `test:e2e:clean` uses a POSIX command
 
@@ -57,6 +65,70 @@ the default Windows command shell. The Windows validation run failed at this cle
 step before it could clean the test output. This platform-specific issue is left
 unfixed per the current task's scope; use a Windows-compatible cleanup command or a
 cross-platform Node script when addressing it.
+
+### Cross-platform — HiDPI Draw preview and commit pixels differ
+
+Mirror run [45028865898](https://github.com/Bohdanus/ph/actions/runs/45028865898)
+on `5c970cdf0bf4f6c9de4a800ef688868821bf8a57` failed
+`check-dpr.spec.ts`'s `committing a Draw stroke preserves the live HiDPI preview pixels`
+on Linux, macOS, and Windows. All three retries failed on each platform; the comparison
+reported committed pixels differing from the live preview, with `presentation source: legacy`.
+The mismatch counts varied between attempts. The run establishes a repeated cross-platform
+failure, not whether the cause is rendering, capture timing, or the comparison oracle. Inspect
+attempt-level traces, reproduce the focused headless test, and trace the mismatch before changing
+the exact-pixel assertion. A local headless run on 2026-11-22
+(`2026-11-22T16-03-06-599Z-65306`) reproduced the mismatch: 1,068 pixels differed with maximum
+channel delta 1 inside bounds `(289, 350)`–`(1210, 765)`; the other two tests in the spec passed.
+The failing assertion completed in under one second after the browser loaded, so these observations
+do not show that its 90-second test budget is insufficient. The focused reproduction command is
+`npm run test:e2e -- e2e/check-dpr.spec.ts`.
+
+### macOS-only — crop-history retained-affine parity fails for the blank source
+
+Focused mirror run [45024770598](https://github.com/Bohdanus/ph/actions/runs/45024770598)
+on candidate `8de043d527360399460da2fece066e15b6d53fb6` failed the
+`multi-step frame transitions retain byte parity across text, vector, blank, and paint sources`
+case on macOS. All three attempts failed for layer `blank-affine` at the
+`integer frame fixture retained affine` stage, with 88 differing frame bytes and the same sampled
+pixels. A baseline run
+[45026204451](https://github.com/Bohdanus/ph/actions/runs/45026204451) on
+`1a1486cba8c931cc1c250a9e6d55c07e93b77196` reproduced the same bytes and samples. That
+diagnostic commit is based on local `main` and changes only unrelated unit-test fixtures and
+classifications; the crop-history spec and renderer source are unchanged, so the repaint candidate
+did not introduce this failure. The candidate passed this focused spec on Linux
+([45023851588](https://github.com/Bohdanus/ph/actions/runs/45023851588)) and Windows
+([45024289894](https://github.com/Bohdanus/ph/actions/runs/45024289894)).
+
+The cause is unknown. This assertion compares the retained-affine diagnostic renderer with the
+legacy renderer; the current product still keeps legacy presentation authoritative while retained
+operation admission is closed, so these runs do not establish a user-visible output regression.
+Mirror run [45028865898](https://github.com/Bohdanus/ph/actions/runs/45028865898) reproduced the
+same test failure on macOS shard one, with all three retries failing at the blank-affine retained
+affine stage. Keep the exact-zero assertion and investigate the blank-layer materialization
+difference before claiming this parity cell passes across supported platforms.
+
+### Cross-platform — PNG save and re-import do not preserve every document pixel
+
+Mirror run [45028865898](https://github.com/Bohdanus/ph/actions/runs/45028865898) failed
+`file-roundtrip.spec.ts`'s `a PNG this app saves re-imports to the same pixels` test on Linux,
+macOS, and Windows, with all three retries failing on each platform. The first reported mismatch
+was at document pixel `(147, 145)`, green channel; the expected value varied between platform
+artifacts. The run proves the exact-pixel round trip check fails cross-platform, but does not
+identify whether the discrepancy comes from canvas capture, PNG export, import, or test timing.
+Reproduce the focused headless test and trace the pixel through save and re-import before changing
+the exact comparison or classifying the failure as a rendering or codec defect. The focused
+reproduction command is `npm run test:e2e -- e2e/file-roundtrip.spec.ts`.
+
+### Cross-platform — Move redo does not match the pre-move raster signature
+
+Mirror run [45028865898](https://github.com/Bohdanus/ph/actions/runs/45028865898) failed
+`zoom-coordinate-tools.spec.ts`'s `Move translates the selected layer by document pixels under
+zoom and rotation and replays exactly` test on Linux, macOS, and Windows, with all three retries
+failing at the redo raster-signature assertion. The expected and received hashes differ. The
+assertion uses a 5-second polling timeout; the report does not show a Playwright timeout or prove a
+synchronous hang. Reproduce the focused headless test and compare the before-move, undo, and redo
+rasters before changing its polling budget or expected signature. The focused reproduction command
+is `npm run test:e2e -- e2e/zoom-coordinate-tools.spec.ts`.
 
 ### Invariant — headless is the default, and the refusal is structural
 
@@ -306,8 +378,10 @@ and `156.0.8078.48` on Windows and macOS. The Linux images in
 `155.0.8059.39` run exceeded the strict 100-pixel budget on six formats. This records
 provenance, not a pin: CI installs each OS's current stable Chrome, which can drift.
 The 2026-11-18 validation run resolved Chrome `158.0.8127.36` and exceeded the strict
-budget on all seven export formats. Choosing a per-platform version policy remains
-open; do not widen the pixel budget or re-record baselines merely to mask drift.
+budget on all seven export formats. Mirror run [45028865898](https://github.com/Bohdanus/ph/actions/runs/45028865898)
+resolved Chrome `158.0.8127.37` and also failed all seven formats on Windows shard one. Choosing
+a per-platform version policy remains open; do not widen the pixel budget or re-record baselines
+merely to mask drift.
 
 ## P3 — no dedicated mobile/HiDPI project; touch coverage and the full 2x suite remain partial
 

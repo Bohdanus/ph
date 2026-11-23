@@ -6,6 +6,7 @@ import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
 
 const storeState = vi.hoisted(() => ({
   canvasRef: { current: null as HTMLCanvasElement | null },
+  containerRef: { current: null as HTMLDivElement | null },
   currentArgs: { current: { toolName: 'draw' } as ToolArgs },
   // A REF, like `currentArgs`, because `UnsavedChangesProvider` reads
   // `previewLayers.current` for an in-flight tool transaction. Without it the provider

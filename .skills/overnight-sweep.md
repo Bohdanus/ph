@@ -332,9 +332,9 @@ second checkout of the `main` ref.
   unexpectedly; the next scheduled tick resumes when the session is available. Missed ticks are
   not replayed. Re-read the plan and findings and rederive repository state from the task worktree
   before resuming. See `docs/ORCHESTRATION.md` § "Unexpected agent recovery".
-- **Subagent produced unusable output**: empty, wrong, or irrelevant results are a quality failure,
-  not a transient error. Re-launch with the same brief to a different free model; if the retry
-  also fails, escalate to Handoff with the evidence of both attempts. Do not fabricate a source.
+- **Subagent result is missing or unusable**: follow the shared
+  [Subagent result handling](../docs/ORCHESTRATION.md#subagent-result-handling) procedure.
+  Record the status and evidence actually returned; do not assume an unchanged retry will recover it.
 - **Main drift during a fix**: between Solve and Land, `main` may advance. Sync current `main`
   into the candidate branch in its own worktree, resolve there, and rerun gates/review. Final
   landing still happens only in the designated main worktree; never create a second checkout of

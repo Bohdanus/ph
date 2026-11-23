@@ -1823,19 +1823,27 @@ export class Board {
         : new Set(this.liveLocks(at).map((lock) => `${lock.path}\0${lock.agent_id}`));
     const freed = [];
     const preserved = [];
+    const preserveLivePairing = ({ path, agent_id }) => {
+      if (!liveLocks?.has(`${path}\0${agent_id}`)) return false;
+      preserved.push({ path, agent_id });
+      return true;
+    };
     for (const pairing of pairings) {
       if (
         liveLocks &&
         (preserveForeignTo === null || pairing.agent_id !== preserveForeignTo) &&
         liveLocks.has(`${pairing.path}\0${pairing.agent_id}`)
       ) {
-        preserved.push({ path: pairing.path, agent_id: pairing.agent_id });
+        preserveLivePairing(pairing);
         continue;
       }
       const expected = expectedLocks?.find((lock) => lock.path === pairing.path && lock.agent_id === pairing.agent_id);
       // A pairing or lock created/renewed since the sweep began is active state.
       // Keep its attribution as well as the lock itself.
-      if (expectedLocks && !expected) continue;
+      if (expectedLocks && !expected) {
+        preserveLivePairing(pairing);
+        continue;
+      }
       if (expected) {
         const lock = this.db
           .prepare('SELECT * FROM file_locks WHERE path = ? AND agent_id = ? AND released_at IS NULL')
@@ -1845,11 +1853,15 @@ export class Board {
           continue;
         }
         if (!sameLeaseGeneration(lock, expected, ['path', 'agent_id', 'worktree', 'acquired_at', 'expires_at'])) {
+          preserveLivePairing(pairing);
           continue;
         }
         const expired = !isLiveDeadline(lock.expires_at, at);
         const gone = lock.worktree ? !existsDir(lock.worktree) : false;
-        if (!expired && !gone) continue;
+        if (!expired && !gone) {
+          preserveLivePairing(pairing);
+          continue;
+        }
       }
       this.db.prepare('DELETE FROM issue_locks WHERE issue_id = ? AND path = ?').run(issueId, pairing.path);
       const stillInUse = this.db

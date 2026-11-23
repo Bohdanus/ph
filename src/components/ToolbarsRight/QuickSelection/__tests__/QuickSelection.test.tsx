@@ -379,12 +379,18 @@ describe('QuickSelection toolbar', () => {
       ).toBeInTheDocument();
     });
 
-    it('names supported mode modifiers without promising brush-tip gestures', () => {
+    it('describes current mode modifiers without promising brush-tip gestures', () => {
       render(<QuickSelection />);
 
       const hint = screen.getByText(/^Drag over/);
-      expect(hint.textContent).toContain('Hold Alt/Option to subtract.');
-      expect(hint.textContent).not.toMatch(/resize|hardness|circular/i);
+      expect(hint).toHaveTextContent(/Hold Alt\/Option to subtract/);
+      expect(hint).not.toHaveTextContent(/Hold Shift to add/);
+      expect(hint).not.toHaveTextContent(/resize|hardness|circular|brush tip|constrain.*circle/i);
+
+      fireEvent.change(getMode(), { target: { value: 'subtract' } });
+
+      expect(hint).toHaveTextContent(/Hold Shift to add; release it to return to this mode/);
+      expect(hint).not.toHaveTextContent(/Hold Alt\/Option to subtract/);
     });
   });
 

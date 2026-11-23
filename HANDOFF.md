@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 124-138, 140-142, 144-145, 147-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 219-220, 222, 224-227, 229-232 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 124-138, 140-142, 144-145, 147-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 219-220, 222, 224-227, 230-232 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1282,26 +1282,23 @@ the commit until the user chooses, which is worse and is not recommended.
 
 ---
 
-## 152. Canvas input lacks a stylus and gesture policy
+## 152. Canvas input lacks a stylus policy
 
-**Problem.** Canvas tools do not distinguish pen from touch, consume stylus pressure, or support
-pinch-zoom and two-finger pan. These gaps affect tablet input and remain separate from the layer
-list's implemented pointer-based touch reorder path.
+**Problem.** Tablet canvas input has no tool policy for distinguishing pen from touch or consuming
+stylus pressure. Palm rejection and pressure behavior remain undefined across canvas tools.
 
-**Evidence.** `LayersTab.tsx` uses `pointerType` for touch reordering, and `usePointerPosition` now
-stores and returns `pointerTypeRef`, but no canvas tool consumes it for filtering. No tool processor
-consumes pointer pressure. `docs/FEATURES.md` records pinch-zoom and two-finger pan as absent.
-The slider hit-target gap has a separate shared `TouchSlider` implementation and the
-`e2e/touch-slider-target.spec.ts` contract; it is no longer part of this open item. Touch E2E
-coverage is not zero (`layers.spec.ts`, `text-edit.spec.ts`, `canvas-growth.spec.ts` opt in per
-test), but the suite has no dedicated touch project.
+**Evidence.** `useCanvasTouchNavigation.ts` handles two-finger canvas navigation while leaving a
+single touch with the active tool. `usePointerPosition` stores and returns `pointerTypeRef`, but no
+canvas tool consumes it to filter input. No tool processor consumes pointer pressure. Touch E2E
+coverage exists (`layers.spec.ts`, `text-edit.spec.ts`, `canvas-growth.spec.ts` opt in per test), but
+the suite has no dedicated touch project. The slider hit-target contract is covered separately by
+`TouchSlider` and `e2e/touch-slider-target.spec.ts`.
 
-**Next work.** Decide how canvas tools should handle pen, touch, and pressure before adding palm
-rejection; add touch gestures for canvas zoom and pan. Keep this work within the desktop and
-tablet/touch product boundary.
+**Next work.** Define pen, touch, pressure and palm-rejection behavior for canvas tools. Keep this
+work within the desktop and tablet/touch product boundary.
 
-**Files.** `src/hooks/usePointerPosition.ts`, canvas tool input handlers and processors, canvas
-zoom/pan handling, and their touch E2E coverage.
+**Files.** `src/hooks/usePointerPosition.ts`, canvas tool input handlers and processors, and their
+pen/pressure coverage.
 
 ---
 
@@ -2096,3 +2093,20 @@ the eventual ruling differs from this app, add a shape-specific decision to `doc
 OVR-2 is about the Draw tool, not shapes. Preserve the `!!args.backgroundColor` half of the fill
 gate either way; it prevents a filled figure without a colour from painting with whatever
 `fillStyle` the shared overlay last carried.
+
+## 233. Fixed-size marquee's ordinary-click anchor lacks Photoshop evidence
+
+**Problem.** `useRect.adjustFreshPoint()` centers the configured fixed-size rectangle on the press
+point, and the current `e2e/selection-tools.spec.ts` fixed-size test pins that behavior. The
+unlanded `salvage/systemic-marquee-20261117` change clarifies that later drag movement does not
+change those dimensions. Adobe's current [Marquee tools guide](https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/make-selections-with-marquee-tools.html)
+defines Fixed Size as exact pixel dimensions and describes center-origin drawing for Alt/Option-drag,
+but does not establish the anchor for an ordinary click in Fixed Size style. Treat center-on-press as
+the app's current behavior, not verified Photoshop parity; do not expand the test's compatibility
+claim until a current Photoshop observation or authoritative source settles the anchor.
+
+**Affected.** `src/hooks/useRect.ts` — `adjustFreshPoint()`; `src/components/Main/RectangularSelectionToolArea.tsx`;
+`e2e/selection-tools.spec.ts` — the fixed-size rectangular marquee test.
+
+**Blocker.** The fixed-size click anchor needs a version-specific Photoshop observation or an
+authoritative source before this behavior can be accepted as a compatibility contract.

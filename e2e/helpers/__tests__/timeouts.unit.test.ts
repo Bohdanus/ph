@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { DEFAULT_TEST_TIMEOUT_MS, PAINT_TOOLS_TEST_TIMEOUT_MS, SEARCH_TEST_TIMEOUT_MS } from '../timeouts';
+import {
+  DEFAULT_TEST_TIMEOUT_MS,
+  HIDPI_PIXEL_COMPARISON_TEST_TIMEOUT_MS,
+  PAINT_TOOLS_TEST_TIMEOUT_MS,
+  SEARCH_TEST_TIMEOUT_MS,
+} from '../timeouts';
 
 const E2E_DIR = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -98,7 +103,7 @@ const navigatesFromABeforeHook = (source: string): boolean =>
  *   than fixed because another agent owns that file, so the guard has to agree with the tree
  *   as it stands today. The fix belongs there, not here.
  * - `flyout-longpress-race.spec.ts` is recorded by `TEST-FLAKES.md`'s own file index
- *   (line 879) as a CPU-contention flake, which is a different mechanism from this one and
+ *   as a CPU-contention flake, which is a different mechanism from this one and
  *   is called out so the next reader does not read its entry here as the same finding. The
  *   index attributes it to §8, and §8's own title is "A third, NAMED observation — the
  *   paint-bucket contiguous test"; the attribution is the index's, and it disagrees with the
@@ -106,7 +111,7 @@ const navigatesFromABeforeHook = (source: string): boolean =>
  *   it is a change to a document this file does not own.
  *
  * The nine others carry the same one-line reason: no recorded instance, so no named budget
- * yet. Adding a tenth reason without evidence would be inventing one.
+ * yet.
  */
 const UNBUDGETED_NAVIGATORS: readonly string[] = [
   'adjustments.spec.ts',
@@ -149,11 +154,12 @@ describe('per-test timeouts are named, not inlined', () => {
 
   it('still exports the budgets the specs import', () => {
     // The scan above passes trivially on an empty suite, and a renamed constant would
-    // break the specs at compile time rather than here — so this asserts the two
-    // most-used names resolve to the values the suite was passing inline before.
+    // break the specs at compile time rather than here — so this asserts the named
+    // budgets resolve to the values the suite was using before extraction.
     expect(DEFAULT_TEST_TIMEOUT_MS).toBe(60_000);
     expect(PAINT_TOOLS_TEST_TIMEOUT_MS).toBe(120_000);
     expect(SEARCH_TEST_TIMEOUT_MS).toBe(180_000);
+    expect(HIDPI_PIXEL_COMPARISON_TEST_TIMEOUT_MS).toBe(90_000);
   });
 });
 

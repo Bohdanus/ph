@@ -131,13 +131,25 @@ describe('toolDescriptions', () => {
       ])
     );
     expect(polygonRows).not.toEqual(expect.arrayContaining([expect.stringMatching(/Alt.*double-click/i)]));
-    expect(polygon.summary).toMatch(/double-click.*right-click.*Enter/i);
-    expect(polygon.summary).not.toMatch(/Ctrl\/Command|starting point/i);
-    expect(polygon.summary).not.toMatch(/Return/i);
+    expect(polygon.summary).toMatch(/close by clicking the start, double-clicking, or Ctrl\/Command-clicking/i);
+    expect(polygon.summary).toMatch(/This app lacks Ctrl\/Command-click closure/i);
+    expect(polygon.summary).not.toMatch(/right-click|Enter|Return/i);
     expect(polygon.purpose).toMatch(/Ctrl-clicking on Windows \/ Command-clicking on macOS/i);
     expect(polygon.purpose).not.toMatch(/Enter|Return/i);
+    expect(polygon.purpose).not.toMatch(/right-click/i);
+    expect(polygonRows).not.toEqual(expect.arrayContaining([expect.stringMatching(/Ctrl\/Command:.*right-click/i)]));
     expect(polygon.shortcuts.map((shortcut) => shortcut.keys)).not.toContain('Return');
+    expect(polygon.appNotes).toMatch(/In this app,.*double-click, right-click, or Enter\/Return/i);
     expect(polygon.appNotes).toMatch(/modifier keys.*Ctrl\/Command-click closure.*absent/i);
+
+    const smudge = toolDescriptions.smudge;
+    expect(smudge.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
+      expect.arrayContaining([expect.stringMatching(/Alt:.*temporarily reverses the Finger Painting setting/i)])
+    );
+    expect(smudge.appNotes).toMatch(/This app does not bind Alt\/Option to Finger Painting/i);
+    expect(smudge.sources).toContain(
+      'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html'
+    );
 
     const magnetic = toolDescriptions['feather-magnetic-lasso'];
     expect(magnetic.modifiers.map((modifier) => `${modifier.keys}: ${modifier.action}`)).toEqual(
@@ -152,12 +164,18 @@ describe('toolDescriptions', () => {
         expect.stringMatching(/Alt:.*temporarily subtracts.*while brushing/i),
       ])
     );
-    expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option while brushing to subtract/i);
-    expect(quick.appNotes).toMatch(/Holding Shift temporarily adds, and holding Alt\/Option temporarily subtracts/i);
-    expect(quick.appNotes).toMatch(/Shift\+Alt intersection and bracket-key resizing are not implemented/i);
-    expect(quick.appNotes).toMatch(/bracket-key resizing are not implemented/i);
+    expect(quick.options.map((option) => option.detail).join(' ')).toMatch(
+      /temporary Shift-add and Alt\/Option-subtract while brushing.*app implements both gestures/i
+    );
+    expect(quick.appNotes).toMatch(/Holding Shift temporarily adds.*Holding Alt\/Option temporarily subtracts/i);
+    expect(quick.appNotes).toMatch(
+      /The app has no Intersect mode and does not implement bracket-key resizing or Shift\+Alt intersection/i
+    );
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
-      /whether its Options bar also offers Intersect is unresolved across Adobe sources/i
+      /current Quick Selection guide lists New, Add to and Subtract from.*general Intersect guide applies its instructions to.*any selection tool.*tutorial includes Quick Selection among tools with combination options.*general Intersect instructions without showing a Quick Selection-specific Intersect step.*exact current Options-bar mode list remains unclear.*2019 keyboard reference excludes Quick Selection from the Shift\+Alt\/Option intersect gesture.*app implements both gestures but has no Intersect mode/i
+    );
+    expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
+      /excludes Quick Selection from the Shift\+Alt\/Option intersect gesture/i
     );
     const quickShortcutKeys = quick.shortcuts.map((shortcut) => shortcut.keys);
     expect(quickShortcutKeys).toContain('[');
@@ -464,6 +482,16 @@ describe('toolDescriptions', () => {
         'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       ])
     );
+  });
+
+  it('qualifies the Sponge saturation behavior and documents its Grayscale contrast behavior', () => {
+    const sponge = toolDescriptions.sponge;
+
+    expect(sponge.summary).toMatch(/color images.*saturation/i);
+    expect(sponge.summary).toMatch(/Grayscale mode.*contrast.*middle gray/i);
+    expect(sponge.summary).not.toMatch(/lightness underneath is untouched/i);
+    expect(sponge.purpose).toMatch(/On color images.*changes saturation/i);
+    expect(sponge.purpose).toMatch(/In Grayscale mode.*changes contrast/i);
   });
 
   describe('modifiers and shortcuts consistency', () => {
