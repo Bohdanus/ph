@@ -708,7 +708,7 @@ test.describe('crop growth and negative document origin', () => {
       await dragInDocument(page, from, to, afterCrop);
       await expect(page.getByTestId('layer-row'), `post-crop commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
       if (i === 0) {
-        await expectDarkDocumentPixel(page, { x: from.x + 25, y: from.y }, afterCrop);
+        await expectDarkDocumentPixel(page, { x: from.x + 25, y: from.y + 1 }, afterCrop);
       }
       const size = await backingStore(page);
       expect(size, `backing store moved after post-crop commit ${i + 1}`).toEqual(afterCrop);
@@ -784,7 +784,7 @@ test.describe('crop growth and negative document origin', () => {
       await dragInDocument(page, from, to, afterCrop);
       await expect(page.getByTestId('layer-row'), `post-crop commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
       if (i === 0) {
-        await expectDarkDocumentPixel(page, { x: from.x + 25, y: from.y }, afterCrop);
+        await expectDarkDocumentPixel(page, { x: from.x + 25, y: from.y + 1 }, afterCrop);
       }
       const size = await backingStore(page);
       expect(size, `backing store moved after post-crop commit ${i + 1}`).toEqual(afterCrop);
