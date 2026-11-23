@@ -261,8 +261,8 @@ const findUnexpectedContourComponents = (
   const incompleteContours: Array<{ contour: DocumentRect; edges: string[] }> = [];
 
   const findIncompleteEdges = (contour: DocumentRect): string[] => {
-    // The brush loop has round outer corners. Its bbox carries the extrema, while the straight
-    // edge coverage check starts far enough inward to avoid treating those corner arcs as gaps.
+    // The brush loop has round outer corners. Its bbox carries the extrema, so check each
+    // straight edge and quarter-circle arc directly instead of using only sparse bbox probes.
     const cornerInset = Math.max(tolerance * 2, contour.cornerRadius ?? 0);
     const edgeLeft = Math.ceil(contour.left);
     const edgeRight = Math.floor(contour.right);
@@ -314,6 +314,61 @@ const findUnexpectedContourComponents = (
         }
       }
       if (!complete) incompleteEdges.push(edgeName);
+    }
+
+    const radius = Math.min(
+      contour.cornerRadius ?? 0,
+      (contour.right - contour.left) / 2,
+      (contour.bottom - contour.top) / 2
+    );
+    if (radius > 0) {
+      const maximumDistance = tolerance + 0.5;
+      const hasAntNearPoint = (pointX: number, pointY: number): boolean => {
+        const minX = Math.max(0, Math.ceil(pointX - maximumDistance - 0.5));
+        const maxX = Math.min(width - 1, Math.floor(pointX + maximumDistance - 0.5));
+        const minY = Math.max(0, Math.ceil(pointY - maximumDistance - 0.5));
+        const maxY = Math.min(runsByRow.length - 1, Math.floor(pointY + maximumDistance - 0.5));
+        for (let y = minY; y <= maxY; y += 1) {
+          for (const [left, right] of runsByRow[y] ?? []) {
+            for (let x = Math.max(left, minX); x <= Math.min(right, maxX); x += 1) {
+              if (Math.hypot(x + 0.5 - pointX, y + 0.5 - pointY) <= maximumDistance) return true;
+            }
+          }
+        }
+        return false;
+      };
+      const corners = [
+        {
+          name: 'top-left arc',
+          x: contour.left + radius,
+          y: contour.top + radius,
+          from: Math.PI,
+          to: (3 * Math.PI) / 2,
+        },
+        { name: 'top-right arc', x: contour.right - radius, y: contour.top + radius, from: -Math.PI / 2, to: 0 },
+        { name: 'bottom-right arc', x: contour.right - radius, y: contour.bottom - radius, from: 0, to: Math.PI / 2 },
+        {
+          name: 'bottom-left arc',
+          x: contour.left + radius,
+          y: contour.bottom - radius,
+          from: Math.PI / 2,
+          to: Math.PI,
+        },
+      ];
+      const samplesPerArc = Math.max(1, Math.ceil((Math.PI * radius) / 2 / 0.5));
+      for (const corner of corners) {
+        let complete = true;
+        for (let sample = 0; sample <= samplesPerArc; sample += 1) {
+          const angle = corner.from + ((corner.to - corner.from) * sample) / samplesPerArc;
+          const pointX = corner.x + Math.cos(angle) * radius;
+          const pointY = corner.y + Math.sin(angle) * radius;
+          if (!hasAntNearPoint(pointX, pointY)) {
+            complete = false;
+            break;
+          }
+        }
+        if (!complete) incompleteEdges.push(corner.name);
+      }
     }
 
     return incompleteEdges;
@@ -377,6 +432,28 @@ const expectOnlyExpectedContours = async (
   ).toEqual({ unexpectedComponents: [], missingContours: [], incompleteContours: [] });
 };
 
+const roundedContourAntRuns = (
+  width: number,
+  contour: DocumentRect,
+  omitPixel: (x: number, y: number) => boolean = () => false
+): AntRun[][] => {
+  const rows = Array.from({ length: width }, () => [] as AntRun[]);
+  for (let y = 0; y < width; y += 1) {
+    let runStart: number | null = null;
+    for (let x = 0; x < width; x += 1) {
+      const painted = !omitPixel(x, y) && runMatchesContour([x, x], y, contour, 0);
+      if (painted) {
+        if (runStart === null) runStart = x;
+      } else if (runStart !== null) {
+        rows[y]?.push([runStart, x - 1]);
+        runStart = null;
+      }
+    }
+    if (runStart !== null) rows[y]?.push([runStart, width - 1]);
+  }
+  return rows;
+};
+
 test('the contour component check rejects an extra loop inside the edge tolerance band', () => {
   const rounded = { left: 10, top: 10, right: 90, bottom: 90, cornerRadius: 20 };
   expect(runMatchesContour([15, 16], 15, rounded, 1)).toBe(true);
@@ -416,25 +493,87 @@ test('the contour component check rejects an extra loop inside the edge toleranc
 test('the contour component check samples fractional rounded edges on integer document pixels', () => {
   const width = 101;
   const contour = { left: 10.5, top: 10.5, right: 90.5, bottom: 90.5, cornerRadius: 20.5 };
+  const rows = roundedContourAntRuns(width, contour);
+
+  expect(findUnexpectedContourComponents(rows, width, [contour], 1)).toEqual({
+    unexpectedComponents: [],
+    missingContours: [],
+    incompleteContours: [],
+  });
+});
+
+test('the contour component check accepts a fully rounded contour with a clamped radius', () => {
+  const width = 101;
+  const contour = { left: 10, top: 10, right: 90, bottom: 90, cornerRadius: 40 };
   const rows = Array.from({ length: width }, () => [] as AntRun[]);
 
   for (let y = 0; y < rows.length; y += 1) {
-    let runStart: number | null = null;
     for (let x = 0; x < width; x += 1) {
-      if (runMatchesContour([x, x], y, contour, 0)) {
-        if (runStart === null) runStart = x;
-      } else if (runStart !== null) {
-        rows[y]?.push([runStart, x - 1]);
-        runStart = null;
-      }
+      if (runMatchesContour([x, x], y, contour, 0)) rows[y]?.push([x, x]);
     }
-    if (runStart !== null) rows[y]?.push([runStart, width - 1]);
   }
 
   expect(findUnexpectedContourComponents(rows, width, [contour], 1)).toEqual({
     unexpectedComponents: [],
     missingContours: [],
     incompleteContours: [],
+  });
+});
+
+test('the contour component check rejects a contiguous gap on a rounded corner arc', () => {
+  const width = 101;
+  const contour = { left: 10.5, top: 10.5, right: 90.5, bottom: 90.5, cornerRadius: 20.5 };
+  const radius = contour.cornerRadius;
+  const centerX = contour.left + radius;
+  const centerY = contour.top + radius;
+  const rows = roundedContourAntRuns(width, contour, (x, y) => {
+    const centerPixelX = x + 0.5;
+    const centerPixelY = y + 0.5;
+    const angle = Math.atan2(centerPixelY - centerY, centerPixelX - centerX);
+    return centerPixelX <= centerX && centerPixelY <= centerY && Math.abs(angle + (3 * Math.PI) / 4) <= 0.4;
+  });
+
+  expect(connectedAntBounds(rows, width)).toEqual([{ left: 10, top: 10, right: 90, bottom: 90 }]);
+  expect(findUnexpectedContourComponents(rows, width, [contour], 1)).toEqual({
+    unexpectedComponents: [],
+    missingContours: [],
+    incompleteContours: [{ contour, edges: ['top-left arc'] }],
+  });
+});
+
+test('the contour component check tolerates one missing rounded-edge pixel within outline tolerance', () => {
+  const width = 101;
+  const contour = { left: 10.5, top: 10.5, right: 90.5, bottom: 90.5, cornerRadius: 20.5 };
+  // The pixel center (16.5, 16.5) lies on the top-left arc's diagonal.
+  const rows = roundedContourAntRuns(width, contour, (x, y) => x === 16 && y === 16);
+
+  expect(rows[16]?.some(([left, right]) => left <= 16 && 16 <= right)).toBe(false);
+  expect(findUnexpectedContourComponents(rows, width, [contour], 1)).toEqual({
+    unexpectedComponents: [],
+    missingContours: [],
+    incompleteContours: [],
+  });
+});
+
+test('the contour component check detects a four-document-unit rounded-edge gap', () => {
+  const width = 101;
+  const contour = { left: 10.5, top: 10.5, right: 90.5, bottom: 90.5, cornerRadius: 20.5 };
+  const radius = contour.cornerRadius;
+  const centerX = contour.left + radius;
+  const centerY = contour.top + radius;
+  const halfGapAngle = 2 / radius;
+  // The omitted interval spans four units on the ideal circle: 2 * radius * halfGapAngle.
+  const rows = roundedContourAntRuns(width, contour, (x, y) => {
+    const centerPixelX = x + 0.5;
+    const centerPixelY = y + 0.5;
+    const angle = Math.atan2(centerPixelY - centerY, centerPixelX - centerX);
+    return centerPixelX <= centerX && centerPixelY <= centerY && Math.abs(angle + (3 * Math.PI) / 4) <= halfGapAngle;
+  });
+
+  expect(findUnexpectedContourComponents(rows, width, [contour], 1)).toEqual({
+    unexpectedComponents: [],
+    missingContours: [],
+    incompleteContours: [{ contour, edges: ['top-left arc'] }],
   });
 });
 

@@ -61,8 +61,8 @@ const REVIEWED = {
   },
   'free-model-kilo.test.mjs': {
     scope:
-      'Each fake Kilo CLI, auth-boundary, filtered Windows PATH, relative command, and symlinked XDG fixture uses a unique OS temp directory with finally cleanup; project-local auth sentinels remain untouched and child processes use test-owned paths.',
-    patterns: `filesystem-write:mkdir=11 filesystem-write:mkdtemp=26 filesystem-write:rm=26 filesystem-write:symlink=4 filesystem-write:writeFile=12 subprocess:spawnSync=1`,
+      'Each fake Kilo CLI, auth-boundary, filtered PATH, caller-worktree, hard-link, protected-bin symlink-chain, descendant-symlink escape, relative command, and symlinked XDG fixture uses a unique OS temp directory with finally cleanup; project-local auth sentinels remain untouched and child processes use test-owned paths.',
+    patterns: `filesystem-write:link=1 filesystem-write:mkdir=25 filesystem-write:mkdtemp=34 filesystem-write:rm=34 filesystem-write:symlink=11 filesystem-write:writeFile=12 subprocess:spawnSync=1`,
   },
   'kilo-project-boundary.test.mjs': {
     scope:
@@ -76,8 +76,8 @@ const REVIEWED = {
   },
   'free-model-pool.test.mjs': {
     scope:
-      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, its explicit incomplete-length fixture uses an isolated fake CLI, and timeout cleanup targets only fixture-owned process IDs.',
-    patterns: `filesystem-write:mkdtemp=42 filesystem-write:rm=42 filesystem-write:writeFile=19 filesystem-write:mkdir=13 filesystem-write:symlinkSync=10 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, its explicit incomplete-length fixture uses an isolated fake CLI, and the distinct caller/runner PATH, symlinked caller-root, and hard-link alias fixtures across node_modules/.bin and scripts remove their temporary directories in finally; timeout cleanup targets only fixture-owned process IDs.',
+    patterns: `filesystem-write:mkdtemp=45 filesystem-write:rm=45 filesystem-write:writeFile=19 filesystem-write:mkdir=18 filesystem-write:link=4 filesystem-write:symlinkSync=13 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -112,8 +112,8 @@ const REVIEWED = {
   },
   'main-landing-alert.test.mjs': {
     scope:
-      'Alert, owner identity, invalid/missing timestamp, duration, and bounded failure-log fixtures use unique temporary repositories/directories; Git setup and CLI children stay inside those fixtures, concurrent workers coordinate through temporary files, and symlink/hardlink targets remain inside each fixture.',
-    patterns: `subprocess:spawn=1 filesystem-write:rmSync=2 filesystem-write:mkdtempSync=25 subprocess:spawnSync=9 filesystem-write:mkdirSync=4 filesystem-write:writeFileSync=22 filesystem-write:renameSync=1 filesystem-write:symlinkSync=2 filesystem-write:linkSync=1`,
+      'Alert, owner identity, invalid/missing timestamp, duration, and bounded failure-log fixtures use unique temporary repositories/directories; registerMainWorktree creates realistic private identity markers, Git setup and CLI children stay inside fixtures, concurrent workers coordinate through temporary files, and symlink/hardlink targets remain inside each fixture.',
+    patterns: `subprocess:spawn=1 filesystem-write:rmSync=2 filesystem-write:mkdtempSync=27 subprocess:spawnSync=17 filesystem-write:mkdirSync=6 filesystem-write:writeFileSync=23 filesystem-write:renameSync=1 filesystem-write:symlinkSync=2 filesystem-write:linkSync=1`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
@@ -305,6 +305,20 @@ describe('script-test resource boundary audit', () => {
       delete process.env['REAL_GIT_PATH'];
       process.env[dynamicKey] = 'value';
       Object.assign(process.env, { CI: 'true' });
+      Object.defineProperty(process.env, 'OBJECT_PROPERTY', { value: 'fixture' });
+      Object.defineProperties(process.env, { OBJECT_PROPERTIES: { value: 'fixture' } });
+      Reflect.set(process.env, 'REFLECT_SET', 'fixture');
+      Reflect.deleteProperty(process['env'], 'REFLECT_DELETE');
+      Reflect.deleteProperty(process.env);
+      Reflect.defineProperty(process.env, 'REFLECT_DEFINE', { value: 'fixture' });
+      Reflect.setPrototypeOf(process.env, null);
+      Reflect.preventExtensions(process.env);
+      Object.setPrototypeOf(process.env, null);
+      Object.preventExtensions(process.env);
+      Object.seal(process.env);
+      Object.freeze(process.env);
+      Object['defineProperty'](process.env, 'BRACKET_METHOD', { value: 'fixture' });
+      Reflect['set'](process.env, dynamicKey, 'fixture');
       process.env.RETRY_COUNT++;
       --process.env.RETRY_COUNT;
       new DatabaseSync(':memory:');
@@ -327,6 +341,20 @@ describe('script-test resource boundary audit', () => {
       'process-env-write:delete:REAL_GIT_PATH',
       'process-env-write:assignment:<computed>',
       'process-env-write:Object.assign:<object>',
+      'process-env-write:Object.defineProperty:OBJECT_PROPERTY',
+      'process-env-write:Object.defineProperties:<object>',
+      'process-env-write:Reflect.set:REFLECT_SET',
+      'process-env-write:Reflect.deleteProperty:REFLECT_DELETE',
+      'process-env-write:Reflect.deleteProperty:<missing>',
+      'process-env-write:Reflect.defineProperty:REFLECT_DEFINE',
+      'process-env-write:Reflect.setPrototypeOf:<object>',
+      'process-env-write:Reflect.preventExtensions:<object>',
+      'process-env-write:Object.setPrototypeOf:<object>',
+      'process-env-write:Object.preventExtensions:<object>',
+      'process-env-write:Object.seal:<object>',
+      'process-env-write:Object.freeze:<object>',
+      'process-env-write:Object.defineProperty:BRACKET_METHOD',
+      'process-env-write:Reflect.set:<computed>',
       'process-env-write:update:RETRY_COUNT',
       'process-env-write:update:RETRY_COUNT',
       'database-open:DatabaseSync:write-capable',

@@ -71,12 +71,15 @@ then checks common VS Code, Cursor, and Windsurf extension folders. If discovery
 CLI, set `KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never
 read or print the Kilo auth database or JSON file.
 
-Automatic discovery resolves PATH and extension candidates to canonical paths, skips this checkout
-and ancestor `node_modules/.bin` directories, and rejects executable aliases whose target is inside
-the checkout or the `node_modules` tree containing an excluded ancestor bin. Trusted executable
-targets outside those trees remain eligible. Missing or inaccessible PATH entries are skipped; if
-an ancestor `.bin` cannot be inspected, automatic discovery fails closed. Windows path comparisons
-are case-insensitive. Relative `KILO_CLI` overrides resolve from the caller's working directory. On
+Automatic discovery resolves PATH directories and candidate parents, excludes both runner and caller
+roots and their ancestor `node_modules/.bin` directories, and rejects aliases that resolve into those
+protected paths. It also rejects multiply linked candidates and symlink chains that pass through a
+protected path even when the final target is outside. Direct external single-link executables remain
+eligible when their resolution chain stays outside protected paths. Missing or inaccessible PATH
+entries are skipped; if an ancestor `.bin` or candidate link cannot be inspected, automatic discovery
+fails closed. These checks do not pin the executable inode through spawn, so concurrent changes to
+writable host paths remain outside this guard. Windows path comparisons are case-insensitive.
+Relative `KILO_CLI` overrides resolve from the caller's working directory. On
 Windows, bare command overrides use the filtered runtime `PATH` and preserve the caller's order among
 supported `PATHEXT` suffixes; `PATHEXT` is used only for lookup and is not passed to the child. An
 explicit `KILO_CLI` path is an operator-trusted override.
@@ -170,12 +173,18 @@ configuration, not proof that credentials are absent. Do not inspect credential 
 database or auth file. See the [OpenCode CLI auth guide](https://opencode.ai/docs/cli/) and
 [storage guide](https://opencode.ai/docs/troubleshooting/).
 
-For a bare command such as `opencode`, the runner removes PATH entries inside this checkout and
+For a bare command such as `opencode`, the runner removes PATH entries inside either project root and
 ancestor `node_modules/.bin` directories added by npm. It resolves relative and symlinked entries
 before filtering, drops missing or inaccessible paths and canonical entries that contain the PATH
 delimiter, resolves the command to an absolute executable, and skips executable aliases into this
-checkout or an excluded ancestor bin, including npm bin symlinks to package files. If an ancestor
-bin cannot be inspected, PATH filtering and bare lookup fail closed. On Windows it reads `Path` and
+checkout by canonical path. It also rejects aliases to executables discovered in excluded ancestor
+bins by canonical path, including npm bin symlinks. Bare PATH candidates must be regular files with
+filesystem metadata proving exactly one hard link. This blocks static hard-link aliases while a link
+to the target remains in either protected project. The check does not inspect Linux mount namespaces,
+so bind-mounted project aliases are outside this guard. It does not pin the inode through process
+creation, so concurrent filesystem changes to a writable PATH directory remain outside this
+protection. It also rejects other multiply linked host executables. If an ancestor bin cannot be
+inspected, PATH filtering and bare lookup fail closed. On Windows it reads `Path` and
 `PATHEXT` without case sensitivity and honors the caller's order among supported executable
 extensions. A Windows PATH alias is accepted only when its canonical target has the selected
 executable extension, and the shim receives that canonical target to avoid a second alias lookup.

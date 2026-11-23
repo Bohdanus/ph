@@ -30,6 +30,19 @@ async function withStateFiles(callback) {
 }
 
 describe('free-model pool persistent state', () => {
+  it('rejects fractional and out-of-range time values before writing state', async () => {
+    await withStateFiles(async ({ quarantineFile, stateFile }) => {
+      const fractionalNow = Date.parse('2026-11-23T12:00:00.000Z') + 0.5;
+      await expect(markOpenRouterQuotaExhausted({ quarantineFile, stateFile, now: fractionalNow })).rejects.toThrow(
+        'supported non-negative integer epoch value'
+      );
+      await expect(markOpenRouterQuotaExhausted({ quarantineFile, stateFile, now: 253402300800000 })).rejects.toThrow(
+        'supported non-negative integer epoch value'
+      );
+      await expect(readFreeModelPoolState(stateFile)).resolves.toMatchObject({ openRouterExhaustedUtcDate: null });
+    });
+  });
+
   it('persists the Kilo one-hour cooldown and makes it inactive after expiry', async () => {
     await withStateFiles(async ({ quarantineFile, stateFile }) => {
       const now = Date.parse('2026-10-26T12:00:00.000Z');
@@ -55,6 +68,40 @@ describe('free-model pool persistent state', () => {
           stateFile,
           now: Date.parse('2026-10-27T00:00:00.000Z'),
         })
+      ).toBe(true);
+      expect((await readFreeModelPoolState(stateFile)).openRouterExhaustedUtcDate).toBeNull();
+    });
+  });
+
+  it('does not let a delayed prior-day quota result overwrite a newer exhausted date', async () => {
+    await withStateFiles(async ({ quarantineFile, stateFile }) => {
+      const previousDay = Date.parse('2026-11-23T23:59:00.000Z');
+      const currentDay = Date.parse('2026-11-24T00:01:00.000Z');
+
+      await markOpenRouterQuotaExhausted({ quarantineFile, stateFile, now: currentDay });
+      await markOpenRouterQuotaExhausted({ quarantineFile, stateFile, now: previousDay });
+
+      expect((await readFreeModelPoolState(stateFile)).openRouterExhaustedUtcDate).toBe('2026-11-24');
+      expect(await isOpenRouterQuotaExhaustedToday({ stateFile, now: currentDay })).toBe(true);
+      expect(await isOpenRouterQuotaExhaustedToday({ stateFile, now: Date.parse('2026-11-25T00:00:00.000Z') })).toBe(
+        false
+      );
+    });
+  });
+
+  it('does not clear a future quota exhaustion date before that UTC day', async () => {
+    await withStateFiles(async ({ quarantineFile, stateFile }) => {
+      const today = Date.parse('2026-11-23T12:00:00.000Z');
+      const exhaustedDay = Date.parse('2026-11-24T00:01:00.000Z');
+      await markOpenRouterQuotaExhausted({ quarantineFile, stateFile, now: exhaustedDay });
+
+      expect(await clearExpiredOpenRouterQuota({ quarantineFile, stateFile, now: today })).toBe(false);
+      expect((await readFreeModelPoolState(stateFile)).openRouterExhaustedUtcDate).toBe('2026-11-24');
+      expect(
+        await clearExpiredOpenRouterQuota({ quarantineFile, stateFile, now: Date.parse('2026-11-24T12:00:00.000Z') })
+      ).toBe(false);
+      expect(
+        await clearExpiredOpenRouterQuota({ quarantineFile, stateFile, now: Date.parse('2026-11-25T00:00:00.000Z') })
       ).toBe(true);
       expect((await readFreeModelPoolState(stateFile)).openRouterExhaustedUtcDate).toBeNull();
     });

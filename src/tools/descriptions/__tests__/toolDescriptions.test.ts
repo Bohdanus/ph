@@ -167,16 +167,12 @@ describe('toolDescriptions', () => {
     expect(quick.options.map((option) => option.detail).join(' ')).toMatch(
       /temporary Shift-add and Alt\/Option-subtract while brushing.*app implements both gestures/i
     );
-    expect(quick.options.map((option) => option.detail).join(' ')).toMatch(/Alt\/Option-subtract while brushing/i);
     expect(quick.appNotes).toMatch(/Holding Shift temporarily adds.*Holding Alt\/Option temporarily subtracts/i);
     expect(quick.appNotes).toMatch(
       /The app has no Intersect mode and does not implement bracket-key resizing or Shift\+Alt intersection/i
     );
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
       /current Quick Selection guide lists New, Add to and Subtract from.*general Intersect guide says.*any selection tool.*includes Quick Selection.*selection-combination tutorial explicitly includes Quick Selection.*exact current Options-bar mode list remains unclear.*2019 keyboard reference excludes Quick Selection from the Shift\+Alt\/Option intersect gesture.*app implements both gestures but has no Intersect mode/i
-    );
-    expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
-      /any selection tool can temporarily add with Shift or subtract with Alt\/Option while dragging; the app implements those temporary modifiers for Quick Selection strokes/i
     );
     expect(quick.options.find((option) => option.control === 'Selection mode')?.detail).toMatch(
       /excludes Quick Selection from the Shift\+Alt\/Option intersect gesture/i

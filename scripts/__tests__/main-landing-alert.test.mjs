@@ -12,6 +12,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
@@ -24,13 +25,16 @@ import {
   formatOperationSummary,
   isOrphanAutoMergeState,
   notifyIfDue,
+  readFailureLogLock,
   newOwner,
   observeOrphanAutoMerge,
   recordedPidStates,
   resetOrphanAutoMergeFailover,
   runMergeReleaseAfterLanding,
   startWatcher,
+  watch,
 } from '../main-landing.mjs';
+import { registerMainWorktree } from '../main-worktree-guard.mjs';
 import { processRuntimeScopeToken, processStartToken } from '../lib/process-identity.mjs';
 
 // Child-process landing fixtures exceed Vitest's default budget on loaded machines.
@@ -55,6 +59,33 @@ function runNodeChild(scriptPath, environment) {
       else reject(new Error('failure-log worker exited with ' + code + ' (' + signal + '): ' + stderr));
     });
   });
+}
+
+function alternatePathCase(path) {
+  const index = path.search(/[A-Za-z]/);
+  if (index < 0) return path;
+  const character = path[index];
+  const replacement = character === character.toLowerCase() ? character.toUpperCase() : character.toLowerCase();
+  return path.slice(0, index) + replacement + path.slice(index + 1);
+}
+
+function sameDirectoryIdentity(left, right) {
+  try {
+    const leftStats = statSync(left, { bigint: true });
+    const rightStats = statSync(right, { bigint: true });
+    return (
+      leftStats.isDirectory() &&
+      rightStats.isDirectory() &&
+      leftStats.dev !== 0n &&
+      rightStats.dev !== 0n &&
+      leftStats.ino !== 0n &&
+      rightStats.ino !== 0n &&
+      leftStats.dev === rightStats.dev &&
+      leftStats.ino === rightStats.ino
+    );
+  } catch {
+    return false;
+  }
 }
 
 afterEach(() => {
@@ -129,13 +160,7 @@ describe('main landing owner-control process identity', () => {
     const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
     expect(initialized.status).toBe(0);
 
-    for (const [key, value] of [
-      ['ph.mainWorktreeGitDir', join(repo, '.git')],
-      ['ph.mainWorktreePath', repo],
-    ]) {
-      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
-      expect(configured.status).toBe(0);
-    }
+    expect(registerMainWorktree(repo, { required: true })).toBe(true);
 
     const controlFile = join(repo, '.git', 'main-landing-occupancy', 'owner-control.lock');
     mkdirSync(join(repo, '.git', 'main-landing-occupancy'), { recursive: true });
@@ -170,19 +195,55 @@ describe('main landing owner-control process identity', () => {
 });
 
 describe('main landing invalid lease timestamps and bounded failure logging', () => {
+  it('classifies a replaced single-link lock inode as a retryable change', () => {
+    const closed = vi.fn();
+    const read = vi.fn();
+    const result = readFailureLogLock('fixture-lock', {
+      lstatImpl: () => ({ isFile: () => true, isSymbolicLink: () => false, nlink: 1, dev: 7, ino: 11 }),
+      openImpl: () => 23,
+      fstatImpl: () => ({ isFile: () => true, nlink: 1, dev: 7, ino: 12, size: 20 }),
+      readImpl: read,
+      closeImpl: closed,
+    });
+
+    expect(result).toEqual({ status: 'changing' });
+    expect(read).not.toHaveBeenCalled();
+    expect(closed).toHaveBeenCalledWith(23);
+  });
+
+  it('classifies an unlinked lock inode as a retryable change', () => {
+    const closed = vi.fn();
+    const result = readFailureLogLock('fixture-lock', {
+      lstatImpl: () => ({ isFile: () => true, isSymbolicLink: () => false, nlink: 1, dev: 7, ino: 11 }),
+      openImpl: () => 23,
+      fstatImpl: () => ({ isFile: () => true, nlink: 0, dev: 7, ino: 11, size: 20 }),
+      closeImpl: closed,
+    });
+
+    expect(result).toEqual({ status: 'changing' });
+    expect(closed).toHaveBeenCalledWith(23);
+  });
+
+  it('still refuses a descriptor that became hard-linked during inspection', () => {
+    const closed = vi.fn();
+    expect(() =>
+      readFailureLogLock('fixture-lock', {
+        lstatImpl: () => ({ isFile: () => true, isSymbolicLink: () => false, nlink: 1, dev: 7, ino: 11 }),
+        openImpl: () => 23,
+        fstatImpl: () => ({ isFile: () => true, nlink: 2, dev: 7, ino: 11, size: 20 }),
+        closeImpl: closed,
+      })
+    ).toThrow('main landing failure log lock is not a single-link regular file');
+    expect(closed).toHaveBeenCalledWith(23);
+  });
+
   it('shows a missing lease ID and invalid timestamp in status without creating an alert marker', () => {
     const repo = mkdtempSync(join(tmpdir(), 'main-landing-invalid-status-'));
     tempDirectories.push(repo);
     const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
     expect(initialized.status).toBe(0);
 
-    for (const [key, value] of [
-      ['ph.mainWorktreeGitDir', join(repo, '.git')],
-      ['ph.mainWorktreePath', repo],
-    ]) {
-      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
-      expect(configured.status).toBe(0);
-    }
+    expect(registerMainWorktree(repo, { required: true })).toBe(true);
 
     const lockDir = join(repo, '.git', 'main-landing-occupancy');
     mkdirSync(lockDir);
@@ -929,6 +990,22 @@ describe('persistent orphan AUTO_MERGE failover', () => {
     operations: [{ operation: null, marker: 'AUTO_MERGE', value: null }],
   };
 
+  it('completes owner-read retries when failure logging is unavailable', async () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'main-landing-watcher-log-failure-'));
+    tempDirectories.push(fixtureRoot);
+    const readOwnerImpl = vi.fn(() => {
+      throw new Error('owner record unavailable');
+    });
+    const sleep = vi.fn(async () => {});
+
+    await expect(
+      watch({ lockDir: join(fixtureRoot, 'missing', 'lock') }, 'watcher-lease', { sleep, readOwnerImpl })
+    ).resolves.toBe(1);
+
+    expect(readOwnerImpl).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(3);
+  }, 15_000);
+
   it('recognizes only a main checkout with an unpaired AUTO_MERGE marker', () => {
     expect(isOrphanAutoMergeState(orphan)).toBe(true);
     expect(isOrphanAutoMergeState({ branch: 'main', operations: [] })).toBe(false);
@@ -959,13 +1036,7 @@ describe('persistent orphan AUTO_MERGE failover', () => {
     const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
     expect(initialized.status).toBe(0);
 
-    for (const [key, value] of [
-      ['ph.mainWorktreeGitDir', join(repo, '.git')],
-      ['ph.mainWorktreePath', repo],
-    ]) {
-      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
-      expect(configured.status).toBe(0);
-    }
+    expect(registerMainWorktree(repo, { required: true })).toBe(true);
     writeFileSync(join(repo, '.git', 'AUTO_MERGE'), 'unpaired marker\n');
 
     const result = spawnSync(process.execPath, [join(import.meta.dirname, '../main-landing.mjs'), 'status', '--json'], {
@@ -979,6 +1050,87 @@ describe('persistent orphan AUTO_MERGE failover', () => {
       branch: 'main',
       operations: [{ operation: null, marker: 'AUTO_MERGE', value: null }],
     });
+  });
+
+  it('validates the registered main repository from a linked task worktree', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'main-landing-identity-'));
+    tempDirectories.push(fixtureRoot);
+    const repo = join(fixtureRoot, 'repo');
+    const foreignRepo = join(fixtureRoot, 'foreign-repo');
+    const taskWorktree = join(fixtureRoot, 'task-worktree');
+    mkdirSync(repo);
+    mkdirSync(foreignRepo);
+
+    const initialized = spawnSync('git', ['init', '-b', 'main', repo], { encoding: 'utf8' });
+    expect(initialized.status).toBe(0);
+    const foreignInitialized = spawnSync('git', ['init', '-b', 'main', foreignRepo], { encoding: 'utf8' });
+    expect(foreignInitialized.status).toBe(0);
+    writeFileSync(join(repo, 'fixture.txt'), 'tracked fixture\n');
+    const added = spawnSync('git', ['-C', repo, 'add', 'fixture.txt'], { encoding: 'utf8' });
+    expect(added.status).toBe(0);
+    const committed = spawnSync(
+      'git',
+      ['-C', repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'fixture'],
+      { encoding: 'utf8' }
+    );
+    expect(committed.status).toBe(0);
+    const linked = spawnSync('git', ['-C', repo, 'worktree', 'add', '-b', 'task/landing-identity', taskWorktree], {
+      encoding: 'utf8',
+    });
+    expect(linked.status).toBe(0);
+
+    expect(registerMainWorktree(repo, { required: true })).toBe(true);
+
+    const alternateRepoPath = alternatePathCase(repo);
+    const alternateGitDir = alternatePathCase(join(repo, '.git'));
+    const caseOnlyAliasWorks =
+      process.platform === 'darwin' &&
+      sameDirectoryIdentity(repo, alternateRepoPath) &&
+      sameDirectoryIdentity(join(repo, '.git'), alternateGitDir);
+    if (caseOnlyAliasWorks) {
+      for (const [key, value] of [
+        ['ph.mainWorktreeGitDir', alternateGitDir],
+        ['ph.mainWorktreePath', alternateRepoPath],
+      ]) {
+        const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
+        expect(configured.status).toBe(0);
+      }
+    }
+
+    const mainLandingScript = join(import.meta.dirname, '../main-landing.mjs');
+    const validTaskStatus = spawnSync(process.execPath, [mainLandingScript, 'status', '--json'], {
+      cwd: taskWorktree,
+      encoding: 'utf8',
+    });
+    expect(validTaskStatus.status).toBe(0);
+
+    const staleIdentity = spawnSync(
+      'git',
+      ['-C', repo, 'config', '--local', 'ph.mainWorktreeIdentity', 'stale-main-worktree-identity'],
+      { encoding: 'utf8' }
+    );
+    expect(staleIdentity.status).toBe(0);
+    const staleIdentityStatus = spawnSync(process.execPath, [mainLandingScript, 'status', '--json'], {
+      cwd: taskWorktree,
+      encoding: 'utf8',
+    });
+    expect(staleIdentityStatus.status).not.toBe(0);
+    expect(staleIdentityStatus.stderr).toContain('registered main worktree identity does not match');
+    expect(registerMainWorktree(repo, { required: true })).toBe(true);
+
+    for (const [key, value] of [
+      ['ph.mainWorktreeGitDir', join(foreignRepo, '.git')],
+      ['ph.mainWorktreePath', foreignRepo],
+    ]) {
+      const configured = spawnSync('git', ['-C', repo, 'config', '--local', key, value], { encoding: 'utf8' });
+      expect(configured.status).toBe(0);
+    }
+    const foreignTaskStatus = spawnSync(process.execPath, [mainLandingScript, 'status', '--json'], {
+      cwd: taskWorktree,
+      encoding: 'utf8',
+    });
+    expect(foreignTaskStatus.status).not.toBe(0);
+    expect(foreignTaskStatus.stderr).toContain('registered main worktree does not belong to this repository');
   });
 
   it('requires the same main and AUTO_MERGE tree to be observed continuously for 30 minutes', () => {

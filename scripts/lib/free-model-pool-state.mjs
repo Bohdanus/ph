@@ -20,6 +20,7 @@ export const MODEL_FAILURE_QUARANTINE_HOURS = 168;
 export const OPENROUTER_RATE_LIMIT_FAILURE_THRESHOLD = 3;
 export const MODEL_FAILURE_THRESHOLD = 250;
 const MAX_TRACKED_MODELS = 512;
+const MAX_SUPPORTED_STATE_EPOCH_MS = Date.parse('9999-12-31T23:59:59.999Z');
 
 const WORKTREE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const WORKTREES_MARKER = `${sep}.kilo${sep}worktrees${sep}`;
@@ -37,7 +38,9 @@ const emptyState = () => ({
 });
 
 function validateNow(now) {
-  if (!Number.isFinite(now) || now < 0) throw new Error('Free-model pool time must be a non-negative epoch value');
+  if (!Number.isSafeInteger(now) || now < 0 || now > MAX_SUPPORTED_STATE_EPOCH_MS) {
+    throw new Error('Free-model pool time must be a supported non-negative integer epoch value');
+  }
 }
 
 function validUtcDate(value) {
@@ -169,7 +172,11 @@ export async function markOpenRouterQuotaExhausted({
 } = {}) {
   const date = utcDate(now);
   await updateState({ stateFile, quarantineFile }, (state) => {
-    state.openRouterExhaustedUtcDate = date;
+    // Quota requests can finish out of order across UTC midnight. Keep a newer
+    // exhausted day if a delayed prior-day response acquires the state lock later.
+    if (state.openRouterExhaustedUtcDate === null || date >= state.openRouterExhaustedUtcDate) {
+      state.openRouterExhaustedUtcDate = date;
+    }
   });
   return date;
 }
@@ -201,7 +208,7 @@ export async function clearExpiredOpenRouterQuota({
 } = {}) {
   const today = utcDate(now);
   return updateState({ stateFile, quarantineFile }, (state) => {
-    if (state.openRouterExhaustedUtcDate === null || state.openRouterExhaustedUtcDate === today) return false;
+    if (state.openRouterExhaustedUtcDate === null || state.openRouterExhaustedUtcDate >= today) return false;
     state.openRouterExhaustedUtcDate = null;
     return true;
   });

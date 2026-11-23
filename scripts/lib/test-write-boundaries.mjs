@@ -187,6 +187,11 @@ function processEnvPath(expression) {
   return path[0] === 'process' && path[1] === 'env' ? path.slice(2).join('.') || '<object>' : null;
 }
 
+function staticPropertyArgument(expression) {
+  if (!expression) return '<missing>';
+  return ts.isStringLiteralLike(expression) || ts.isNumericLiteral(expression) ? expression.text : '<computed>';
+}
+
 function hasReadOnlyOption(options) {
   if (!options || !ts.isObjectLiteralExpression(options)) return false;
   for (let index = options.properties.length - 1; index >= 0; index -= 1) {
@@ -230,15 +235,33 @@ export function scanTestSource(source, fileName) {
       const processApi = findApi(node.expression, bindings, PROCESS_MODULES, PROCESS_APIS);
       if (processApi) addFinding('subprocess', processApi, node);
 
-      if (
-        node.arguments.length > 0 &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.name.text === 'assign' &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === 'Object'
-      ) {
+      const callee = expressionPath(node.expression);
+      if (node.arguments.length > 0 && callee.length === 2 && callee[0] === 'Object' && callee[1] === 'assign') {
         const envTarget = processEnvPath(node.arguments[0]);
         if (envTarget !== null) addFinding('process-env-write', `Object.assign:${envTarget}`, node);
+      }
+
+      if (node.arguments.length > 0 && callee.length === 2) {
+        const [namespace, method] = callee;
+        const mutatesEnvironmentObject = processEnvPath(node.arguments[0]) === '<object>';
+        const objectMutation =
+          namespace === 'Object' &&
+          ['defineProperty', 'defineProperties', 'setPrototypeOf', 'preventExtensions', 'seal', 'freeze'].includes(
+            method
+          ) &&
+          mutatesEnvironmentObject;
+        const reflectMutation =
+          namespace === 'Reflect' &&
+          ['set', 'deleteProperty', 'defineProperty', 'setPrototypeOf', 'preventExtensions'].includes(method) &&
+          mutatesEnvironmentObject;
+        if (objectMutation || reflectMutation) {
+          const property = ['defineProperties', 'setPrototypeOf', 'preventExtensions', 'seal', 'freeze'].includes(
+            method
+          )
+            ? '<object>'
+            : staticPropertyArgument(node.arguments[1]);
+          addFinding('process-env-write', `${namespace}.${method}:${property}`, node);
+        }
       }
     }
 

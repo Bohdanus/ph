@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync, realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path, { delimiter, dirname, join } from 'node:path';
 import { MAX_KILO_OUTPUT_BYTES, resolveKiloCli, runKiloCompletion } from '../lib/free-model-kilo.mjs';
@@ -29,6 +29,100 @@ describe('Kilo CLI discovery', () => {
     );
   });
 
+  it('excludes the caller checkout bin when locating the runner CLI', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-caller-checkout-'));
+    const callerRoot = join(directory, 'caller-checkout');
+    const projectRoot = join(directory, 'runner-checkout');
+    const callerBin = join(callerRoot, 'node_modules', '.bin');
+    const trustedBin = join(directory, 'trusted-bin');
+    const callerKilo = await writeExecutable(join(callerBin, 'kilo'), 'process.exit(0);');
+    const trustedKilo = await writeExecutable(join(trustedBin, 'kilo'), 'process.exit(0);');
+
+    try {
+      await mkdir(projectRoot, { recursive: true });
+      await expect(
+        resolveKiloCli({
+          command: '',
+          pathValue: [callerBin, trustedBin].join(delimiter),
+          cwd: callerRoot,
+          projectRoot,
+          home: join(directory, 'empty-home'),
+        })
+      ).resolves.toBe(realpathSync(trustedKilo));
+      expect(existsSync(callerKilo)).toBe(true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'excludes caller checkout PATH entries that escape through a descendant symlink',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-caller-symlink-'));
+      const callerRoot = join(directory, 'caller-checkout');
+      const projectRoot = join(directory, 'runner-checkout');
+      const externalPackage = join(directory, 'external-package');
+      const linkedPackage = join(callerRoot, 'vendor');
+      const callerBin = join(linkedPackage, 'node_modules', '.bin');
+      const trustedBin = join(directory, 'trusted-bin');
+      const trustedKilo = await writeExecutable(join(trustedBin, 'kilo'), 'process.exit(0);');
+
+      try {
+        await Promise.all([
+          mkdir(callerRoot, { recursive: true }),
+          mkdir(projectRoot, { recursive: true }),
+          mkdir(join(externalPackage, 'node_modules', '.bin'), { recursive: true }),
+        ]);
+        await symlink(externalPackage, linkedPackage, 'dir');
+        await writeExecutable(join(callerBin, 'kilo'), 'process.exit(0);');
+
+        await expect(
+          resolveKiloCli({
+            command: '',
+            pathValue: [callerBin, trustedBin].join(delimiter),
+            cwd: callerRoot,
+            projectRoot,
+            home: join(directory, 'empty-home'),
+          })
+        ).resolves.toBe(realpathSync(trustedKilo));
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'excludes hard-link aliases to executables inside a protected checkout',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-hard-link-'));
+      const callerRoot = join(directory, 'caller-checkout');
+      const projectRoot = join(directory, 'runner-checkout');
+      const callerKilo = await writeExecutable(join(callerRoot, 'bin', 'kilo'), 'process.exit(0);');
+      const aliasBin = join(directory, 'external-bin');
+      const trustedBin = join(directory, 'trusted-bin');
+      const aliasKilo = join(aliasBin, 'kilo');
+      const trustedKilo = await writeExecutable(join(trustedBin, 'kilo'), 'process.exit(0);');
+
+      try {
+        await mkdir(projectRoot, { recursive: true });
+        await mkdir(aliasBin, { recursive: true });
+        await link(callerKilo, aliasKilo);
+        expect((await stat(aliasKilo)).nlink).toBe(2);
+        await expect(
+          resolveKiloCli({
+            command: '',
+            pathValue: [aliasBin, trustedBin].join(delimiter),
+            cwd: callerRoot,
+            projectRoot,
+            home: join(directory, 'empty-home'),
+          })
+        ).resolves.toBe(realpathSync(trustedKilo));
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('filters Windows PATH entries case-insensitively with the Windows delimiter', async () => {
     const projectRoot = 'C:\\Repo';
     const projectBin = path.win32.join(projectRoot, 'node_modules', '.bin');
@@ -42,7 +136,7 @@ describe('Kilo CLI discovery', () => {
     const statImpl = async (candidate) => {
       const kind = fileSystem.get(path.win32.normalize(candidate).toLowerCase());
       if (!kind) throw Object.assign(new Error('missing fixture path'), { code: 'ENOENT' });
-      return { isDirectory: () => kind === 'directory', isFile: () => kind === 'file' };
+      return { isDirectory: () => kind === 'directory', isFile: () => kind === 'file', nlink: kind === 'file' ? 1 : 2 };
     };
 
     await expect(
@@ -53,12 +147,82 @@ describe('Kilo CLI discovery', () => {
         projectRoot,
         platform: 'win32',
         accessImpl: async () => {},
+        lstatImpl: async () => ({ isSymbolicLink: () => false }),
         readdirImpl: async () => [{ name: 'kilo.exe' }],
         realpathImpl: async (candidate) => path.win32.normalize(candidate),
         statImpl,
       })
     ).resolves.toBe(path.win32.join(trustedDirectory, 'kilo.exe'));
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects symlink chains through protected bins while allowing the same direct external executable',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-symlink-chain-'));
+      const projectRoot = join(directory, 'project', 'repo');
+      const projectBin = join(projectRoot, 'node_modules', '.bin');
+      const trustedBin = join(directory, 'trusted-bin');
+      const loopBin = join(directory, 'loop-bin');
+      const externalBin = join(directory, 'external-bin');
+      const externalKilo = await writeExecutable(join(externalBin, 'kilo'), 'process.exit(0);');
+
+      try {
+        await Promise.all([
+          mkdir(projectBin, { recursive: true }),
+          mkdir(trustedBin, { recursive: true }),
+          mkdir(loopBin, { recursive: true }),
+        ]);
+        await symlink(externalKilo, join(projectBin, 'kilo'));
+        await symlink(path.relative(trustedBin, join(projectBin, 'kilo')), join(trustedBin, 'kilo'));
+        await symlink('kilo', join(loopBin, 'kilo'));
+
+        const resolveFrom = (pathValue) =>
+          resolveKiloCli({
+            command: '',
+            pathValue,
+            cwd: projectRoot,
+            projectRoot,
+            home: join(directory, 'empty-home'),
+          });
+
+        await expect(resolveFrom(trustedBin)).resolves.toBeNull();
+        await expect(resolveFrom(loopBin)).resolves.toBeNull();
+        await expect(resolveFrom(externalBin)).resolves.toBe(realpathSync(externalKilo));
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects extension candidates with a parent symlink into a protected bin',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-extension-bin-alias-'));
+      const projectRoot = join(directory, 'project', 'repo');
+      const projectBin = join(projectRoot, 'node_modules', '.bin');
+      const extensionBin = join(directory, 'home', '.vscode', 'extensions', 'kilocode.kilo-code-test', 'bin');
+      const externalBin = join(directory, 'external-bin');
+      const externalKilo = await writeExecutable(join(externalBin, 'kilo'), 'process.exit(0);');
+
+      try {
+        await Promise.all([mkdir(projectBin, { recursive: true }), mkdir(dirname(extensionBin), { recursive: true })]);
+        await symlink(externalKilo, join(projectBin, 'kilo'));
+        await symlink(projectBin, extensionBin, 'dir');
+
+        await expect(
+          resolveKiloCli({
+            command: '',
+            pathValue: '',
+            cwd: projectRoot,
+            projectRoot,
+            home: join(directory, 'home'),
+          })
+        ).resolves.toBeNull();
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
 
   it('filters unsafe PATH aliases and fails closed on unreadable ancestor bins before editor extensions', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-discovery-'));
@@ -208,8 +372,16 @@ describe('authenticated Kilo CLI completion', () => {
     const runtimeProjectRoot = join(directory, 'caller-project', 'repo');
     const runtimeProjectBin = join(runtimeProjectRoot, 'node_modules', '.bin');
     const runtimeAncestorBin = join(directory, 'node_modules', '.bin');
+    const runtimeCallerRoot = join(directory, 'different-caller-worktree');
+    const runtimeCallerBin = join(runtimeCallerRoot, 'node_modules', '.bin');
+    const runtimeCallerExternalPackage = join(directory, 'external-caller-package');
+    const runtimeCallerSymlinkBin = join(runtimeCallerRoot, 'vendor', 'node_modules', '.bin');
     await mkdir(runtimeProjectBin, { recursive: true });
     await mkdir(runtimeAncestorBin, { recursive: true });
+    await mkdir(runtimeCallerBin, { recursive: true });
+    await mkdir(runtimeCallerRoot, { recursive: true });
+    await mkdir(join(runtimeCallerExternalPackage, 'node_modules', '.bin'), { recursive: true });
+    await symlink(runtimeCallerExternalPackage, join(runtimeCallerRoot, 'vendor'), 'dir');
     await mkdir(join(fixtureDataHome, 'kilo'), { recursive: true });
     await mkdir(join(fixtureDataHome, 'other-app'), { recursive: true });
     await writeFile(join(fixtureDataHome, 'kilo', 'auth.json'), 'fixture auth', 'utf8');
@@ -229,7 +401,7 @@ const isolatedKiloData = path.join(process.env.XDG_DATA_HOME, 'kilo');
 const agentPath = path.join(process.cwd(), '.kilo', 'agent', 'free-completion.md');
 const agentPolicy = fs.readFileSync(agentPath, 'utf8');
 const runtimePath = process.env.PATH.split(path.delimiter);
-if (runtimePath.includes(${JSON.stringify(runtimeProjectBin)}) || runtimePath.includes(${JSON.stringify(runtimeAncestorBin)})) process.exit(23);
+if (runtimePath.includes(${JSON.stringify(runtimeProjectBin)}) || runtimePath.includes(${JSON.stringify(runtimeAncestorBin)}) || runtimePath.includes(${JSON.stringify(runtimeCallerBin)}) || runtimePath.includes(${JSON.stringify(realpathSync(runtimeCallerSymlinkBin))})) process.exit(23);
 if (!runtimePath.includes(path.dirname(fs.realpathSync(process.execPath)))) process.exit(24);
 if (!args.includes('--pure') || valueAfter('--format') !== 'json') process.exit(4);
 if (valueAfter('--model') !== 'kilo/xingchen-agi/xing4.0-29b-a4b:free') process.exit(5);
@@ -265,9 +437,16 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           model: 'xingchen-agi/xing4.0-29b-a4b:free',
           prompt: 'private prompt',
           maxTokens: 65536,
+          cwd: runtimeCallerRoot,
           projectRoot: runtimeProjectRoot,
           env: {
-            PATH: [runtimeProjectBin, runtimeAncestorBin, dirname(process.execPath)].join(delimiter),
+            PATH: [
+              runtimeProjectBin,
+              runtimeAncestorBin,
+              runtimeCallerBin,
+              runtimeCallerSymlinkBin,
+              dirname(process.execPath),
+            ].join(delimiter),
             HOME: '/fixture/home',
             USERPROFILE: '/fixture/home',
             XDG_CONFIG_HOME: '/fixture/config',
@@ -301,8 +480,17 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           model: 'xingchen-agi/xing4.0-29b-a4b:free',
           prompt: 'private prompt',
           maxTokens: 128,
+          cwd: runtimeCallerRoot,
           projectRoot: runtimeProjectRoot,
-          env: { PATH: [runtimeProjectBin, runtimeAncestorBin, dirname(process.execPath)].join(delimiter) },
+          env: {
+            PATH: [
+              runtimeProjectBin,
+              runtimeAncestorBin,
+              runtimeCallerBin,
+              runtimeCallerSymlinkBin,
+              dirname(process.execPath),
+            ].join(delimiter),
+          },
           statImpl: async (candidate) => {
             if (candidate === runtimeAncestorBin)
               throw Object.assign(new Error('fixture access denied'), { code: 'EACCES' });
@@ -503,6 +691,73 @@ kilo_grep({pattern: "selection", paths: ["e2e"]})`,
   {paths: ["src"]}
 )`,
     ],
+    ['the Kilo CLI rendered tool-call span', '<span class="tool-call">listFiles({"path": "src"})</span>'],
+    [
+      'a tool-call class after a quoted greater-than attribute',
+      '<span title="a > b" class="tool-call">listFiles({"path": "src"})</span>',
+    ],
+    ['the Kilo CLI rendered read_file tool tag', '<read_file><path>src/example.ts</path></read_file>'],
+    [
+      'the Kilo CLI serialized attempt_completion tool tag',
+      '<attempt_completion><result>Task completed.</result></attempt_completion>',
+    ],
+    ['a serialized delete_file tool tag', '<delete_file><path>src/obsolete.ts</path></delete_file>'],
+    ['a serialized update_todo_list tool tag', '<update_todo_list><todos>[]</todos></update_todo_list>'],
+    [
+      'function-call JSONL records emitted as plain text',
+      [
+        JSON.stringify({ type: 'function_call', name: 'read', arguments: { path: 'src/tools/draw.ts' } }),
+        JSON.stringify({ type: 'function_call', name: 'bash', arguments: { command: 'git show 80eb207cb8 --stat' } }),
+        JSON.stringify({ type: 'function_call', name: 'view_file', arguments: { path: 'src/tools/draw.ts' } }),
+        JSON.stringify({
+          tool_calls: [{ type: 'function', function: { name: 'read', arguments: '{"path":"src/tools/draw.ts"}' } }],
+        }),
+      ].join('\n'),
+    ],
+    [
+      'a pretty-printed function-call JSON object embedded in prose',
+      [
+        'Example function call:',
+        '{',
+        '  "type": "function_call",',
+        '  "name": "read_file",',
+        '  "arguments": { "path": "src/example.ts" }',
+        '}',
+        'This is an example.',
+      ].join('\n'),
+    ],
+    [
+      'a pretty-printed function-call JSON object inside a prose bracket',
+      [
+        'Example function call [payload:',
+        '{',
+        '  "type": "function_call",',
+        '  "name": "read_file",',
+        '  "arguments": { "path": "src/example.ts" }',
+        '}',
+        'The bracket is explanatory prose.',
+      ].join('\n'),
+    ],
+    [
+      'an OpenAI function-call JSON envelope emitted as plain text',
+      JSON.stringify({
+        tool_calls: [{ type: 'function', function: { name: 'read', arguments: '{"path":"src"}' } }],
+      }),
+    ],
+    [
+      'a function-call JSON object after nested false function markers exhaust the inspection budget',
+      `Ordinary prose: ${('{"type":"function","pad":"' + 'x'.repeat(465) + '","payload":').repeat(65)}null${'}'.repeat(65)} actual call: ${JSON.stringify(
+        {
+          type: 'function_call',
+          name: 'read_file',
+          arguments: { path: 'src/secret.ts' },
+        }
+      )}`,
+    ],
+    [
+      'a deeply nested array containing a function-call object',
+      '['.repeat(15_000) + '{"type":"function_call","name":"read_file","arguments":{}}' + ']'.repeat(15_000),
+    ],
     [
       'a Kilo JavaScript-style call hidden by an unterminated comment',
       `kilo_ls/* unfinished comment
@@ -526,6 +781,20 @@ kilo_grep({pattern: "selection", paths: ["e2e"]})`,
     [
       'a serialized call after a blockquoted fence opener ends',
       ['> ```', '<function=kilo_ls></function></tool_call>'].join('\n'),
+    ],
+    [
+      'a serialized function envelope surrounding a fenced example',
+      [
+        '<tool_call><function=kilo_memory_recall>',
+        '~~~~xml',
+        'Example markup is shown for documentation only.',
+        '~~~~',
+        '</function></tool_call>',
+      ].join('\n'),
+    ],
+    [
+      'a Kilo function call with its argument split by a fenced example',
+      ['kilo_edit(', '~~~js', 'const example = true;', '~~~', '{ "path": "a" })'].join('\n'),
     ],
     [
       'a serialized call in an indented paragraph continuation',
@@ -681,20 +950,6 @@ search
       ['~~~xml', '> ~~~', '<tool_call>', '<function=kilo_ls></function>', '</tool_call>', '~~~'].join('\n'),
     ],
     [
-      'tool-call fragments separated by a fenced example',
-      [
-        '<tool_call><function=kilo_memory_recall>',
-        '~~~~xml',
-        'Example markup is shown for documentation only.',
-        '~~~~',
-        '</function></tool_call>',
-      ].join('\n'),
-    ],
-    [
-      'a JavaScript-style tool-call fragment split by a fenced example',
-      ['kilo_edit(', '~~~js', 'const example = true;', '~~~', '{ "path": "a" })'].join('\n'),
-    ],
-    [
       'an unclosed tilde fence',
       `~~~xml
 <tool_call>
@@ -708,6 +963,59 @@ search
       'an inline JavaScript-style tool-call example',
       'The tool syntax is `kilo_ls({paths: ["src"]})` in this documentation example.',
     ],
+    [
+      'a rendered Kilo tool-call span in inline code',
+      'The literal markup is `<span class="tool-call">listFiles({"path": "src"})</span>` in this documentation example.',
+    ],
+    [
+      'a different rendered span class',
+      '<span class="tool-call-example">This is documentation, not a tool call.</span>',
+    ],
+    [
+      'an ordinary span whose title mentions the tool-call class',
+      `<span title='the class="tool-call" example'>ordinary text</span>`,
+    ],
+    ['many malformed span starts', '<span data="unfinished '.repeat(25_000)],
+    [
+      'a prose answer with many lines and near-limit deeply nested non-call data',
+      `Ordinary answer:\n${'line\n'.repeat(100_000)}${'['.repeat(200_000)}0${']'.repeat(200_000)}`,
+    ],
+    [
+      'a rendered Kilo read_file tool tag in a fenced example',
+      ['```xml', '<read_file><path>src/example.ts</path></read_file>', '```'].join('\n'),
+    ],
+    [
+      'a JSON tool-call object in a fenced example',
+      ['```json', '{"name":"read","arguments":{"path":"src/example.ts"}}', '```'].join('\n'),
+    ],
+    [
+      'a pretty-printed function-call JSON object in a fenced example',
+      [
+        '```json',
+        '{',
+        '  "type": "function_call",',
+        '  "name": "read_file",',
+        '  "arguments": { "path": "src/example.ts" }',
+        '}',
+        '```',
+      ].join('\n'),
+    ],
+    [
+      'ordinary JSON data with name and arguments fields',
+      '{"name":"settings","arguments":{"theme":"dark","language":"en"}}',
+    ],
+    ['JSON data with read as its name', '{"name":"read","arguments":{"path":"config.json"}}'],
+    ['JSON data with bash as its name', '{"name":"bash","arguments":{"command":"build"}}'],
+    ['JSON data with view_file as its name', '{"name":"view_file","arguments":{"path":"preview.json"}}'],
+    [
+      'a JSON tool result is not a new tool call',
+      '{"type":"tool_result","name":"read","arguments":{"path":"config.json"}}',
+    ],
+    ['JSON data whose name extends a tool verb', '{"name":"readConfig","arguments":{"path":"settings.json"}}'],
+    ['JSON data whose name uses an underscore after a tool verb', '{"name":"read_only","arguments":{"enabled":true}}'],
+    ['JSON data with a generic action word as its name', '{"name":"search","arguments":{"query":"users"}}'],
+    ['an ordinary XML search element', '<search>find users</search>'],
+    ['an ordinary XML view element', '<view>preview details</view>'],
     [
       'an indented code example after an inline tool-call mention',
       'Use `kilo_ls({paths: ["src"]})` like this:\n\n    kilo_ls({paths: ["src"]})',
@@ -890,6 +1198,79 @@ process.exit(1);`
         status: 429,
       });
       expect(JSON.stringify(result)).not.toContain('private provider details');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['nested numeric status', '{"status":429}'],
+    ['snake-case status code', '{"status_code":429}'],
+    ['snake-case HTTP status', '{"http_status":429}'],
+    ['snake-case HTTP status code', '{"http_status_code":429}'],
+    ['nested message status', '{"message":"HTTP 429"}'],
+  ])('extracts a deeply nested Kilo error status without recursive traversal: %s', async (_label, leaf) => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const depth = 6_000;
+    const nestedError = `${'{"detail":'.repeat(depth)}${leaf}${'}'.repeat(depth)}`;
+    const event = `{"type":"error","error":${nestedError}}`;
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `process.stdout.write(${JSON.stringify(event + '\n')});`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+        error: 'Kilo provider quota or rate limit returned HTTP 429',
+        exhaustSource: true,
+        status: 429,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not treat an error array index as a reported Kilo status', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const event = JSON.stringify({ type: 'error', error: Array.from({ length: 430 }, () => 'ordinary detail') });
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `process.stdout.write(${JSON.stringify(`${event}\n`)}); process.exitCode = 1;`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+        error: 'Kilo CLI reported a provider or completion error',
+        exhaustSource: false,
+        status: null,
+        modelAttributable: false,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['an unrelated identifier in a message', { message: 'Validation failed: user ID 429 not found' }],
+    ['a numeric detail value', { details: [429] }],
+    ['a numeric user field', { userId: 401 }],
+    ['a generic numeric error code', { error_code: 429 }],
+    ['an unrelated code in prose', { message: 'Record 402 could not be loaded' }],
+  ])('does not treat %s as a Kilo HTTP status', async (_label, error) => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const event = JSON.stringify({ type: 'error', error });
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `process.stdout.write(${JSON.stringify(`${event}\n`)}); process.exitCode = 1;`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+        error: 'Kilo CLI reported a provider or completion error',
+        exhaustSource: false,
+        status: null,
+        modelAttributable: false,
+      });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

@@ -1,6 +1,18 @@
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, lstat, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import {
+  access,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readlink,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -204,18 +216,23 @@ function missingPathError(error) {
   return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
 }
 
-async function excludedKiloPaths(projectRoot, pathApi, platform, realpathImpl, readdirImpl, statImpl) {
+async function excludedKiloPaths(exclusionRoots, pathApi, platform, realpathImpl, readdirImpl, statImpl) {
   const directories = [];
   const executables = new Set();
+  const canonicalRoots = new Set();
   let complete = true;
-  let canonicalRoot;
-  try {
-    canonicalRoot = await realpathImpl(projectRoot);
-  } catch {
-    return { canonicalRoot: null, directories, executables, complete: false };
+  for (const root of exclusionRoots) {
+    let canonicalRoot;
+    try {
+      canonicalRoot = await realpathImpl(root);
+    } catch {
+      return { canonicalRoots: [], directories, executables, complete: false };
+    }
+    canonicalRoots.add(pathApi.resolve(root));
+    canonicalRoots.add(canonicalRoot);
   }
 
-  const roots = new Set([projectRoot, canonicalRoot]);
+  const roots = new Set(canonicalRoots);
   for (const root of roots) {
     let ancestor = pathApi.resolve(root);
     while (true) {
@@ -253,22 +270,117 @@ async function excludedKiloPaths(projectRoot, pathApi, platform, realpathImpl, r
       ancestor = parent;
     }
   }
-  return { canonicalRoot, directories, executables, complete };
+  return { canonicalRoots: [...canonicalRoots], directories, executables, complete };
 }
 
 function isExcludedKiloPath(candidate, excluded, pathApi, platform) {
-  if (pathComparisonKey(candidate, platform) === pathComparisonKey(excluded.canonicalRoot, platform)) return true;
-  if (pathIsWithin(excluded.canonicalRoot, candidate, pathApi, platform)) return true;
-  if (isAncestorNodeModulesBin(pathApi.dirname(candidate), excluded.canonicalRoot, pathApi, platform)) return true;
+  if (
+    excluded.canonicalRoots.some(
+      (root) =>
+        pathComparisonKey(candidate, platform) === pathComparisonKey(root, platform) ||
+        pathIsWithin(root, candidate, pathApi, platform) ||
+        isAncestorNodeModulesBin(pathApi.dirname(candidate), root, pathApi, platform)
+    )
+  ) {
+    return true;
+  }
   if (excluded.executables.has(pathComparisonKey(candidate, platform))) return true;
   return excluded.directories.some((directory) => pathIsWithin(directory, candidate, pathApi, platform));
 }
 
-async function canonicalKiloCandidate(candidate, excluded, pathApi, platform, realpathImpl, statImpl, accessImpl) {
+async function traversesExcludedKiloPath(
+  candidate,
+  excluded,
+  pathApi,
+  platform,
+  realpathImpl,
+  lstatImpl,
+  readlinkImpl
+) {
+  const visited = new Set();
+  let current = pathApi.resolve(candidate);
+
+  if (isExcludedKiloPath(current, excluded, pathApi, platform)) return true;
   try {
-    const canonical = await realpathImpl(candidate);
-    if (!(await statImpl(canonical)).isFile() || isExcludedKiloPath(canonical, excluded, pathApi, platform))
+    // PATH entries are already canonical directories, but editor-extension
+    // candidates are not. Resolve the parent without resolving the executable
+    // itself so a symlinked parent into a protected .bin stays visible.
+    const canonicalParent = await realpathImpl(pathApi.dirname(current));
+    current = pathApi.join(canonicalParent, pathApi.basename(current));
+  } catch {
+    return true;
+  }
+
+  for (let depth = 0; depth < 40; depth += 1) {
+    if (isExcludedKiloPath(current, excluded, pathApi, platform)) return true;
+
+    const key = pathComparisonKey(current, platform);
+    if (visited.has(key)) return true;
+    visited.add(key);
+
+    let candidateStat;
+    try {
+      candidateStat = await lstatImpl(current);
+    } catch {
+      // If the symlink chain cannot be inspected, do not trust the candidate.
+      return true;
+    }
+    if (!candidateStat.isSymbolicLink()) return false;
+
+    let target;
+    try {
+      target = await readlinkImpl(current);
+    } catch {
+      return true;
+    }
+
+    const unresolvedTarget = pathApi.isAbsolute(target) ? target : pathApi.resolve(pathApi.dirname(current), target);
+    let canonicalTarget;
+    try {
+      // Resolve only the parent so a final symlink under a protected .bin
+      // remains visible to the next iteration instead of being collapsed.
+      const canonicalParent = await realpathImpl(pathApi.dirname(unresolvedTarget));
+      canonicalTarget = pathApi.join(canonicalParent, pathApi.basename(unresolvedTarget));
+    } catch {
+      return true;
+    }
+
+    current = canonicalTarget;
+  }
+
+  // A deeper-than-expected chain is ambiguous; fail closed instead of looping.
+  return true;
+}
+
+async function canonicalKiloCandidate(
+  candidate,
+  excluded,
+  pathApi,
+  platform,
+  realpathImpl,
+  statImpl,
+  accessImpl,
+  lstatImpl,
+  readlinkImpl
+) {
+  try {
+    if (
+      await traversesExcludedKiloPath(candidate, excluded, pathApi, platform, realpathImpl, lstatImpl, readlinkImpl)
+    ) {
       return null;
+    }
+    const canonical = await realpathImpl(candidate);
+    const candidateStat = await statImpl(canonical);
+    // realpath cannot distinguish a hard-link alias from a path outside the
+    // protected checkout. Reject multiply-linked PATH candidates instead.
+    if (
+      !candidateStat.isFile() ||
+      !Number.isSafeInteger(candidateStat.nlink) ||
+      candidateStat.nlink !== 1 ||
+      isExcludedKiloPath(canonical, excluded, pathApi, platform)
+    ) {
+      return null;
+    }
     if (platform === 'win32' && pathApi.extname(candidate).toLowerCase() !== pathApi.extname(canonical).toLowerCase()) {
       return null;
     }
@@ -287,16 +399,27 @@ async function trustedKiloPathDirectories(
   const pathApi = platform === 'win32' ? path.win32 : path;
   const absoluteProjectRoot = pathApi.resolve(projectRoot);
   const absoluteCwd = pathApi.resolve(cwd);
-  const excluded = await excludedKiloPaths(absoluteProjectRoot, pathApi, platform, realpathImpl, readdirImpl, statImpl);
+  const excluded = await excludedKiloPaths(
+    [absoluteProjectRoot, absoluteCwd],
+    pathApi,
+    platform,
+    realpathImpl,
+    readdirImpl,
+    statImpl
+  );
   if (!excluded.complete) return null;
 
   const trustedDirectories = [];
   const seenDirectories = new Set();
+  const protectedRoots = [absoluteProjectRoot, absoluteCwd];
   for (const directory of pathValue.split(pathApi.delimiter).filter(Boolean)) {
     const resolvedDirectory = pathApi.resolve(absoluteCwd, directory);
     if (
-      pathIsWithin(absoluteProjectRoot, resolvedDirectory, pathApi, platform) ||
-      isAncestorNodeModulesBin(resolvedDirectory, absoluteProjectRoot, pathApi, platform)
+      protectedRoots.some(
+        (root) =>
+          pathIsWithin(root, resolvedDirectory, pathApi, platform) ||
+          isAncestorNodeModulesBin(resolvedDirectory, root, pathApi, platform)
+      )
     ) {
       continue;
     }
@@ -372,7 +495,9 @@ export async function resolveKiloCli({
   projectRoot = resolve(import.meta.dirname, '../..'),
   platform = process.platform,
   accessImpl = access,
+  lstatImpl = lstat,
   readdirImpl = readdir,
+  readlinkImpl = readlink,
   realpathImpl = realpath,
   statImpl = stat,
 } = {}) {
@@ -397,7 +522,9 @@ export async function resolveKiloCli({
         platform,
         realpathImpl,
         statImpl,
-        accessImpl
+        accessImpl,
+        lstatImpl,
+        readlinkImpl
       );
       if (canonical) return canonical;
     }
@@ -424,7 +551,9 @@ export async function resolveKiloCli({
           platform,
           realpathImpl,
           statImpl,
-          accessImpl
+          accessImpl,
+          lstatImpl,
+          readlinkImpl
         );
         if (canonical) return canonical;
       }
@@ -434,25 +563,46 @@ export async function resolveKiloCli({
 }
 
 function reportedStatus(events, stderrText = '') {
+  const statusFromText = (value) => {
+    if (typeof value !== 'string') return null;
+    const match = value.match(/\b(?:HTTP(?:\s+status)?|status(?:\s+code)?)\s*[:=]?\s*(401|402|429)\b/i);
+    return match ? Number(match[1]) : null;
+  };
   const visit = (value) => {
     if (!value || typeof value !== 'object') return null;
-    for (const [key, child] of Object.entries(value)) {
-      if (/^(?:status|statuscode|httpstatus|code)$/i.test(key)) {
-        const status = Number(child);
+    const pending = [{ value, keys: Object.keys(value), index: 0 }];
+    let textualStatus = null;
+    while (pending.length > 0) {
+      const frame = pending[pending.length - 1];
+      if (frame.index >= frame.keys.length) {
+        pending.pop();
+        continue;
+      }
+
+      const key = frame.keys[frame.index++];
+      const child = frame.value[key];
+      const normalizedKey = key.toLowerCase().replace(/[_-]/g, '');
+      if (/^(?:status|statuscode|httpstatus|httpstatuscode|code)$/.test(normalizedKey)) {
+        // Provider statuses are scalar. Avoid coercing adversarial nested arrays,
+        // which can recurse during Number conversion even with an explicit stack.
+        const status = typeof child === 'string' || typeof child === 'number' ? Number(child) : Number.NaN;
         if (Number.isInteger(status) && status >= 400 && status <= 599) return status;
       }
-      const nested = visit(child);
-      if (nested !== null) return nested;
+      if (textualStatus === null) {
+        // JSON.stringify serializes array values but not their numeric indices.
+        const keyStatus = Array.isArray(frame.value) ? null : statusFromText(key);
+        textualStatus = keyStatus ?? statusFromText(child);
+      }
+      if (child !== null && typeof child === 'object') {
+        pending.push({ value: child, keys: Object.keys(child), index: 0 });
+      }
     }
-    return null;
+    return textualStatus;
   };
   for (const event of events) {
     if (event?.type === 'error') {
       const status = visit(event);
       if (status !== null) return status;
-      const message = JSON.stringify(event);
-      const match = message.match(/\b(?:HTTP\s*)?(401|402|429)\b/i);
-      if (match) return Number(match[1]);
     }
   }
   const statusMatch = stderrText.match(/\b(?:HTTP(?:\s+status)?|status(?:\s+code)?)\s*[:=]?\s*(401|402|429)\b/i);
@@ -574,6 +724,233 @@ function hasOpenSerializedToolCallPrefix(text) {
   return hasKiloFunctionCallPrefix(text);
 }
 
+function hasRenderedToolCallSpan(text) {
+  const isHtmlWhitespace = (character) =>
+    character === ' ' || character === '\t' || character === '\n' || character === '\r' || character === '\f';
+  let searchFrom = 0;
+  while (searchFrom < text.length) {
+    let tagStart = -1;
+    for (let index = searchFrom; index + 4 < text.length; index += 1) {
+      if (text[index] !== '<' || text.slice(index + 1, index + 5).toLowerCase() !== 'span') continue;
+      const boundary = text[index + 5];
+      if (boundary === undefined || isHtmlWhitespace(boundary) || boundary === '/' || boundary === '>') {
+        tagStart = index;
+        break;
+      }
+    }
+    if (tagStart < 0) return false;
+
+    let cursor = tagStart + 5;
+    while (cursor < text.length) {
+      while (isHtmlWhitespace(text[cursor])) cursor += 1;
+      if (text[cursor] === '>') {
+        cursor += 1;
+        break;
+      }
+      if (text[cursor] === '/' && text[cursor + 1] === '>') {
+        cursor += 2;
+        break;
+      }
+
+      const nameStart = cursor;
+      while (
+        cursor < text.length &&
+        !isHtmlWhitespace(text[cursor]) &&
+        text[cursor] !== '=' &&
+        text[cursor] !== '>' &&
+        text[cursor] !== '/'
+      ) {
+        cursor += 1;
+      }
+      if (cursor === nameStart) {
+        cursor += 1;
+        continue;
+      }
+
+      const attributeName = text.slice(nameStart, cursor).toLowerCase();
+      while (isHtmlWhitespace(text[cursor])) cursor += 1;
+      let attributeValue = '';
+      if (text[cursor] === '=') {
+        cursor += 1;
+        while (isHtmlWhitespace(text[cursor])) cursor += 1;
+        const quote = text[cursor] === '"' || text[cursor] === "'" ? text[cursor] : null;
+        if (quote !== null) cursor += 1;
+        const valueStart = cursor;
+        if (quote !== null) {
+          while (cursor < text.length && text[cursor] !== quote) cursor += 1;
+        } else {
+          while (cursor < text.length && !isHtmlWhitespace(text[cursor]) && text[cursor] !== '>') cursor += 1;
+        }
+        attributeValue = text.slice(valueStart, cursor);
+        if (quote !== null && cursor < text.length) cursor += 1;
+      }
+      if (attributeName === 'class' && /(?:^|\s)tool-call(?:\s|$)/.test(attributeValue)) return true;
+    }
+    searchFrom = cursor;
+  }
+  return false;
+}
+
+function hasSerializedToolActionElement(text) {
+  for (const match of text.matchAll(/<([A-Za-z][A-Za-z0-9_-]*)(?=[\s/>])/g)) {
+    if (SERIALIZED_TOOL_ACTION_TAGS.has((match[1] ?? '').toLowerCase())) return true;
+  }
+  return false;
+}
+
+const SERIALIZED_TOOL_ACTION_TAGS = new Set([
+  'access_mcp_resource',
+  'apply_diff',
+  'ask_followup_question',
+  'attempt_completion',
+  'browser_action',
+  'delete_file',
+  'execute_command',
+  'fetch_instructions',
+  'list_code_definition_names',
+  'list_files',
+  'new_task',
+  'read_file',
+  'search_files',
+  'switch_mode',
+  'update_todo_list',
+  'use_mcp_tool',
+  'write_to_file',
+]);
+
+function containsSerializedToolCallJson(value) {
+  const pending = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (Array.isArray(current)) {
+      for (const child of current) pending.push(child);
+      continue;
+    }
+    if (current === null || typeof current !== 'object') continue;
+
+    const type = typeof current.type === 'string' ? current.type.toLowerCase() : '';
+    if (['tool_use', 'tool_call', 'function_call'].includes(type)) return true;
+    if (
+      type === 'function' &&
+      current.function !== null &&
+      typeof current.function === 'object' &&
+      typeof current.function.name === 'string' &&
+      Object.hasOwn(current.function, 'arguments')
+    ) {
+      return true;
+    }
+    for (const child of Object.values(current)) pending.push(child);
+  }
+  return false;
+}
+
+function hasSerializedToolCallJsonText(text) {
+  const hasToolCall = (candidate) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      // Plain prose and non-JSON lines are not serialized tool calls.
+      return false;
+    }
+    return containsSerializedToolCallJson(parsed);
+  };
+  const wholeTextCandidate = text.trim();
+  if ((wholeTextCandidate.startsWith('{') || wholeTextCandidate.startsWith('[')) && hasToolCall(wholeTextCandidate)) {
+    return true;
+  }
+  for (const line of iterateTextLines(text)) {
+    const candidate = line.trim().replace(/^(?:[-*+]\s+|\d+[.)]\s+)/, '');
+    if ((candidate.startsWith('{') || candidate.startsWith('[')) && hasToolCall(candidate)) return true;
+  }
+
+  const typeMarkers = text.matchAll(/"type"\s*:\s*"(?:tool_use|tool_call|function_call|function)"/gi);
+  const markerIterator = typeMarkers[Symbol.iterator]();
+  let marker = markerIterator.next().value;
+  if (!marker) return false;
+  // CLI text is capped at MAX_KILO_OUTPUT_BYTES. Typed arrays keep adversarial
+  // nesting bounded by that same input limit instead of allocating one object
+  // (and parent pointer) for every opening delimiter.
+  const stackCapacity = Math.min(text.length, MAX_KILO_OUTPUT_BYTES);
+  const delimiterStarts = new Uint32Array(stackCapacity);
+  const delimiterKinds = new Uint8Array(stackCapacity);
+  const parentObjectDepths = new Uint32Array(stackCapacity);
+  const objectHasToolCallType = new Uint8Array(stackCapacity);
+  let delimiterDepth = 0;
+  let currentObjectDepth = -1;
+  let inString = false;
+  let escaped = false;
+  let parsedCandidateCharacters = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    while (marker && marker.index < index) marker = markerIterator.next().value;
+    if (marker?.index === index) {
+      if (!inString && currentObjectDepth >= 0) objectHasToolCallType[currentObjectDepth] = 1;
+      marker = markerIterator.next().value;
+    }
+
+    if (delimiterDepth === 0) {
+      if (character === '{' || character === '[') {
+        delimiterStarts[0] = index;
+        delimiterKinds[0] = character === '{' ? 1 : 2;
+        delimiterDepth = 1;
+        if (character === '{') {
+          parentObjectDepths[0] = currentObjectDepth + 1;
+          objectHasToolCallType[0] = 0;
+          currentObjectDepth = 0;
+        }
+      }
+      continue;
+    }
+
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === '{' || character === '[') {
+      if (delimiterDepth >= stackCapacity) return true;
+      delimiterStarts[delimiterDepth] = index;
+      delimiterKinds[delimiterDepth] = character === '{' ? 1 : 2;
+      if (character === '{') {
+        parentObjectDepths[delimiterDepth] = currentObjectDepth + 1;
+        objectHasToolCallType[delimiterDepth] = 0;
+        currentObjectDepth = delimiterDepth;
+      }
+      delimiterDepth += 1;
+      continue;
+    }
+    if (character === '}' || character === ']') {
+      const frameDepth = delimiterDepth - 1;
+      const expectedClosing = delimiterKinds[frameDepth] === 1 ? '}' : ']';
+      if (expectedClosing !== character) {
+        delimiterDepth = 0;
+        currentObjectDepth = -1;
+        continue;
+      }
+      delimiterDepth -= 1;
+      if (delimiterKinds[frameDepth] === 1) {
+        const candidateLength = index + 1 - delimiterStarts[frameDepth];
+        if (objectHasToolCallType[frameDepth]) {
+          // Over-budget candidate parsing must fail closed. Skipping this
+          // candidate and resuming could hide a later tool call in the same
+          // bounded response after nested false markers consume the budget.
+          if (candidateLength > MAX_KILO_OUTPUT_BYTES - parsedCandidateCharacters) return true;
+          parsedCandidateCharacters += candidateLength;
+          if (hasToolCall(text.slice(delimiterStarts[frameDepth], index + 1))) return true;
+        }
+        currentObjectDepth = parentObjectDepths[frameDepth] - 1;
+      }
+    }
+  }
+  return false;
+}
+
 function isEscapedBacktick(text, index) {
   let backslashes = 0;
   for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) backslashes += 1;
@@ -581,8 +958,9 @@ function isEscapedBacktick(text, index) {
 }
 
 function stripInlineCodeParagraph(text) {
-  const visible = text.split('');
+  const visible = [];
   let index = 0;
+  let visibleStart = 0;
   while (index < text.length) {
     if (text[index] !== '`' || isEscapedBacktick(text, index)) {
       index += 1;
@@ -610,19 +988,27 @@ function stripInlineCodeParagraph(text) {
       index = openingEnd;
       continue;
     }
-    for (let cursor = index; cursor < closingEnd; cursor += 1) {
-      if (text[cursor] !== '\n' && text[cursor] !== '\r') visible[cursor] = ' ';
-    }
+    visible.push(text.slice(visibleStart, index));
+    visible.push(text.slice(index, closingEnd).replace(/[^\r\n]/g, ' '));
+    visibleStart = closingEnd;
     index = closingEnd;
   }
+  visible.push(text.slice(visibleStart));
   return visible.join('');
 }
 
 function stripInlineCodeSpans(text) {
-  return text
-    .split(/((?:\r?\n[ \t]*){2,})/)
-    .map((paragraph, index) => (index % 2 === 0 ? stripInlineCodeParagraph(paragraph) : paragraph))
-    .join('');
+  const visible = [];
+  const separators = /(?:\r?\n[ \t]*){2,}/g;
+  let paragraphStart = 0;
+  let match;
+  while ((match = separators.exec(text)) !== null) {
+    visible.push(stripInlineCodeParagraph(text.slice(paragraphStart, match.index)));
+    visible.push(match[0]);
+    paragraphStart = separators.lastIndex;
+  }
+  visible.push(stripInlineCodeParagraph(text.slice(paragraphStart)));
+  return visible.join('');
 }
 
 function expandTabsAtColumns(line) {
@@ -651,6 +1037,20 @@ function parseBlockquoteLine(line) {
     quoteDepth += 1;
   }
   return { quoteDepth, text };
+}
+
+function* iterateTextLines(text) {
+  let lineStart = 0;
+  while (true) {
+    const newline = text.indexOf('\n', lineStart);
+    if (newline < 0) {
+      yield text.slice(lineStart);
+      return;
+    }
+    const lineEnd = newline > lineStart && text[newline - 1] === '\r' ? newline - 1 : newline;
+    yield text.slice(lineStart, lineEnd);
+    lineStart = newline + 1;
+  }
 }
 
 function leadingIndentColumns(line) {
@@ -731,15 +1131,27 @@ function updateListStack(listStacks, quoteDepth, line, canStartIndentedCode) {
   return { stack, contentStart: 0 };
 }
 
+function containsVisibleSerializedToolCall(text) {
+  const visibleText = stripInlineCodeSpans(text);
+  return (
+    /(?:<tool_call\s*>\s*)?<function=[A-Za-z0-9_.:-]+>[\s\S]*?<\/function\s*>(?:\s*<\/tool_call\s*>)?/i.test(
+      visibleText
+    ) ||
+    hasKiloFunctionCallText(visibleText) ||
+    hasRenderedToolCallSpan(visibleText) ||
+    hasSerializedToolActionElement(visibleText) ||
+    hasSerializedToolCallJsonText(visibleText)
+  );
+}
+
 function isSerializedToolCallText(content) {
-  const outsideFencedSegments = [];
   let currentSegment = [];
-  const lines = content.split(/\r?\n/).map(parseBlockquoteLine);
   const listStacks = new Map();
   let fence = null;
   let indentedCode = null;
   let canStartIndentedCode = true;
-  for (const { quoteDepth, text: line } of lines) {
+  for (const rawLine of iterateTextLines(content)) {
+    const { quoteDepth, text: line } = parseBlockquoteLine(rawLine);
     let reprocess = true;
     while (reprocess) {
       reprocess = false;
@@ -807,7 +1219,11 @@ function isSerializedToolCallText(content) {
       const fenceContentIndent =
         contentStart > 0 || (listStack.length > 0 && indentation >= listContentIndent) ? listContentIndent : 0;
       if (opening && fenceOpenerIndentIsValid && !(opening[2][0] === '`' && opening[3].includes('`'))) {
-        outsideFencedSegments.push(currentSegment.join('\n'));
+        const visiblePrefix = stripInlineCodeSpans(currentSegment.join('\n'));
+        // A Markdown fence does not close a serialized tool-call envelope that
+        // began in visible text; only a fully code-contained example is inert.
+        if (hasOpenSerializedToolCallPrefix(visiblePrefix)) return true;
+        if (containsVisibleSerializedToolCall(currentSegment.join('\n'))) return true;
         currentSegment = [];
         fence = {
           character: opening[2][0],
@@ -822,7 +1238,7 @@ function isSerializedToolCallText(content) {
       if (indentation >= minimumIndentedCodeIndent && canStartIndentedCode) {
         const visiblePrefix = stripInlineCodeSpans(currentSegment.join('\n'));
         if (hasOpenSerializedToolCallPrefix(visiblePrefix)) return true;
-        outsideFencedSegments.push(currentSegment.join('\n'));
+        if (containsVisibleSerializedToolCall(currentSegment.join('\n'))) return true;
         currentSegment = [];
         indentedCode = { quoteDepth, minimumIndent: minimumIndentedCodeIndent };
         canStartIndentedCode = false;
@@ -832,15 +1248,7 @@ function isSerializedToolCallText(content) {
       canStartIndentedCode = false;
     }
   }
-  outsideFencedSegments.push(currentSegment.join('\n'));
-  return outsideFencedSegments.some((outsideFencedText) => {
-    const visibleText = stripInlineCodeSpans(outsideFencedText);
-    return (
-      /(?:<tool_call\s*>\s*)?<function=[A-Za-z0-9_.:-]+>[\s\S]*?<\/function\s*>(?:\s*<\/tool_call\s*>)?/i.test(
-        visibleText
-      ) || hasKiloFunctionCallText(visibleText)
-    );
-  });
+  return containsVisibleSerializedToolCall(currentSegment.join('\n'));
 }
 
 function isExactZeroCost(cost) {
@@ -849,13 +1257,11 @@ function isExactZeroCost(cost) {
 }
 
 function parseEvents(output) {
-  const lines = output
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').trim())
-    .filter((line) => line.startsWith('{'));
   const events = [];
   let malformed = false;
-  for (const line of lines) {
+  for (const rawLine of iterateTextLines(output)) {
+    const line = rawLine.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').trim();
+    if (!line.startsWith('{')) continue;
     try {
       events.push(JSON.parse(line));
     } catch {

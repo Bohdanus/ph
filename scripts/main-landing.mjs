@@ -23,6 +23,7 @@ import {
   readSync,
   renameSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -120,6 +121,26 @@ function resolvePath(value, base) {
   return resolve(isAbsolute(value) ? value : join(base, value));
 }
 
+function sameDirectory(left, right) {
+  if (samePath(left, right)) return true;
+  try {
+    const leftStats = statSync(left, { bigint: true });
+    const rightStats = statSync(right, { bigint: true });
+    return (
+      leftStats.isDirectory() &&
+      rightStats.isDirectory() &&
+      leftStats.dev !== 0n &&
+      rightStats.dev !== 0n &&
+      leftStats.ino !== 0n &&
+      rightStats.ino !== 0n &&
+      leftStats.dev === rightStats.dev &&
+      leftStats.ino === rightStats.ino
+    );
+  } catch {
+    return false;
+  }
+}
+
 function resolvePaths(cwd = process.cwd()) {
   const registeredGitDir = gitConfigValue('ph.mainWorktreeGitDir', cwd);
   const registeredPath = gitConfigValue('ph.mainWorktreePath', cwd);
@@ -142,6 +163,42 @@ function resolvePaths(cwd = process.cwd()) {
   const commonDir = resolvePath(commonRaw, cwd);
   const mainGitDir = resolvePath(registeredGitDir, cwd);
   const mainPath = resolvePath(registeredPath, cwd);
+  let registeredCommonDir;
+  let actualMainGitDir;
+  let actualMainPath;
+  try {
+    registeredCommonDir = resolvePath(
+      gitText(['rev-parse', '--path-format=absolute', '--git-common-dir'], mainPath),
+      mainPath
+    );
+    actualMainGitDir = resolvePath(gitText(['rev-parse', '--absolute-git-dir'], mainPath), mainPath);
+    actualMainPath = resolvePath(gitText(['rev-parse', '--show-toplevel'], mainPath), mainPath);
+  } catch {
+    throw new Error(
+      'registered main worktree cannot be verified against this repository; preserve state and repair the shared main-worktree registration'
+    );
+  }
+  if (
+    !sameDirectory(registeredCommonDir, commonDir) ||
+    !sameDirectory(actualMainGitDir, mainGitDir) ||
+    !sameDirectory(actualMainPath, mainPath)
+  ) {
+    throw new Error(
+      'registered main worktree does not belong to this repository; preserve state and repair the shared main-worktree registration'
+    );
+  }
+  const registeredIdentity = gitConfigValue('ph.mainWorktreeIdentity', cwd);
+  let currentMainIdentity = null;
+  try {
+    currentMainIdentity = readFileSync(join(mainGitDir, 'kilo-main-worktree-identity'), 'utf8').trim() || null;
+  } catch {
+    // A missing or unreadable identity marker cannot establish this worktree's registration.
+  }
+  if (!registeredIdentity || currentMainIdentity !== registeredIdentity) {
+    throw new Error(
+      'registered main worktree identity does not match its private git directory; preserve state and reinstall hooks from main'
+    );
+  }
   return {
     cwd,
     commonDir,
@@ -169,12 +226,19 @@ function readOwner(paths) {
 const sleepFor = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
 
 async function readOwnerForWatcher(paths, { sleep = sleepFor, readOwnerImpl = readOwner } = {}) {
+  const logFailure = (message) => {
+    try {
+      appendFailureLog(paths, message);
+    } catch {
+      // Failure-log contention or I/O must not skip the owner-read retry sequence.
+    }
+  };
+
   for (let attempt = 1; attempt <= WATCHER_READ_RETRY_MAX; attempt += 1) {
     try {
       return { ok: true, owner: readOwnerImpl(paths) };
     } catch (error) {
-      appendFailureLog(
-        paths,
+      logFailure(
         'watcher readOwner failed (attempt ' +
           attempt +
           '/' +
@@ -183,7 +247,7 @@ async function readOwnerForWatcher(paths, { sleep = sleepFor, readOwnerImpl = re
           (error?.message ?? String(error))
       );
       if (attempt === WATCHER_READ_RETRY_MAX) {
-        appendFailureLog(paths, 'watcher: readOwner failed ' + WATCHER_READ_RETRY_MAX + ' consecutive times; exiting');
+        logFailure('watcher: readOwner failed ' + WATCHER_READ_RETRY_MAX + ' consecutive times; exiting');
         return { ok: false, error };
       }
       await sleep(WATCHER_READ_RETRY_BASE_MS * attempt);
@@ -576,10 +640,13 @@ function invalidTimestampMessage(owner) {
   ).replace(/--/g, '- -');
 }
 
-function readFailureLogLock(file) {
+export function readFailureLogLock(
+  file,
+  { lstatImpl = lstatSync, openImpl = openSync, fstatImpl = fstatSync, readImpl = readSync, closeImpl = closeSync } = {}
+) {
   let pathStat;
   try {
-    pathStat = lstatSync(file);
+    pathStat = lstatImpl(file);
   } catch (error) {
     if (error?.code === 'ENOENT') return { status: 'missing' };
     throw error;
@@ -590,17 +657,20 @@ function readFailureLogLock(file) {
 
   let descriptor;
   try {
-    descriptor = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
-    const stat = fstatSync(descriptor);
-    const sameSingleLinkFile =
-      Number.isSafeInteger(pathStat.dev) &&
-      Number.isSafeInteger(pathStat.ino) &&
-      pathStat.ino > 0 &&
-      pathStat.nlink === 1 &&
-      stat.dev === pathStat.dev &&
-      stat.ino === pathStat.ino &&
-      stat.nlink === 1;
-    if (!stat.isFile() || !sameSingleLinkFile) {
+    descriptor = openImpl(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    const stat = fstatImpl(descriptor);
+    if (!stat.isFile() || !Number.isSafeInteger(stat.nlink) || stat.nlink > 1) {
+      throw new Error('main landing failure log lock is not a single-link regular file');
+    }
+    if (stat.nlink === 0 || stat.dev !== pathStat.dev || stat.ino !== pathStat.ino) {
+      return { status: 'changing' };
+    }
+    if (
+      !Number.isSafeInteger(pathStat.dev) ||
+      !Number.isSafeInteger(pathStat.ino) ||
+      pathStat.ino <= 0 ||
+      stat.nlink !== 1
+    ) {
       throw new Error('main landing failure log lock changed during inspection');
     }
     if (!Number.isSafeInteger(stat.size) || stat.size <= 0 || stat.size > FAILURE_LOG_LOCK_MAX_BYTES) {
@@ -610,7 +680,7 @@ function readFailureLogLock(file) {
     const buffer = Buffer.alloc(stat.size);
     let bytesRead = 0;
     while (bytesRead < buffer.length) {
-      const count = readSync(descriptor, buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+      const count = readImpl(descriptor, buffer, bytesRead, buffer.length - bytesRead, bytesRead);
       if (count === 0) return { status: 'unreadable' };
       bytesRead += count;
     }
@@ -637,7 +707,7 @@ function readFailureLogLock(file) {
     if (error?.code === 'ENOENT') return { status: 'missing' };
     throw error;
   } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
+    if (descriptor !== undefined) closeImpl(descriptor);
   }
 }
 
@@ -704,6 +774,11 @@ function acquireFailureLogLock(paths) {
     const inspected = readFailureLogLock(file);
     if (inspected.status === 'missing') {
       lastObservedLockState = 'changing';
+      continue;
+    }
+    if (inspected.status === 'changing') {
+      lastObservedLockState = 'changing';
+      if (attempt < FAILURE_LOG_LOCK_RETRY_ATTEMPTS - 1) waitForFailureLogLock(waitCell);
       continue;
     }
     if (inspected.status === 'unreadable') {

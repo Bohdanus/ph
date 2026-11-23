@@ -220,7 +220,8 @@ function excludedOpenCodePaths(projectRoot, pathApi, platform) {
         for (const entry of readdirSync(bin)) {
           const candidate = pathApi.join(bin, entry);
           try {
-            if (statSync(candidate).isFile()) {
+            const stat = statSync(candidate);
+            if (stat.isFile()) {
               executables.add(pathComparisonKey(realpathSync.native(candidate), platform));
             }
           } catch (error) {
@@ -239,6 +240,30 @@ function excludedOpenCodePaths(projectRoot, pathApi, platform) {
   return { directories, executables, complete };
 }
 
+function openCodeProjectRoots(cwd, projectRoot, pathApi, platform) {
+  const roots = new Map();
+  for (const candidate of [projectRoot, cwd]) {
+    const resolved = pathApi.resolve(candidate);
+    for (const root of [resolved, canonicalPath(resolved, pathApi)]) {
+      roots.set(pathComparisonKey(root, platform), root);
+    }
+  }
+  return [...roots.values()];
+}
+
+function excludedOpenCodePathsForRoots(projectRoots, pathApi, platform) {
+  const directories = [];
+  const executables = new Set();
+  let complete = true;
+  for (const projectRoot of projectRoots) {
+    const current = excludedOpenCodePaths(projectRoot, pathApi, platform);
+    directories.push(...current.directories);
+    for (const executable of current.executables) executables.add(executable);
+    complete &&= current.complete;
+  }
+  return { directories, executables, complete };
+}
+
 function isExcludedOpenCodePath(candidate, excluded, pathApi, platform) {
   if (excluded.executables.has(pathComparisonKey(candidate, platform))) return true;
   return excluded.directories.some((directory) => pathIsWithin(directory, candidate, pathApi, platform));
@@ -252,17 +277,21 @@ function filterOpenCodePathWithExclusions(
   if (typeof pathValue !== 'string') return undefined;
   const pathApi = platform === 'win32' ? path.win32 : path;
   const pathDelimiter = pathApi.delimiter;
-  const canonicalRoot = canonicalPath(projectRoot, pathApi);
+  const projectRoots = openCodeProjectRoots(cwd, projectRoot, pathApi, platform);
+  const canonicalRoots = projectRoots.map((root) => canonicalPath(root, pathApi));
   const unique = new Set();
   const trusted = [];
   for (const entry of pathValue.split(pathDelimiter)) {
     const directory = pathApi.resolve(cwd, entry || '.');
     // Exclude lexical project paths even when a repository-owned symlink points
-    // outside the checkout. Also check the resolved target to catch aliases
-    // that point into the checkout from an external PATH entry.
+    // outside either checkout. Also check the resolved target to catch aliases
+    // that point into a protected checkout from an external PATH entry.
     if (
-      pathIsWithin(projectRoot, directory, pathApi, platform) ||
-      isAncestorNodeModulesBin(directory, projectRoot, pathApi, platform)
+      projectRoots.some(
+        (root) =>
+          pathIsWithin(root, directory, pathApi, platform) ||
+          isAncestorNodeModulesBin(directory, root, pathApi, platform)
+      )
     ) {
       continue;
     }
@@ -275,8 +304,11 @@ function filterOpenCodePathWithExclusions(
       continue;
     }
     if (
-      pathIsWithin(canonicalRoot, canonical, pathApi, platform) ||
-      isAncestorNodeModulesBin(canonical, canonicalRoot, pathApi, platform) ||
+      canonicalRoots.some(
+        (root) =>
+          pathIsWithin(root, canonical, pathApi, platform) ||
+          isAncestorNodeModulesBin(canonical, root, pathApi, platform)
+      ) ||
       isExcludedOpenCodePath(canonical, excluded, pathApi, platform) ||
       canonical.includes(pathDelimiter)
     ) {
@@ -296,7 +328,8 @@ export function filterOpenCodePath(
 ) {
   if (typeof pathValue !== 'string') return undefined;
   const pathApi = platform === 'win32' ? path.win32 : path;
-  const excluded = excludedOpenCodePaths(projectRoot, pathApi, platform);
+  const projectRoots = openCodeProjectRoots(cwd, projectRoot, pathApi, platform);
+  const excluded = excludedOpenCodePathsForRoots(projectRoots, pathApi, platform);
   if (!excluded.complete) return '';
   return filterOpenCodePathWithExclusions(pathValue, { cwd, projectRoot, platform }, excluded);
 }
@@ -321,21 +354,35 @@ export function resolveOpenCodeCommand(
 
   const callerPath = environmentValue(environment, 'PATH', platform);
   if (typeof callerPath !== 'string' || callerPath.length === 0) return null;
-  const excluded = excludedOpenCodePaths(projectRoot, pathApi, platform);
+  const projectRoots = openCodeProjectRoots(cwd, projectRoot, pathApi, platform);
+  const excluded = excludedOpenCodePathsForRoots(projectRoots, pathApi, platform);
   if (!excluded.complete) return null;
   const searchPath = filterOpenCodePathWithExclusions(callerPath, { cwd, projectRoot, platform }, excluded);
   if (!searchPath) return null;
   const extensions = platform === 'win32' ? windowsExecutableExtensions(command, environment, pathApi) : [''];
   const candidates = extensions.map((extension) => `${command}${extension}`);
-  const canonicalRoot = canonicalPath(projectRoot, pathApi);
+  const canonicalRoots = projectRoots.map((root) => canonicalPath(root, pathApi));
   for (const directory of searchPath.split(pathApi.delimiter)) {
     for (const candidateName of candidates) {
       const candidate = pathApi.join(directory, candidateName);
       try {
-        if (!statSync(candidate).isFile()) continue;
+        const candidateStat = statSync(candidate);
+        if (!candidateStat.isFile()) continue;
+        // A hard link to any protected project file can live outside the tree,
+        // so path checks cannot identify an existing alias. Reject multiply
+        // linked PATH candidates without a recursive project scan. This does
+        // not pin the inode through spawn against concurrent filesystem writes.
+        if (!Number.isSafeInteger(candidateStat.nlink) || candidateStat.nlink !== 1) continue;
         const canonical = realpathSync.native(candidate);
-        if (pathIsWithin(canonicalRoot, canonical, pathApi, platform)) continue;
-        if (isAncestorNodeModulesBin(pathApi.dirname(canonical), canonicalRoot, pathApi, platform)) continue;
+        if (
+          canonicalRoots.some(
+            (root) =>
+              pathIsWithin(root, canonical, pathApi, platform) ||
+              isAncestorNodeModulesBin(pathApi.dirname(canonical), root, pathApi, platform)
+          )
+        ) {
+          continue;
+        }
         if (isExcludedOpenCodePath(canonical, excluded, pathApi, platform)) continue;
         if (platform !== 'win32') accessSync(canonical, constants.X_OK);
         // The Windows shim uses the filename extension to choose between

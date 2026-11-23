@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync, realpathSync, symlinkSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -1044,6 +1044,166 @@ console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }))
     } finally {
       await rm(projectBin, { recursive: true, force: true });
       if (trustedBin) await rm(trustedBin, { recursive: true, force: true });
+    }
+  });
+
+  it('excludes caller project bins when the runner is invoked from another project', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-distinct-projects-'));
+    const runnerRoot = join(parent, 'runner');
+    const callerRoot = join(parent, 'caller');
+    const callerBin = join(callerRoot, 'node_modules', '.bin');
+    const trustedBin = join(parent, 'trusted');
+    let cwdSpy;
+    try {
+      await mkdir(runnerRoot, { recursive: true });
+      await mkdir(callerBin, { recursive: true });
+      await mkdir(trustedBin, { recursive: true });
+      await writeFakeOpenCode(
+        callerBin,
+        "console.log(JSON.stringify({ type: 'text', part: { text: 'caller project shadow' } }));",
+        'opencode'
+      );
+      const trustedCommand = await writeFakeOpenCode(
+        trustedBin,
+        "console.log(JSON.stringify({ type: 'text', part: { text: 'trusted command' } }));",
+        'opencode'
+      );
+      const suppliedPath = [callerBin, trustedBin, process.env.PATH ?? ''].filter(Boolean).join(delimiter);
+      const expectedPath = realpathSync.native(trustedBin);
+      const environment = {
+        PATH: suppliedPath,
+        ComSpec: process.env.ComSpec,
+        SystemRoot: process.env.SystemRoot,
+      };
+
+      cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(callerRoot);
+
+      const filteredPath = filterOpenCodePath(suppliedPath, { cwd: callerRoot, projectRoot: runnerRoot });
+      expect(filteredPath.split(delimiter)).toContain(expectedPath);
+      expect(filteredPath.split(delimiter)).not.toContain(realpathSync.native(callerBin));
+      expect(
+        resolveOpenCodeCommand('opencode', {
+          environment,
+          cwd: callerRoot,
+          projectRoot: runnerRoot,
+          platform: process.platform,
+        })
+      ).toBe(realpathSync.native(trustedCommand));
+      await expect(
+        runOpenCodeCompletion({
+          command: 'opencode',
+          model: 'beam-free',
+          prompt: 'prompt',
+          maxTokens: 64,
+          environment,
+        })
+      ).resolves.toMatchObject({ content: 'trusted command', finishReason: 'stop', model: 'beam-free' });
+    } finally {
+      cwdSpy?.mockRestore();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('excludes caller ancestor bins when the caller root is a symlink', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-symlinked-caller-root-'));
+    const callerParent = join(parent, 'caller-parent');
+    const callerRoot = join(callerParent, 'project');
+    const callerRootAlias = join(parent, 'caller-link');
+    const callerBin = join(callerParent, 'node_modules', '.bin');
+    const packageBin = join(parent, 'outside-package');
+    const aliasBin = join(parent, 'aliases');
+    const runnerRoot = join(parent, 'runner');
+    try {
+      await Promise.all(
+        [callerRoot, callerBin, packageBin, aliasBin, runnerRoot].map((directory) =>
+          mkdir(directory, { recursive: true })
+        )
+      );
+      const packageCommand = await writeFakeOpenCode(
+        packageBin,
+        "console.log('ancestor package command');",
+        'opencode'
+      );
+      const callerCommand = join(callerBin, 'opencode');
+      symlinkSync(packageCommand, callerCommand);
+      symlinkSync(callerRoot, callerRootAlias, 'dir');
+      symlinkSync(callerCommand, join(aliasBin, 'opencode'));
+      const environment = { PATH: aliasBin };
+
+      expect(
+        resolveOpenCodeCommand('opencode', {
+          environment,
+          cwd: callerRootAlias,
+          projectRoot: runnerRoot,
+          platform: process.platform,
+        })
+      ).toBeNull();
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects hard-link aliases to runner and caller project executables', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-hard-link-aliases-'));
+    const runnerBin = join(parent, 'runner', 'node_modules', '.bin');
+    const callerBin = join(parent, 'caller', 'node_modules', '.bin');
+    const runnerScripts = join(parent, 'runner', 'scripts');
+    const callerScripts = join(parent, 'caller', 'scripts');
+    const runnerAliasBin = join(parent, 'aliases', 'runner');
+    const callerAliasBin = join(parent, 'aliases', 'caller');
+    const runnerScriptAliasBin = join(parent, 'aliases', 'runner-scripts');
+    const callerScriptAliasBin = join(parent, 'aliases', 'caller-scripts');
+    const trustedBin = join(parent, 'trusted');
+    try {
+      await Promise.all(
+        [
+          runnerBin,
+          callerBin,
+          runnerScripts,
+          callerScripts,
+          runnerAliasBin,
+          callerAliasBin,
+          runnerScriptAliasBin,
+          callerScriptAliasBin,
+          trustedBin,
+        ].map((directory) => mkdir(directory, { recursive: true }))
+      );
+      const runnerCommand = await writeFakeOpenCode(runnerBin, "console.log('runner project command');", 'opencode');
+      const callerCommand = await writeFakeOpenCode(callerBin, "console.log('caller project command');", 'opencode');
+      const runnerScriptCommand = await writeFakeOpenCode(
+        runnerScripts,
+        "console.log('runner scripts command');",
+        'opencode'
+      );
+      const callerScriptCommand = await writeFakeOpenCode(
+        callerScripts,
+        "console.log('caller scripts command');",
+        'opencode'
+      );
+      const trustedCommand = await writeFakeOpenCode(trustedBin, "console.log('trusted command');", 'opencode');
+      await link(runnerCommand, join(runnerAliasBin, basename(runnerCommand)));
+      await link(callerCommand, join(callerAliasBin, basename(callerCommand)));
+      await link(runnerScriptCommand, join(runnerScriptAliasBin, basename(runnerScriptCommand)));
+      await link(callerScriptCommand, join(callerScriptAliasBin, basename(callerScriptCommand)));
+      const suppliedPath = [
+        runnerAliasBin,
+        callerAliasBin,
+        runnerScriptAliasBin,
+        callerScriptAliasBin,
+        trustedBin,
+      ].join(delimiter);
+      const environment = { PATH: suppliedPath, ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot };
+
+      expect(
+        resolveOpenCodeCommand('opencode', {
+          environment,
+          cwd: join(parent, 'caller'),
+          projectRoot: join(parent, 'runner'),
+          platform: process.platform,
+        })
+      ).toBe(realpathSync.native(trustedCommand));
+    } finally {
+      await rm(parent, { recursive: true, force: true });
     }
   });
 
