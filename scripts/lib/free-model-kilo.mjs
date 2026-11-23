@@ -565,13 +565,27 @@ export async function resolveKiloCli({
 function reportedStatus(events, stderrText = '') {
   const statusFromText = (value) => {
     if (typeof value !== 'string') return null;
-    const match = value.match(/\b(?:HTTP(?:\s+status)?|status(?:\s+code)?)\s*[:=]?\s*(401|402|429)\b/i);
+    // Structured error prose is not authoritative; accept only compact status lines.
+    const match = value.match(
+      /^[ \t]*(?:Error:[ \t]*)?(?:HTTP(?:[ \t]+status(?:[ \t]+code)?)?|status(?:[ \t]+code)?)[ \t]*[:=]?[ \t]*(401|402|429)(?:(?:[ \t]+|:[ \t]*|=[ \t]*)(?:Unauthorized|Payment Required|Too Many Requests|Rate Limit Exceeded|Rate Limited))?[ \t]*$/i
+    );
     return match ? Number(match[1]) : null;
   };
+  const legacyQuotaStatusFromText = (value) => {
+    if (typeof value !== 'string') return null;
+    const match = value.match(
+      /^[ \t]*(?:Error:[ \t]*)?Free model usage limit reached[ \t]*\([^()\r\n]*?\b(?:HTTP(?:[ \t]+status(?:[ \t]+code)?)?|status(?:[ \t]+code)?)[ \t]*[:=]?[ \t]*(401|402|429)\b[^()\r\n]*\)(?:[ \t]*:.*)?[ \t]*$/i
+    );
+    return match ? Number(match[1]) : null;
+  };
+  const isLegacyQuotaMessage = (value) =>
+    typeof value === 'string' && /^[ \t]*(?:Error:[ \t]*)?Free model usage limit reached[ \t]*$/i.test(value);
   const visit = (value) => {
     if (!value || typeof value !== 'object') return null;
     const pending = [{ value, keys: Object.keys(value), index: 0 }];
+    let explicitStatus = null;
     let textualStatus = null;
+    let legacyQuota = false;
     while (pending.length > 0) {
       const frame = pending[pending.length - 1];
       if (frame.index >= frame.keys.length) {
@@ -582,31 +596,39 @@ function reportedStatus(events, stderrText = '') {
       const key = frame.keys[frame.index++];
       const child = frame.value[key];
       const normalizedKey = key.toLowerCase().replace(/[_-]/g, '');
-      if (/^(?:status|statuscode|httpstatus|httpstatuscode|code)$/.test(normalizedKey)) {
+      const isStatusField = /^(?:status|statuscode|httpstatus|httpstatuscode|code)$/.test(normalizedKey);
+      if (isStatusField) {
         // Provider statuses are scalar. Avoid coercing adversarial nested arrays,
         // which can recurse during Number conversion even with an explicit stack.
         const status = typeof child === 'string' || typeof child === 'number' ? Number(child) : Number.NaN;
-        if (Number.isInteger(status) && status >= 400 && status <= 599) return status;
+        if (Number.isInteger(status) && status >= 400 && status <= 599) {
+          explicitStatus ??= status;
+        } else if (textualStatus === null) {
+          textualStatus = statusFromText(child) ?? legacyQuotaStatusFromText(child);
+        }
       }
-      if (textualStatus === null) {
-        // JSON.stringify serializes array values but not their numeric indices.
-        const keyStatus = Array.isArray(frame.value) ? null : statusFromText(key);
-        textualStatus = keyStatus ?? statusFromText(child);
+      if (!Array.isArray(frame.value) && /^(?:message|error)$/.test(normalizedKey)) {
+        const legacyQuotaStatus = legacyQuotaStatusFromText(child);
+        if (textualStatus === null) textualStatus = statusFromText(child) ?? legacyQuotaStatus;
+        legacyQuota ||= isLegacyQuotaMessage(child) || legacyQuotaStatus !== null;
       }
       if (child !== null && typeof child === 'object') {
         pending.push({ value: child, keys: Object.keys(child), index: 0 });
       }
     }
-    return textualStatus;
+    return { status: explicitStatus ?? textualStatus, legacyQuota };
   };
+  let status = null;
+  let legacyQuota = isLegacyQuotaMessage(stderrText) || legacyQuotaStatusFromText(stderrText) !== null;
   for (const event of events) {
     if (event?.type === 'error') {
-      const status = visit(event);
-      if (status !== null) return status;
+      const result = visit(event);
+      if (status === null && result.status !== null) status = result.status;
+      legacyQuota ||= result.legacyQuota;
     }
   }
-  const statusMatch = stderrText.match(/\b(?:HTTP(?:\s+status)?|status(?:\s+code)?)\s*[:=]?\s*(401|402|429)\b/i);
-  return statusMatch ? Number(statusMatch[1]) : null;
+  status ??= statusFromText(stderrText) ?? legacyQuotaStatusFromText(stderrText);
+  return { status, legacyQuota };
 }
 
 function hasToolActivity(events) {
@@ -1261,26 +1283,31 @@ function isExactZeroCost(cost) {
 
 function parseEvents(output) {
   const events = [];
+  const diagnosticLines = [];
   let malformed = false;
   for (const rawLine of iterateTextLines(output)) {
     const line = rawLine.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').trim();
-    if (!line.startsWith('{')) continue;
+    if (!line.startsWith('{')) {
+      if (line) diagnosticLines.push(line);
+      continue;
+    }
     try {
       events.push(JSON.parse(line));
     } catch {
       malformed = true;
     }
   }
-  return { events, malformed };
+  return { events, malformed, diagnosticText: diagnosticLines.join('\n') };
 }
 
-function sanitizedProcessError(events, stderrText, code, signal) {
-  const status = reportedStatus(events, stderrText);
+function sanitizedProcessError(events, stderrDiagnosticText, code, signal) {
+  const report = reportedStatus(events, stderrDiagnosticText);
+  const status = report.status;
   if (status === 401) return { error: 'Kilo authentication was rejected', exhaustSource: true, status };
   if (status === 402 || status === 429) {
     return { error: `Kilo provider quota or rate limit returned HTTP ${status}`, exhaustSource: true, status };
   }
-  if (/\bfree model usage limit reached\b/i.test(stderrText)) {
+  if (report.legacyQuota) {
     return { error: 'Kilo provider quota or rate limit was reached', exhaustSource: true };
   }
   const modelAttributable =
@@ -1618,7 +1645,8 @@ export async function runKiloCompletion({
         child.stdin.end(message);
       });
 
-    const stderrEvents = parseEvents(stderrText).events;
+    const parsedStderr = parseEvents(stderrText);
+    const stderrEvents = parsedStderr.events;
     const processEvents = [...events, ...stderrEvents];
     const costs = processEvents.flatMap((event) =>
       [event?.part?.cost, event?.cost, event?.error?.cost].filter((cost) => cost !== undefined)
@@ -1643,8 +1671,8 @@ export async function runKiloCompletion({
     if (hasToolActivity(processEvents))
       return { error: 'Kilo attempted a tool call; the completion was rejected', exhaustSource: true };
     if (processEvents.some((event) => event?.type === 'error'))
-      return sanitizedProcessError(processEvents, stderrText, code, signal);
-    if (code !== 0) return sanitizedProcessError(processEvents, stderrText, code, signal);
+      return sanitizedProcessError(processEvents, parsedStderr.diagnosticText, code, signal);
+    if (code !== 0) return sanitizedProcessError(processEvents, parsedStderr.diagnosticText, code, signal);
     if (inputError) return { error: 'Kilo CLI did not accept the complete prompt' };
 
     const terminal = events.filter((event) => event?.type === 'step_finish').at(-1);
