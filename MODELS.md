@@ -33,6 +33,15 @@ flag, so its adapter passes the budget as a response-length instruction; the mod
 output length. Confirm non-empty text, the resolved model/provider, completion reason, and reported
 cost before relying on a result.
 
+To pin the completion runner to one exact route, pass both `--provider` and `--model`. If the pair is missing, quarantined, or not verified free, the run stops before inference instead of falling back. Passing only one flag filters by that provider or model while retaining eligible routes in the other dimension. This command requests Kilo Nemotron with an 8,192-token response-length budget:
+
+```sh
+node scripts/free-model-pool.mjs --prompt-file /tmp/nemotron-review.txt \
+  --provider kilo --model nvidia/nemotron-3-ultra-550b-a55b:free --max-tokens 8192
+```
+
+Kilo receives that budget as an instruction, not a hard provider token limit. For WSL with Windows-saved Kilo auth, see [`docs/FREE-COMPUTE-OPERATIONS.md`](docs/FREE-COMPUTE-OPERATIONS.md#kilo-code).
+
 The host-level `usageLimited` indicator can misreport GPT weekly usage and is not an authoritative
 capacity signal. At route selection, do not exclude a model/provider solely because of this flag.
 Use the live catalog and route policy to determine eligibility; paid inference still requires
