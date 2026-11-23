@@ -31,7 +31,7 @@ import {
   parseDuration,
 } from '../lib/agent-board/db.mjs';
 import { resolveIdentity } from '../lib/agent-board/identity.mjs';
-import { run } from '../agent-board.mjs';
+import { formatDoctorFinding, run } from '../agent-board.mjs';
 
 /**
  * This file's budget, and the reason it is not Vitest's default 5s.
@@ -70,6 +70,55 @@ import { run } from '../agent-board.mjs';
  * tests below that already declare one keep it.
  */
 vi.setConfig({ testTimeout: 20_000 });
+
+describe('doctor finding output', () => {
+  it('does not describe a worktree as gone when only its lease expired', () => {
+    expect(
+      formatDoctorFinding({
+        kind: 'expired-lock',
+        path: 'scripts/example.mjs',
+        agent: 'task/example',
+        worktree: '/repo/example',
+      })
+    ).toBe('  expired-lock scripts/example.mjs — task/example');
+  });
+
+  it('names a missing worktree only for a missing-worktree finding', () => {
+    expect(
+      formatDoctorFinding({
+        kind: 'dead-worktree-lock',
+        path: 'scripts/example.mjs',
+        agent: 'task/example',
+        worktree: '/repo/example',
+      })
+    ).toBe('  dead-worktree-lock scripts/example.mjs — task/example (/repo/example is gone)');
+  });
+
+  it('names a missing worktree for a dead-worktree finding', () => {
+    expect(
+      formatDoctorFinding({
+        kind: 'dead-worktree',
+        path: 'scripts/example.mjs',
+        agent: 'task/example',
+        worktree: '/repo/example',
+      })
+    ).toBe('  dead-worktree scripts/example.mjs — task/example (/repo/example is gone)');
+  });
+
+  it('reports retained live locks without claiming the worktree is gone', () => {
+    expect(
+      formatDoctorFinding({
+        kind: 'expired-lock',
+        path: 'scripts/example.mjs',
+        agent: 'task/example',
+        worktree: '/repo/example',
+        files_retained: [{ path: 'src/held-by-b.ts', agent_id: 'task/contributor' }],
+      })
+    ).toBe(
+      '  expired-lock scripts/example.mjs — task/example; live file locks remain held: src/held-by-b.ts by task/contributor'
+    );
+  });
+});
 
 /**
  * The CLI as a filesystem path, for spawning.

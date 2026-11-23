@@ -42,6 +42,7 @@ import {
   PLACEHOLDER_BRANCHES,
   anchorRefFor,
   dispose,
+  disposalExitCode,
   isRegenerableIgnored,
   locateInventory,
   inspectOrphanContent,
@@ -342,6 +343,7 @@ describe('dispose preflight', () => {
       },
       'must-not-prune',
     ],
+    ['a missing common Git directory', { gitState: greenState({ commonDir: '' }) }, 'main-worktree-path-unavailable'],
     ['ignored content', { gitState: greenState({ ignoredWork: ['.env.local'] }) }, 'ignored-content'],
     ['a live board claim', { board: { ...greenBoard, claims: [{ agentId: 'writer' }] } }, 'board-claim'],
     [
@@ -765,16 +767,31 @@ describe('dispose execution', () => {
     const cwdCalls = [];
     const writes = [];
     const answerCounts = new Map();
+    let simulatedBranchRefPresent = true;
     const run = (cwd, args, opts = {}) => {
       cwdCalls.push(cwd);
       calls.push(args);
       const key = args.join(' ');
       const answerKey = answers[key] === undefined ? `${args[0]} ${args[1]}` : key;
-      const configured = answers[answerKey];
+      const isBranchDeletion =
+        args[0] === '--git-dir' && args[2] === 'branch' && (args[3] === '-d' || args[3] === '-D');
+      const isBranchRefCheck =
+        args[0] === '--git-dir' &&
+        args[2] === 'for-each-ref' &&
+        args[3] === '--format=%(refname)' &&
+        args[4] === '--' &&
+        args[5]?.startsWith('refs/heads/');
+      const defaultBranchRefAnswer = isBranchRefCheck ? (simulatedBranchRefPresent ? args[5] : '') : undefined;
+      const configured = answers[answerKey] === undefined ? defaultBranchRefAnswer : answers[answerKey];
       const count = answerCounts.get(answerKey) ?? 0;
       answerCounts.set(answerKey, count + 1);
       const answer = Array.isArray(configured) ? configured[Math.min(count, configured.length - 1)] : configured;
       if (answer instanceof Error) throw answer;
+      if (isBranchDeletion) simulatedBranchRefPresent = false;
+      if (isBranchRefCheck && answers[answerKey] !== undefined) {
+        simulatedBranchRefPresent =
+          typeof answer === 'string' && answer.split('\n').some((entry) => entry.trim() === args[5]);
+      }
       return { stdout: typeof answer === 'string' ? answer : '' };
     };
     const fs = {
@@ -826,6 +843,7 @@ describe('dispose execution', () => {
     expect(calls.some((c) => c[0] === 'worktree' && c[1] === 'remove')).toBe(false);
     expect(result.worktreeRemoved).toBe(false);
     expect(result.branchDeleted).toBe(false);
+    expect(result.branchKept).toBeNull();
   });
 
   it('never passes --force or -f to worktree remove', () => {
@@ -927,10 +945,31 @@ describe('dispose execution', () => {
       expect(result.branchKept).toBe(true);
       expect(result.branchDeleted).toBe(false);
       expect(result.worktreeRemoved).toBe(true);
-      expect(calls.some((c) => c.join(' ') === 'worktree remove /repo/.kilo/worktrees/task')).toBe(true);
+      const removeAt = calls.findIndex((c) => c.join(' ') === 'worktree remove /repo/.kilo/worktrees/task');
+      const verifyAt = calls.findIndex(
+        (c) => c.join(' ') === '--git-dir /repo/.git for-each-ref --format=%(refname) -- refs/heads/fix/task'
+      );
+      expect(removeAt).toBeGreaterThanOrEqual(0);
+      expect(verifyAt).toBeGreaterThan(removeAt);
       // The whole status in one assertion: the command that deletes the ref is
       // not run at all, so no `-D` fallback can reach it either.
       expect(calls.some((c) => c[0] === 'branch')).toBe(false);
+    });
+
+    it('fails when the retained branch ref disappears during worktree removal', () => {
+      const h = harness({
+        '--git-dir /repo/.git for-each-ref --format=%(refname) -- refs/heads/fix/task': '',
+      });
+      const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs, keepBranch: true });
+
+      expect(result).toMatchObject({ worktreeRemoved: true, branchDeleted: false, branchKept: false });
+      expect(result.anchorRef).toBe(`${KEEP_REF_PREFIX}fix-task`);
+      const anchorAt = h.calls.findIndex((args) => args[0] === 'update-ref');
+      expect(anchorAt).toBeGreaterThanOrEqual(0);
+      expect(h.calls[anchorAt]).toEqual(['update-ref', `${KEEP_REF_PREFIX}fix-task`, 'abc1234', '']);
+      expect(result.steps.join('\n')).toContain('MISSING branch fix/task');
+      expect(result.steps.join('\n')).toContain(`captured tip anchored at ${KEEP_REF_PREFIX}fix-task`);
+      expect(disposalExitCode(result, { keepBranch: true })).toBe(2);
     });
 
     it('writes no anchor ref, because the surviving branch IS the copy', () => {
@@ -1012,6 +1051,7 @@ describe('dispose execution', () => {
     const ok = harness();
     const kept = harness({
       '--git-dir /repo/.git branch -d fix/task': new Error("error: the branch 'fix/task' is not fully merged"),
+      '--git-dir /repo/.git for-each-ref --format=%(refname) -- refs/heads/fix/task': 'refs/heads/fix/task',
     });
 
     const deleted = dispose('/repo', greenState({ mainWorktreePath: '/foreign/reused-main' }), {
@@ -1027,6 +1067,28 @@ describe('dispose execution', () => {
     expect(refused.steps.join('\n')).toContain('KEPT branch fix/task');
     // The anchor is what makes a kept branch recoverable, so it must be reported.
     expect(refused.steps.join('\n')).toContain(KEEP_REF_PREFIX);
+  });
+
+  it('fails when a branch ref exists again after the deletion command succeeds', () => {
+    const h = harness({
+      '--git-dir /repo/.git for-each-ref --format=%(refname) -- refs/heads/fix/task': 'refs/heads/fix/task',
+    });
+    const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs });
+
+    expect(result).toMatchObject({ worktreeRemoved: true, branchDeleted: true, branchKept: true });
+    expect(result.steps.join('\n')).toContain('exists after the deletion command');
+    expect(disposalExitCode(result)).toBe(2);
+  });
+
+  it('fails when branch deletion succeeds but its resulting ref cannot be verified', () => {
+    const h = harness({
+      '--git-dir /repo/.git for-each-ref --format=%(refname) -- refs/heads/fix/task': new Error('spawnSync git ENOENT'),
+    });
+    const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs });
+
+    expect(result).toMatchObject({ worktreeRemoved: true, branchDeleted: true, branchKept: null });
+    expect(disposalExitCode(result)).toBe(2);
+    expect(result.steps.join('\n')).toContain('spawnSync git ENOENT');
   });
 
   it('uses guarded -D only for a verified absorbed branch after anchoring it', () => {
@@ -1170,9 +1232,10 @@ describe('dispose execution', () => {
 
     expect(result.worktreeRemoved).toBe(false);
     expect(result.branchDeleted).toBe(false);
+    expect(result.branchKept).toBeNull();
     expect(result.steps.join('\n')).toContain('KEPT worktree');
     expect(result.steps.join('\n')).toContain('cannot remove a locked working tree');
-    // The branch is still there and still recoverable at its anchor.
+    // No branch deletion was attempted, and the captured tip remains anchored.
     expect(result.steps.join('\n')).toContain(KEEP_REF_PREFIX);
   });
 
@@ -1188,16 +1251,68 @@ describe('dispose execution', () => {
     const result = dispose('/repo', greenState({ mainWorktreePath: null }), { run: h.run, fs: h.fs });
     const message = result.steps.join('\n');
 
-    expect(result).toMatchObject({ worktreeRemoved: false, branchDeleted: false, anchorRef: null });
-    expect(message).toContain('Git did not report a registered main checkout and common directory');
+    expect(result).toMatchObject({
+      worktreeRemoved: false,
+      branchDeleted: false,
+      anchorRef: null,
+      branchKept: null,
+    });
+    expect(message).toContain('Git did not report the common directory and');
     expect(h.calls.some((args) => args[0] === 'update-ref' || args[0] === 'worktree')).toBe(false);
   });
 
+  it('does not remove a branch-preserving worktree when its common Git directory is unknown', () => {
+    const h = harness();
+    const result = dispose('/repo', greenState({ commonDir: '' }), {
+      run: h.run,
+      fs: h.fs,
+      keepBranch: true,
+    });
+
+    expect(result.worktreeRemoved).toBe(false);
+    expect(result.branchKept).toBeNull();
+    expect(h.calls.some((args) => args[0] === 'worktree' && args[1] === 'remove')).toBe(false);
+  });
+
+  it('checks a kept branch from the common Git directory after removing its worktree', () => {
+    const target = '/repo/.kilo/worktrees/task';
+    const h = harness();
+    const result = dispose(target, greenState({ absolutePath: target, mainWorktreePath: null }), {
+      run: h.run,
+      fs: h.fs,
+      keepBranch: true,
+    });
+    const verifyAt = h.calls.findIndex((args) => args[0] === '--git-dir' && args[2] === 'for-each-ref');
+
+    expect(result).toMatchObject({ worktreeRemoved: true, branchDeleted: false, branchKept: true });
+    expect(h.cwdCalls[verifyAt]).toBe('/repo/.git');
+  });
+
+  it('does not claim a retained branch when its ref check fails after worktree removal', () => {
+    const h = harness({
+      '--git-dir /repo/.git for-each-ref --format=%(refname) -- refs/heads/fix/task': new Error('EACCES'),
+    });
+    const result = dispose('/repo', greenState({ mainWorktreePath: null }), {
+      run: h.run,
+      fs: h.fs,
+      keepBranch: true,
+    });
+
+    expect(result).toMatchObject({ worktreeRemoved: true, branchDeleted: false, branchKept: null });
+    expect(disposalExitCode(result, { keepBranch: true })).toBe(2);
+    expect(result.steps.join('\n')).toContain('UNVERIFIED branch fix/task');
+    expect(result.steps.join('\n')).toContain('EACCES');
+  });
+
   it('removes the worktree even when the branch deletion is refused, and reports both', () => {
-    const h = harness({ '--git-dir /repo/.git branch -d fix/task': new Error('not fully merged') });
+    const h = harness({
+      '--git-dir /repo/.git branch -d fix/task': new Error('not fully merged'),
+      '--git-dir /repo/.git rev-parse --verify --quiet refs/heads/fix/task^{commit}': 'abc1234',
+    });
     const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs });
     expect(h.calls.some((c) => c.join(' ') === 'worktree remove /repo/.kilo/worktrees/task')).toBe(true);
     expect(result.branchDeleted).toBe(false);
+    expect(result.branchKept).toBe(true);
     expect(result.steps.join('\n')).toContain('could not delete it');
     expect(result.steps.join('\n')).not.toContain('so it is unmerged');
   });
@@ -1218,18 +1333,76 @@ describe('dispose execution', () => {
     expect(h.cwdCalls[removeAt]).toBe(target);
     expect(branchDeleteAt).toBeGreaterThan(removeAt);
     expect(h.cwdCalls[branchDeleteAt]).toBe(main);
-    expect(result).toMatchObject({ worktreeRemoved: true, branchDeleted: true });
+    expect(result).toMatchObject({ worktreeRemoved: true, branchDeleted: true, branchKept: false });
   });
 
   it('reports a runner failure without labeling it an unmerged branch', () => {
-    const h = harness({ '--git-dir /repo/.git branch -d fix/task': new Error('spawnSync git ENOENT') });
+    const h = harness({
+      '--git-dir /repo/.git branch -d fix/task': new Error('spawnSync git ENOENT'),
+      '--git-dir /repo/.git for-each-ref --format=%(refname) -- refs/heads/fix/task': new Error('spawnSync git ENOENT'),
+    });
     const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs });
     const message = result.steps.join('\n');
 
     expect(result.worktreeRemoved).toBe(true);
     expect(result.branchDeleted).toBe(false);
+    expect(result.branchKept).toBeNull();
     expect(message).toContain('spawnSync git ENOENT');
+    expect(message).toContain('UNVERIFIED branch');
     expect(message).not.toContain('so it is unmerged');
+  });
+
+  it('reports an unknown branch when no worktree mapping is available', () => {
+    const h = harness();
+    const result = dispose('/repo', greenState({ found: false, mainWorktreePath: null, commonDir: '', branch: null }), {
+      run: h.run,
+      fs: h.fs,
+    });
+
+    expect(result).toMatchObject({
+      worktreeRemoved: false,
+      branchDeleted: false,
+      branchKept: null,
+    });
+    expect(h.calls.some((args) => args[0] === 'worktree')).toBe(false);
+  });
+});
+
+describe('disposal exit status', () => {
+  it('fails when the worktree was not removed', () => {
+    expect(disposalExitCode({ worktreeRemoved: false, branchDeleted: false, branchKept: true })).toBe(2);
+  });
+
+  it('succeeds after confirmed branch deletion', () => {
+    expect(disposalExitCode({ worktreeRemoved: true, branchDeleted: true, branchKept: false })).toBe(0);
+  });
+
+  it('succeeds when legacy mode confirms the branch was retained', () => {
+    expect(
+      disposalExitCode({ worktreeRemoved: true, branchDeleted: false, branchKept: true }, { keepBranch: true })
+    ).toBe(0);
+  });
+
+  it('fails when branch retention was requested but not confirmed', () => {
+    expect(
+      disposalExitCode({ worktreeRemoved: true, branchDeleted: false, branchKept: null }, { keepBranch: true })
+    ).toBe(2);
+  });
+
+  it('fails when the retained branch is confirmed absent', () => {
+    expect(
+      disposalExitCode({ worktreeRemoved: true, branchDeleted: false, branchKept: false }, { keepBranch: true })
+    ).toBe(2);
+  });
+
+  it('fails when ordinary disposal did not delete the branch', () => {
+    expect(disposalExitCode({ worktreeRemoved: true, branchDeleted: false, branchKept: true })).toBe(2);
+  });
+
+  it('fails when branch deletion contradicts requested retention', () => {
+    expect(
+      disposalExitCode({ worktreeRemoved: true, branchDeleted: true, branchKept: false }, { keepBranch: true })
+    ).toBe(2);
   });
 });
 
