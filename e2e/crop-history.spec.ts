@@ -6280,6 +6280,11 @@ test.describe('Crop history', () => {
         info.width - 2,
         Math.ceil((cropBox!.x + cropBox!.width - workspaceBox!.x + 5) * scaleX)
       );
+      // The artifact starts at the crop edge; these strips catch it without sampling distant page content.
+      const edgeWindows = [
+        [Math.max(frameLeft, cropGuardLeft - 64), Math.min(frameRight, cropGuardLeft)],
+        [Math.max(frameLeft, cropGuardRight), Math.min(frameRight, cropGuardRight + 64)],
+      ] as const;
       const top = Math.round((cropBox!.y - workspaceBox!.y) * scaleY);
       const bottom = Math.round((cropBox!.y + cropBox!.height - workspaceBox!.y) * scaleY);
       const luminance = (x: number, y: number) => {
@@ -6289,11 +6294,12 @@ test.describe('Crop history', () => {
       const edgeContrast = (edgeY: number) => {
         let pixels = 0;
         for (const y of [edgeY - 1, edgeY, edgeY + 1]) {
-          for (let x = frameLeft; x < frameRight; x++) {
-            if (x >= cropGuardLeft && x < cropGuardRight) continue;
-            const center = luminance(x, y);
-            if (Math.abs(center - luminance(x, y - 3)) > 18 && Math.abs(center - luminance(x, y + 3)) > 18) {
-              pixels++;
+          for (const [start, end] of edgeWindows) {
+            for (let x = start; x < end; x++) {
+              const center = luminance(x, y);
+              if (Math.abs(center - luminance(x, y - 3)) > 18 && Math.abs(center - luminance(x, y + 3)) > 18) {
+                pixels++;
+              }
             }
           }
         }
