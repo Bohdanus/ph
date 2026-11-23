@@ -2110,11 +2110,3 @@ claim until a current Photoshop observation or authoritative source settles the 
 
 **Blocker.** The fixed-size click anchor needs a version-specific Photoshop observation or an
 authoritative source before this behavior can be accepted as a compatibility contract.
-
-## 234. Fill opacity candidate lacks a clean full-suite baseline
-
-**Problem.** The Fill-opacity candidate passes its 17 focused test files (715 tests), `npm run tsc`, `npm run build`, and `git diff --check`. Its full-suite run still reported five failing assertions across three paths untouched by this task: `scripts/__tests__/free-chat-search.test.mjs` (Linux path expectation), `src/tools/descriptions/__tests__/toolDescriptions.test.ts` (Quick Selection modifier description), and three assertions in `src/components/ToolbarsRight/QuickSelection/__tests__/QuickSelection.test.tsx` (hint text). The failures were not replayed against a clean base, so their baseline status is unknown.
-
-**Status.** The candidate is reviewed and its focused validation is green; repository-wide regression status remains unproven while those five failures lack a clean-base comparison. No landing is recorded.
-
-**What would close it.** Run the three affected test paths on a clean checkout of the same base and on the candidate, then fix any candidate-caused regression or track verified base failures separately. Land the reviewed candidate through the owner-tracked wrapper after the full-suite status is resolved.
