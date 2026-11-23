@@ -64,6 +64,33 @@ into logs. Report only the provider, path, and whether authentication is availab
 
 ## Kilo Code
 
+Use provider/model pinning when a task must stay on Kilo Nemotron. Set both `--provider` and `--model` to restrict catalog discovery and inference to one exact route; a missing or quarantined route stops before inference rather than falling through. Passing either flag alone filters only that dimension:
+
+```sh
+node scripts/free-model-pool.mjs --prompt-file /tmp/nemotron-review.txt \
+  --provider kilo --model nvidia/nemotron-3-ultra-550b-a55b:free --max-tokens 8192
+```
+
+The live catalog verifies that the exact route is currently free. A successful completion reports its source, model, finish reason, usage, and cost when provided. A catalog listing with `configured: null` means Kilo CLI discovery succeeded but authentication was not tested. For Kilo, `--max-tokens` is a response-length instruction rather than a hard output limit.
+
+### WSL with Windows-saved Kilo credentials
+
+Run from a WSL task worktree with WSL Node/npm. If the Kilo login is stored at
+`%USERPROFILE%\.local\share\kilo\auth.json`, set the source path without printing file contents:
+
+```sh
+source "$HOME/.nvm/nvm.sh"
+nvm use default
+WINDOWS_PROFILE="$(powershell.exe -NoProfile -Command '$env:USERPROFILE' | tr -d '\r')"
+export XDG_DATA_HOME="$(wslpath -u "$WINDOWS_PROFILE")/.local/share"
+test -r "$XDG_DATA_HOME/kilo/auth.json"
+```
+
+The free completion adapter links only `auth.json` into an isolated Linux-local XDG data root, so
+SQLite state stays off the Windows mount. Do not point the raw Kilo CLI at a Windows-mounted
+`kilo.db`. Verify auth by making the exact pinned completion above. If `kilo` is missing from the WSL
+`PATH`, install `@kilocode/cli` using WSL npm from the task worktree, then check `kilo --version`.
+
 The shared completion pool selects eligible, verified-free Kilo routes in model-first provider
 order and invokes this adapter; Kilo is not a fallback-only route. `kilo run` uses the logged-in Kilo
 Gateway OAuth account used by the Kilo Code extension. The adapter discovers `kilo` on `PATH` and
