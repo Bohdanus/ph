@@ -37,8 +37,10 @@ forgotten it. Two rows have weaker coverage than the table implies:
 - `test.use({ headless: false })` inside a spec is below the scope visible to
   `global-setup.ts`. `e2e/helpers/__tests__/global-setup.unit.test.ts` derives the
   Playwright spec tree and rejects direct headed overrides in CI. This is a
-  source-level regression guard, not a runtime sandbox: dynamically constructed
-  options or an alternate test API can evade static detection, so keep headed
+  source-level regression guard, not a runtime sandbox. It recognizes common
+  direct named, default, and namespace imports plus literal dot and bracket calls;
+  dynamically constructed options, indirect aliases, and alternate test APIs can
+  evade it, while a shadowed local name can produce a false positive. Keep headed
   browser options out of specs and use only the operator-owned headed command.
 
 ## Commands

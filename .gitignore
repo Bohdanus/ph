@@ -103,6 +103,9 @@ playwright/.auth
 !.kilo/skills/parallel-test-hardening/
 .kilo/skills/parallel-test-hardening/*
 !.kilo/skills/parallel-test-hardening/SKILL.md
+!.kilo/skills/pipeline-health/
+.kilo/skills/pipeline-health/*
+!.kilo/skills/pipeline-health/SKILL.md
 !.kilo/skills/photoshop-tool-creation/
 .kilo/skills/photoshop-tool-creation/*
 !.kilo/skills/photoshop-tool-creation/SKILL.md

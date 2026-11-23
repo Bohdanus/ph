@@ -7911,6 +7911,136 @@ test.describe('Crop history', () => {
       expect(result.transitionResults).toHaveLength(1);
     });
 
+    test('a vector triangle keeps exact parity through a vertical mirror and fractional quarter-turn frame', async ({
+      page,
+    }) => {
+      await openDocument(page);
+      const nextFrame = { x: 4.25, y: 4.5, width: 55.75, height: 55.5 };
+
+      const fixture: CropParityFixture = {
+        caseName: 'vertical-mirrored vector triangle through fractional quarter-turn frame',
+        documentId: 'vector-mirror-v-quarter-turn-fractional-frame-parity',
+        materializedLayerIds: ['vector-triangle'],
+        layerTransforms: [
+          {
+            id: 'vertical-mirror',
+            layerId: 'vector-triangle',
+            args: {
+              toolName: 'transform',
+              rotate: 0,
+              mirrorH: false,
+              mirrorV: true,
+              skewX: 0,
+              skewY: 0,
+              trapezoid: 0,
+              resizeX: 100,
+              resizeY: 100,
+            },
+          },
+        ],
+        transitions: [{ angleDegrees: 90, nextFrame }],
+        layers: [
+          {
+            kind: 'vector',
+            id: 'vector-triangle',
+            order: 0,
+            pos: { x: 16, y: 16, width: 32, height: 32 },
+            args: {
+              toolName: 'shape',
+              alpha: 1,
+              color: '#003366',
+              backgroundColor: '#00ccff',
+              hasFill: true,
+              figure: 'triangle',
+              lineWidth: 1,
+              toolMode: 'shape',
+              start: { x: 2, y: 2 },
+              end: { x: 30, y: 30 },
+            },
+          },
+        ],
+      };
+      const result = await compareCropRenderers(page, fixture);
+      const identityControl = await compareCropRenderers(page, {
+        ...fixture,
+        caseName: 'untransformed control for vector triangle quarter-turn frame',
+        documentId: 'vector-mirror-v-quarter-turn-fractional-frame-control',
+        layerTransforms: [],
+      });
+      const noRotationControl = await compareCropRenderers(page, {
+        ...fixture,
+        caseName: 'vertical-mirrored vector triangle with no frame rotation',
+        documentId: 'vector-mirror-v-quarter-turn-fractional-frame-no-rotation-control',
+        transitions: [{ angleDegrees: 0, nextFrame }],
+      });
+
+      expect(result.layerTransformResults).toHaveLength(1);
+      const mirrorResult = result.layerTransformResults[0];
+      expect(mirrorResult?.frame).toEqual({ x: 0, y: 0, width: 64, height: 64 });
+      expect(mirrorResult?.durableFrame).toEqual(mirrorResult?.frame);
+      expect(mirrorResult?.differingBytes).toBe(0);
+      expect(mirrorResult?.legacyDiffersFromUntransformed).toBe(true);
+      expect(mirrorResult?.durableDiffersFromUntransformed).toBe(true);
+      expect(mirrorResult?.materializedLayerComparisons.map((comparison) => comparison.layerId)).toEqual([
+        'vector-triangle',
+      ]);
+      for (const comparison of mirrorResult?.materializedLayerComparisons ?? []) {
+        expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
+        expect(comparison.bitmapSize).toEqual({
+          width: comparison.expectedBounds.width,
+          height: comparison.expectedBounds.height,
+        });
+        expect(comparison.frameDifferingBytes).toBe(0);
+        expectTightBitmapPremultipliedParity(comparison, 'vertical-mirrored vector triangle');
+      }
+
+      expect(result.transitionResults).toHaveLength(1);
+      expect(identityControl.transitionResults).toHaveLength(1);
+      expect(noRotationControl.transitionResults).toHaveLength(1);
+      const transition = result.transitionResults[0];
+      const identityTransition = identityControl.transitionResults[0];
+      const noRotationTransition = noRotationControl.transitionResults[0];
+      expect(transition?.frame).toEqual(nextFrame);
+      expect(transition?.durableFrame).toEqual(transition?.frame);
+      expect(transition?.differingBytes).toBe(0);
+      expect(transition?.legacyPixels).not.toEqual(identityTransition?.legacyPixels);
+      expect(transition?.durablePixels).not.toEqual(identityTransition?.durablePixels);
+      expect(transition?.legacyPixels).not.toEqual(noRotationTransition?.legacyPixels);
+      expect(transition?.durablePixels).not.toEqual(noRotationTransition?.durablePixels);
+      expect(identityTransition?.frame).toEqual(nextFrame);
+      expect(identityTransition?.durableFrame).toEqual(identityTransition?.frame);
+      expect(identityTransition?.differingBytes).toBe(0);
+      expect(noRotationTransition?.frame).toEqual(nextFrame);
+      expect(noRotationTransition?.durableFrame).toEqual(noRotationTransition?.frame);
+      expect(noRotationTransition?.differingBytes).toBe(0);
+      expect(transition?.materializedLayerComparisons.map((comparison) => comparison.layerId)).toEqual([
+        'vector-triangle',
+      ]);
+      expect(identityTransition?.materializedLayerComparisons.map((comparison) => comparison.layerId)).toEqual([
+        'vector-triangle',
+      ]);
+      expect(noRotationTransition?.materializedLayerComparisons.map((comparison) => comparison.layerId)).toEqual([
+        'vector-triangle',
+      ]);
+      for (const comparison of [
+        ...(transition?.materializedLayerComparisons ?? []),
+        ...(identityTransition?.materializedLayerComparisons ?? []),
+        ...(noRotationTransition?.materializedLayerComparisons ?? []),
+      ]) {
+        expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
+        expect(comparison.bitmapSize).toEqual({
+          width: comparison.expectedBounds.width,
+          height: comparison.expectedBounds.height,
+        });
+        expect(comparison.frameDifferingBytes).toBe(0);
+        expectTightBitmapPremultipliedParity(comparison, 'quarter-turn vector triangle');
+      }
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(identityControl.durablePixels).toEqual(identityControl.legacyPixels);
+      expect(noRotationControl.durablePixels).toEqual(noRotationControl.legacyPixels);
+      expect(Object.keys(result.materializedBounds)).toEqual(['vector-triangle']);
+    });
+
     test('a 37-degree crop matches legacy pixels for multiple positioned layers', async ({ page }) => {
       await openDocument(page);
 

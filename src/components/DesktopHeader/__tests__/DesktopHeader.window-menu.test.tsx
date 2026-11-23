@@ -74,6 +74,7 @@ describe('DesktopHeader Window menu', () => {
     useStore.mockReturnValue([
       {
         canvasRef: { current: null },
+        containerRef: { current: null },
         currentArgs: { current: { toolName: 'draw' } },
         // A REF, like `currentArgs`, because `UnsavedChangesProvider` reads
         // `previewLayers.current` for an in-flight tool transaction. Without it the

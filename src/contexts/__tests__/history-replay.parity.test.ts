@@ -37,6 +37,7 @@ const size: Size = { width: 400, height: 300 };
 const frame: DocumentFrame = { x: 0, y: 0, width: 400, height: 300 };
 const layerA = 'layer-a';
 const layerB = 'layer-b';
+const layerC = 'layer-c';
 
 type BlankSource = Extract<LayerSource, { kind: 'blank' }>;
 
@@ -138,6 +139,9 @@ const cases: ReadonlyArray<{
   history: readonly HistoryItem[];
   /** The frame BOTH models must report at the last cursor. Absent means "parity only". */
   expectedTipFrame?: DocumentFrame;
+  /** Ordered layer identities BOTH models must report at the named legacy cursors. */
+  expectedLayerIdsByCursor?: Readonly<Record<number, readonly string[]>>;
+  expectedDisabledDurableEntry?: { id: string; operationKind: string };
 }> = [
   {
     name: 'layer properties',
@@ -195,6 +199,36 @@ const cases: ReadonlyArray<{
       baseline({ [layerA]: runtimeLayer(layerA, 0), [layerB]: runtimeLayer(layerB, 1) }),
       item('reorder', REORDER_ACTION, layerB, { layerToMoveId: layerB, afterWhichLayerId: null }),
     ],
+  },
+  {
+    name: 'disabled reorder before anchored create',
+    history: [
+      baseline({
+        [layerA]: runtimeLayer(layerA, 0),
+        [layerB]: runtimeLayer(layerB, 1),
+        [layerC]: runtimeLayer(layerC, 2),
+      }),
+      {
+        ...item('disabled-reorder', REORDER_ACTION, layerA, {
+          layerToMoveId: layerA,
+          afterWhichLayerId: layerC,
+        }),
+        disabled: true,
+      },
+      {
+        id: 'create-after-anchor',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'inserted',
+        layerSource: blankSource({ x: 40, y: 50, width: 80, height: 60 }),
+        insertAfterLayerId: layerA,
+      },
+    ],
+    expectedLayerIdsByCursor: {
+      0: [layerA, layerB, layerC],
+      1: [layerA, layerB, layerC],
+      2: [layerA, 'inserted', layerB, layerC],
+    },
+    expectedDisabledDurableEntry: { id: 'disabled-reorder', operationKind: 'reorder-layers' },
   },
   {
     name: 'filter chain',
@@ -429,31 +463,54 @@ describe('legacy/durable logical replay parity', () => {
   beforeAll(() => overrideCanvasFilterSupport(true));
   afterAll(() => overrideCanvasFilterSupport(null));
 
-  it.each(cases)('matches at every reachable cursor: $name', ({ name, history, expectedTipFrame }) => {
-    const converted = convert(history, name);
-    expect(converted.diagnostics).toEqual([]);
+  it.each(cases)(
+    'matches at every reachable cursor: $name',
+    ({ name, history, expectedTipFrame, expectedLayerIdsByCursor, expectedDisabledDurableEntry }) => {
+      const converted = convert(history, name);
+      expect(converted.diagnostics).toEqual([]);
 
-    for (let cursor = 0; cursor < history.length; cursor += 1) {
-      const legacy = replayHistory(history, cursor, size, replayDependencies(), frame);
-      const durableCursor = converted.legacyCursorToDurableCursor[cursor];
-      expect(durableCursor, `${name} legacy cursor ${cursor} must map`).toEqual(expect.any(Number));
-      const durable = replayDurableDocument(converted.document, durableCursor);
-      expect(normalizeDurable(durable), `${name} at cursor ${cursor}`).toEqual(normalizeLegacy(legacy));
+      for (let cursor = 0; cursor < history.length; cursor += 1) {
+        const legacy = replayHistory(history, cursor, size, replayDependencies(), frame);
+        const durableCursor = converted.legacyCursorToDurableCursor[cursor];
+        expect(durableCursor, `${name} legacy cursor ${cursor} must map`).toEqual(expect.any(Number));
+        const durable = replayDurableDocument(converted.document, durableCursor);
+        expect(normalizeDurable(durable), `${name} at cursor ${cursor}`).toEqual(normalizeLegacy(legacy));
 
-      // Parity alone cannot see an origin clamp: a model that floored the frame at 0 would
-      // still agree with the other one, and the extent of these cases would not show it
-      // either. So a case that declares a tip frame is held to that frame on BOTH sides,
-      // sign included, at the only cursor that applied it.
-      if (expectedTipFrame && cursor === history.length - 1) {
-        expect(legacy.documentFrame, `${name} legacy frame at the tip`).toEqual(expectedTipFrame);
-        expect(durable.frame, `${name} durable frame at the tip`).toEqual(expectedTipFrame);
-        expect(Math.sign(legacy.documentFrame.x), `${name} legacy origin x sign`).toBe(Math.sign(expectedTipFrame.x));
-        expect(Math.sign(durable.frame.x), `${name} durable origin x sign`).toBe(Math.sign(expectedTipFrame.x));
-        expect(Math.sign(legacy.documentFrame.y), `${name} legacy origin y sign`).toBe(Math.sign(expectedTipFrame.y));
-        expect(Math.sign(durable.frame.y), `${name} durable origin y sign`).toBe(Math.sign(expectedTipFrame.y));
+        // Parity alone cannot see an origin clamp: a model that floored the frame at 0 would
+        // still agree with the other one, and the extent of these cases would not show it
+        // either. So a case that declares a tip frame is held to that frame on BOTH sides,
+        // sign included, at the only cursor that applied it.
+        if (expectedTipFrame && cursor === history.length - 1) {
+          expect(legacy.documentFrame, `${name} legacy frame at the tip`).toEqual(expectedTipFrame);
+          expect(durable.frame, `${name} durable frame at the tip`).toEqual(expectedTipFrame);
+          expect(Math.sign(legacy.documentFrame.x), `${name} legacy origin x sign`).toBe(Math.sign(expectedTipFrame.x));
+          expect(Math.sign(durable.frame.x), `${name} durable origin x sign`).toBe(Math.sign(expectedTipFrame.x));
+          expect(Math.sign(legacy.documentFrame.y), `${name} legacy origin y sign`).toBe(Math.sign(expectedTipFrame.y));
+          expect(Math.sign(durable.frame.y), `${name} durable origin y sign`).toBe(Math.sign(expectedTipFrame.y));
+        }
+
+        const expectedLayerIds = expectedLayerIdsByCursor?.[cursor];
+        if (expectedLayerIds) {
+          const legacyLayerIds = Object.values(legacy.layers)
+            .sort((left, right) => left.order - right.order)
+            .map((layer) => layer.id);
+          const durableLayerIds = Object.values(durable.layers)
+            .sort((left, right) => left.snapshot.order - right.snapshot.order)
+            .map((layer) => layer.snapshot.id);
+          expect(legacyLayerIds, `${name} legacy layer order at cursor ${cursor}`).toEqual(expectedLayerIds);
+          expect(durableLayerIds, `${name} durable layer order at cursor ${cursor}`).toEqual(expectedLayerIds);
+        }
+      }
+
+      if (expectedDisabledDurableEntry) {
+        expect(converted.document.history.find((entry) => entry.id === expectedDisabledDurableEntry.id)).toMatchObject({
+          id: expectedDisabledDurableEntry.id,
+          enabled: false,
+          operation: { kind: expectedDisabledDurableEntry.operationKind },
+        });
       }
     }
-  });
+  );
 
   it('keeps invalid cursor behavior outside the parity oracle', () => {
     const history = cases[0]!.history;
