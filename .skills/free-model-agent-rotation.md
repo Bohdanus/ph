@@ -1,25 +1,45 @@
----
-name: free-model-agent-rotation
-description: Route bounded research, text-sweep, and simple review subtasks through currently free model providers without paid fallback.
----
-
 # Free Model Agent Rotation
 
-Use free models first for high-signal web research, documentation, chat-history extraction, code search, simple code writing, and simple review. Split large inputs into bounded independent subtasks and ask for concise findings with source paths or citations.
+Use verified free models for bounded research, text sweeps, code search, and routine reviews. Split independent read-only work into small, evidence-based requests. Follow [`MODELS.md`](../MODELS.md) for current route policy and cost rules.
 
 ## Refresh and select
 
-Run `node scripts/free-model-pool.mjs --list` in a repository worktree. It fetches the public Kilo and OpenRouter catalogs without API credentials. Only current Kilo and OpenRouter free entries that pass exact pricing checks across all present price fields and conditional overrides are listed. For Kilo, `configured: null` means the CLI is present but its saved login was not probed; for OpenRouter, `configured` reflects `OPENROUTER_API_KEY`. Neither value promises quota or capacity. Model availability and quotas change; do not reuse stale catalog output.
+Run `node scripts/free-model-pool.mjs --list` from a repository worktree to refresh the live catalog. A listed route proves only that the catalog currently advertises it as free; it does not prove authentication, quota, or capacity. For Kilo, `configured: null` means CLI discovery succeeded but authentication was not tested.
 
-For a standalone text completion, put the non-sensitive prompt in a temporary file and run:
+For a standalone completion, save a non-sensitive prompt outside the repository and run:
 
-```bash
+```sh
 node scripts/free-model-pool.mjs --prompt-file /tmp/free-task.txt --output-file /tmp/free-task-result.txt
 ```
 
-Use Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b:free`) as the recommended free model through OpenRouter when its live catalog confirms exact-zero pricing and quota is positive. The same exact model is approved for explicit Kilo Gateway CLI calls; other Nemotron variants and providers remain blocked. Use `--max-tokens 4000` for longer reviews and research; OpenRouter sends this as its API output limit, while Kilo receives a response-length instruction because its CLI has no token-limit flag, and the model controls actual output length. Verify complete non-empty output and cost, and use the fallback order in `MODELS.md` when the preferred route is unavailable. The runner attempts at most three candidates per provider per run and defaults other routes to 1,200 tokens; automatic routes are OpenRouter, OpenCode, and opt-in Groq. Lower-ranked Kilo catalog entries are not completion-pool fallback routes. Explicit Kilo invocations use the authenticated Kilo Code CLI and its `free-completion` profile, which denies all tools. The CLI is discovered on `PATH` or in common editor extension folders; `KILO_CLI` overrides discovery. OpenCode uses its headless CLI with tools denied and accepts only provider-owned catalog IDs ending in `-free`. Inference has a five-minute timeout; catalog and quota checks have a separate 15-second timeout. Kilo exhausts its source for reported 401/402/429 errors, while other model-level failures can move to the next Kilo candidate. OpenRouter 401/402 exhausts the source; 429 and 503 rotate only when quota/header checks permit, honoring a valid `Retry-After` up to 60 seconds. Other failures move to another candidate. Content-policy rejection stops routing across providers. The runner stops when eligible free routes fail and never discovers paid fallback models. The OpenRouter key must never be copied into files or output. `--openrouter-quota` reports the server-side daily `used/limit/remaining` counter without inference; check before and after large fan-outs to include other tools' concurrent use. `--probe-openrouter-quota` logs the pre-route snapshot and skips OpenRouter if exhausted. Results report this run's per-provider request attempts.
+The automatic pool tries the exact Nemotron 3 Ultra model before weaker models on eligible, verified-free routes. To require the exact Kilo route, set both `--provider` and `--model`:
 
-**Use free subagents heavily, but keep Kilo free children read-only.** For visible Kilo research sessions, use the project `read-only-research` agent in `.kilo/agent/read-only-research.md`. For parallel internal repository exploration, use the native `task` tool's `explore` role with the exact free model and provider together. Verify no `edit`, `bash`, or separate write/patch tools are available; Kilo permissions are tool-level, so there is no delete-only permission. Explicitly deny any connected file-mutating MCP tools not covered by the profile. If read-only access cannot be verified, use the completion runner or do not launch the child. Free children do not launch GPT subagents, perform Git operations, or write summary files; they return concise findings and the coordinator writes any needed files. Keep the global maximum of 15 concurrent subagents. Inspect each child's resolved model; a provider label alone does not prove it was free. If rate limited, refresh the catalog and rotate to another exact free pair, never silently to paid compute.
+```sh
+node scripts/free-model-pool.mjs --prompt-file /tmp/nemotron-review.txt \
+  --provider kilo --model nvidia/nemotron-3-ultra-550b-a55b:free --max-tokens 8192
+```
+
+Setting both flags restricts catalog discovery and inference to that exact provider/model pair; if unavailable, quarantined, or unverified free, the run stops without fallback. Either flag on its own filters only that dimension. Kilo has no hard token-limit option: `--max-tokens 8192` is a response-length instruction, so verify that the completion returned non-empty text with the expected source/model, finish reason, and reported cost. See [`docs/FREE-COMPUTE-OPERATIONS.md`](../docs/FREE-COMPUTE-OPERATIONS.md#kilo-code) for WSL setup and route details.
+
+### WSL with Windows-saved Kilo auth
+
+Run from the WSL task worktree with WSL Node/npm. Confirm the shell is using Linux executables before invoking npm or Kilo:
+
+```sh
+source "$HOME/.nvm/nvm.sh"
+nvm use default
+command -v node npm kilo
+node --version
+npm --version
+```
+
+When credentials are stored by Windows Kilo, set `XDG_DATA_HOME` to the Windows profile's `.local/share` directory converted with `wslpath -u`, then confirm `kilo/auth.json` is readable. The adapter links only `auth.json` into an isolated Linux-local XDG data root. Do not point raw Kilo CLI state at a Windows-mounted `kilo.db`. Verify the route with the pinned completion; a catalog row does not test login.
+
+## Free subagents and completion fallback
+
+Inside Kilo Code, use the read-only `explore` role for internal `task` research, or [`.kilo/agent/read-only-research.md`](../.kilo/agent/read-only-research.md) for visible research sessions. Pass `model: "nvidia/nemotron-3-ultra-550b-a55b:free"` and `provider: "kilo"` together. Verify the resolved model and deny `edit`, `bash`, and every connected file-mutating tool. A free task child returns findings; the coordinator owns edits and Git operations.
+
+In Codex, do not assume `spawn_agent` can route to Kilo: this host may accept a model override without a provider. Use the pinned completion runner for free Nemotron analysis when the host cannot guarantee a free subagent route, and label it a completion rather than a subagent. Treat Nemotron findings on hard reasoning as leads and verify them against source and tests.
 
 ## Data handling
 
