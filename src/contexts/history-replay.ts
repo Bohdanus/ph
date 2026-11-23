@@ -47,6 +47,7 @@ import {
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
@@ -74,6 +75,7 @@ export type ReplayDiagnostic = Readonly<{
     | 'invalid-layer-blend-mode'
     | 'invalid-document-transform'
     | 'invalid-layer-opacity'
+    | 'invalid-layer-fill-opacity'
     | 'invalid-layer-source'
     | 'invalid-selection-snapshot';
   error: unknown;
@@ -253,6 +255,21 @@ export function replayHistory(
       }
       const layer = layers[layerId];
       if (layer) layers = { ...layers, [layerId]: { ...layer, opacity: (args as { opacity: number }).opacity } };
+      continue;
+    }
+    if (actionName === SET_LAYER_FILL_OPACITY_ACTION) {
+      const fillOpacity = (args as { fillOpacity?: unknown } | undefined)?.fillOpacity;
+      if (typeof fillOpacity !== 'number' || !Number.isFinite(fillOpacity) || fillOpacity < 0 || fillOpacity > 1) {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-layer-fill-opacity',
+          error: new TypeError('Layer fill opacity history value must be a finite number between 0 and 1'),
+        });
+        continue;
+      }
+      const layer = layers[layerId];
+      if (layer) layers = { ...layers, [layerId]: { ...layer, fillOpacity } };
       continue;
     }
     if (actionName === SET_LAYER_BLEND_MODE_ACTION) {

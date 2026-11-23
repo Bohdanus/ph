@@ -503,6 +503,8 @@ function compareRuntimeLayerToSnapshot(runtime: Layer, snapshot: DurableLayerSna
   if (runtime.isBedrock !== snapshot.isBedrock) return 'the durable bedrock flag does not match the legacy source';
   if (runtime.visible !== snapshot.visible) return 'the durable layer visibility does not match the legacy source';
   if (runtime.opacity !== snapshot.opacity) return 'the durable layer opacity does not match the legacy source';
+  if ((runtime.fillOpacity ?? 1) !== snapshot.fillOpacity)
+    return 'the durable layer fill opacity does not match the legacy source';
   if (runtime.locked !== snapshot.locked) return 'the durable layer lock state does not match the legacy source';
   if (runtime.blendMode !== snapshot.blendMode) return 'the durable layer blend mode does not match the legacy source';
   if (!sameJsonValue(runtime.pos, snapshot.pos)) return 'the durable layer position does not match the legacy source';
@@ -1858,6 +1860,15 @@ function validatePlannedDurableEntryUnchecked(
         return patch.opacity === opacity
           ? provenanceMismatch
           : 'the durable layer opacity does not match the legacy entry';
+      }
+      case 'fillOpacity': {
+        const fillOpacity = (entry.args as { fillOpacity?: unknown } | undefined)?.fillOpacity;
+        if (typeof fillOpacity !== 'number' || !Number.isFinite(fillOpacity) || fillOpacity < 0 || fillOpacity > 1) {
+          return 'the layer-property value is invalid';
+        }
+        return patch.fillOpacity === fillOpacity
+          ? provenanceMismatch
+          : 'the durable layer fill opacity does not match the legacy entry';
       }
       case 'blendMode': {
         const blendMode = (entry.args as { blendMode?: unknown } | undefined)?.blendMode;

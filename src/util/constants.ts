@@ -25,6 +25,7 @@ export const SHOW_LAYER_ACTION = 'show';
 export const HIDE_LAYER_ACTION = 'hide';
 export const RENAME_LAYER_ACTION = 'rename';
 export const SET_LAYER_OPACITY_ACTION = 'set layer opacity';
+export const SET_LAYER_FILL_OPACITY_ACTION = 'set layer fill opacity';
 export const SET_LAYER_BLEND_MODE_ACTION = 'set layer blend mode';
 export const LOCK_LAYER_ACTION = 'lock layer';
 export const UNLOCK_LAYER_ACTION = 'unlock layer';
@@ -47,6 +48,7 @@ export type ActionType =
   | typeof HIDE_LAYER_ACTION
   | typeof RENAME_LAYER_ACTION
   | typeof SET_LAYER_OPACITY_ACTION
+  | typeof SET_LAYER_FILL_OPACITY_ACTION
   | typeof SET_LAYER_BLEND_MODE_ACTION
   | typeof LOCK_LAYER_ACTION
   | typeof UNLOCK_LAYER_ACTION

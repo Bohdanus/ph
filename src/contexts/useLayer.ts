@@ -49,6 +49,7 @@ import {
   REPLACE_LAYER_SOURCE_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
@@ -1221,12 +1222,23 @@ export const useLayers = () => {
     const layer = layers[id];
     if (!layer) return;
     if (
-      (actionName === SET_LAYER_OPACITY_ACTION || actionName === SET_LAYER_BLEND_MODE_ACTION) &&
+      (actionName === SET_LAYER_OPACITY_ACTION ||
+        actionName === SET_LAYER_FILL_OPACITY_ACTION ||
+        actionName === SET_LAYER_BLEND_MODE_ACTION) &&
       (layer.isBedrock || isLayerLocked(layer))
     ) {
       return;
     }
     if (actionName === SET_LAYER_BLEND_MODE_ACTION && !isLayerBlendMode(patch.blendMode)) return;
+    if (
+      actionName === SET_LAYER_FILL_OPACITY_ACTION &&
+      (typeof patch.fillOpacity !== 'number' ||
+        !Number.isFinite(patch.fillOpacity) ||
+        patch.fillOpacity < 0 ||
+        patch.fillOpacity > 1)
+    ) {
+      return;
+    }
     if (
       (actionName === LOCK_LAYER_ACTION && patch.locked !== true) ||
       (actionName === UNLOCK_LAYER_ACTION && patch.locked !== false) ||
@@ -1794,6 +1806,7 @@ export const useLayers = () => {
           bitmap: null,
           visible: true,
           opacity: 1,
+          fillOpacity: 1,
           locked: false,
           blendMode: 'source-over',
           order,

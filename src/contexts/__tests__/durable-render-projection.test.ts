@@ -23,6 +23,7 @@ function snapshot(
     isBedrock: false,
     visible,
     opacity: 0.8,
+    fillOpacity: 1,
     locked: false,
     blendMode: 'screen' as const,
     order,

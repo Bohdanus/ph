@@ -16,6 +16,7 @@ import {
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TEXT_PADDING,
@@ -37,6 +38,7 @@ const LEGAL_ACTION_VALUES: Record<ActionType, true> = {
   [HIDE_LAYER_ACTION]: true,
   [RENAME_LAYER_ACTION]: true,
   [SET_LAYER_OPACITY_ACTION]: true,
+  [SET_LAYER_FILL_OPACITY_ACTION]: true,
   [SET_LAYER_BLEND_MODE_ACTION]: true,
   [LOCK_LAYER_ACTION]: true,
   [UNLOCK_LAYER_ACTION]: true,
@@ -51,7 +53,7 @@ const LEGAL_ACTION_NAMES = Object.keys(LEGAL_ACTION_VALUES);
 describe('action type constants', () => {
   it('exhaustively mirrors every member of the ActionType union', () => {
     // The typed record provides compile-time exhaustiveness and this pins its runtime inventory.
-    expect(LEGAL_ACTION_NAMES).toHaveLength(16);
+    expect(LEGAL_ACTION_NAMES).toHaveLength(17);
     expect(LEGAL_ACTION_NAMES).toEqual(
       expect.arrayContaining([
         OPEN_DOCUMENT_ACTION,

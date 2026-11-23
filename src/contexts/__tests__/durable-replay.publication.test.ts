@@ -19,6 +19,7 @@ function layer(id: string, order: number, overrides: Partial<DurableLayerSnapsho
     isBedrock: false,
     visible: true,
     opacity: 1,
+    fillOpacity: 1,
     locked: false,
     blendMode: 'source-over',
     order,

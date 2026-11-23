@@ -25,6 +25,7 @@ function documentFor(source: DurableLayerSource): DurableDocument {
           isBedrock: false,
           visible: true,
           opacity: 1,
+          fillOpacity: 1,
           locked: false,
           blendMode: 'source-over',
           order: 0,

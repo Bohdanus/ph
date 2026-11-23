@@ -278,6 +278,7 @@ export function createLayerSource({
     blendMode: 'source-over',
     locked: false,
     opacity: 1,
+    fillOpacity: 1,
     order,
     pos,
     source,

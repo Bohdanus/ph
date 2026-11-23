@@ -75,6 +75,7 @@ function durableFixture() {
     isBedrock: false,
     visible: true,
     opacity: 1,
+    fillOpacity: 1,
     locked: false,
     blendMode: 'source-over' as const,
     order: 0,
