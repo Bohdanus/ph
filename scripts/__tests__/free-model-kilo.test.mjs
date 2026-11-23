@@ -1211,6 +1211,12 @@ process.exit(1);`
     ['snake-case HTTP status', '{"http_status":429}'],
     ['snake-case HTTP status code', '{"http_status_code":429}'],
     ['nested message status', '{"message":"HTTP 429"}'],
+    ['nested message error status prefix', '{"message":"Error: HTTP 429"}'],
+    ['nested message HTTP status code', '{"message":"HTTP status code: 429"}'],
+    ['text status field', '{"status":"HTTP 429"}'],
+    ['nested legacy quota message', JSON.stringify({ message: 'Free model usage limit reached (HTTP 429)' })],
+    ['nested message status with reason phrase', '{"message":"HTTP 429 Too Many Requests"}'],
+    ['nested message status with colon reason phrase', '{"message":"HTTP 429: Too Many Requests"}'],
   ])('extracts a deeply nested Kilo error status without recursive traversal: %s', async (_label, leaf) => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
     const depth = 6_000;
@@ -1226,6 +1232,105 @@ process.exit(1);`
         error: 'Kilo provider quota or rate limit returned HTTP 429',
         exhaustSource: true,
         status: 429,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['detail text', '{"detail":"HTTP 429"}'],
+    ['message prose', '{"message":"This is a local parse error; HTTP 429 is only an example."}'],
+    ['leading status example', '{"message":"HTTP 429 is only an example in this local parse error."}'],
+    ['detail array text', '{"detail":["HTTP 429"]}'],
+    ['error prose', '"This local parse error mentions HTTP 429 only as an example."'],
+    [
+      'message quota phrase prose',
+      JSON.stringify({ message: 'Local parse error: “Free model usage limit reached” is only an example.' }),
+    ],
+    [
+      'multiline message quota phrase prose',
+      JSON.stringify({
+        message: 'Expected diagnostic:\nFree model usage limit reached (HTTP 429)\nActual error: invalid configuration',
+      }),
+    ],
+    ['stderr message prose', '{"message":"This is a local parse error; HTTP 429 is only an example."}', 'stderr'],
+    ['stderr diagnostic prose', 'Local parse error: HTTP 429 is only an example.', 'stderr', 'plain'],
+    [
+      'stderr quota phrase prose',
+      'Local parse error: “Free model usage limit reached” is only an example.',
+      'stderr',
+      'plain',
+    ],
+    ['stderr quota phrase prefix prose', 'Free model usage limit reached is only an example.', 'stderr', 'plain'],
+    [
+      'multiline stderr quota phrase prose',
+      'Expected diagnostic:\nFree model usage limit reached (HTTP 429)\nActual error: invalid configuration',
+      'stderr',
+      'plain',
+    ],
+  ])(
+    'does not treat non-status or explanatory HTTP text in %s as a reported status',
+    async (_label, errorFields, stream = 'stdout', format = 'json') => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+      const output = format === 'json' ? `{"type":"error","error":${errorFields}}` : errorFields;
+      const command = await writeExecutable(
+        join(directory, 'fake-kilo'),
+        `process.${stream}.write(${JSON.stringify(`${output}\n`)}); process.exitCode = 1;`
+      );
+
+      try {
+        await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+          error: format === 'plain' ? 'Kilo CLI exited 1' : 'Kilo CLI reported a provider or completion error',
+          exhaustSource: false,
+          status: null,
+          modelAttributable: false,
+        });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each([
+    ['statusless stdout', 'stdout', { message: 'Free model usage limit reached' }],
+    ['statusless stderr', 'stderr', { message: 'Free model usage limit reached' }],
+    ['stdout status before message', 'stdout', { status: 400, message: 'Free model usage limit reached' }],
+    ['stdout message before status', 'stdout', { message: 'Free model usage limit reached', status: 400 }],
+    ['stderr status before message', 'stderr', { status: 400, message: 'Free model usage limit reached' }],
+    ['stderr message before status', 'stderr', { message: 'Free model usage limit reached', status: 400 }],
+    [
+      'stdout status before coded quota message',
+      'stdout',
+      { status: 400, message: 'Free model usage limit reached (HTTP 429)' },
+    ],
+    [
+      'stdout coded quota message before status',
+      'stdout',
+      { message: 'Free model usage limit reached (HTTP 429)', status: 400 },
+    ],
+    [
+      'stderr status before coded quota message',
+      'stderr',
+      { status: 400, message: 'Free model usage limit reached (HTTP 429)' },
+    ],
+    [
+      'stderr coded quota message before status',
+      'stderr',
+      { message: 'Free model usage limit reached (HTTP 429)', status: 400 },
+    ],
+  ])('preserves a structured quota error for %s', async (_label, stream, error) => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const event = JSON.stringify({ type: 'error', error });
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `process.${stream}.write(${JSON.stringify(`${event}\n`)}); process.exitCode = 1;`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+        error: 'Kilo provider quota or rate limit was reached',
+        exhaustSource: true,
       });
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -1287,6 +1392,12 @@ process.exit(1);`
       'a structured JSONL error status',
       `process.stderr.write(${JSON.stringify(`${JSON.stringify({ type: 'error', error: { status: 429 } })}\n`)}); process.exitCode = 1;`,
     ],
+    [
+      'a structured JSONL legacy quota message',
+      `process.stderr.write(${JSON.stringify(`${JSON.stringify({ type: 'error', error: { message: 'Free model usage limit reached (HTTP 429)' } })}\n`)}); process.exitCode = 1;`,
+    ],
+    ['a compact stderr status line', "console.error('HTTP status code: 429'); process.exit(1);"],
+    ['an error-prefixed stderr status line', "console.error('Error: HTTP 429'); process.exit(1);"],
   ])(
     'detects quota errors written only to stderr from %s without exposing provider details',
     async (_label, source) => {
@@ -1325,6 +1436,26 @@ process.exitCode = 0;`
         error: 'Kilo provider quota or rate limit returned HTTP 429',
         exhaustSource: true,
         status: 429,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a legacy stderr quota signal alongside a different structured status', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const event = JSON.stringify({ type: 'error', error: { status: 400 } });
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
+      `process.stdout.write(${JSON.stringify(`${event}\n`)});
+process.stderr.write('Free model usage limit reached (HTTP 429)');
+process.exitCode = 1;`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+        error: 'Kilo provider quota or rate limit was reached',
+        exhaustSource: true,
       });
     } finally {
       await rm(directory, { recursive: true, force: true });
