@@ -1053,16 +1053,24 @@ type CropParityFixture = Readonly<{
   captureRuntimePixels?: boolean;
   verifyDownstreamInvertParity?: boolean;
   diagnoseOpaqueBackdrop?: boolean;
+  diagnoseAccumulatedPaintSource?: Readonly<{ legacyIndex: number; layerId: string }>;
   layers: readonly CropParityLayerFixture[];
 }>;
-
-type CropParityFramePixelSample = Readonly<
-  PixelDifference['differingSamples'][number] & { documentX: number; documentY: number }
->;
 
 type CropParityFrameChannel = 'r' | 'g' | 'b' | 'a';
 
 type CropParityRgba = readonly [number, number, number, number];
+
+type CropParityFramePixelSample = Readonly<
+  PixelDifference['differingSamples'][number] & {
+    documentX: number;
+    documentY: number;
+    legacyRgba?: CropParityRgba;
+    durableRgba?: CropParityRgba;
+    legacyPremultipliedRgba?: CropParityRgba;
+    durablePremultipliedRgba?: CropParityRgba;
+  }
+>;
 
 type CropParityAlphaNeighborhood = readonly (number | null)[];
 
@@ -1165,7 +1173,13 @@ type CropParityLayerComparison = Readonly<{
   tightBitmapRawDifferingSamples: readonly CropParityFramePixelSample[];
   offscreenTightBitmapRawDifferingBytes: number;
   offscreenTightBitmapRawDifferingSamples: readonly CropParityFramePixelSample[];
+  legacyHtmlTightSurfaceToFrameGridDifferingBytes: number;
+  legacyOffscreenTightSurfaceToFrameGridDifferingBytes: number;
   tightBitmapPremultipliedDifferingBytes: number;
+  downstreamInvertOutputDifferingBytes: number | null;
+  downstreamInvertOutputDifferingSamples: readonly CropParityFramePixelSample[];
+  offscreenDownstreamInvertOutputDifferingBytes: number | null;
+  offscreenDownstreamInvertOutputDifferingSamples: readonly CropParityFramePixelSample[];
   downstreamInvertReadbackDifferingBytes: number | null;
   downstreamInvertReadbackDifferingSamples: readonly CropParityFramePixelSample[];
   offscreenDownstreamInvertReadbackDifferingBytes: number | null;
@@ -1456,6 +1470,213 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           if (!durableContext) throw new Error(`Durable composition produced no 2D context at ${stage}`);
           durableContext.drawImage(composite.bitmap as CanvasImageSource, 0, 0);
           const durablePixels = Array.from(durableContext.getImageData(0, 0, frameSize.width, frameSize.height).data);
+          const paintSourceAccumulationDiagnostics =
+            fixture.diagnoseAccumulatedPaintSource?.legacyIndex === legacyIndex
+              ? (() => {
+                  const paintLayerId = fixture.diagnoseAccumulatedPaintSource.layerId;
+                  const visibleLayers = legacyLayers.filter((layer) => layer.visible);
+                  const paintIndex = visibleLayers.findIndex((layer) => layer.id === paintLayerId);
+                  const paintLayer = visibleLayers[paintIndex];
+                  if (!paintLayer) throw new Error(`Missing paint source ${paintLayerId} at ${stage}`);
+                  const paintSource = paintLayer.source;
+                  if (
+                    paintSource?.kind !== 'tool' ||
+                    !('pos' in paintSource) ||
+                    paintSource.args.toolName !== 'draw' ||
+                    paintLayer.tmpCanvas !== null ||
+                    paintLayer.bitmap === null ||
+                    paintLayer.presentationBounds !== null
+                  ) {
+                    throw new Error(`Paint source ${paintLayerId} is not a cached Draw raster at ${stage}`);
+                  }
+                  const enabledOperations = paintLayer.operations.filter((operation) => operation.enabled);
+                  if (paintIndex <= 0) {
+                    throw new Error(
+                      `Accumulation diagnostic requires a visible backdrop before ${paintLayerId} at ${stage}`
+                    );
+                  }
+                  if (visibleLayers.some((layer) => layer.tmpCanvas !== null)) {
+                    throw new Error(`Accumulation diagnostic requires no active raster previews at ${stage}`);
+                  }
+                  if (
+                    enabledOperations.length !== 0 ||
+                    paintSource.args.blockStamp ||
+                    paintSource.args.composite === 'destination-out' ||
+                    (paintSource.args.penType === 'spray' && paintLayer.opacity !== 1) ||
+                    paintLayer.blendMode !== 'source-over' ||
+                    paintSource.pos.width !== paintLayer.pos.width ||
+                    paintSource.pos.height !== paintLayer.pos.height
+                  ) {
+                    throw new Error(
+                      `Paint source ${paintLayerId} does not qualify for the direct Draw branch at ${stage}`
+                    );
+                  }
+
+                  const createDiagnosticContext = (): OffscreenCanvasRenderingContext2D => {
+                    const surface = new OffscreenCanvas(frameSize.width, frameSize.height);
+                    const context = surface.getContext('2d');
+                    if (!context) throw new Error(`Offscreen diagnostic surface has no 2D context at ${stage}`);
+                    return context;
+                  };
+                  const compareAccumulatedPixels = (direct: Uint8ClampedArray, cached: Uint8ClampedArray) => {
+                    const expectedByteLength = frameSize.width * frameSize.height * 4;
+                    if (direct.length !== expectedByteLength || cached.length !== expectedByteLength) {
+                      throw new Error(
+                        `Accumulation diagnostic expected ${expectedByteLength} bytes per frame, received direct=${direct.length} and cached=${cached.length} at ${stage}`
+                      );
+                    }
+                    let differingBytes = 0;
+                    let differingPixels = 0;
+                    let lastDifferingPixel = -1;
+                    const firstChangedBytes: Array<{
+                      byteIndex: number;
+                      x: number;
+                      y: number;
+                      channel: 'r' | 'g' | 'b' | 'a';
+                      direct: number;
+                      cached: number;
+                    }> = [];
+                    const channels = ['r', 'g', 'b', 'a'] as const;
+                    for (let byteIndex = 0; byteIndex < expectedByteLength; byteIndex += 1) {
+                      const directByte = direct[byteIndex] ?? null;
+                      const cachedByte = cached[byteIndex] ?? null;
+                      if (directByte === cachedByte) continue;
+                      differingBytes += 1;
+                      const pixel = Math.floor(byteIndex / 4);
+                      if (pixel !== lastDifferingPixel) {
+                        differingPixels += 1;
+                        lastDifferingPixel = pixel;
+                      }
+                      if (firstChangedBytes.length < 16) {
+                        firstChangedBytes.push({
+                          byteIndex,
+                          x: pixel % frameSize.width,
+                          y: Math.floor(pixel / frameSize.width),
+                          channel: channels[byteIndex % 4] ?? 'a',
+                          direct: directByte ?? -1,
+                          cached: cachedByte ?? -1,
+                        });
+                      }
+                    }
+                    return { differingBytes, differingPixels, firstChangedBytes };
+                  };
+                  type AccumulationPrefixComparison = Readonly<{
+                    layerId: string;
+                    directVsCached: ReturnType<typeof compareAccumulatedPixels>;
+                  }>;
+                  const renderHtmlPrefix = (layersThroughCurrent: readonly Layer[], forceCachedPaint: boolean) => {
+                    const canvas = document.createElement('canvas');
+                    const previewLayerIds = forceCachedPaint ? new Set([paintLayerId]) : undefined;
+                    if (!drawLayersToCanvas(canvas, layersThroughCurrent, frame, previewLayerIds)) {
+                      throw new Error(`Unable to render HTML accumulation prefix at ${stage}`);
+                    }
+                    const context = canvas.getContext('2d');
+                    if (!context) throw new Error(`HTML accumulation prefix has no context at ${stage}`);
+                    return context.getImageData(0, 0, frameSize.width, frameSize.height).data;
+                  };
+                  const renderOffscreenPrefix = (layersThroughCurrent: readonly Layer[], forceCachedPaint: boolean) => {
+                    const target = createDiagnosticContext();
+                    for (const layer of layersThroughCurrent) {
+                      if (
+                        !drawLayer(
+                          target as unknown as CanvasRenderingContext2D,
+                          layer,
+                          frame,
+                          forceCachedPaint && layer.id === paintLayerId
+                        )
+                      ) {
+                        throw new Error(`Unable to render Offscreen accumulation prefix ${layer.id} at ${stage}`);
+                      }
+                    }
+                    return target.getImageData(0, 0, frameSize.width, frameSize.height).data;
+                  };
+                  const htmlPrefixPixelPairs: Array<{
+                    directPixels: Uint8ClampedArray;
+                    cachedPixels: Uint8ClampedArray;
+                  }> = [];
+                  const htmlPrefixes: AccumulationPrefixComparison[] = [];
+                  let firstDifferingHtmlPrefix: AccumulationPrefixComparison | null = null;
+                  let firstDifferingOffscreenPrefix: AccumulationPrefixComparison | null = null;
+                  const prefixLayers: Layer[] = [];
+                  let publishedHtmlDirectPixels = new Uint8ClampedArray(0);
+                  let publishedHtmlCachedPixels = new Uint8ClampedArray(0);
+                  for (const layer of visibleLayers) {
+                    prefixLayers.push(layer);
+                    const directPixels = renderHtmlPrefix(prefixLayers, false);
+                    const cachedPixels = renderHtmlPrefix(prefixLayers, true);
+                    htmlPrefixPixelPairs.push({ directPixels, cachedPixels });
+                    publishedHtmlDirectPixels = directPixels;
+                    publishedHtmlCachedPixels = cachedPixels;
+                    const directVsCached = compareAccumulatedPixels(directPixels, cachedPixels);
+                    const prefix = { layerId: layer.id, directVsCached };
+                    htmlPrefixes.push(prefix);
+                    if (firstDifferingHtmlPrefix === null && directVsCached.differingBytes > 0) {
+                      firstDifferingHtmlPrefix = prefix;
+                    }
+                  }
+                  const offscreenPrefixes = visibleLayers.map((layer, index) => {
+                    const layersThroughCurrent = visibleLayers.slice(0, index + 1);
+                    const directPixels = renderOffscreenPrefix(layersThroughCurrent, false);
+                    const cachedPixels = renderOffscreenPrefix(layersThroughCurrent, true);
+                    const htmlPixels = htmlPrefixPixelPairs[index];
+                    if (!htmlPixels) throw new Error(`Missing HTML accumulation prefix ${layer.id} at ${stage}`);
+                    const directVsCached = compareAccumulatedPixels(directPixels, cachedPixels);
+                    if (firstDifferingOffscreenPrefix === null && directVsCached.differingBytes > 0) {
+                      firstDifferingOffscreenPrefix = { layerId: layer.id, directVsCached };
+                    }
+                    return {
+                      layerId: layer.id,
+                      directVsCached,
+                      htmlDirectVsOffscreenDirect: compareAccumulatedPixels(htmlPixels.directPixels, directPixels),
+                      htmlCachedVsOffscreenCached: compareAccumulatedPixels(htmlPixels.cachedPixels, cachedPixels),
+                    };
+                  });
+
+                  return {
+                    stage,
+                    legacyIndex,
+                    paintLayerId,
+                    documentFrame: frame,
+                    framePixelSize: frameSize,
+                    paintSource: {
+                      kind: paintSource.kind,
+                      toolName: paintSource.args.toolName,
+                      color: paintSource.args.color,
+                      alpha: paintSource.args.alpha,
+                      penType: paintSource.args.penType,
+                      lineWidth: paintSource.args.lineWidth,
+                      points: paintSource.args.points,
+                      composite: paintSource.args.composite ?? 'source-over',
+                      sourcePos: paintSource.pos,
+                      layerPos: paintLayer.pos,
+                      bitmapSize: { width: paintLayer.bitmap.width, height: paintLayer.bitmap.height },
+                      directBranchEligible: true,
+                      cachedPath: 'layer.bitmap via getLayerBitmap after bypassing direct Draw',
+                    },
+                    renderer: {
+                      html: 'production drawLayersToCanvas wrapper, staging and publish included',
+                      offscreen: 'drawLayer primitive on fresh OffscreenCanvas surfaces',
+                    },
+                    htmlPrefixes,
+                    offscreenPrefixes,
+                    firstDifferingHtmlPrefix,
+                    firstDifferingOffscreenPrefix,
+                    publishedOutput: {
+                      html: {
+                        directVsActualLegacy: compareAccumulatedPixels(
+                          publishedHtmlDirectPixels,
+                          new Uint8ClampedArray(legacyPixels)
+                        ),
+                        directVsCached: compareAccumulatedPixels(publishedHtmlDirectPixels, publishedHtmlCachedPixels),
+                        cachedVsDurable: compareAccumulatedPixels(
+                          publishedHtmlCachedPixels,
+                          new Uint8ClampedArray(durablePixels)
+                        ),
+                      },
+                    },
+                  };
+                })()
+              : null;
           let differingBytes = 0;
           let differingPixels = 0;
           let lastDifferingPixel = -1;
@@ -1493,41 +1714,38 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               return [id, layer.bounds];
             })
           );
-          const frameComparisonSurfaces =
-            (fixture.materializedLayerIds?.length ?? 0) > 0
-              ? (() => {
-                  const legacyFrameSurface = document.createElement('canvas');
-                  legacyFrameSurface.width = frameSize.width;
-                  legacyFrameSurface.height = frameSize.height;
-                  const legacyFrameContext = legacyFrameSurface.getContext('2d');
-                  const durableFrameSurface = document.createElement('canvas');
-                  durableFrameSurface.width = frameSize.width;
-                  durableFrameSurface.height = frameSize.height;
-                  const durableFrameContext = durableFrameSurface.getContext('2d');
-                  if (!legacyFrameContext || !durableFrameContext) {
-                    throw new Error(`Unable to create reusable frame comparison surfaces at ${stage}`);
-                  }
-                  const legacyOffscreenSurface =
-                    typeof OffscreenCanvas === 'undefined'
-                      ? legacyFrameSurface
-                      : new OffscreenCanvas(frameSize.width, frameSize.height);
-                  const durableOffscreenSurface =
-                    typeof OffscreenCanvas === 'undefined'
-                      ? durableFrameSurface
-                      : new OffscreenCanvas(frameSize.width, frameSize.height);
-                  const legacyOffscreenContext = legacyOffscreenSurface.getContext('2d');
-                  const durableOffscreenContext = durableOffscreenSurface.getContext('2d');
-                  if (!legacyOffscreenContext || !durableOffscreenContext) {
-                    throw new Error(`Unable to create OffscreenCanvas comparison surfaces at ${stage}`);
-                  }
-                  return {
-                    legacyContext: legacyFrameContext,
-                    durableContext: durableFrameContext,
-                    legacyOffscreenContext,
-                    durableOffscreenContext,
-                  };
-                })()
-              : null;
+          const createFrameComparisonSurfaces = () => {
+            const legacyFrameSurface = document.createElement('canvas');
+            legacyFrameSurface.width = frameSize.width;
+            legacyFrameSurface.height = frameSize.height;
+            const legacyFrameContext = legacyFrameSurface.getContext('2d');
+            const durableFrameSurface = document.createElement('canvas');
+            durableFrameSurface.width = frameSize.width;
+            durableFrameSurface.height = frameSize.height;
+            const durableFrameContext = durableFrameSurface.getContext('2d');
+            if (!legacyFrameContext || !durableFrameContext) {
+              throw new Error(`Unable to create isolated frame comparison surfaces at ${stage}`);
+            }
+            const legacyOffscreenSurface =
+              typeof OffscreenCanvas === 'undefined'
+                ? legacyFrameSurface
+                : new OffscreenCanvas(frameSize.width, frameSize.height);
+            const durableOffscreenSurface =
+              typeof OffscreenCanvas === 'undefined'
+                ? durableFrameSurface
+                : new OffscreenCanvas(frameSize.width, frameSize.height);
+            const legacyOffscreenContext = legacyOffscreenSurface.getContext('2d');
+            const durableOffscreenContext = durableOffscreenSurface.getContext('2d');
+            if (!legacyOffscreenContext || !durableOffscreenContext) {
+              throw new Error(`Unable to create OffscreenCanvas frame comparison surfaces at ${stage}`);
+            }
+            return {
+              legacyContext: legacyFrameContext,
+              durableContext: durableFrameContext,
+              legacyOffscreenContext,
+              durableOffscreenContext,
+            };
+          };
           const materializedLayerComparisons = (fixture.materializedLayerIds ?? []).map((layerId) => {
             const legacyLayer = legacyReplay.layers[layerId];
             const materializedLayer = composite.layers[layerId];
@@ -1552,13 +1770,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 Math.ceil(evaluation.bounds.y + evaluation.bounds.height - frame.y) -
                 Math.floor(evaluation.bounds.y - frame.y),
             };
-            if (!frameComparisonSurfaces) throw new Error(`Missing frame comparison surfaces at ${stage}`);
             const {
               legacyContext: legacyFrameContext,
               durableContext: durableFrameContext,
               legacyOffscreenContext,
               durableOffscreenContext,
-            } = frameComparisonSurfaces;
+            } = createFrameComparisonSurfaces();
             for (const context of [
               legacyFrameContext,
               durableFrameContext,
@@ -1951,15 +2168,27 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             const compareRawPixels = (expected: Uint8ClampedArray, actual: Uint8ClampedArray) => {
               let rawBitmapDifferingBytes = 0;
               const rawBitmapDifferingSamples: CropParityFramePixelSample[] = [];
+              const pixelRgba = (pixels: Uint8ClampedArray, pixel: number): CropParityRgba => {
+                const offset = pixel * 4;
+                return [pixels[offset] ?? 0, pixels[offset + 1] ?? 0, pixels[offset + 2] ?? 0, pixels[offset + 3] ?? 0];
+              };
+              const premultiplyRgba = ([red, green, blue, alpha]: CropParityRgba): CropParityRgba => [
+                Math.round((red * alpha) / 255),
+                Math.round((green * alpha) / 255),
+                Math.round((blue * alpha) / 255),
+                alpha,
+              ];
               for (let byte = 0; byte < Math.max(expected.length, actual.length); byte += 1) {
                 const legacy = expected[byte] ?? null;
                 const durable = actual[byte] ?? null;
                 if (legacy === durable) continue;
                 rawBitmapDifferingBytes += 1;
-                if (rawBitmapDifferingSamples.length >= 8) continue;
+                if (rawBitmapDifferingSamples.length >= 16) continue;
                 const pixel = Math.floor(byte / 4);
                 const x = pixel % expectedBounds.width;
                 const y = Math.floor(pixel / expectedBounds.width);
+                const legacyRgba = pixelRgba(expected, pixel);
+                const durableRgba = pixelRgba(actual, pixel);
                 rawBitmapDifferingSamples.push({
                   x,
                   y,
@@ -1968,10 +2197,22 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                   channel: frameChannels[byte % 4],
                   legacy,
                   durable,
+                  legacyRgba,
+                  durableRgba,
+                  legacyPremultipliedRgba: premultiplyRgba(legacyRgba),
+                  durablePremultipliedRgba: premultiplyRgba(durableRgba),
                 });
               }
               return { differingBytes: rawBitmapDifferingBytes, differingSamples: rawBitmapDifferingSamples };
             };
+            const legacyHtmlTightSurfaceToFrameGridComparison = compareRawPixels(
+              legacyTightPixels,
+              legacyHybridTightPixels
+            );
+            const legacyOffscreenTightSurfaceToFrameGridComparison = compareRawPixels(
+              legacyOffscreenTightPixels,
+              legacyOffscreenHybridTightPixels
+            );
             const downstreamInvertReadbackComparisons = fixture.verifyDownstreamInvertParity
               ? (() => {
                   const invertProcessor = findToolProcessor('invert');
@@ -1995,15 +2236,51 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                     context.drawImage(bitmap, 0, 0, expectedBounds.width, expectedBounds.height);
                     return context.getImageData(0, 0, expectedBounds.width, expectedBounds.height).data;
                   };
-                  const durableInverted = invertRaster(materializedLayer.bitmap as CanvasImageSource);
+                  const rasterFromPixels = (pixels: Uint8ClampedArray, useOffscreenCanvas: boolean) => {
+                    const imageDataFor = (context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D) => {
+                      const imageData = context.createImageData(expectedBounds.width, expectedBounds.height);
+                      imageData.data.set(pixels);
+                      context.putImageData(imageData, 0, 0);
+                    };
+                    if (useOffscreenCanvas) {
+                      const surface = new OffscreenCanvas(expectedBounds.width, expectedBounds.height);
+                      const context = surface.getContext('2d', { willReadFrequently: true });
+                      if (!context) throw new Error('Unable to create the legacy Offscreen Invert input raster');
+                      imageDataFor(context);
+                      return surface as CanvasImageSource;
+                    }
+                    const surface = document.createElement('canvas');
+                    surface.width = expectedBounds.width;
+                    surface.height = expectedBounds.height;
+                    const context = surface.getContext('2d', { willReadFrequently: true });
+                    if (!context) throw new Error('Unable to create the legacy HTML Invert input raster');
+                    imageDataFor(context);
+                    return surface;
+                  };
+                  const inspectInvertedRaster = (bitmap: CanvasImageSource) => {
+                    const inverted = invertRaster(bitmap);
+                    const context = (inverted as OffscreenCanvas).getContext('2d', { willReadFrequently: true });
+                    if (!context) throw new Error('Unable to read the Invert processor output raster');
+                    return {
+                      processorOutput: context.getImageData(0, 0, expectedBounds.width, expectedBounds.height).data,
+                      htmlReadback: readRaster(inverted),
+                    };
+                  };
+                  const durableInverted = inspectInvertedRaster(materializedLayer.bitmap as CanvasImageSource);
+                  const legacyHtmlInverted = inspectInvertedRaster(rasterFromPixels(legacyHybridTightPixels, false));
+                  const legacyOffscreenInverted = inspectInvertedRaster(
+                    rasterFromPixels(legacyOffscreenHybridTightPixels, true)
+                  );
                   return {
-                    html: compareRawPixels(
-                      readRaster(invertRaster(legacyTightSurfaces.htmlContext.canvas)),
-                      readRaster(durableInverted)
+                    htmlOutput: compareRawPixels(legacyHtmlInverted.processorOutput, durableInverted.processorOutput),
+                    offscreenOutput: compareRawPixels(
+                      legacyOffscreenInverted.processorOutput,
+                      durableInverted.processorOutput
                     ),
-                    offscreen: compareRawPixels(
-                      readRaster(invertRaster(legacyTightSurfaces.offscreenContext.canvas as CanvasImageSource)),
-                      readRaster(durableInverted)
+                    htmlReadback: compareRawPixels(legacyHtmlInverted.htmlReadback, durableInverted.htmlReadback),
+                    offscreenReadback: compareRawPixels(
+                      legacyOffscreenInverted.htmlReadback,
+                      durableInverted.htmlReadback
                     ),
                   };
                 })()
@@ -2466,13 +2743,26 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               offscreenFrameDifferingSamples,
               tightBitmapRawDifferingBytes: tightBitmapRawComparison.differingBytes,
               tightBitmapRawDifferingSamples: tightBitmapRawComparison.differingSamples,
-              downstreamInvertReadbackDifferingBytes: downstreamInvertReadbackComparisons?.html.differingBytes ?? null,
+              legacyHtmlTightSurfaceToFrameGridDifferingBytes:
+                legacyHtmlTightSurfaceToFrameGridComparison.differingBytes,
+              legacyOffscreenTightSurfaceToFrameGridDifferingBytes:
+                legacyOffscreenTightSurfaceToFrameGridComparison.differingBytes,
+              downstreamInvertOutputDifferingBytes:
+                downstreamInvertReadbackComparisons?.htmlOutput.differingBytes ?? null,
+              downstreamInvertOutputDifferingSamples:
+                downstreamInvertReadbackComparisons?.htmlOutput.differingSamples ?? [],
+              offscreenDownstreamInvertOutputDifferingBytes:
+                downstreamInvertReadbackComparisons?.offscreenOutput.differingBytes ?? null,
+              offscreenDownstreamInvertOutputDifferingSamples:
+                downstreamInvertReadbackComparisons?.offscreenOutput.differingSamples ?? [],
+              downstreamInvertReadbackDifferingBytes:
+                downstreamInvertReadbackComparisons?.htmlReadback.differingBytes ?? null,
               downstreamInvertReadbackDifferingSamples:
-                downstreamInvertReadbackComparisons?.html.differingSamples ?? [],
+                downstreamInvertReadbackComparisons?.htmlReadback.differingSamples ?? [],
               offscreenDownstreamInvertReadbackDifferingBytes:
-                downstreamInvertReadbackComparisons?.offscreen.differingBytes ?? null,
+                downstreamInvertReadbackComparisons?.offscreenReadback.differingBytes ?? null,
               offscreenDownstreamInvertReadbackDifferingSamples:
-                downstreamInvertReadbackComparisons?.offscreen.differingSamples ?? [],
+                downstreamInvertReadbackComparisons?.offscreenReadback.differingSamples ?? [],
               offscreenTightBitmapRawDifferingBytes: offscreenTightBitmapRawComparison.differingBytes,
               offscreenTightBitmapRawDifferingSamples: offscreenTightBitmapRawComparison.differingSamples,
               tightBitmapPremultipliedDifferingBytes: tightBitmapComparison.differingBytes,
@@ -6078,6 +6368,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             materializedBounds,
             materializedLayerComparisons,
             projectedOutputParity,
+            paintSourceAccumulationDiagnostics,
           };
         } finally {
           composite.release();
@@ -6101,6 +6392,10 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           durableFrame: result.durableFrame,
           expectedSize: result.expectedSize,
           differingBytes: result.differingBytes,
+          differingPixels: result.differingPixels,
+          maxChannelDelta: result.maxChannelDelta,
+          differingSamples: result.differingSamples,
+          paintSourceAccumulationDiagnostics: result.paintSourceAccumulationDiagnostics,
           legacyDiffersFromUntransformed: result.legacyDiffersFromUntransformed,
           durableDiffersFromUntransformed: result.durableDiffersFromUntransformed,
           legacyDiffersFromPrevious: differsFromPrevious(result.legacyPixels, previousLegacyTransformPixels),
@@ -6218,6 +6513,9 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         colorPresence,
         materializedBounds: finalMaterializedBounds,
         materializedLayerComparisons: finalMaterializedLayerComparisons,
+        paintSourceAccumulationDiagnostics:
+          layerTransformResults.find((transform) => transform.paintSourceAccumulationDiagnostics)
+            ?.paintSourceAccumulationDiagnostics ?? null,
         layerTransformResults,
         transitionResults,
       };
@@ -8346,6 +8644,246 @@ test.describe('Crop history', () => {
       expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'foreground']);
     });
 
+    test('two raster layers keep exact rendered parity through a foreground affine and fractional quarter-turn frame', async ({
+      page,
+    }, testInfo) => {
+      await openDocument(page);
+      const nextFrame = { x: 4, y: 4, width: 55.75, height: 55.5 };
+      const fixture: CropParityFixture = {
+        caseName: 'two raster layers through retained foreground affine and fractional quarter-turn frame',
+        documentId: 'raster-affine-quarter-turn-fractional-frame-parity',
+        materializedLayerIds: ['background', 'foreground'],
+        verifyDownstreamInvertParity: true,
+        layerTransforms: [
+          {
+            id: 'foreground-affine',
+            layerId: 'foreground',
+            args: {
+              toolName: 'transform',
+              rotate: 19,
+              mirrorH: false,
+              mirrorV: true,
+              skewX: 4,
+              skewY: -3,
+              trapezoid: 0,
+              resizeX: 112,
+              resizeY: 84,
+            },
+          },
+        ],
+        transitions: [{ angleDegrees: 90, nextFrame }],
+        layers: [
+          {
+            kind: 'raster',
+            id: 'background',
+            order: 0,
+            pos: { x: 0, y: 0, width: 64, height: 64 },
+            fills: [
+              { x: 0, y: 0, width: 64, height: 64, color: '#18324a' },
+              { x: 3, y: 5, width: 17, height: 41, color: '#ef3322' },
+              { x: 31, y: 11, width: 27, height: 22, color: '#2255df' },
+            ],
+          },
+          {
+            kind: 'raster',
+            id: 'foreground',
+            order: 1,
+            pos: { x: 13, y: 18, width: 29, height: 23 },
+            fills: [
+              { x: 0, y: 0, width: 16, height: 10, color: '#ffd500' },
+              { x: 16, y: 0, width: 13, height: 15, color: '#19c37d' },
+              { x: 4, y: 11, width: 19, height: 12, color: '#8a2be2' },
+              { x: 24, y: 16, width: 5, height: 7, color: '#f15a29' },
+            ],
+          },
+        ],
+      };
+      const result = await compareCropRenderers(page, fixture);
+      const noAffineControl = await compareCropRenderers(page, {
+        ...fixture,
+        caseName: 'two raster layers without foreground affine through fractional quarter-turn frame',
+        documentId: 'raster-quarter-turn-fractional-frame-no-affine-control',
+        layerTransforms: [],
+      });
+      const noRotationControl = await compareCropRenderers(page, {
+        ...fixture,
+        caseName: 'two raster layers with foreground affine and no frame rotation',
+        documentId: 'raster-affine-fractional-frame-no-rotation-control',
+        transitions: [{ angleDegrees: 0, nextFrame }],
+      });
+
+      const summarizeMaterialization = (comparisons: readonly CropParityLayerComparison[], fixtureStage: string) =>
+        comparisons.map((comparison) => ({
+          fixtureStage,
+          layerId: comparison.layerId,
+          stage: comparison.stage,
+          affineTransforms: comparison.affineTransforms,
+          expectedBounds: comparison.expectedBounds,
+          materializedBounds: comparison.materializedBounds,
+          bitmapSize: comparison.bitmapSize,
+          frameDifferingBytes: comparison.frameDifferingBytes,
+          frameDifferingSamples: comparison.frameDifferingSamples,
+          offscreenFrameDifferingBytes: comparison.offscreenFrameDifferingBytes,
+          offscreenFrameDifferingSamples: comparison.offscreenFrameDifferingSamples,
+          framePremultipliedDifferingBytes: comparison.framePremultipliedDifferingBytes,
+          framePremultipliedDifferingSamples: comparison.framePremultipliedDifferingSamples,
+          offscreenFramePremultipliedDifferingBytes: comparison.offscreenFramePremultipliedDifferingBytes,
+          offscreenFramePremultipliedDifferingSamples: comparison.offscreenFramePremultipliedDifferingSamples,
+          tightBitmapRawDifferingBytes: comparison.tightBitmapRawDifferingBytes,
+          tightBitmapRawDifferingSamples: comparison.tightBitmapRawDifferingSamples,
+          offscreenTightBitmapRawDifferingBytes: comparison.offscreenTightBitmapRawDifferingBytes,
+          offscreenTightBitmapRawDifferingSamples: comparison.offscreenTightBitmapRawDifferingSamples,
+          legacyHtmlTightSurfaceToFrameGridDifferingBytes: comparison.legacyHtmlTightSurfaceToFrameGridDifferingBytes,
+          legacyOffscreenTightSurfaceToFrameGridDifferingBytes:
+            comparison.legacyOffscreenTightSurfaceToFrameGridDifferingBytes,
+          tightBitmapPremultipliedDifferingBytes: comparison.tightBitmapPremultipliedDifferingBytes,
+          offscreenTightBitmapPremultipliedDifferingBytes: comparison.offscreenTightBitmapPremultipliedDifferingBytes,
+          downstreamInvertOutputDifferingBytes: comparison.downstreamInvertOutputDifferingBytes,
+          downstreamInvertOutputDifferingSamples: comparison.downstreamInvertOutputDifferingSamples,
+          offscreenDownstreamInvertOutputDifferingBytes: comparison.offscreenDownstreamInvertOutputDifferingBytes,
+          offscreenDownstreamInvertOutputDifferingSamples: comparison.offscreenDownstreamInvertOutputDifferingSamples,
+          downstreamInvertReadbackDifferingBytes: comparison.downstreamInvertReadbackDifferingBytes,
+          downstreamInvertReadbackDifferingSamples: comparison.downstreamInvertReadbackDifferingSamples,
+          offscreenDownstreamInvertReadbackDifferingBytes: comparison.offscreenDownstreamInvertReadbackDifferingBytes,
+          offscreenDownstreamInvertReadbackDifferingSamples:
+            comparison.offscreenDownstreamInvertReadbackDifferingSamples,
+        }));
+      // Raw unassociated tight-bitmap bytes are diagnostic here. This test gates
+      // rendered frame bytes, exact premultiplied layer pixels, and the
+      // production Invert output for parity-equivalent raster inputs.
+      await testInfo.attach('raster-affine-quarter-turn-materialization.json', {
+        body: JSON.stringify(
+          [
+            ...result.layerTransformResults.flatMap((transform) =>
+              summarizeMaterialization(transform.materializedLayerComparisons, `affine cursor ${transform.id}`)
+            ),
+            ...result.transitionResults.flatMap((transition) =>
+              summarizeMaterialization(transition.materializedLayerComparisons, 'affine plus quarter-turn')
+            ),
+            ...noAffineControl.transitionResults.flatMap((transition) =>
+              summarizeMaterialization(transition.materializedLayerComparisons, 'no-affine quarter-turn control')
+            ),
+            ...noRotationControl.layerTransformResults.flatMap((transform) =>
+              summarizeMaterialization(transform.materializedLayerComparisons, 'no-rotation affine cursor')
+            ),
+            ...noRotationControl.transitionResults.flatMap((transition) =>
+              summarizeMaterialization(transition.materializedLayerComparisons, 'no-rotation affine control')
+            ),
+          ],
+          null,
+          2
+        ),
+        contentType: 'application/json',
+      });
+
+      const assertMaterializedLayerParity = (
+        comparisons: readonly CropParityLayerComparison[],
+        stage: string,
+        expectedForegroundAffineCount = 1
+      ) => {
+        expect(comparisons.map(({ layerId }) => layerId).sort(), `${stage} materialized layers`).toEqual([
+          'background',
+          'foreground',
+        ]);
+        const foreground = comparisons.find(({ layerId }) => layerId === 'foreground');
+        expect(foreground?.affineTransforms.legacy, `${stage} legacy foreground affine count`).toHaveLength(
+          expectedForegroundAffineCount
+        );
+        expect(foreground?.affineTransforms.durable, `${stage} durable foreground affine matrix`).toEqual(
+          foreground?.affineTransforms.legacy
+        );
+        for (const comparison of comparisons) {
+          expect(comparison.materializedBounds, `${comparison.layerId} bounds at ${stage}`).toEqual(
+            comparison.expectedBounds
+          );
+          expect(comparison.bitmapSize, `${comparison.layerId} bitmap size at ${stage}`).toEqual({
+            width: comparison.expectedBounds.width,
+            height: comparison.expectedBounds.height,
+          });
+          expect(comparison.frameDifferingBytes, `${comparison.layerId} frame bytes at ${stage}`).toBe(0);
+          expect(
+            comparison.offscreenFrameDifferingBytes,
+            `${comparison.layerId} Offscreen frame bytes at ${stage}`
+          ).toBe(0);
+          expect(
+            comparison.downstreamInvertOutputDifferingBytes,
+            `${comparison.layerId} HTML Invert output at ${stage}; ${JSON.stringify(
+              comparison.downstreamInvertOutputDifferingSamples
+            )}`
+          ).toBe(0);
+          expect(
+            comparison.offscreenDownstreamInvertOutputDifferingBytes,
+            `${comparison.layerId} Offscreen Invert output at ${stage}; ${JSON.stringify(
+              comparison.offscreenDownstreamInvertOutputDifferingSamples
+            )}`
+          ).toBe(0);
+          expect(
+            comparison.downstreamInvertReadbackDifferingBytes,
+            `${comparison.layerId} HTML Invert readback at ${stage}; ${JSON.stringify(
+              comparison.downstreamInvertReadbackDifferingSamples
+            )}`
+          ).toBe(0);
+          expect(
+            comparison.offscreenDownstreamInvertReadbackDifferingBytes,
+            `${comparison.layerId} Offscreen Invert readback at ${stage}; ${JSON.stringify(
+              comparison.offscreenDownstreamInvertReadbackDifferingSamples
+            )}`
+          ).toBe(0);
+          expectTightBitmapPremultipliedParity(comparison, stage);
+        }
+      };
+      const assertCompositeParity = (
+        comparison: Awaited<ReturnType<typeof compareCropRenderers>>,
+        stage: string,
+        expectedForegroundAffineCount: number
+      ) => {
+        expect(comparison.differingBytes, `${stage} composite byte parity`).toBe(0);
+        expect(comparison.durablePixels, `${stage} durable and legacy composite pixels`).toEqual(
+          comparison.legacyPixels
+        );
+        expect(comparison.transitionResults, `${stage} frame transition count`).toHaveLength(1);
+        const transition = comparison.transitionResults[0];
+        expect(transition?.frame, `${stage} frame`).toEqual(nextFrame);
+        expect(transition?.durableFrame, `${stage} durable frame`).toEqual(transition?.frame);
+        expect(transition?.differingBytes, `${stage} transition composite byte parity`).toBe(0);
+        expect(transition?.durablePixels, `${stage} transition pixels`).toEqual(transition?.legacyPixels);
+        assertMaterializedLayerParity(
+          transition?.materializedLayerComparisons ?? [],
+          stage,
+          expectedForegroundAffineCount
+        );
+      };
+
+      expect(result.layerTransformResults).toHaveLength(1);
+      expect(noAffineControl.layerTransformResults).toHaveLength(0);
+      expect(noRotationControl.layerTransformResults).toHaveLength(1);
+      const affineCursor = result.layerTransformResults[0];
+      const noRotationAffineCursor = noRotationControl.layerTransformResults[0];
+      expect(affineCursor?.frame).toEqual({ x: 0, y: 0, width: 64, height: 64 });
+      expect(affineCursor?.durableFrame).toEqual(affineCursor?.frame);
+      expect(affineCursor?.differingBytes).toBe(0);
+      expect(affineCursor?.legacyDiffersFromUntransformed).toBe(true);
+      expect(affineCursor?.durableDiffersFromUntransformed).toBe(true);
+      assertMaterializedLayerParity(affineCursor?.materializedLayerComparisons ?? [], 'foreground affine cursor');
+      expect(noRotationAffineCursor?.differingBytes).toBe(0);
+      assertMaterializedLayerParity(
+        noRotationAffineCursor?.materializedLayerComparisons ?? [],
+        'no-rotation foreground affine cursor'
+      );
+
+      assertCompositeParity(result, 'affine plus quarter-turn', 2);
+      assertCompositeParity(noAffineControl, 'no-affine quarter-turn control', 1);
+      assertCompositeParity(noRotationControl, 'no-rotation affine control', 1);
+      const transition = result.transitionResults[0];
+      const noAffineTransition = noAffineControl.transitionResults[0];
+      const noRotationTransition = noRotationControl.transitionResults[0];
+      expect(transition?.legacyPixels).not.toEqual(noAffineTransition?.legacyPixels);
+      expect(transition?.durablePixels).not.toEqual(noAffineTransition?.durablePixels);
+      expect(transition?.legacyPixels).not.toEqual(noRotationTransition?.legacyPixels);
+      expect(transition?.durablePixels).not.toEqual(noRotationTransition?.durablePixels);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+    });
+
     test('an affine raster keeps composite opacity and blend mode exact', async ({ page }, testInfo) => {
       await openDocument(page);
 
@@ -10102,12 +10640,13 @@ test.describe('Crop history', () => {
 
     test('multi-step frame transitions retain byte parity across text, vector, blank, and paint sources', async ({
       page,
-    }) => {
+    }, testInfo) => {
       await openDocument(page);
 
       const fixture: CropParityFixture = {
         caseName: 'multi-step mixed-source crop',
         documentId: 'multi-step-mixed-source-crop-pixel-parity',
+        diagnoseAccumulatedPaintSource: { legacyIndex: 1, layerId: 'paint' },
         materializedLayerIds: ['blank', 'blank-semi', 'vector', 'paint', 'text'],
         layerTransforms: [
           {
@@ -10245,7 +10784,7 @@ test.describe('Crop history', () => {
             kind: 'paint',
             id: 'paint',
             order: 3,
-            pos: { x: 40, y: 24, width: 16, height: 18 },
+            pos: { x: 36, y: 20, width: 23, height: 25 },
             args: {
               toolName: 'draw',
               alpha: 1,
@@ -10253,8 +10792,8 @@ test.describe('Crop history', () => {
               penType: 'pen',
               lineWidth: 5,
               points: [
-                { x: 1, y: 1 },
-                { x: 14, y: 16 },
+                { x: 5, y: 5 },
+                { x: 18, y: 20 },
               ],
             },
           },
@@ -10280,7 +10819,31 @@ test.describe('Crop history', () => {
         ],
       };
       const integerResult = await compareCropRenderers(page, fixture);
-
+      await testInfo.attach('mixed-source-accumulated-paint-path.json', {
+        body: JSON.stringify(integerResult.paintSourceAccumulationDiagnostics, null, 2),
+        contentType: 'application/json',
+      });
+      expect(
+        integerResult.paintSourceAccumulationDiagnostics,
+        'accumulated paint source diagnostic was captured'
+      ).not.toBeNull();
+      const paintSourceAccumulationSummary = integerResult.paintSourceAccumulationDiagnostics
+        ? {
+            stage: integerResult.paintSourceAccumulationDiagnostics.stage,
+            legacyIndex: integerResult.paintSourceAccumulationDiagnostics.legacyIndex,
+            paintLayerId: integerResult.paintSourceAccumulationDiagnostics.paintLayerId,
+            documentFrame: integerResult.paintSourceAccumulationDiagnostics.documentFrame,
+            framePixelSize: integerResult.paintSourceAccumulationDiagnostics.framePixelSize,
+            paintSource: integerResult.paintSourceAccumulationDiagnostics.paintSource,
+            renderer: integerResult.paintSourceAccumulationDiagnostics.renderer,
+            htmlPrefixes: integerResult.paintSourceAccumulationDiagnostics.htmlPrefixes,
+            offscreenPrefixes: integerResult.paintSourceAccumulationDiagnostics.offscreenPrefixes,
+            firstDifferingHtmlPrefix: integerResult.paintSourceAccumulationDiagnostics.firstDifferingHtmlPrefix,
+            firstDifferingOffscreenPrefix:
+              integerResult.paintSourceAccumulationDiagnostics.firstDifferingOffscreenPrefix,
+            publishedOutput: integerResult.paintSourceAccumulationDiagnostics.publishedOutput,
+          }
+        : null;
       const assertMixedLayerParity = (comparisons: readonly CropParityLayerComparison[], stage: string) => {
         expect(comparisons, `${stage} materialized layer count`).toHaveLength(5);
         expect(comparisons.map((comparison) => comparison.layerId)).toEqual([
@@ -10303,6 +10866,10 @@ test.describe('Crop history', () => {
             `${comparison.layerId} pixels at ${stage} differ at ${JSON.stringify(comparison.frameDifferingSamples)}`
           ).toBe(0);
           expect(
+            comparison.offscreenFrameDifferingBytes,
+            `${comparison.layerId} Offscreen pixels at ${stage} differ at ${JSON.stringify(comparison.offscreenFrameDifferingSamples)}`
+          ).toBe(0);
+          expect(
             {
               htmlCanvas: comparison.tightBitmapPremultipliedDifferingBytes,
               offscreenCanvas: comparison.offscreenTightBitmapPremultipliedDifferingBytes,
@@ -10316,7 +10883,19 @@ test.describe('Crop history', () => {
         expect(result.layerTransformResults, context + ' retained affine count').toHaveLength(6);
         for (const transform of result.layerTransformResults) {
           assertMixedLayerParity(transform.materializedLayerComparisons, context + ' retained affine ' + transform.id);
-          expect(transform.differingBytes, context + ' retained affine ' + transform.id + ' composite parity').toBe(0);
+          const accumulationSuffix =
+            context === 'integer frame fixture' && transform.id === 'blank-affine'
+              ? '; paint source accumulation=' + JSON.stringify(paintSourceAccumulationSummary)
+              : '';
+          expect(
+            transform.differingBytes,
+            context +
+              ' retained affine ' +
+              transform.id +
+              ' composite parity; ' +
+              pixelDifferenceSummary(transform) +
+              accumulationSuffix
+          ).toBe(0);
           expect(transform.legacyDiffersFromUntransformed).toBe(true);
           expect(transform.durableDiffersFromUntransformed).toBe(true);
           expect(transform.legacyDiffersFromPrevious).toBe(true);
@@ -10360,6 +10939,7 @@ test.describe('Crop history', () => {
         ...fixture,
         caseName: 'fractional multi-step mixed-source crop',
         documentId: 'fractional-multi-step-mixed-source-crop-pixel-parity',
+        diagnoseAccumulatedPaintSource: undefined,
         transitions: [
           { angleDegrees: 37, nextFrame: { x: 4.25, y: 4.5, width: 55.75, height: 55.5 } },
           { angleDegrees: 0, nextFrame: { x: 5.125, y: 6.25, width: 53.5, height: 51.875 } },
