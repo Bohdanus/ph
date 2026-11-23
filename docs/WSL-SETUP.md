@@ -110,7 +110,10 @@ unset OPENROUTER_API_KEY
 ```
 
 In Windows PowerShell, the same quota check can use a hidden prompt for the
-current process:
+current process. `SecureString` hides the prompt, but Node still needs the key
+as plaintext in its inherited process environment. This avoids console echo and
+persistent shell configuration; it does not protect the value from process-memory
+inspection. Use a secret manager for stricter handling.
 
 ```powershell
 $secret = Read-Host 'OpenRouter API key' -AsSecureString
@@ -126,12 +129,13 @@ try {
 ```
 
 `--openrouter-quota` calls OpenRouter's `GET /api/v1/key` endpoint and sends no
-inference request. A `no_key` result means the current process did not receive
-the environment variable. A `401` means the endpoint rejected the request, but
-it does not by itself prove the key is invalid: OpenRouter has documented
-`401 "User not found"` responses during an authentication lookup outage. Check
-[OpenRouter status](https://status.openrouter.ai/); if the error persists while
-the service is healthy, confirm that the key is enabled before replacing it.
+inference request. A `no_key` result means the variable is unset or empty in the current process.
+An HTTP `401` normally means OpenRouter rejected the bearer key. In a documented
+2026 infrastructure incident, an authorization lookup outage returned `401
+"User not found"`; OpenRouter's report says it deployed a correction to return
+`503` for infrastructure authorization lookup failures. If a `401` is unexpected,
+check [OpenRouter status](https://status.openrouter.ai/); if it persists while the
+service is healthy, confirm the key is enabled before replacing it.
 If the endpoint returns HTTP 429, wait before retrying. For HTTP 5xx, check status and try again later.
 Neither response by itself proves the key is invalid.
 See the [quota endpoint reference](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key)

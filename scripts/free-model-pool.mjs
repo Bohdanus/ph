@@ -2590,7 +2590,7 @@ export async function main(
     if (quota.reason !== 'ok') {
       if (quota.reason === 'no_key') {
         stderr.write(
-          'OPENROUTER_API_KEY is not set in this process; provide it through a secret manager or this shell environment. No request or inference was sent.\n'
+          'OPENROUTER_API_KEY is missing or empty in this process; provide it through a secret manager or this shell environment. No request or inference was sent.\n'
         );
         return 2;
       }
@@ -2608,7 +2608,7 @@ export async function main(
       }
       if (quota.reason === 'http_401') {
         stderr.write(
-          'OpenRouter rejected the quota request with HTTP 401. Check OpenRouter status and confirm the key is active if the error persists; a 401 alone does not prove the key is invalid. No inference request was sent.\n'
+          'OpenRouter rejected the quota request with HTTP 401. This usually means the bearer key was missing or not accepted, though OpenRouter has documented an infrastructure incident that also returned 401 for authorization lookup failures. Check status if unexpected and confirm the key is active if the error persists. No inference request was sent.\n'
         );
         return 2;
       }
