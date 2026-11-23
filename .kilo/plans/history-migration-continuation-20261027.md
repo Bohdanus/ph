@@ -2,9 +2,10 @@
 
 ## Current restart contract
 
-Use the [latest verified continuation reconciliation](../../docs/HISTORY-MIGRATION-NEXT.md#latest-continuation-reconciliation--2026-11-21-2331-utc)
+Use the [latest verified continuation reconciliation](../../docs/HISTORY-MIGRATION-NEXT.md#latest-continuation-reconciliation--2026-11-23-0110-utc)
 for current refs, candidate proof, cross-chat coverage, validation, and ordered next steps. The
-snapshot below was last refreshed on 2026-11-14 and is retained as historical evidence only. Recheck
+historical live-status snapshot below was last refreshed on 2026-11-14 and is retained as evidence
+of that checkpoint only. Recheck
 live refs, owners, and handoffs before acting on any dated branch or issue instruction below.
 
 ## Historical live status — refreshed 2026-11-14 18:03 UTC

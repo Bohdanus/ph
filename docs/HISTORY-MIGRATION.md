@@ -546,3 +546,703 @@ claim is made.
    remove only stale problem entries whose fixes are verified. Keep the
    ordered remaining gates and explicit unresolved risks in those docs, not
    only in chat.
+
+## Continuation checkpoint — 2026-11-22 11:19 UTC
+
+This checkpoint supersedes the previous checkpoint's ordered next steps. It
+records the raster/affine/quarter-turn proof and corrects the paint-path
+diagnosis after a test-only baseline probe.
+
+### Branch, main, and ownership snapshot
+
+- The candidate branch is `task/history-migration-raster-quarter-turn-20261122`.
+  It was created at `99988eed4d187defe59ed2f38aeb1e64a3581099` and fast-forwarded
+  twice as `main` advanced during this continuation; it now matches local
+  `main` at `18d4daf2c55376d6bac12bbe5c3b3360ac65e62b`. It currently contains
+  the raster matrix E2E change and this documentation checkpoint as uncommitted
+  work; it has no production `src/` changes.
+- The additional local-main delta from `99988eed` changes feature documentation,
+  touch navigation, view-menu shortcuts, and tablet-input handoff wording. It
+  does not change `e2e/crop-history.spec.ts` or the durable renderer, so it does
+  not resolve the paint diagnostic or raster matrix gap. The focused E2E,
+  typecheck, and lint checks below were rerun after the latest fast-forward.
+- The local `refs/remotes/origin/main` remains
+  `e6b6183e4c507ed6dd18dbf2b5d267926b348ab6`; current local `main` is 38 commits
+  ahead and 2 behind, with merge base
+  `e31679a888261612e5efabe7bb3ce8d822a51479`. The startup fetch for this
+  continuation already happened; there was no second fetch and no push.
+- The separate `task/origin-main-sync-20261122` worktree remains at
+  `beae809ad8f2db01debe940bda79c2740a750e24` with `MERGE_HEAD` at the recorded
+  `origin/main` tip. It has no unmerged entries but retains extensive staged,
+  unstaged, and untracked work. Preserve it as a separate, unreviewed merge;
+  it is not this candidate and must not be committed or landed wholesale.
+- At 11:14 UTC, the read-only board snapshot showed no active path lock on
+  `docs/HISTORY-MIGRATION.md`, `docs/HISTORY-MIGRATION-NEXT.md`, `HANDOFF.md`, or
+  `e2e/crop-history.spec.ts`; `npm run swarm -- doctor --dry-run` reported no
+  expired or missing-worktree holdings. The PH-93 issue is still open although
+  its claim row is released. Its worktree remains dirty in the migration
+  handoff and plan files, with no owner handoff or owner/process-death proof.
+  Keep that typed text-source work untouched until the documented ownership
+  gate is satisfied.
+
+### Corrected paint-renderer finding
+
+The earlier diagnosis that located the 135-byte difference at the retained
+paint affine is superseded. The corrected test-only probe on baseline
+`99988eed4d187defe59ed2f38aeb1e64a3581099`, run
+`2026-11-22T10-40-48-646Z-46908`, captured both the first paint cursor and the
+later affine cursor:
+
+- At `cursor=blank-affine`, the paint layer has no affine operation. Its source
+  bitmap is 23×25 at `{x:36,y:20,width:23,height:25}`. Legacy HTML versus
+  Offscreen output differs by 135 channel bytes across 69 pixels; durable HTML
+  versus Offscreen output is exact. Directly drawing the same identity
+  evaluation is exact on both contexts. Comparing that evaluation with legacy
+  `drawLayer()` differs by 135 bytes on HTML and is exact on Offscreen.
+- The legacy Draw shortcut is eligible at this cursor because the operation
+  list is empty and can draw tool arguments directly with `drawLine()`. This
+  narrows the observation to the no-affine legacy Draw path's destination
+  backend. It does not establish a specific Canvas sampling cause or Photoshop
+  behavior.
+- At the later retained-affine cursor, direct evaluation matches both
+  destination contexts exactly. The retained affine is therefore not the
+  demonstrated cause of the first-cursor mismatch.
+
+Keep the existing exact zero-difference gate. Do not change production
+rendering or describe the result as Photoshop parity without a primary-source
+behavior contract and an independent correctness oracle.
+
+### Raster affine plus quarter-turn proof
+
+The new test, `two raster layers keep exact rendered parity through a
+foreground affine and fractional quarter-turn frame`, fills the matrix cell
+proposed in the earlier history-review chats. It uses two asymmetric raster
+layers, a retained foreground affine (19-degree rotation, vertical mirror,
+skew, and non-uniform resize), and a +90-degree frame transition to
+`{x:4,y:4,width:55.75,height:55.5}`. Two controls independently remove the
+affine or replace the quarter-turn with a 0-degree transition. The main result
+must differ from each control in both renderers.
+
+The test requires exact legacy/durable composite bytes, exact transition frame,
+exact materialized layer bounds and bitmap dimensions, exact HTML and Offscreen
+per-layer frame bytes, and exact premultiplied tight-bitmap pixels at the affine
+and transition cursors. A free Nemotron review suggested checking the recorded
+affine arrays directly; the test now requires exact legacy/durable matrix-array
+equality and the expected affine count. The quarter-turn result has two
+foreground affine entries (the retained layer transform and the frame
+rotation); the no-affine quarter-turn and affine/zero-rotation controls each
+have one. The reviewer also warned about exact fractional-frame assertions;
+source inspection confirmed the helper passes `nextFrame` as explicit history
+input and verifies the replayed frame against those exact values, so exact
+equality is the intended gate and no float tolerance was added. The first
+matrix-count attempt expected one entry after the quarter-turn and failed with
+two; the count was corrected to include the document-frame affine. The final
+focused run on the first fast-forwarded `4229aa831` tree,
+`2026-11-22T11-32-30-994Z-12103`, passed after the matrix assertion was added.
+`main` then advanced to `18d4daf2c` with a tablet-input handoff change; the
+candidate was fast-forwarded again. The final focused run on `18d4daf2c`,
+`2026-11-22T11-35-04-370Z-16488`, passed. On this final candidate,
+`npm run tsc` passed and `npm run lint:check` passed with 0 errors and 127
+existing warnings; Prettier passed. The earlier
+`2026-11-22T11-19-42-277Z-88813` run passed before the matrix assertion was
+added.
+
+A separate exploratory strict comparison at the affine cursor observed 10
+one-channel differences in unassociated RGBA tight-bitmap readback, each with
+an observed delta of 1. The premultiplied tight comparison and both destination
+frame-byte comparisons were exact. The test records raw tight bytes as
+diagnostics but does not assert unassociated-byte identity. This is internal
+rendered-parity evidence; it does not prove source bitmap, encoded export, or
+Photoshop pixel equality.
+
+### Cross-chat and open-source editor research
+
+The incremental local history scan since 10:19 UTC found three matching Kilo
+sessions, all unrelated to history migration; it found no Codex matches. The
+read-only Copilot Chronicle query of the current stable VS Code profile found
+no matching `/ph` session. This was a local-only scan capped at 500 sessions
+per Kilo/Codex source and did not include remote or synced sessions, other VS
+Code profiles, or other stores.
+
+A bounded primary-source scan of GIMP, Pinta, and MyPaint found useful renderer
+architecture references, not a Photoshop oracle. GIMP's developer FAQ
+describes GEGL as a graph of image operations with region-based evaluation and
+caching. Pinta's project notes describe a canvas-widget rewrite and a later
+performance fix; its renderer discussion records nearest-neighbor sampling for
+zoomed-in canvas display. MyPaint's canvas renderer aligns the transformed
+origin to a screen pixel for sharp display. These sources reinforce that
+viewport display policy and document/image transforms are distinct contracts;
+they do not explain this app's measured delta or decide Photoshop behavior.
+References: [GIMP developer FAQ](https://gimp-web-devel-f10491.pages.gitlab.gnome.org/faq/),
+[Pinta changelog](https://github.com/PintaProject/Pinta/blob/master/CHANGELOG.md),
+[Pinta canvas-renderer discussion](https://github.com/PintaProject/Pinta/discussions/596),
+and [MyPaint canvas renderer](https://github.com/mypaint/mypaint/blob/master/gui/tileddrawwidget.py).
+
+### Ordered next steps
+
+1. Capture and inspect the exact 10 unassociated tight-bitmap byte samples,
+   including alpha and premultiplied values, then trace whether any downstream
+   renderer or export consumes those raw values. Keep the raw bitmap and export
+   gates closed until their contract is proven; do not add a tolerance.
+2. Isolate the no-affine direct Draw shortcut across HTML and Offscreen
+   destinations with a bounded source-level/browser experiment. Research
+   Photoshop behavior from Adobe or another primary source before making a
+   product claim. The open-source references above are architecture comparisons
+   only.
+3. Keep the passing raster × affine × quarter-turn controls. Choose the next
+   matrix cell from current exact coverage rather than adding arbitrary cases;
+   retain separate composite, per-layer, export, source-lifecycle, and
+   authority-cutover gates. `HistoryItem[]` and `replayHistory()` remain logical
+   authority while durable replay is staged presentation/export.
+4. Do not take over PH-93's typed text-source work until its owner hands it off
+   or the documented process-liveness procedure proves the complete owner tree
+   has stopped. Re-review runtime ownership, failure, canvas, PNG, and PSD
+   evidence before changing admission or authority gates.
+5. Resolve the separate origin merge only after the full staged/unstaged tree
+   and path ownership are reviewed. For this candidate, recheck current main,
+   `main:landing` occupancy, scoped `repo:state -- --for-landing`, path locks,
+   and pins immediately before using the owner-tracked landing wrapper. Verify
+   both parents, tree, local main, `origin/main`, and status afterward. Do not
+   fetch again or push during this continuation.
+6. No additional Terra subagent is scheduled or authorized by this checkpoint.
+   Use only verified free, read-only reviews for the remaining bounded checks.
+   Once PH-93 safely releases its docs, reconcile the durable next-step record
+   into `docs/HISTORY-MIGRATION-NEXT.md`, `HANDOFF.md`, and the continuation
+   plan; keep the currently verified sequence here until then.
+
+## Follow-up checkpoint — 2026-11-22 12:16 UTC
+
+This follow-up supersedes the 11:19 checkpoint's ordered next steps. It adds a
+quarter-turn matrix case, corrects a downstream Invert diagnostic that compared
+different legacy input rasters, and records the current cross-chat evidence.
+
+### Corrected affine-raster and Invert evidence
+
+The focused test, `two raster layers keep exact rendered parity through a
+foreground affine and fractional quarter-turn frame`, now records the raw tight
+bitmap samples, verifies exact premultiplied tight pixels and frame bytes, and
+passes each parity-equivalent legacy raster through the production `invert`
+processor. It reads both the processor's returned OffscreenCanvas and the later
+HTML canvas readback, and requires exact byte equality at both stages for the
+HTML and Offscreen legacy input rasters.
+
+The 2026-11-22 11:57 UTC diagnostic run reported three output-byte differences
+at the affine cursor. That comparison was invalid: the tight-pixel parity
+baseline is `legacyHybridTightPixels`, while the Invert probe used
+`legacyTightSurfaces` directly. Those two legacy inputs differ by 14 bytes at
+the foreground affine cursor (HTML and Offscreen). The probe now builds its
+legacy HTML and Offscreen inputs from the same hybrid arrays used by the tight
+bitmap comparison. The corrected focused run,
+`2026-11-22T12-03-51-756Z-653`, passed on `18d4daf2c` and recorded zero output
+differences through Invert at every tested cursor in both input renderers.
+The extra HTML readback was also exact. The assertions were strengthened to
+gate those exact processor-output and readback results; the subsequent strict
+focused run, `2026-11-22T12-09-43-596Z-77829`, passed. The earlier three-byte
+report is superseded; it is not evidence of a durable-materialization
+mismatch.
+
+| Foreground stage                       | Hybrid legacy vs durable raw bytes | Bounded legacy surface vs hybrid, HTML / Offscreen | Invert output, HTML / Offscreen |
+| -------------------------------------- | ---------------------------------: | -------------------------------------------------: | ------------------------------: |
+| Retained affine cursor                 |                                 10 |                                            14 / 14 |                           0 / 0 |
+| Affine plus 90-degree frame transition |                                  0 |                                              0 / 0 |                           0 / 0 |
+| No-affine quarter-turn control         |                                  0 |                                              0 / 0 |                           0 / 0 |
+| Affine, no-rotation cursor             |                                 10 |                                            14 / 14 |                           0 / 0 |
+| Affine, zero-degree frame transition   |                                  0 |                                              4 / 4 |                           0 / 0 |
+
+The 10 unassociated-byte differences at each affine cursor are one-channel
+deltas of 1. Each sample has equal calculated premultiplied RGBA on the legacy
+and durable sides, using `round(RGB * alpha / 255)` for each color channel:
+
+- Local `(12,2)`, document `(21,17)`, green:
+  `[136,43,225,60]` → `[136,42,225,60]`; premultiplied `[32,10,53,60]` on both.
+- Local `(22,5)`, document `(31,20)`, green:
+  `[138,43,226,96]` → `[138,42,226,96]`; premultiplied `[52,16,85,96]` on both.
+- Local `(25,6)`, document `(34,21)`, green:
+  `[137,43,226,132]` → `[137,42,226,132]`; premultiplied `[71,22,117,132]` on both.
+- Local `(11,22)`, document `(20,37)`, green:
+  `[255,212,0,132]` → `[255,213,0,132]`; premultiplied `[132,110,0,132]` on both.
+- Local `(14,23)`, document `(23,38)`, green:
+  `[255,213,0,96]` → `[255,212,0,96]`; premultiplied `[96,80,0,96]` on both.
+- Local `(33,23)`, document `(42,38)`, red and green:
+  `[43,213,128,6]` → `[42,212,128,6]`; premultiplied `[1,5,3,6]` on both.
+- Local `(32,25)`, document `(41,40)`, green:
+  `[26,196,125,120]` → `[26,195,125,120]`; premultiplied `[12,92,59,120]` on both.
+- Local `(24,26)`, document `(33,41)`, green:
+  `[26,196,123,60]` → `[26,195,123,60]`; premultiplied `[6,46,29,60]` on both.
+- Local `(25,26)`, document `(34,41)`, red:
+  `[25,194,126,130]` → `[26,194,126,130]`; premultiplied `[13,99,64,130]` on both.
+
+This establishes exact output for this Invert path from the parity-equivalent
+rasters; it does not establish exactness for other processors, source
+lifecycles, PNG/PSD export, or Photoshop. Keep raw-byte identity and export
+gates separate, and do not add a tolerance.
+
+The final strict focused E2E,
+`2026-11-22T12-15-37-658Z-57767`, and `npm run tsc` passed.
+`npm run lint:check` passed with 0 errors and 127 existing warnings; Prettier
+passed. The authorized Luna 6 read-only review found no concrete issues and did
+not run tests. It does not establish Photoshop, export, source-lifecycle, or
+authority-cutover parity. Independent free read-only reviews remain pending at
+this checkpoint.
+
+### Cross-chat correction and ownership
+
+The 11:19 checkpoint's local-chat note missed a related free Kilo session,
+`Crop history byte parity failure`. Its read-only prompt examined the separate
+`origin-main-sync` worktree at `beae809ad8f2db01debe940bda79c2740a750e24`, with
+`origin/main` merged in the index and `MERGE_HEAD` still active. It reported 88
+paint channel differences at `blank-affine`, including a green/alpha sample
+`135/215` versus `136/191`, and suggested comparing a source-sized Offscreen
+render before frame mapping. The model also proposed rerouting
+`resolveLayerSourceBitmap()` through `setupDrawCtx()` and `drawLine()`; that is
+an unverified hypothesis, not a fix.
+
+The current `18d4daf2c` source probe independently locates 135 differing bytes
+across 69 pixels at the no-affine legacy Draw fast path on HTML, with exact
+Offscreen output and exact direct evaluation on both contexts. The 88-byte
+report is from a separate worktree/fixture state and must not be conflated with
+the current probe. Preserve the origin-sync worktree and its active merge; do
+not harvest or repair it without its owner and the documented ownership gate.
+
+The recent local Codex scan found no separate durable-history migration
+session. It did find another Codex chat requesting a seven-day Nemotron
+quarantine. At 12:15 UTC the quarantine state visible from this candidate still
+did not contain that route, so no free-model review call has been made from
+this candidate. Recheck the shared quarantine and free-model catalog before
+review; do not launch Terra or rely on Nemotron until this cross-chat route
+request is reconciled. The current stable Copilot Chronicle query found no
+`/ph` history/replay match. These scans were local and did not cover remote or
+synced sessions, other VS Code profiles, or other stores.
+
+### Ordered next steps
+
+1. Resolve the shared free-model route state from the parallel Codex
+   quarantine request, then obtain independent free, read-only reviews of the
+   exact candidate diff. Do not use paid Terra. A reviewer cannot inspect this
+   checkout; provide the complete diff and source excerpts, verify its route,
+   completion status, and zero reported cost, and reproduce every useful claim.
+2. Continue the paint-path investigation by comparing, at source dimensions,
+   the stored draw-processor bitmap, the legacy direct `drawLine()` result, and
+   the `preferCachedSource` result before any document-frame blit. Record HTML
+   and Offscreen bytes separately. Reconcile the current 135-byte observation
+   with the independent 88-byte report; keep the proposed resolver change
+   unimplemented until this experiment identifies the failing boundary.
+3. Keep the raster affine/quarter-turn test's exact frame, matrix, bounds,
+   composite, premultiplied-pixel, and Invert output assertions. Keep
+   unassociated raw bytes and untested downstream processors diagnostic until
+   the relevant source and export contracts are proven. Choose the next matrix
+   cell from known coverage and keep PNG/PSD and source-lifecycle evidence
+   separate.
+4. Preserve `HistoryItem[]` and `replayHistory()` as logical authority.
+   Durable replay remains staged presentation/export; do not widen publication,
+   source admission, or authority cutover based on this raster test.
+5. Leave PH-93 typed text-source work and the separate origin-sync merge alone
+   until ownership is handed off or the documented liveness procedure proves
+   the full owner tree stopped.
+6. Before landing this candidate, rerun lint and the required scoped ownership,
+   path-lock, main-landing, and pin checks. Land only through the owner-tracked
+   wrapper, then verify both parents, tree, local `main`, `origin/main`, and
+   status. Do not fetch again or push.
+
+## Continuation checkpoint — 2026-11-22 16:45 UTC
+
+This checkpoint supersedes the 12:16 checkpoint's diagnosis and ordered steps.
+It records a producer-valid mixed-source fixture, the remaining exact composite
+failure, the current local-main drift, and the old branch/chat reconciliation.
+
+### Candidate and main drift
+
+The candidate is `task/history-migration-raster-quarter-turn-20261122` in
+`.kilo/worktrees/history-migration-raster-quarter-turn-20261122`. It was
+at `18d4daf2c55376d6bac12bbe5c3b3360ac65e62b` in the 11:19 checkpoint, then
+fast-forwarded to `5c970cdf0bf4f6c9de4a800ef688868821bf8a57` and most recently
+to local `main=abdc35647385f83cf69b18f2a01f4b6f71118f94`. The candidate reflog
+records those transitions at 13:37 UTC and 16:17 UTC, respectively; this
+reconciles the earlier 18d4 snapshot with 5c970 as the immediate predecessor
+to the latest sync. The designated main worktree was clean at the latest pin.
+The two commits added since 5c970 are
+`44f552fd6` and merge `abdc35647`; the scoped path diff changes only
+`e2e/OPEN_PROBLEMS.md` among migration paths, adding the mirror run's newer
+failure evidence. No history implementation or crop-history spec changed in
+that drift. The exact E2E problem entry below incorporates the new local result.
+
+The last fetched `origin/main` tracking pin remains
+`e6b6183e4c507ed6dd18dbf2b5d267926b348ab6`; it was not fetched again. The
+current local comparison is 44 commits ahead and 2 behind, with merge base
+`e31679a888261612e5efabe7bb3ce8d822a51479`. These are local tracking-ref
+measurements, not a fresh remote check. `repo:state -- --for-landing
+task/history-migration-raster-quarter-turn-20261122` exited 0 with 12
+unrelated findings preserved. The candidate has no production `src/` changes.
+
+### Corrected Draw fixture and remaining composite delta
+
+The original Draw test source was not producer-valid: its stroke points and
+stored `pos` did not match the bounds computed by `DrawToolArea`. The candidate
+uses `pos={x:36,y:20,width:23,height:25}` and localized points `(5,5)` to
+`(18,20)`, derived from the producer's outward bounds. It also compares each
+materialized layer on fresh frame surfaces. This corrects the test input and
+removes the prior shared-surface artifact from per-layer comparisons; it does
+not erase the older mirror observations or prove composite parity.
+
+On the candidate tree based on `abdc356`, run
+`2026-11-22T16-41-21-236Z-49094` failed the exact mixed-source composite
+assertion at `integer frame fixture retained affine blank-affine`: 8 channel
+bytes differed across 6 pixels, with a maximum channel delta of 255. The
+samples `(x,y,channel,legacy→durable)` were `(28,7,a,79→76)`,
+`(34,8,a,70→69)`, `(39,9,g,255→0)`, `(39,9,a,3→0)`,
+`(26,16,g,255→0)`, `(26,16,a,3→0)`, `(31,17,a,70→69)`, and
+`(37,18,a,79→76)`. The corrected source bitmaps and fresh
+HTML/Offscreen per-layer frame comparisons were exact in the instrumented
+diagnostic. The earlier checkpoint reported that the independent affine-raster plus fractional
+quarter-turn matrix case passed on the same candidate in run
+`2026-11-22T16-41-42-652Z-49716`; no artifact for that run is present in this worktree, so retain
+it only as an unverified historical report and do not use it as current proof.
+
+On this candidate, `npm run tsc` passed. `npm run lint:check` exited 0 with 127
+warnings and no errors; Prettier reported all four changed files formatted.
+No full E2E suite or production build was run.
+
+The bounded diagnostic `2026-11-22T16-08-23-700Z-97050` narrows the first
+composite-prefix difference to accumulation of the paint source. Actual legacy
+HTML output matched a manual direct draw exactly; routing that same source
+through the cached bitmap path reproduced the 8-byte difference. A cached
+materialization matched the manual materialized output, and direct-versus-cached
+rendering on a fresh destination surface was exact. This points to the legacy
+direct `drawLine()` route versus cached `drawImage()` under accumulated context;
+it does not establish the Canvas implementation as the root cause. The
+temporary instrumentation used for that run has been removed. Do not change
+production rendering from this diagnostic alone.
+
+The 18:21 UTC checkpoint below supersedes the 16:08 manual-path comparison as
+root-cause evidence. Its hand-built direct surface did not equal the production
+legacy compositor, so preserve the 16:08 run only as a failed diagnostic
+attempt.
+
+The product still uses `HistoryItem[]` and `replayHistory()` as logical
+authority. Durable replay remains staged; source admission, PNG/PSD export
+authority, and undo/redo cutover remain closed. This diagnostic mismatch is not
+evidence of a user-visible regression while legacy presentation is authoritative.
+Keep exact-zero assertions and investigate the first differing stage without a
+tolerance.
+
+### Old branch and cross-chat reconciliation
+
+The local mirror refs are `task/crop-history-cross-platform-20261029` at
+`97b80395b` and `task/overnight-crop-history-20261030` at `ac3487d94`; the
+remote was not re-queried in this turn. The first branch tip is not an ancestor
+of current main. Kilo's 2026-10-30 audit, session
+`ses_e71e39819ffe59ps2H2bfyk2Zk`, records crop-history-cross-platform work among
+the branches landed and the overnight branch as remaining unmerged. Source
+history confirms the native-drag prevention handler is present in main through
+`6f9aaf535`, and it matches the handler in the old branch. The old ref's full
+tip is not therefore proven merged: its crop-history spec is roughly 6.8k lines
+shorter than current main and its `CropToolArea` also differs in unrelated
+behavior.
+
+The overnight branch remains checked out clean at `ac3487d94`. The dry-run
+swarm doctor reports no stale or missing-worktree holdings; that does not prove
+the owner process has stopped. Both trees contain the direct-affine source
+helpers. The exact residual renderer differences include an old `drawImage`
+frame-overlap copy where main uses `getImageData`/`putImageData`; the old
+compositor omits the final post-conversion currentness assertion, owned-bitmap
+cleanup in the catch path, and the produced-bitmap invariant check. The old
+tree also removes three `toOwnedBitmap` tests for canvas input, fallback, and
+error propagation. Its crop-history E2E file declares 29 tests versus 34 in
+current main, but their bodies and case coverage have not been audited one by
+one. Do not merge or reclaim that live branch based on its name or old chat
+claims. The scoped
+`repo:state -- --for-landing task/overnight-crop-history-20261030` exited 0
+with 13 unrelated findings; this is not an ownership or code-review result.
+
+The Kilo audit's child review `ses_e711bf0c7ffePCowoCsnkl0KpU` did not produce
+a completed final assessment. One free Nemotron review treated the crop
+branch's current non-ancestry as disproving the historical “landed” report and
+missed that both trees contain the direct-affine helpers. The current handler
+behavior is present through `6f9aaf535`, while whether the whole old tip was
+merged and later rewritten cannot be established from the current DAG. Exact
+`git show`, `git blame`, and source comparison corrected the review's scope.
+Keep free-model results as leads. The Luna 6 review recorded in the 12:16
+checkpoint covered that earlier candidate only, not the current diff; no Luna
+review was launched in this free-only continuation.
+The local Codex state index returned no dedicated thread matching either old
+branch name; exact-name hits in rollout files are branch references, not proof
+of another implementation. The current stable Copilot Chronicle store returned
+no exact branch-name hit, and its earlier 19-session project scan found no
+`/ph` session. Remote or synced histories, other VS Code profiles, and other
+stores were not searched.
+
+### Comparative editor research
+
+A free Nemotron 3 Ultra request through Kilo fetched five primary project sources
+and returned non-empty text with `finish_reason=stop`, one Kilo request, no
+OpenRouter request, and reported cost zero. GIMP's GEGL documentation describes
+a graph of image operations and tiled buffers; Krita documents time-based undo
+grouping and separately describes snapshots that discard the undo stack when
+switched; MyPaint documents tiled canvas storage and a temporary transformed
+render buffer; Pinta's changelog records canvas-widget performance work. These
+are architecture and product comparisons only. They do not define Photoshop
+behavior, explain this browser Canvas difference, or set this app's migration
+contract. References: [GIMP GEGL architecture](https://developer.gimp.org/resource/writing-a-filter/architecture-install/),
+[Krita undo history](https://docs.krita.org/en/reference_manual/dockers/undo_history.html),
+[Krita snapshots](https://docs.krita.org/en/reference_manual/dockers/snapshot_docker.html),
+[MyPaint canvas](https://www.mypaint.app/en/docs/backend/canvas/), and
+[Pinta changelog](https://github.com/PintaProject/Pinta/blob/master/CHANGELOG.md).
+This expands the earlier 11:19 three-editor survey (GIMP, Pinta, and MyPaint)
+with Krita undo and snapshot references; the added source set does not change
+the architecture-only conclusion.
+
+### Ordered next steps
+
+1. Isolate the 8-byte composite difference in a minimal deterministic test at
+   the paint-layer accumulation boundary. Compare direct `drawLine()` and
+   cached `drawImage()` paths on the same accumulated target; retain HTML and
+   Offscreen results separately and keep exact-zero assertions.
+2. Review the captured exact samples and context state against the candidate
+   source and test helper. Change production rendering only after the differing
+   stage and intended behavior are established; consult Photoshop or another
+   primary source before making a product-behavior claim.
+3. Keep the passing raster/affine/fractional-quarter-turn case and all exact
+   bounds, matrix, frame, and per-layer gates. Run this matrix on Linux,
+   Windows, and macOS after the mixed-source failure is resolved; do not reuse
+   the old 88-byte run as a pass or add a tolerance.
+4. Preserve legacy logical authority. After the raster discrepancy is closed,
+   continue the typed text-source lifecycle slice in `HANDOFF.md` §1 only after
+   its owner handoff or documented full-tree liveness proof; prove integration,
+   failure, navigation, canvas, PNG, and PSD behavior before changing
+   `ownership-unproven`.
+5. Before any landing, rerun the focused proof and required typecheck, lint,
+   scoped ownership, path-lock, landing occupancy, and pinned-tree checks. Do
+   not land this candidate while its exact composite assertion remains red.
+   Do not fetch again or push during this continuation.
+
+## Continuation checkpoint — 2026-11-22 18:21 UTC
+
+### Corrected accumulated Draw-path comparison
+
+Focused run `2026-11-22T18-02-05-055Z-51088` on candidate `abdc356` still fails exact retained-affine
+composite parity at `blank-affine`: 8 channel bytes across 6 pixels and a maximum channel delta of 255. The eight `legacy→durable` samples are `(28,7,a,79→76)`, `(34,8,a,70→69)`,
+`(39,9,g,255→0)`, `(39,9,a,3→0)`, `(26,16,g,255→0)`, `(26,16,a,3→0)`, `(31,17,a,70→69)`, and
+`(37,18,a,79→76)`.
+
+The corrected test-only probe invokes production `drawLayersToCanvas()` separately for identical
+visible-layer prefixes. Its only A/B change is whether the eligible Draw layer is rendered directly
+from tool arguments or through the existing cached bitmap. The first three prefixes (`blank`,
+`blank-semi`, `vector`) have zero differing bytes. The first difference is after `paint`; the
+`text` prefix retains the same difference. The direct final output equals the real legacy output
+exactly. The cached final output equals the durable composite exactly. This replaces the earlier
+hand-built direct renderer comparison, whose output differed from actual legacy and therefore could
+not establish path parity.
+
+Execution reaches the composite assertion only after `assertMixedLayerParity()` passes for all
+layers at each retained-affine cursor. That includes HTML and Offscreen frame output and the
+premultiplied tight-bitmap check for paint. The fixture's Draw alpha is 1, layer opacity defaults to
+1, blend mode is source-over, and its source and layer dimensions both equal 23×25. Direct rendering
+is eligible because no enabled operation, temporary canvas, baked presentation, block stamp, spray,
+eraser, or non-source-over blend is present. Thus the standalone layer pixels agree; the observed
+delta appears only when the layer is added over the rendered lower-layer prefix. This localizes the
+compatibility discrepancy to the direct-versus-cached accumulation path, without identifying the
+exact Canvas arithmetic or asserting a Canvas defect.
+
+### Existing contract and external references
+
+Commit `89e348237c` (`Fix Draw HiDPI commit rendering`) added the direct Draw source branch and the
+E2E check that committing a Draw stroke preserves live HiDPI preview pixels. Preserve that app-level
+contract during migration unless a separately reviewed renderer change proves both preview and
+commit behavior. Adobe's [Brush/Pencil documentation](https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/brushes-presets/paint-with-brush-or-pencil-tool.html)
+describes paint opacity within a stroke; Adobe's [layer opacity and blending documentation](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/apply-layer-effects/set-layer-opacity-and-blending-modes.html)
+describes layer opacity and blending against underlying pixels. Neither page supplies an exact
+browser-canvas byte oracle for this fixture. Open-source GIMP, Krita, MyPaint, and Pinta research
+remains architecture-only.
+
+### Free history scan and review limits
+
+The free chat search covered up to 500 recent Kilo and Codex sessions per source from the `/ph`
+workspace since 2026-11-15. It found no newer independent migration implementation or next-step
+plan. A Kilo E2E review corroborated the producer-valid Draw fixture; current source checks reject its
+unrelated Invert concern for the quarter-turn fixture. A Kilo documentation review flagged candidate
+pin and editor-count differences, but the 16:45 checkpoint already reconciles the candidate reflog
+(`18d4daf2c` → `5c970cdf0` → `abdc356`) and describes the Krita addition as an expansion. The local
+Codex index is complete; the latest matching threads are the active migration thread and an unrelated
+tools-hardening thread. The older migration plan remains useful for scope, not current implementation
+evidence. The current stable Copilot Chronicle has 19 local sessions and no `/ph` match; other
+profiles and synced/remote stores remain outside this scan. Nemotron reviews agreed on the controlled
+direct-versus-cached boundary, but one incorrectly claimed layer opacity was below 1 and that Adobe
+docs decided the renderer choice. The fixture and documentation disprove those claims. A Kilo
+review's standalone-bitmap suggestion is already covered by the passing per-layer assertions; all
+model output remains a lead until source-verified.
+
+### Next step
+
+Reduce the case to one backdrop and one eligible Draw layer; compare both paths over transparent,
+opaque, and semitransparent backdrops on HTML and Offscreen surfaces, recording RGBA at the six known
+coordinates. Trace whether the first difference occurs while creating the standalone paint bitmap
+or only when partial coverage is composited onto an existing destination. Preserve the current
+`check-dpr` preview/commit contract and all exact parity gates. Do not change production rendering or
+authority/export cutover until this reduced case and the required renderer contract are reviewed.
+
+## Continuation checkpoint — 2026-11-22 19:53 UTC
+
+This checkpoint supersedes the 18:21 checkpoint's next experiment. The synthetic backdrop controls,
+original-layer subset reducer, exact pixel-copy control, and a focused hidden-clip probe have now
+run. No production renderer or migration authority change is supported by the results.
+
+### Candidate and exact-gate status
+
+Candidate `task/history-migration-raster-quarter-turn-20261122` and the clean designated local
+`main` worktree are both at `abdc35647385f83cf69b18f2a01f4b6f71118f94`. The last fetched local
+`origin/main` tracking pin remains `e6b6183e4c507ed6dd18dbf2b5d267926b348ab6`; no second fetch or
+push occurred. Issue `ph-111` owns the test-only paths. The changes remain limited to the migration
+docs, `e2e/OPEN_PROBLEMS.md`, and `e2e/crop-history.spec.ts`; there are no production `src/` edits or
+landed changes.
+
+Focused run `2026-11-22T19-50-41-900Z-5926` fails the exact assertion in
+`multi-step frame transitions retain byte parity across text, vector, blank, and paint sources` at
+the first retained-affine `blank-affine` cursor. It reports 8 channel bytes across 6 pixels and a
+maximum delta of 255. The measurements match run `2026-11-22T19-21-37-747Z-59946`; exact equality
+is still required.
+
+### Reduced backdrop and context evidence
+
+The 18:21 checkpoint's proposed transparent/opaque/semitransparent controls and backdrop reduction
+are complete. All synthetic controls compare direct and cached Draw paths exactly. Of the seven
+non-empty subsets of the original lower layers, only subsets containing `blank` reproduce the
+8-byte/6-pixel result; the `blank` subset alone is sufficient. The `blank-semi` and `vector` subsets
+remain exact. `blank` is a green `#00ff00` source at opacity 1, size 10×10, with retained affine
+`blank-affine`; it is not a transparent blank. The six changed pixels surround its transformed
+edges and lie outside the paint layer bounds. Direct rendering raises green alpha by 1–3 at four
+existing green samples and writes `[0,255,0,3]` at two transparent samples; cached rendering leaves
+all six backdrop samples unchanged.
+
+The actual accumulated backdrop RGBA round-trips exactly through a fresh Offscreen surface using
+`putImageData`. Direct and cached rendering are exact on that copied surface; the 8-byte delta
+remains on the original surface after the affine blank layer. The legacy direct output still equals
+the actual legacy composite, and the cached output equals the durable composite. HTML and Offscreen
+prefix comparisons report the same difference. These facts isolate a direct-versus-cached
+accumulation discrepancy tied to the transformed blank backdrop. They do not establish the first
+Canvas operation that causes it or why the direct path changes pixels outside the paint bounds.
+
+The existing context-state probe sees identity transform, alpha 1, source-over, filter `none`,
+smoothing enabled, default stroke/fill, line width 1, butt cap, miter join, and no dash after both
+paths. The historical after-layer sentinel reset pixels with `putImageData`, then used a full-frame
+fill whose reported coverage was all 4,096 pixels. That shows no residual clip restricted the later
+fill; it does not test whether the temporary clip restricted the stroke during that call. Its old
+output field was `clipSentinelAfterLayerDraw`; the helper is not in the current test. It cannot prove
+absence of every internal canvas or backing-store difference. No browser defect, Photoshop output,
+user-visible defect, or root cause is claimed. The exact composite gate remains blocked; legacy
+replay and presentation authority remain unchanged.
+
+### Chat reconciliation
+
+The 18:33 Kilo free review requested frame-origin confirmation; the current `DocumentFrame` is
+`{x:0,y:0,width:64,height:64}`, so sample and document coordinates match. The 18:47 reduction
+suggestion is now covered by synthetic controls, all original lower-layer subsets, and the actual
+RGBA pixel-copy control. The 18:55 Kilo review called the green affine source transparent and
+presented blending order as a causal finding. Both claims are rejected: the fixture source and
+subset tests contradict the former, and none of the measurements identify the latter's mechanism.
+Treat all model output as a lead.
+
+The previous Copilot search inspected only the stable Chronicle store and was not a complete scan of
+VS Code Agent-host history. This checkpoint also queried the Agent-host registry and its 47 `/ph`
+parent-session databases (2026-10-06 through 2026-11-20); four contained local turns matching
+history/crop terms. The Oct 30 `Project review and merge tasks` session exposes older history and
+crop review requests, but its 23 stored child turns all have failed status (upstream 502, unsupported
+model, or quota errors), leaving no completed review output to reconcile. The Nov 20 `Review Kilo
+Chat Sweep` session has no migration-related turn. The registry search found no newer completed
+Copilot migration review; other VS Code profiles and synced/remote stores were not scanned.
+
+### Ordered next steps
+
+1. Keep the exact composite assertion blocked, with no tolerance, fixture workaround, or production
+   edit. Do not repeat the already completed synthetic backdrop or layer-subset reductions.
+2. If continuing this diagnosis, reduce the stack to the affine green `blank` and producer-valid
+   Draw layer. Add a test-only direct/cached call trace covering clip, translation, Draw context
+   setup, path construction/stroke, bitmap selection, evaluated draw, and `drawImage`. Avoid
+   `getImageData` between production calls and retain an uninstrumented exact-parity control because
+   pixel readback/copy changes the outcome. Stop with the mismatch blocked if this does not isolate
+   the first responsible stage.
+3. Only propose a compatibility change after the first differing write and intended renderer
+   contract are supported by current source and a primary source. Keep `check-dpr`, exact per-layer,
+   export, source/frame admission, PNG/PSD authority, and undo/redo cutover gates closed.
+4. After exact parity is green, run the focused matrix on Linux, Windows, and macOS. Then continue the
+   typed text-source lifecycle slice in `HANDOFF.md` §1 after its owner handoff or documented full
+   process-tree liveness proof, preserving its identity/lease, failure, navigation, canvas, PNG, and
+   PSD requirements.
+5. Do not land this candidate while its exact composite assertion is red. The detailed restart
+   order is in [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md).
+
+## Continuation checkpoint — 2026-11-22 20:33 UTC
+
+The 19:53 checkpoint's proposed call trace has now run. It did not locate a cause, so the mixed-source
+composite remains blocked and no production renderer, history authority, or export change is
+supported. The latest reconciliation, full run evidence, chat/Git research, scope limits, and ordered
+restart steps are in [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md).
+
+Focused run `2026-11-22T20-20-54-431Z-48893` still reports 8 differing channel bytes across 6 pixels
+at the retained-affine green `blank-affine` cursor. Instrumented direct/cached output each matches
+its uninstrumented control. The selected direct Draw calls target clip/destination
+`[36,59) × [20,45)`; all differing samples have `y=7..18`, below its `y=20` start. The
+bounded trace does not identify the first differing write or distinguish an output/backing-path
+issue from a fixture/oracle issue. Do not infer a browser defect, Photoshop result, or user-visible
+regression, and do not repeat the same trace or prior backdrop/subset/pixel-copy controls.
+
+Keep exact byte equality and legacy presentation authority. Resume this diagnosis only with new
+evidence that can distinguish the backing/output path from the fixture/oracle. Do not land while the
+exact assertion is red. After parity is green, follow the documented cross-platform gate and then the
+typed text-source lifecycle slice only after its owner handoff or full process-tree liveness proof.
+
+## Continuation checkpoint — 2026-11-22 22:33 UTC
+
+The added equal-backdrop accumulation-path control now runs on both HTML canvas and OffscreenCanvas.
+Local focused Chrome run `2026-11-22T21-33-15-841Z-97111` still fails exact mixed-source composite
+parity by 8 bytes across 6 pixels at the retained-affine blank cursor; the exact assertion is
+unchanged. Sequential and separately composed affine backdrops read back identically, and the
+sequential direct/cached outputs reproduce their production baselines. Comparing final full-frame
+readbacks after adding each paint-route variant, the separate-backdrop/direct result differs from
+the sequential-backdrop/direct result by 8/6, while cached-route readbacks remain unchanged. All differing samples have `y=7..18`, below the recorded rectangles' `y=20` start; although
+`x=36..39` overlaps the rectangle's horizontal span, none intersects its 2D bounds. This does not
+show that the Draw stroke wrote them. Direct full stack still matches
+legacy exactly and cached full stack still matches durable exactly.
+
+The measured path sensitivity does not identify a first differing write, establish the expected
+Canvas or Photoshop output, or prove a browser or user-visible defect. A free review's claimed
+context-state leak was checked against source and rejected: `drawLayer()` brackets every source draw
+with `save()`/`restore()`, and the direct Draw branch has its own bracket. Other review claims of an
+established production defect or of all Canvas mechanisms having been falsified are unsupported.
+Keep legacy authority and the exact composite gate unchanged. The gate is green only at zero
+differing bytes across all tested transition cursors; after local parity, require the focused Linux,
+Windows, and macOS matrix before advancing. Per-layer, export, PNG/PSD, and authority cutover remain
+separate gates. A bounded primary-source check of GIMP and Krita is recorded in
+[`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md). Those editors use documented graph/buffer
+and paint-device/projection architectures, but their sources do not define Photoshop-compatible
+semantics or resolve this Canvas byte difference; they provide context, not an oracle. The latest
+cross-chat scope, review dispositions, current refs, and ordered restart plan are in
+[`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md).
+
+## Continuation checkpoint — 2026-11-23 01:10 UTC
+
+Candidate `task/history-migration-raster-quarter-turn-20261122` contains test-only code commit
+`81bef88`; the current documentation update is committed separately after it. The focused Chrome
+run `2026-11-23T00-27-50-020Z-14186` passes the raster × affine ×
+fractional quarter-turn case and still fails the exact mixed-source composite by 8 bytes across 6
+pixels at the retained-affine `blank-affine` cursor. The new direct/cached prefix diagnostic first
+differs when the paint layer is added, and its complete direct and cached outputs match the legacy
+and durable outputs respectively. This localizes the fixture's path-dependent difference but does
+not identify the first internal Canvas write or establish Photoshop behavior. The unchanged exact
+gate stays red; no production renderer, export, admission, or authority change is supported.
+
+The latest refs, test measurements, local Kilo/Codex/Copilot history delta, review dispositions, and
+ordered next steps are recorded in
+[`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md#latest-continuation-reconciliation--2026-11-23-0110-utc).
+
+## Documentation audit update — 2026-11-23 01:34 UTC
+
+The 01:10 pixel and ref checkpoint remains unchanged. A follow-up documentation review clarified
+that the required mirror check runs the full `e2e/crop-history.spec.ts` spec once per platform, and
+that the future mirror wrapper's remote refresh/push is separate from the current hold on source
+sync. Four exact-free Kilo reviews completed; one wording issue was fixed, two apparent issues were
+rejected after checking complete files and relative link resolution, and the final audit found none.
+The local zero-tolerance composite gate remains red, so no mirror run, test rerun, main merge, or
+production change is recorded. A broad `repo:state --json` audit also saw foreign in-progress
+operations; none were touched, and that repository-wide result is not a landing decision. See the
+current owner/lock state, review dispositions, and chat-scan evidence in
+[`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md#latest-continuation-reconciliation--2026-11-23-0110-utc).

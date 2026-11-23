@@ -83,29 +83,111 @@ The failing assertion completed in under one second after the browser loaded, so
 do not show that its 90-second test budget is insufficient. The focused reproduction command is
 `npm run test:e2e -- e2e/check-dpr.spec.ts`.
 
-### macOS-only — crop-history retained-affine parity fails for the blank source
+### Crop history — retained-affine composite parity remains unresolved
 
-Focused mirror run [45024770598](https://github.com/Bohdanus/ph/actions/runs/45024770598)
-on candidate `8de043d527360399460da2fece066e15b6d53fb6` failed the
-`multi-step frame transitions retain byte parity across text, vector, blank, and paint sources`
-case on macOS. All three attempts failed for layer `blank-affine` at the
-`integer frame fixture retained affine` stage, with 88 differing frame bytes and the same sampled
-pixels. A baseline run
-[45026204451](https://github.com/Bohdanus/ph/actions/runs/45026204451) on
-`1a1486cba8c931cc1c250a9e6d55c07e93b77196` reproduced the same bytes and samples. That
-diagnostic commit is based on local `main` and changes only unrelated unit-test fixtures and
-classifications; the crop-history spec and renderer source are unchanged, so the repaint candidate
-did not introduce this failure. The candidate passed this focused spec on Linux
-([45023851588](https://github.com/Bohdanus/ph/actions/runs/45023851588)) and Windows
-([45024289894](https://github.com/Bohdanus/ph/actions/runs/45024289894)).
+#### Historical mirror failures — prior fixture and tree
 
-The cause is unknown. This assertion compares the retained-affine diagnostic renderer with the
-legacy renderer; the current product still keeps legacy presentation authoritative while retained
-operation admission is closed, so these runs do not establish a user-visible output regression.
-Mirror run [45028865898](https://github.com/Bohdanus/ph/actions/runs/45028865898) reproduced the
-same test failure on macOS shard one, with all three retries failing at the blank-affine retained
-affine stage. Keep the exact-zero assertion and investigate the blank-layer materialization
-difference before claiming this parity cell passes across supported platforms.
+These mirror run IDs are failures on earlier trees and an older fixture. They do not test the current
+candidate `81bef88e5f1da2221b61fc89785c98a657e6aad5`.
+
+Earlier focused mirror runs [45024770598](https://github.com/Bohdanus/ph/actions/runs/45024770598)
+and [45026204451](https://github.com/Bohdanus/ph/actions/runs/45026204451) reported 88 differing
+frame bytes at `blank-affine` on macOS, including the baseline. Mirror run
+[45028865898](https://github.com/Bohdanus/ph/actions/runs/45028865898) on `5c970cdf0bf4f6c9de4a800ef688868821bf8a57`
+again failed the older fixture on macOS shard one. That run tested the 5c970 tree before the
+candidate's producer-valid fixture and fresh-surface changes. Those runs used the previous test
+setup; do not carry their 88-byte count forward as the current candidate result.
+
+The candidate now uses a producer-valid Draw source: the line points and `pos` are derived from the
+same outward bounds used by `DrawToolArea`, and each layer comparison gets a fresh frame surface.
+On the preceding candidate `abdc35647385f83cf69b18f2a01f4b6f71118f94`, the prior local focused headless Chrome run
+`2026-11-22T21-33-15-841Z-97111` still fails the exact composite assertion at
+`integer frame fixture retained affine blank-affine`: 8 differing channel bytes across 6 pixels,
+with maximum channel delta 255. Samples `(x,y,channel,legacy→durable)` remain
+`(28,7,a,79→76)`, `(34,8,a,70→69)`, `(39,9,g,255→0)`, `(39,9,a,3→0)`,
+`(26,16,g,255→0)`, `(26,16,a,3→0)`, `(31,17,a,70→69)`, and
+`(37,18,a,79→76)`. This is a local focused run, not a mirror cross-platform result. The corrected
+fixture's per-layer HTML and Offscreen comparisons, source bitmap comparison, and fresh frame
+comparisons were exact at the failing cursor.
+
+The lower-layer subset probe shows the discrepancy only when the green `#00ff00`, opacity-1 `blank`
+source with retained affine `blank-affine` is present; `blank` alone reproduces it, while `blank-semi`
+and `vector` alone do not. Transparent, opaque, and semitransparent synthetic backdrops compare
+exactly. Copying the original blank-prefix pixels through `putImageData` also restores exact
+direct/cached parity, although their RGBA roundtrip is exact. The same 8-byte result appears on HTML
+and Offscreen surfaces; direct matches the legacy output and cached matches durable.
+
+Changed samples are around transformed green edges and outside the Draw bounds. In the final byte
+comparison, the direct-route composition has higher green alpha at four samples and green
+`[0,255,0,3]` at two transparent samples, while the cached-route composition preserves the backdrop
+values. These route labels describe the completed composition variant; they do not identify which
+operation wrote a differing sample. The ordinary context-state samples match before/after both
+paths. The historical after-layer sentinel reset pixels through `putImageData`, then used a
+full-frame fill whose reported coverage was all 4,096 pixels; this shows no residual clip restricted
+that later fill, but it does not test whether the temporary clip restricted the stroke. Its old
+output field was `clipSentinelAfterLayerDraw`; the helper is not in the current test. The root
+operation and reason for the path-dependent bytes remain unknown; do not infer a Canvas defect,
+browser bug, Photoshop result, or user-visible regression.
+Legacy presentation remains authoritative and frame-change admission stays closed. Keep the exact
+assertion and do not change production. The candidate has not been rerun on the mirror's Linux,
+Windows, or macOS workers.
+
+Focused run `2026-11-22T20-20-54-431Z-48893` added a bounded trace of selected Offscreen Canvas
+methods and scalar drawing-state writes. Its instrumented direct and cached outputs each match their
+uninstrumented control exactly. The direct stroke runs under transform `[1,0,0,1,36,20]` with clip
+`[36,59) × [20,45)`; the cached route draws a 23×25 bitmap to that same rectangle under identity
+transform. All differing samples have `y=7..18`, below the recorded rectangles' `y=20` start;
+although `x=36..39` overlaps their horizontal span, none intersects the direct clip or cached
+destination rectangles. It does not cover every possible
+write or identify the first differing write. The later equal-backdrop control on both HTML and
+OffscreenCanvas surfaces found the same
+backdrop readback bytes and same sequential baselines, but the final full-frame readback after
+including the direct-route Draw variant differed by 8/6 when the affine layer was rendered to an
+isolated frame surface and then drawn once with `drawImage`; the cached-route readback remained
+unchanged. All differing samples have `y=7..18`, below the recorded rectangles' `y=20` start;
+although `x=36..39` overlaps the horizontal span, none intersects the bounded trace's direct clip
+and cached destination. The trace therefore does not support attributing those bytes to writes by
+the Draw stroke. Direct-on-clone differs from original direct by 8/6, while direct/cached on the same fresh
+clone are exact. These results establish path-dependent final readbacks, not the root operation.
+Do not repeat the call trace, synthetic backdrop matrix, subset reducer, pixel-copy round-trip, clone
+control, or equal-backdrop path control.
+
+#### Current focused run — 2026-11-23 00:27 UTC
+
+On test-only candidate `81bef88e5f1da2221b61fc89785c98a657e6aad5`, focused Chrome run
+`2026-11-23T00-27-50-020Z-14186` ran two tests. The separate raster × affine × fractional
+quarter-turn case passed. The mixed-source test still fails its unchanged exact composite assertion
+at `integer frame fixture retained affine blank-affine` by 8 channel bytes over 6 pixels, with
+maximum channel delta 255. Samples are `(28,7,a,79→76)`, `(34,8,a,70→69)`,
+`(39,9,g,255→0)`, `(39,9,a,3→0)`, `(26,16,g,255→0)`, `(26,16,a,3→0)`,
+`(31,17,a,70→69)`, and `(37,18,a,79→76)`.
+
+The new test-only prefix diagnostic compares direct and cached Draw rendering within each destination:
+HTML variants both use `drawLayersToCanvas`; Offscreen variants both use `drawLayer` on fresh
+surfaces. The `blank`, `blank-semi`, and `vector` prefixes match exactly. The first direct/cached
+difference appears when `paint` is added (8 bytes / 6 pixels) and remains unchanged at `text`.
+Cross HTML/Offscreen comparisons are zero controls, not the causal A/B. The full HTML direct output
+equals actual legacy output at zero bytes, and the cached output equals durable output at zero bytes;
+these full-buffer identities map the same 8-byte difference to the red legacy/durable assertion.
+All differing samples have `y=7..18`, above the Draw clip and cached destination
+`[36,59) × [20,45)`. The probe localizes this fixture's path-dependent difference to the paint
+prefix, but does not identify the internal Canvas write or establish an expected Photoshop result.
+No mirror run was performed on this candidate.
+
+Resume only if new independent evidence tests a concrete mechanism or oracle. Keep the mismatch
+blocked and preserve the zero-tolerance assertion until every tested cursor reports zero differing
+bytes. After a local exact pass, run `e2e/crop-history.spec.ts` through the mirror once per platform
+with each explicit platform:
+
+    npm run test:e2e:mirror -- --spec e2e/crop-history.spec.ts --platform linux
+    npm run test:e2e:mirror -- --spec e2e/crop-history.spec.ts --platform windows
+    npm run test:e2e:mirror -- --spec e2e/crop-history.spec.ts --platform macos
+
+The mirror CLI selects a spec file rather than a test name; require zero differing bytes at the
+target composite assertion on all three platforms. Per-layer, export, PNG/PSD, and authority gates
+remain independent. See
+[`HISTORY-MIGRATION-NEXT.md`](../docs/HISTORY-MIGRATION-NEXT.md) for the exit criteria and ordered
+migration steps.
 
 ### Cross-platform — PNG save and re-import do not preserve every document pixel
 

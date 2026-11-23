@@ -110,8 +110,13 @@ paragraph text layer through a two-frame sequence, with exact per-layer
 comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
 combinations; other retained-affine operation combinations and angles, blank opacity variants, other
 text styling/rotation, and exact fractional bounds across the wider source matrix remain unproven.
-The three-transition mixed-source fixture pins composite pixels byte-for-byte after every frame
-transition. Do not infer exact per-layer or export parity from that gate. A separate transformed
+The three-transition mixed-source fixture asserts byte-for-byte composite parity after every frame
+transition, but its latest exact composite assertion is still red at the retained-affine blank
+cursor. The 2026-11-23 focused Chrome run retains 8 differing bytes across 6 pixels; its prefix
+diagnostic first diverges at the paint layer but does not identify an internal Canvas write. See the
+[latest migration reconciliation](docs/HISTORY-MIGRATION-NEXT.md#latest-continuation-reconciliation--2026-11-23-0110-utc)
+for evidence, current refs, and the ordered next steps.
+Do not infer exact per-layer or export parity from that gate. A separate transformed
 raster with layer opacity 0.58 and `multiply` blend mode has exact raw materialization and direct
 composite parity. Its normal admission check refuses retained operations, so the product continues
 to use legacy rendering and export. An earlier local Chrome run that manually invokes the refused
@@ -159,8 +164,13 @@ diagnostic-only while legacy fallback is active. Keep the broader frame matrix o
 angles, other affine combinations, other blank opacity values, and other text styling/rotation. It
 is independent of the next ownership slice and remains gated.
 
-**Next after the current `ph-71` diagnostic claim is reviewed and landed:** create or claim a separate
-source-ownership task for one product-reachable in-place text edit. Trace `commitDirtyTool` in
+**Next slice after the PH-71 diagnostic acceptance was reviewed and landed:** PH-93,
+`Prove typed text-source lifecycle under legacy history authority`, remains a separate source-
+ownership task for one product-reachable in-place text edit. The 2026-11-22 board snapshot shows
+PH-93 open and unclaimed; recheck its owner, path locks, and prior worktree before starting. Keep it behind the
+retained-affine mixed-source exact composite gate recorded in
+[`HISTORY-MIGRATION-NEXT.md`](docs/HISTORY-MIGRATION-NEXT.md). Do not take over prior PH-93 work
+without owner handoff or the documented full process-tree liveness proof. Trace `commitDirtyTool` in
 `useLayer.ts` through `replaceLayerSource` to the typed `REPLACE_LAYER_SOURCE_ACTION`. Refresh the
 producer owner and handoff first. The current `StoreContext.tsx` gate returns
 `ownership-unproven` for this action, but existing StoreContext coverage uses a generic replacement
