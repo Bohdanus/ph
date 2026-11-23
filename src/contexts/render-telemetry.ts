@@ -39,10 +39,18 @@ let lastNotificationAt = Number.NEGATIVE_INFINITY;
 let pendingNotification: ReturnType<typeof setTimeout> | null = null;
 let latestSummary: LayerRenderTelemetrySummary | null = null;
 
+function isPublishedRenderOutcome(outcome: LayerRenderOutcome): boolean {
+  return outcome === 'published' || outcome === 'published-with-skips';
+}
+
 function refreshSummary(): void {
   const latestIndex = (nextWriteIndex - 1 + RING_CAPACITY) % RING_CAPACITY;
   const latest = ring[latestIndex];
   if (!latest) return;
+  if (!isPublishedRenderOutcome(latest.outcome)) {
+    latestSummary = Object.freeze({ latest, averagePublishedDurationMs: null, sampleCount: 0 });
+    return;
+  }
 
   let durationTotal = 0;
   let sampleCount = 0;
@@ -51,7 +59,7 @@ function refreshSummary(): void {
     const sample = ring[index];
     if (
       sample &&
-      (sample.outcome === 'published' || sample.outcome === 'published-with-skips') &&
+      isPublishedRenderOutcome(sample.outcome) &&
       sample.documentWidth === latest.documentWidth &&
       sample.documentHeight === latest.documentHeight &&
       sample.backingScale === latest.backingScale &&
