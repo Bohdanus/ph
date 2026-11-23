@@ -192,9 +192,9 @@ function dirtyState(worktreePath) {
 /**
  * Release one worktree's claims and locks, as that branch.
  *
- * Returns a record of what was released, or `{ skipped }` with the reason it was not
- * eligible. It never throws: a claim held by another agent is left alone by the board's
- * own check, and that is a refusal rather than an error.
+ * Returns a record of what was released and which foreign locks remain, or `{ skipped }`
+ * with the reason it was not eligible. It never throws: a claim held by another agent is
+ * left alone by the board's own check, and that is a refusal rather than an error.
  */
 export function releaseWorktree(
   board,
@@ -250,18 +250,30 @@ export function releaseWorktree(
   }
 
   const releasedClaims = [];
+  const retainedLocks = new Map();
   for (const claim of claims) {
     const result = board.releaseClaim(claim.id, { agent: branch, reason: `merged into ${base}` });
     if (result.released) releasedClaims.push(claim.id);
+    for (const lock of result.files_retained ?? []) {
+      retainedLocks.set(`${lock.agent_id}\0${lock.path}`, lock);
+    }
   }
-  // Released by path, as the owner, so a path another agent also holds is left with that
-  // agent's row intact — `releaseFiles` skips a foreign row without force.
+  // Release by path as the owner. `releaseFiles` reports and skips foreign rows without force.
   const releasedLocks = [];
   for (const lock of locks) {
     const result = board.releaseFiles([lock.path], { agent: branch });
     for (const p of result.released) if (!releasedLocks.includes(p)) releasedLocks.push(p);
+    for (const retained of result.blocked ?? []) {
+      retainedLocks.set(`${retained.agent_id}\0${retained.path}`, retained);
+    }
   }
-  return { worktree: path.basename(worktreePath), branch, releasedClaims, releasedLocks };
+  return {
+    worktree: path.basename(worktreePath),
+    branch,
+    releasedClaims,
+    releasedLocks,
+    retainedLocks: [...retainedLocks.values()],
+  };
 }
 
 /**
@@ -355,6 +367,9 @@ export function formatReport(results, { dryRun = false } = {}) {
     const what = [
       r.releasedClaims?.length ? `claims ${r.releasedClaims.join(', ')}` : null,
       r.releasedLocks?.length ? `${r.releasedLocks.length} lock(s)` : null,
+      r.retainedLocks?.length
+        ? `foreign locks retained: ${r.retainedLocks.map((lock) => `${lock.path} by ${lock.agent_id}`).join(', ')}`
+        : null,
     ]
       .filter(Boolean)
       .join(', ');

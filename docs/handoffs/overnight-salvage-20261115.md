@@ -65,3 +65,95 @@ This snapshot supersedes the earlier landing and operation status above. The des
 Immediately before this handoff-only update, the continuation candidate was `task/salvage-continuation-20261116` at `f03797163c91a03c5a9f7cc06a28457837c76129` (tree `40f50757bbf008010387c607e89ca4627fec1363`), based on current `main`. Its only code changes beyond `main` are a 60-second bounded timeout for synchronous Git probes in `main-landing.mjs` and a 15-second test budget for the 12MP sharpen buffer/index correctness test. Both focused tests passed. The commit gate passed; the subsequent full push gate completed without failure output. An earlier full-gate attempt exposed the resource-sensitive timeouts that these adjustments address.
 
 No additional source changes were selected from the preserved dirty snapshots. `audit-harvest-all-20261114` still has a staged patch that removes newer test coverage. The seven tracked working files in `systemic-hardening-disposition-20261115` match current `main` exactly; its untracked `REVIEW_RESULTS.json` remains preserved. The detached primary `ph` checkout remains dirty with unfinished chats, and its untracked `ORCHESTRATION_ISSUES_AND_BUGS.md`, `check-db.mjs`, and cursor image remain untouched. The issue report was not copied into the tracked tree because its claims mix fixed behavior, documented design limits, and unverified risks. No worktree or branch was disposed.
+
+## WSL stale-worktree continuation - 2026-11-21
+
+### Current source and integration
+
+A fresh WSL fetch and git ls-remote origin refs/heads/main both resolved to
+e31679a888261612e5efabe7bb3ce8d822a51479. The WSL salvage task branch was already
+based on that commit. npm run repo:state now reports no operation in progress across
+the 32 registered worktrees; the designated main worktree remains at older commit
+61fe07d1 and its landing lease was free at the last check.
+
+The dirty task/wsl-board-lock-salvage-20261119 worktree is preserved unchanged because
+its owner could not be conclusively identified. Its complete staged and unstaged patch
+was copied to the current task branch. The stale prepared merge in
+fix/orchestration-rigorous-final-20261116 was cleared only after its exact staged
+result was saved, no unresolved paths or unstaged changes remained, no process using
+that worktree was found, and the branch-side work was shown to be represented in the
+carried patch. Its six source commits and clean worktree remain preserved.
+
+The integrated lock patch reports live foreign locks when claim release or reopen
+retains them, prevents forced release of a live foreign lock, and makes doctor
+report only retained locks still present after the entire sweep. A regression covers
+the case where a later stale-lock pass clears a lock that the earlier claim pass
+temporarily retained. The focused agent-board and merge-release suites pass 222 tests.
+Three tool-free Kilo Nemotron 3 Ultra completion reviews ran at zero reported cost;
+they were review completions, not subagents, and multiple claims were rejected after
+source checks. Kilo task dispatch is unavailable in this Codex host and OpenRouter
+preflight returned HTTP 401, so no OpenRouter completion or Kilo subagent is claimed.
+
+### Ref and patch dispositions
+
+- task/review-next-salvage-20261104: the exact-pixel getImageData/putImageData
+  implementation is present on current origin/main; the dirty source difference
+  removes two comments. Its docs/INCOMING_COMMITS.md ledger is obsolete and was
+  deliberately removed by current main commit b657d3c7a. No pixel or ledger content
+  was transplanted.
+- Bedrock conversion tests and the source-flag assertion from commits 8b12fa488 and
+  66e21c3a4 exist in current main's evolved test file. The retained-pixel patch
+  from 8d1e7026f is also represented by current materialization code. Patch-ID
+  differences here do not indicate missing behavior.
+- The inventory batching safeguard from 68826b23e is present in current main with
+  stricter handling for an individually overlong path. The old shared Kilo DB-path
+  resolver was not ported: the WSL session database was unavailable, and the old
+  resolver did not establish a working Windows AppData path from this WSL environment.
+- task/wsl-files is obsolete against current main, which already owns
+  docs/WSL-SETUP.md and scripts/wsl-setup.sh. The older branch copy regresses
+  current setup guidance and compares the installed Node major to the full .nvmrc
+  version string; its npm run prepare failure is also ignored.
+- task/salvage-stale-worktrees-20261104 and its related old synchronization refs
+  contain obsolete blocker reports and copies of changes already represented in
+  current source. They were not merged wholesale.
+- wsl/systemic-hardening-review still has patch-unique Windows process, shell
+  argument, and executable-resolution changes. Its own prior review explicitly
+  requires focused Windows validation. It remains preserved and unlanded; do not
+  merge it directly into the WSL salvage candidate without that review.
+- fix/activity-analyzer adds a personal Windows activity-cache analyzer with a
+  machine-specific database path. It remains excluded from the product branch.
+- The broken e2e-hardening- worktree metadata and all other source worktrees were
+  left in place; no prune, disposal, or metadata repair was attempted.
+
+### Remaining release state
+
+The candidate contains the reviewed lock-safety changes, test and documentation
+corrections for the supported Quick Selection modifiers, updated write-boundary
+counts for the added temporary-directory cleanup, and this disposition update.
+The first full-suite runs surfaced stale Quick Selection assertions and the new
+cleanup callsites; those checks now match the current behavior and resource use.
+The flood-fill scaling test passed alone (49 tests); its one failure in the default
+four-worker full suite was a timing ratio under load. The full push gate passed with
+CI=true, using the project's configured two-worker CI mode, without relaxing the
+assertion. This section records pre-landing validation; establish final landing and push status from the verified main Git history and origin/main.
+The preserved Windows-specific branch is explicitly unproven pending its platform
+review; it is not a reason to merge stale snapshots or discard its source worktree.
+
+## Follow-up - 2026-11-23
+
+### Current remote and route work
+
+The WSL task branch started at GitHub origin/main `87e63a5f1c1abec8df61795645e2c7ea4d435bc0`. At the last read, the GitHub remote and designated WSL main worktree matched that commit; the landing lease was free and `repo:state` reported no in-progress operation. This follow-up records pre-landing status; verify the final landing and push from Git history.
+
+The branch adds exact provider/model selection to the free-completion runner, explicit failures for missing OpenRouter/Groq configuration, and WSL Kilo instructions. The pinned runner result reported the exact Kilo route nvidia/nemotron-3-ultra-550b-a55b:free, non-empty text, finishReason stop, cost 0, and request counters kilo 1 / openrouter 0. Seven read-only Kilo/Nemotron reviews in this continuation each reported finishReason stop, cost 0, and kilo 1 / openrouter 0; these were completions, not subagents. Findings were checked against current source. The exact changed-code review returned no concrete issue.
+
+### Refreshed salvage findings
+
+- The dirty `wsl-board-lock-salvage-20261119` worktree remains untouched. Its claim/reopen/doctor/merge-release behavior and regression tests are present on current origin/main. Its remaining timeout-only changes have no measured failure or latency evidence; they were not transplanted.
+- The separate WSL clone at /home/dev/src/ph-salvage-20261031-b tracks the Windows local main at 17cd7d04898ae30c1977554af87446bc4c57e814, not GitHub origin. Its staged Bedrock test is older than the current origin test: it omits the temporary-canvas fallback case and the dedicated source-level isBedrock assertion; its dedicated test checks converted.isBedrock, which is already covered by the conversion test, while current origin asserts converted.source.isBedrock. It was not transplanted.
+- Windows local main is stale relative to GitHub origin (92 commits only on GitHub, 2 only on the Windows mirror). Its unique OpenRouter comparison-table commit `ccea6dbc4` contains uncited benchmark and availability claims that conflict with the current canonical route ranking. It was not merged; keep the mirror and commit for a source-backed review.
+- The Git registry lists /home/dev/src/ph/.kilo/worktrees/e2e-hardening- at HEAD 61fe07d1 as prunable because its checkout path is missing. A separate, unregistered directory /home/dev/src/ph/.kilo/worktrees/e2e-hardening-20261117-1850 is present; its .git file points to the absent /home/dev/src/ph.git/worktrees/e2e-hardening- admin path. It contains the 387,576-byte tool-inventory-cron-20261019.patch; its recovery note says the mixed merge-result patch is older and not to be applied wholesale. git apply --check --reverse fails against current origin, so the patch is not a clean reverse delta and its residual unique work remains unproven. No repair, move, prune, or disposal was attempted. Recovery requires a quiescent coherent backup and comparison under Recovering Git metadata.
+- The generated WSL WORKTREES.json snapshot at 2026-11-23T13:16:37Z reported sessions=0 from /home/dev/.local/share/kilo/kilo.db; the WSL environment had no USERPROFILE or XDG_DATA_HOME. The Windows Kilo database exists at /mnt/c/Users/2025/.local/share/kilo/kilo.db (7,208,398,848 bytes), but a WSL Node DatabaseSync open with readOnly=true and PRAGMA query_only=ON returns ERR_SQLITE_ERROR: disk I/O error. The zero-session snapshot therefore does not establish Kilo-owner liveness. Do not infer that owners or descendants are dead from it.
+- The older WSL inventory safeguards, exact-pixel materialization, and evolved Bedrock coverage are represented in current origin/main. The a933722cc handoff correction is obsolete because its problematic entry is absent from current HANDOFF.md. Windows-only hardening and the personal activity-cache analyzer remain outside this product landing.
+
+No stale worktree was removed, reset, repaired, moved, or pruned. The dirty candidates ownership is not fully proven, and the broken metadata recovery prerequisites are unmet. Re-run a host-aware inventory after a supported Kilo database reader is available; do not treat the current zero-session result as clearance.

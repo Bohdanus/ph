@@ -136,8 +136,7 @@ export async function loadQuarantineState(filePath = DEFAULT_FILE, now = Date.no
   }
   return withQuarantineWriteLock(filePath, async (saveState) => {
     const state = await readQuarantineState(filePath);
-    if (state.migration_v2 === true && state.migration_v3 === true && state.migration_v4 === true) return state;
-    migrateQuarantineState(state, now);
+    if (!prepareQuarantineStateForLoad(state, now)) return state;
     await saveState(state);
     return state;
   });
@@ -185,10 +184,16 @@ async function writeQuarantineStateIfAbsent(state, filePath) {
 export async function loadQuarantineStateLocked(filePath = DEFAULT_FILE, now = Date.now()) {
   validateEpochMilliseconds(now);
   const state = await readQuarantineState(filePath);
-  if (state.migration_v2 === true && state.migration_v3 === true && state.migration_v4 === true) return state;
-  migrateQuarantineState(state, now);
+  if (!prepareQuarantineStateForLoad(state, now)) return state;
   await writeQuarantineStateUnlocked(state, filePath);
   return state;
+}
+
+function prepareQuarantineStateForLoad(state, now) {
+  const needsMigration = state.migration_v2 !== true || state.migration_v3 !== true || state.migration_v4 !== true;
+  if (needsMigration) migrateQuarantineState(state, now);
+  const expiredCount = removeExpiredQuarantines(state, now);
+  return needsMigration || expiredCount > 0;
 }
 
 export function activeQuarantineKeys(state, now = Date.now()) {

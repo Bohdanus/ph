@@ -184,7 +184,7 @@ describe('SidebarLeft overflow', () => {
     // a three-dots tile with nothing in it is noise, so it is not rendered.
     expect(visibleTools()).toHaveLength(toolbarMap.flat().length);
     expect(overflowTile()).toBeNull();
-  });
+  }, 15_000);
 
   it('moves the tiles that do not fit into a three-dots tile, and only those', () => {
     render(<SidebarLeft />);
@@ -233,7 +233,7 @@ describe('SidebarLeft overflow', () => {
     // the arithmetic rather than left to the two assertions above.
     const inFlyout = openOverflowFlyout().length;
     expect(toolsOnTiles() + inFlyout, 'every tool is reachable exactly once').toBe(allTools().length);
-  });
+  }, 15_000);
 
   it('selects a tool from the three-dots tile', () => {
     render(<SidebarLeft />);

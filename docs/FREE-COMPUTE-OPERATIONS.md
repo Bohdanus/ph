@@ -26,6 +26,11 @@ receives a response-length instruction instead. Verify the resolved route, non-e
 reason, and cost. The runner ranks Nemotron first across eligible providers, then Xing 4.0, and
 interleaves unranked fallback routes. See [`MODELS.md`](../MODELS.md).
 
+If Nemotron returns `finish_reason: "length"`, the pool retries once with a 1.5x larger token budget,
+capped at 65,536. It sends an OpenRouter retry only after a fresh quota check confirms remaining
+daily capacity. At the maximum budget, no larger retry is possible. Kilo receives the increased
+budget as a response-length instruction, not a provider-side token limit.
+
 ### Operator-managed quarantine entries
 
 The default shared quarantine file is `.kilo/free-model-quarantine.json`.
@@ -38,7 +43,17 @@ updates and the `free:quarantine add` command accept only transient reasons with
 they preserve an active operator ban for the same pair. Unknown reasons and out-of-range durations
 fail closed.
 
+When an older quarantine file is loaded, migration v4 removes only `poor_performance` entries for
+the exact Nemotron 3 Ultra `:free` routes on Kilo and OpenRouter, whose temporary outage holds were
+released after successful free completions. It preserves other reasons for those routes and does
+not change OpenCode entries or any other model/provider pair. The migration runs once and records
+`migration_v4` in the local state file.
+
 The CLI defaults to six hours when `--hours` is omitted.
+
+Quarantine loaders prune expired entries and persist that cleanup under the existing file lock.
+The low-level `readQuarantineState` helper remains non-mutating; `free:quarantine -- prune` is still
+available for an explicit cleanup pass.
 
 ## Find credentials safely
 
@@ -49,6 +64,33 @@ into logs. Report only the provider, path, and whether authentication is availab
 
 ## Kilo Code
 
+Use provider/model pinning when a task must stay on Kilo Nemotron. Set both `--provider` and `--model` to restrict catalog discovery and inference to one exact route; a missing or quarantined route stops before inference rather than falling through. Passing either flag alone filters only that dimension:
+
+```sh
+node scripts/free-model-pool.mjs --prompt-file /tmp/nemotron-review.txt \
+  --provider kilo --model nvidia/nemotron-3-ultra-550b-a55b:free --max-tokens 8192
+```
+
+The live catalog verifies that the exact route is currently free. A successful completion reports its source, model, finish reason, usage, and cost when provided. A catalog listing with `configured: null` means Kilo CLI discovery succeeded but authentication was not tested. For Kilo, `--max-tokens` is a response-length instruction rather than a hard output limit.
+
+### WSL with Windows-saved Kilo credentials
+
+Run from a WSL task worktree with WSL Node/npm. If the Kilo login is stored at
+`%USERPROFILE%\.local\share\kilo\auth.json`, set the source path without printing file contents:
+
+```sh
+source "$HOME/.nvm/nvm.sh"
+nvm use default
+WINDOWS_PROFILE="$(powershell.exe -NoProfile -Command '$env:USERPROFILE' | tr -d '\r')"
+export XDG_DATA_HOME="$(wslpath -u "$WINDOWS_PROFILE")/.local/share"
+test -r "$XDG_DATA_HOME/kilo/auth.json"
+```
+
+The free completion adapter links only `auth.json` into an isolated Linux-local XDG data root, so
+SQLite state stays off the Windows mount. Do not point the raw Kilo CLI at a Windows-mounted
+`kilo.db`. Verify auth by making the exact pinned completion above. If `kilo` is missing from the WSL
+`PATH`, install `@kilocode/cli` using WSL npm from the task worktree, then check `kilo --version`.
+
 The shared completion pool selects eligible, verified-free Kilo routes in model-first provider
 order and invokes this adapter; Kilo is not a fallback-only route. `kilo run` uses the logged-in Kilo
 Gateway OAuth account used by the Kilo Code extension. The adapter discovers `kilo` on `PATH` and
@@ -56,16 +98,44 @@ then checks common VS Code, Cursor, and Windsurf extension folders. If discovery
 CLI, set `KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never
 read or print the Kilo auth database or JSON file.
 
-`kilo run` starts with `--pure` and the tracked `free-completion` agent. That profile denies every
-tool name. The prompt is piped through stdin, keeping it out of process arguments and avoiding
-Kilo's file-attachment and external-directory permission checks. Do not add `--auto`: it would
-broaden permissions beyond the tool-free profile. The runner verifies a clean JSON completion,
-rejects tool events and reported non-zero cost. Nemotron inference has a 12-minute timeout; other
-inference routes use five minutes. Catalog and quota checks use a separate 15-second timeout. It
+Automatic discovery resolves PATH directories and candidate parents, excludes both runner and caller
+roots and their ancestor `node_modules/.bin` directories, and rejects aliases that resolve into those
+protected paths. It also rejects multiply linked candidates and symlink chains that pass through a
+protected path even when the final target is outside. Direct external single-link executables remain
+eligible when their resolution chain stays outside protected paths. Missing or inaccessible PATH
+entries are skipped; if an ancestor `.bin` or candidate link cannot be inspected, automatic discovery
+fails closed. These checks do not pin the executable inode through spawn, so concurrent changes to
+writable host paths remain outside this guard. Windows path comparisons are case-insensitive.
+Relative `KILO_CLI` overrides resolve from the caller's working directory. On
+Windows, bare command overrides use the filtered runtime `PATH` and preserve the caller's order among
+supported `PATHEXT` suffixes; `PATHEXT` is used only for lookup and is not passed to the child. An
+explicit `KILO_CLI` path is an operator-trusted override.
+
+The child process receives a PATH filtered with those same exclusions. The current Node runtime's
+directory is prepended so a launcher using `/usr/bin/env node` selects the Node process already
+running the pool.
+
+`kilo run` starts with `--pure` from a fresh temporary project containing only a generated
+`free-completion` agent whose wildcard permission denies every tool name. Before creating it, the
+adapter resolves the caller environment's configured temporary directory (or the system default)
+and refuses to run if that path is inside a Git or Kilo project boundary. The child gets an
+ephemeral `HOME`, XDG config/cache/data roots, and temporary directories. Repository and caller
+project config, per-user MCP servers, custom agents, session history, and other applications' data
+are therefore outside its project and user config paths. Only the caller's Kilo `auth.json` is
+linked under the temporary XDG data root, preserving Gateway authentication while the run writes
+any new session data under the temporary directory. `KILO_DB` and caller-supplied config variables
+are not forwarded. Organization or system-managed Kilo policy is outside this isolation; verify its
+effective tool policy or skip the Kilo route in managed environments. The prompt is piped through stdin,
+keeping it out of process arguments and avoiding Kilo's file-attachment and
+external-directory permission checks. Do not add `--auto`: it would broaden permissions beyond the
+tool-free profile. The runner verifies a clean JSON completion, rejects tool events, serialized XML
+or Kilo function-call text, and reported non-zero cost. Nemotron
+inference has a 12-minute timeout; other inference routes use five minutes. Catalog and quota checks
+use a separate 15-second timeout. It
 uses the public Kilo catalog only for model and exact-zero price discovery; it does not send
 inference requests anonymously to the public Gateway endpoint. The child environment is limited to
-runtime paths and locale settings, including the Kilo database selector; unrelated provider keys
-and `KILO_CONFIG_CONTENT` are not passed through.
+runtime paths and locale settings; unrelated provider keys and Kilo configuration overrides are
+discarded.
 
 The current Kilo CLI has no `--max-tokens` option. For Kilo completions, the runner's
 `--max-tokens` value is a response-length instruction; Kilo and the model control the actual
@@ -130,12 +200,49 @@ configuration, not proof that credentials are absent. Do not inspect credential 
 database or auth file. See the [OpenCode CLI auth guide](https://opencode.ai/docs/cli/) and
 [storage guide](https://opencode.ai/docs/troubleshooting/).
 
+For a bare command such as `opencode`, the runner removes PATH entries inside either project root and
+ancestor `node_modules/.bin` directories added by npm. It resolves relative and symlinked entries
+before filtering, drops missing or inaccessible paths and canonical entries that contain the PATH
+delimiter, resolves the command to an absolute executable, and skips executable aliases into this
+checkout by canonical path. It also rejects aliases to executables discovered in excluded ancestor
+bins by canonical path, including npm bin symlinks. Bare PATH candidates must be regular files with
+filesystem metadata proving exactly one hard link. This blocks static hard-link aliases while a link
+to the target remains in either protected project. The check does not inspect Linux mount namespaces,
+so bind-mounted project aliases are outside this guard. It does not pin the inode through process
+creation, so concurrent filesystem changes to a writable PATH directory remain outside this
+protection. It also rejects other multiply linked host executables. If an ancestor bin cannot be
+inspected, PATH filtering and bare lookup fail closed. On Windows it reads `Path` and
+`PATHEXT` without case sensitivity and honors the caller's order among supported executable
+extensions. A Windows PATH alias is accepted only when its canonical target has the selected
+executable extension, and the shim receives that canonical target to avoid a second alias lookup.
+Explicit extensionless Windows path overrides are resolved to the first existing supported
+executable in that order before spawning; the child receives only the filtered `PATH`.
+Set `OPENCODE_CLI` to an absolute
+path when you want to select a specific executable; an explicit path is treated as an
+operator-trusted choice.
+Other executable directories on the host `PATH` remain part of the operator's trusted environment.
+
+The completion child receives runtime path variables, but uses a per-request temporary `HOME`, XDG
+directories, and working directory instead of the operator's OpenCode credentials and project
+config. It does not inherit arbitrary provider API-key variables or `OPENCODE_CONFIG_DIR`.
+`OPENCODE_PURE` and `OPENCODE_DISABLE_PROJECT_CONFIG` provide additional isolation. Its injected
+policies deny tool use, provider/integration selection, integration connections, MCP servers,
+plugins, skills, and web search; they allow only the `opencode` provider and free-tier integration.
+Use OpenCode 2.2.6 or newer so all of these policy actions are recognized. System-wide OpenCode
+config and managed preferences remain machine policy and are still loaded by the CLI. Managed
+policies have higher precedence than the injected config and can override its denies, so the runner
+does not guarantee tool isolation on a machine whose OpenCode administrator allows tools or
+integrations. Provider-owned free models do not require an API key; `opencode auth login` is not
+needed for this route.
+
 The runner accepts provider-owned model IDs ending in `-free`, plus the exact Nemotron `:free` ID
-only when the catalog marks it `owned_by: opencode`. It denies tool use and requires a clean CLI exit
+only when the catalog marks it `owned_by: opencode`. It denies tool and extension use and requires a clean CLI exit
 with non-empty text. The current OpenCode catalog inspection on 2026-11-12 did not list the exact
 Nemotron model, so no OpenCode Nemotron route was eligible in that check.
-OpenCode CLI JSON output can omit its final `step_finish` event; a clean exit, text response, and free
-catalog ID are sufficient when no explicit error, tool call, or non-zero cost was reported.
+OpenCode CLI JSON output can omit its final `step_finish` event. For provider-owned model IDs ending
+in `-free`, a clean exit with non-empty text is sufficient when no explicit error, tool call, or
+non-zero cost was reported. The exact Nemotron `:free` ID does not use this fallback and requires an
+explicit terminal event.
 The typed `provider.free-limit` event and upstream `FreeUsageLimitError` alias both signal a service
 quota for the account, workspace, and network. This remains a source-wide stop when there is no HTTP
 status or when an earlier model-specific error came first. Skip OpenCode for the current run without

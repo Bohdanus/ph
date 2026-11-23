@@ -658,13 +658,11 @@ modifier table:
 | `Cmd+Option+T` | duplicate and enter Free Transform on the duplicate |
 | `Enter`        | commit                                              |
 
-The app binds none of the three. `t` alone selects the Text tool
-(the `t` registration in `AppKeyboardShortcuts.tsx`; what an earlier version cited is inside the
-`Cmd+C` copy handler) and there is no `Cmd+T` registration
-anywhere; the tool has no accelerator at all, and no rail entry to declare one on —
-`extraTools` in `toolbar-mapping.ts` is where `color`, `levels` and `transform` are recorded as
-carrying no Tools-rail entry, and `Edit ▸ Free Transform` in the header is what reaches the id
-instead (the `Edit` menu's `Free Transform` item in `DesktopHeader.tsx`).
+The app binds `Cmd/Ctrl+T` to the `transform` command. It does not bind `Cmd+Option+T` to duplicate
+and transform, or `Enter` to commit; slider releases still commit the preview and the panel has no
+explicit Apply button. `t` alone selects the Text tool. `transform` has no Tools-rail entry —
+`extraTools` in `toolbar-mapping.ts` records that it is a command, and `Edit ▸ Free Transform` in
+the header reaches the same command.
 
 **`Enter` is now Adobe's, and it was third-party before this pass.** Adobe's Free Transform page
 does not print it, but the Feb 23 2026 reference-point page does, in the imperative: "Press **Enter
@@ -1131,14 +1129,14 @@ the durable materializer — see the `ctx.filter` section above.
    not found in any Adobe page opened in this pass. Closest URL:
    `https://community.adobe.com/questions-712/alt-drag-to-duplicate-not-working-in-photoshop-1091259`,
    which is about the Alt form and is not evidence for a Cmd form.
-10. **Photoshop's `Cmd+T`, `Cmd+L` and `Enter` bindings, from Adobe.** Adobe's
-    default-keyboard-shortcuts page describes the Keyboard Shortcuts dialog rather than listing
-    the bindings (`https://helpx.adobe.com/photoshop/using/default-keyboard-shortcuts.html`), and
-    the Free Transform page says "Choose Edit > Free Transform" without the shortcut. The
-    shortcuts in the data file come from a third-party mirror of Adobe's shipped Mac shortcut
-    sheet, plus an Adobe blog post and a Peachpit excerpt that agree with it. They are
-    version-stable in practice — the 2026 duplicate-and-transform page only makes sense if
-    `Cmd+T` still exists — but they are not read off an Adobe page in this pass.
+10. **Photoshop's transform shortcuts.** Adobe's default-keyboard-shortcuts page describes the
+    Keyboard Shortcuts dialog rather than listing bindings
+    (`https://helpx.adobe.com/photoshop/using/default-keyboard-shortcuts.html`). Adobe's
+    `https://www.adobe.com/products/photoshop/resize-image.html` page does explicitly say
+    "Ctrl + T" (Windows) / "Cmd + T" (Mac), then names Edit > Free Transform as another route; it
+    confirms the shortcut for the transform operation, not a Tools-panel tool. Adobe's
+    reference-point page also confirms Enter/Return to apply. `Cmd+L` and `Cmd+Option+T` remain
+    third-party corroboration rather than confirmed in an Adobe shortcut list.
 11. **`X` as the reset key for Black and White.** Not found, and contradicted: `X` swaps
     foreground and background colors in Photoshop's default key map, and Adobe's own route back
     from an adjustment is the Reset control

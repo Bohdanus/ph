@@ -45,7 +45,8 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     shortcut: 'L',
   },
   'polygonal-lasso': {
-    summary: 'Click to add straight-sided polygon anchors; close with a double-click, right-click, or Enter.',
+    summary:
+      'Click to add straight-sided anchors; close by clicking the start, double-clicking, or Ctrl/Command-clicking. This app lacks Ctrl/Command-click closure.',
     implementation: 'partial',
   },
   'feather-magnetic-lasso': {
@@ -145,7 +146,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   sponge: {
     summary:
-      'Raises or lowers the colour saturation under the brush, so a flat area gains colour or a loud one loses it, and the lightness underneath is untouched.',
+      'On color images, adjusts saturation under the brush. In Grayscale mode, Photoshop changes contrast by moving gray levels toward or away from middle gray.',
     implementation: 'partial',
   },
   gradient: {
@@ -253,7 +254,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   eyedropper: {
     summary:
-      'Samples a color from the composited canvas at the pointer position and writes it to the foreground or background swatch; no drag preview, no history entry.',
+      'Samples a color from the composited canvas while clicking or dragging and writes it to the foreground or background swatch; no history entry.',
     implementation: 'partial',
     shortcut: 'I',
   },

@@ -7,6 +7,7 @@ import {
   MAX_QUARANTINE_HOURS,
   quarantineKey,
   loadQuarantineState,
+  loadQuarantineStateLocked,
   readQuarantineState,
   releaseQuarantine,
   removeExpiredQuarantines,
@@ -105,9 +106,47 @@ describe('free-model quarantine lifecycle', () => {
 
       const afterExpiry = await loadQuarantineState(filePath, now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000 + 1);
       expect(activeQuarantineKeys(afterExpiry, now + MAX_QUARANTINE_HOURS * 60 * 60 * 1000 + 1).size).toBe(0);
-      expect(afterExpiry.entries['kilo:kilo-auto/free'].expiresAt).toBe(
-        migrated.entries['kilo:kilo-auto/free'].expiresAt
-      );
+      expect(afterExpiry.entries['kilo:kilo-auto/free']).toBeUndefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['regular', (filePath, now) => loadQuarantineState(filePath, now)],
+    ['locked', (filePath, now) => withQuarantineWriteLock(filePath, () => loadQuarantineStateLocked(filePath, now))],
+  ])('prunes expired entries during %s state loads and preserves active entries', async (_kind, load) => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-expiry-'));
+    const filePath = join(directory, 'state.json');
+    const now = Date.parse('2026-10-26T12:00:00.000Z');
+    const state = {
+      schemaVersion: 1,
+      migration_v2: true,
+      migration_v3: true,
+      migration_v4: true,
+      entries: {},
+    };
+    const expiredKey = upsertQuarantine(state, {
+      source: 'kilo',
+      model: 'expired:free',
+      reason: 'provider_outage',
+      hours: 1,
+      now: now - 2 * 60 * 60 * 1000,
+    });
+    const activeKey = upsertQuarantine(state, {
+      source: 'openrouter',
+      model: 'active:free',
+      reason: 'rate_limit',
+      hours: 1,
+      now,
+    });
+
+    try {
+      await writeQuarantineState(state, filePath);
+      const loaded = await load(filePath, now);
+      expect(loaded.entries[expiredKey]).toBeUndefined();
+      expect(loaded.entries[activeKey]).toEqual(state.entries[activeKey]);
+      expect(await readQuarantineState(filePath)).toEqual(loaded);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

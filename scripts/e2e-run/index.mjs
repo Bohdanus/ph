@@ -59,9 +59,11 @@ export function runPlaywright(args, options = {}) {
     });
 
     let signalled = 0;
+    let terminationRequested = false;
     const forward = (signal, name) => () => {
       signalled += 1;
       if (signalled === 1) {
+        terminationRequested = true;
         if (!signalProcessTree(child, signal)) {
           console.error(`${PREFIX} could not signal the full Playwright process tree; a descendant may survive.`);
         }
@@ -88,6 +90,13 @@ export function runPlaywright(args, options = {}) {
       child.stdout.on('data', (chunk) => captured.push(chunk));
       child.stderr.on('data', (chunk) => captured.push(chunk));
     }
+
+    child.on('exit', () => {
+      if (terminationRequested && process.platform !== 'win32') {
+        // Escalate before a surviving descendant can keep the child's stdio pipes open.
+        signalProcessTree(child, 'SIGKILL');
+      }
+    });
 
     child.on('error', (error) => {
       cleanup();

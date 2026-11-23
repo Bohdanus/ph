@@ -1129,7 +1129,7 @@ describe('provider rate-limit diagnostics', () => {
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(3);
   });
 
-  it('uses at most one OpenRouter retry even when more catalog candidates remain', async () => {
+  it('does not wait for an OpenRouter retry after reaching the source attempt limit', async () => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const response = () =>
       new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
@@ -1138,9 +1138,9 @@ describe('provider rate-limit diagnostics', () => {
       });
     const chat = vi
       .fn()
-      .mockResolvedValueOnce(response())
-      .mockResolvedValueOnce(response())
-      .mockResolvedValueOnce(response());
+      .mockResolvedValueOnce(response()) // r1 attempt 1
+      .mockResolvedValueOnce(response()) // r1 retry 1 (attempt 2)
+      .mockResolvedValueOnce(response()); // r2 attempt 1 (attempt 3)
     const fetchImpl = catalogFetch({
       kilo: [],
       openrouter: [openRouterRow('r1'), openRouterRow('r2'), openRouterRow('r3')],
@@ -2442,6 +2442,45 @@ describe('provider rate-limit diagnostics', () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it('retries truncated OpenRouter Nemotron only after a positive quota refresh with a larger budget', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const keyInfo = vi.fn(() => ({
+      ok: true,
+      json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+    }));
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ model, choices: [{ message: { content: 'partial' }, finish_reason: 'length' }] }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ model, choices: [{ message: { content: 'complete' }, finish_reason: 'stop' }] }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      );
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow(model.slice(0, -':free'.length))],
+      keyInfo,
+      chat,
+    });
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', maxTokens: 4096 })
+    ).resolves.toMatchObject({ source: 'openrouter', model, content: 'complete' });
+
+    expect(
+      fetchImpl.mock.calls
+        .filter(([url]) => String(url).includes('openrouter.ai/api/v1/chat'))
+        .map(([, options]) => JSON.parse(options.body).max_tokens)
+    ).toEqual([4096, 6144]);
+    expect(keyInfo).toHaveBeenCalledTimes(2);
   });
 
   it('returns a complete HTTP 200 OpenRouter answer when the remaining header is zero', async () => {
