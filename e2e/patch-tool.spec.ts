@@ -1,8 +1,10 @@
 import { expect, test } from './fixtures/extended-test';
 import { drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { clickToolButton, openToolFlyout } from './helpers/toolbar-helpers';
+import { clickToolButton, hasOwnToolTile, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 test.describe('Patch Tool', () => {
+  test.use({ viewport: { width: 1600, height: 1200 } });
+
   test('preserves an active selection, drags a donor area, and replays one raster action', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     const canvas = getWorkspaceCanvas(page);
@@ -14,8 +16,9 @@ test.describe('Patch Tool', () => {
     await drawLine(page, box, 220, 180, 240, 180, { steps: 4 });
     await clickToolButton(page, 'rectangular-selection');
     await drawLine(page, box, 260, 190, 300, 225, { steps: 8 });
-    await openToolFlyout(page, 'brush');
-    await page.locator('[data-testid^="tool-flyout-item-patch-"]').click();
+    expect(await hasOwnToolTile(page, 'spot-healing'), 'the Healing family has its own visible tile').toBe(true);
+    await openToolFlyout(page, 'spot-healing');
+    await selectFromFlyout(page, { toolName: 'patch', label: 'Patch Tool' });
     await expect(page.locator('#patch-mode')).toHaveValue('source');
 
     await drawLine(page, box, 280, 207, 350, 207, { steps: 8 });
