@@ -228,6 +228,47 @@ describe('drawLayerSource', () => {
     expect(ctx.drawImage).toHaveBeenCalledExactlyOnceWith(bitmap, 0, 0, 10, 10);
   });
 
+  it('keeps a Fill-transparent Spray layer grouped through its cached bitmap', () => {
+    const bitmap = { width: 10, height: 10 } as ImageBitmap;
+    const ctx = makeMockCtx();
+    const position = { x: 0, y: 0, width: 10, height: 10 };
+    const layer: Layer = {
+      id: 'spray-fill',
+      name: 'Spray Fill',
+      isBedrock: false,
+      bitmap,
+      tmpCanvas: null,
+      visible: true,
+      opacity: 1,
+      fillOpacity: 0.5,
+      locked: false,
+      blendMode: 'source-over',
+      order: 0,
+      pos: position,
+      presentationBounds: null,
+      operations: [],
+      source: {
+        kind: 'tool',
+        pos: position,
+        args: {
+          toolName: 'draw',
+          alpha: 1,
+          color: '#000000',
+          penType: 'spray',
+          lineWidth: 4,
+          points: [
+            { x: 2, y: 2 },
+            { x: 8, y: 8 },
+          ],
+        },
+      },
+    };
+
+    expect(drawLayerSource(ctx, layer)).toBe(true);
+    expect(ctx.translate).not.toHaveBeenCalled();
+    expect(ctx.drawImage).toHaveBeenCalledExactlyOnceWith(bitmap, 0, 0, 10, 10);
+  });
+
   it('draws the retained vector source when its only operation is disabled', () => {
     const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor');
     const ctx = makeMockCtx();
@@ -902,6 +943,12 @@ describe('drawLayer', () => {
     const { ctx, drawnStates } = makeStatefulCtx();
     drawLayer(ctx, makeImageLayer({ opacity: 0.37 }));
     expect(drawnStates[0]?.alpha).toBe(0.37);
+  });
+
+  it('multiplies Fill opacity with layer opacity before drawing', () => {
+    const { ctx, drawnStates } = makeStatefulCtx();
+    drawLayer(ctx, makeImageLayer({ opacity: 0.5, fillOpacity: 0.4 }));
+    expect(drawnStates[0]?.alpha).toBeCloseTo(0.2);
   });
 
   it('sets globalCompositeOperation to the layer blendMode before drawing', () => {

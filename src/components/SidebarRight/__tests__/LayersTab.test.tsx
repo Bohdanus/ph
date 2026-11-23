@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import LayersTab, { LAYER_REORDER_LONG_PRESS_MS } from '../LayersTab.tsx';
 import type { Layer, LayerId, LayersRecord, ToolLayerSource } from '@/contexts/layer-types.ts';
 import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
-import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '@/util/constants.ts';
+import { RENAME_LAYER_ACTION, SET_LAYER_FILL_OPACITY_ACTION, SET_LAYER_OPACITY_ACTION } from '@/util/constants.ts';
 import type { TextToolArgs } from '@/tools/text.ts';
 
 vi.mock('../../Icons/EyeIcon.tsx', () => ({
@@ -268,7 +268,7 @@ describe('LayersTab', () => {
 
   it('commits one opacity history entry when a slider gesture ends', () => {
     render(<LayersTab />);
-    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    fireEvent.click(screen.getByTestId('layer-opacity-summary'));
     const slider = screen.getByRole('slider', { name: 'Layer opacity' });
     const setPointerCapture = vi.fn();
     Object.defineProperty(slider, 'setPointerCapture', { configurable: true, value: setPointerCapture });
@@ -289,7 +289,7 @@ describe('LayersTab', () => {
 
   it('keeps an opacity draft owned by its pointer through foreign pointer endings', () => {
     render(<LayersTab />);
-    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    fireEvent.click(screen.getByTestId('layer-opacity-summary'));
     const slider = screen.getByRole('slider', { name: 'Layer opacity' });
 
     fireEvent.pointerDown(slider, { pointerId: 1 });
@@ -307,7 +307,7 @@ describe('LayersTab', () => {
 
   it('keeps a pointer-owned opacity draft through blur until that pointer ends', () => {
     render(<LayersTab />);
-    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    fireEvent.click(screen.getByTestId('layer-opacity-summary'));
     const slider = screen.getByRole('slider', { name: 'Layer opacity' });
 
     fireEvent.pointerDown(slider, { pointerId: 1 });
@@ -326,7 +326,7 @@ describe('LayersTab', () => {
 
   it('discards a pointer-owned opacity draft if pointer capture is lost', () => {
     render(<LayersTab />);
-    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    fireEvent.click(screen.getByTestId('layer-opacity-summary'));
     const slider = screen.getByRole('slider', { name: 'Layer opacity' });
 
     fireEvent.pointerDown(slider, { pointerId: 1 });
@@ -336,7 +336,7 @@ describe('LayersTab', () => {
     fireEvent(slider, lostCapture);
 
     expect(layerMocks.updateLayer).not.toHaveBeenCalled();
-    expect(screen.getByText('100%', { selector: 'output' })).toBeInTheDocument();
+    expect(slider.closest('details')?.querySelector('output')).toHaveTextContent('100%');
     fireEvent.pointerUp(slider, { pointerId: 1 });
     expect(layerMocks.updateLayer).not.toHaveBeenCalled();
   });
@@ -344,10 +344,33 @@ describe('LayersTab', () => {
   it('disables opacity changes for a locked layer', () => {
     seed({ ...mockLayers, 'layer-2': { ...mockLayers['layer-2'], locked: true } });
     render(<LayersTab />);
-    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    fireEvent.click(screen.getByTestId('layer-opacity-summary'));
 
     expect(screen.getByRole('slider', { name: 'Layer opacity' })).toBeDisabled();
+    expect(screen.getByRole('slider', { name: 'Layer fill opacity' })).toBeDisabled();
     expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+  });
+
+  it('commits one Fill history entry when its slider gesture ends', () => {
+    render(<LayersTab />);
+    fireEvent.click(screen.getByTestId('layer-fill-opacity-summary'));
+    const slider = screen.getByRole('slider', { name: 'Layer fill opacity' });
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(slider, 'setPointerCapture', { configurable: true, value: setPointerCapture });
+
+    fireEvent.pointerDown(slider, { pointerId: 7 });
+    expect(setPointerCapture).toHaveBeenCalledWith(7);
+    fireEvent.change(slider, { target: { value: '42' } });
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    fireEvent.pointerUp(slider, { pointerId: 7 });
+
+    expect(layerMocks.updateLayer).toHaveBeenCalledTimes(1);
+    expect(layerMocks.updateLayer).toHaveBeenCalledWith(
+      'layer-2',
+      { fillOpacity: 0.42 },
+      SET_LAYER_FILL_OPACITY_ACTION
+    );
+    expect(liveStore.snapshot.layers['layer-2'].fillOpacity).toBe(0.42);
   });
 
   it('shows all four Photoshop lock slots and disables unsupported partial locks', () => {

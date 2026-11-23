@@ -381,6 +381,19 @@ describe('PSD codec binary roundtrip', () => {
     expect(top.opacity).toBe(0.5);
   });
 
+  it('round-trips independent PSD layer opacity and Fill opacity', async () => {
+    const input = layer({ opacity: 0.5, fillOpacity: 0.25 });
+    const saved = await savePsd({ input }, { width: 1, height: 1 });
+    const decoded = readPsd(saved, { useImageData: true });
+
+    expect(decoded.children?.[0]).toMatchObject({ opacity: 128 / 255, fillOpacity: 64 / 255 });
+    expect(drawCalls.at(-1)?.alpha).toBeCloseTo((128 / 255) * (64 / 255));
+
+    const imported = await loadPsd(saved);
+    expect(Object.values(imported.layers)[0]).toMatchObject({ opacity: 128 / 255, fillOpacity: 64 / 255 });
+    expect(imported.warnings).toEqual([]);
+  });
+
   it('keeps empty layers with a transparent 1x1 raster', async () => {
     const imported = await loadPsd(binary([{ name: 'Empty', hidden: true }]));
     expect(Object.values(imported.layers)[0].pos).toMatchObject({ width: 1, height: 1 });
@@ -517,6 +530,9 @@ describe('PSD codec binary roundtrip', () => {
       savePsd({ input: layer({ pos: { x: NaN, y: 0, width: 1, height: 1 } }) }, { width: 1, height: 1 })
     ).rejects.toThrow('offset');
     await expect(savePsd({ input: layer({ opacity: NaN }) }, { width: 1, height: 1 })).rejects.toThrow('opacity');
+    await expect(savePsd({ input: layer({ fillOpacity: NaN }) }, { width: 1, height: 1 })).rejects.toThrow(
+      'fill opacity'
+    );
     await expect(
       savePsd({ input: layer({ pos: { x: 0, y: 0, width: 8000, height: 8000 } }) }, { width: 8000, height: 8000 })
     ).rejects.toThrow('budget');

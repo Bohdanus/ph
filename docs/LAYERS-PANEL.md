@@ -230,7 +230,7 @@ Note that four visible controls do not imply four model fields: Adobe's UXP `Lay
   Photoshop lock icons in order; the three partial-lock controls are disabled with an explanation
   because the model cannot represent those flags independently. The full-lock padlock occupies the
   fourth (rightmost) slot. PSD import collapses any such flag to full-layer-locked.
-- `GAP` — no Fill control. `Fill:` is not a synonym for Opacity; see [§9.1](#91-opacity-and-fill-are-not-the-same-field).
+- `HAVE` — `Fill:` is a separate layer property on this row. A completed slider gesture records one titled `SET_LAYER_FILL_OPACITY_ACTION`; PSD leaf Fill values round-trip independently. The app has no layer effects yet, so rendered appearance currently uses the product of Opacity and Fill.
 - The panel lock state renders **on the row** as a solid padlock when fully locked. Partial-lock and
   locked-group rendering remain unavailable because neither state exists in the flat layer model.
   (Adobe, primary)
@@ -593,8 +593,8 @@ Every panel requirement in this document reduces to a field. This is the table t
 | Background layer  | none                                  | `GAP`     | Not the same thing as `isBedrock`, which is the document's backing image                                                                                                                       |
 | Layer selection   | `selectedLayerIds` (proposed)         | `GAP`     | Singular only. **Must not reuse `selections`** — [§5](#5-selection)                                                                                                                            |
 | Visibility        | `visible: boolean`                    | `HAVE`    | —                                                                                                                                                                                              |
-| Opacity           | `opacity: number`                     | `PARTIAL` | Desktop and tablet panels edit the single field and replay `SET_LAYER_OPACITY_ACTION`; Photoshop's separate Fill opacity and layer-kind rules remain absent                                    |
-| Fill opacity      | none                                  | `GAP`     | Folded into `opacity` on import — `psd-utils.ts` — `loadPsd()` — warns "Fill opacity is approximated as layer opacity"                                                                         |
+| Opacity           | `opacity: number`                     | `PARTIAL` | Desktop and tablet panels edit the field and replay `SET_LAYER_OPACITY_ACTION`; Photoshop's layer-kind rules remain absent                                                                     |
+| Fill opacity      | `fillOpacity: number`                 | `PARTIAL` | Opacity and Fill are independently stored, replayed, rendered and PSD round-tripped; layer effects are not supported, so their visual distinction is not yet observable                        |
 | Blend mode        | `blendMode: GlobalCompositeOperation` | `PARTIAL` | Desktop and tablet selectors write one of 16 supported Photoshop modes; unsupported values fall back to `source-over` on import (`psd-utils.ts` — `loadPsd()`)                                 |
 | Full lock         | `locked: boolean`                     | `PARTIAL` | Panel Lock All is replayable; PSD import still collapses Photoshop's four protection flags into one (`psd-utils.ts` — `loadPsd()`)                                                             |
 | Partial locks (3) | none                                  | `GAP`     | Lock All and Lock Position are not the same rule and cannot share a boolean                                                                                                                    |
@@ -618,15 +618,13 @@ affecting the opacity of layer effects such as drop shadows.**" (Adobe, primary.
 
 "**You cannot change the opacity of a background layer or a locked layer.**" (Adobe, primary.)
 
-- **The rule for implementation: one `opacity` field is a trap.** Photoshop's two opacity fields
-  differ _only_ in whether layer effects are also faded. An app with no layer effects can collapse
-  them and lose nothing — but the moment effects land, the collapsed field silently becomes wrong,
-  and it will be wrong in the direction that is hard to see. If Fill is added later, adding the field
-  is a migration across history, the durable model and PSD round-trip.
-- The import already takes this decision: `nextOpacity = opacity * (source.opacity ?? 1) *
-(source.fillOpacity ?? 1)` (`src/contexts/psd-utils.ts` — `loadPsd()`, at that `nextOpacity`
-  assignment), multiplying both into one number and
-  warning in the same function.
+- **The rule for implementation: keep `opacity` and `fillOpacity` separate.** Photoshop's two fields
+  differ in whether layer effects are also faded. The app now records each property in its own
+  runtime/durable field and action; leaf PSD import/export retains both fields. The renderer multiplies
+  them because this app does not support layer effects yet. When effects arrive, Opacity must affect
+  both layer pixels and effects while Fill affects layer pixels alone.
+- PSD groups are flattened. A group's Opacity and Fill are combined into the inherited child Opacity,
+  and import warns about the lost group isolation/opacity fidelity. Leaf Fill remains separate.
 
 ---
 
@@ -856,15 +854,15 @@ Renaming anything in this panel has blast radius beyond the panel. Current contr
 
 ## 16. Test coverage that exists
 
-| Suite                                                | What it pins                                                                                                                                                                              |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SidebarRight/__tests__/LayersTab.test.tsx`          | Empty state, top-first order, active highlight, eye states, **one live preview thumbnail per row**, action-bar deletion, rename (all branches), blank-rename write-back, and drag guards  |
-| `SidebarRight/__tests__/LayersTab.dispatch.test.tsx` | Exact dispatched action objects for New Layer placement, delete, hide, show, select, rename, remove, blend mode, full lock, and reorder intents                                           |
-| `SidebarRight/__tests__/LayersTab.store.test.tsx`    | Live-subscription rendering, refused drops, and abandoned drags leave stacking order untouched                                                                                            |
-| `SidebarRight/__tests__/SidebarRight.test.tsx`       | Dock gating, collapse, roll-up, pinned-panel behavior, and resize                                                                                                                         |
-| `e2e/layers-panel.spec.ts`                           | New Layer ordering and undo, hide/show compositing, rename, Merge all, layer-vs-History row identity, row selection, history entries, and empty state                                     |
-| `e2e/layers.spec.ts`                                 | Four-layer drag reorder, deletion, and hidden-state preservation                                                                                                                          |
-| `Mobile/__tests__/MobileLayersDrawer.test.tsx`       | Thumbnail coverage without touch-scroll capture, move up/down exactness, 44px targets, ARIA structure, opacity gestures, blend mode, full lock, locked-layer behavior, and history groups |
+| Suite                                                | What it pins                                                                                                                                                                                      |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SidebarRight/__tests__/LayersTab.test.tsx`          | Empty state, top-first order, active highlight, eye states, **one live preview thumbnail per row**, action-bar deletion, rename (all branches), opacity and Fill slider gestures, and drag guards |
+| `SidebarRight/__tests__/LayersTab.dispatch.test.tsx` | Exact dispatched action objects for New Layer placement, delete, hide, show, select, rename, remove, blend mode, opacity, Fill, full lock, and reorder intents                                    |
+| `SidebarRight/__tests__/LayersTab.store.test.tsx`    | Live-subscription rendering, refused drops, and abandoned drags leave stacking order untouched                                                                                                    |
+| `SidebarRight/__tests__/SidebarRight.test.tsx`       | Dock gating, collapse, roll-up, pinned-panel behavior, and resize                                                                                                                                 |
+| `e2e/layers-panel.spec.ts`                           | New Layer ordering and undo, hide/show compositing, rename, Merge all, layer-vs-History row identity, row selection, history entries, and empty state                                             |
+| `e2e/layers.spec.ts`                                 | Four-layer drag reorder, deletion, and hidden-state preservation                                                                                                                                  |
+| `Mobile/__tests__/MobileLayersDrawer.test.tsx`       | Thumbnail coverage without touch-scroll capture, move up/down exactness, 44px targets, ARIA structure, opacity gestures, blend mode, full lock, locked-layer behavior, and history groups         |
 
 > The `openWorkspace` helper these specs use is **file-local**, not shared.
 > `e2e/erase-fill-eyedropper.spec.ts` carries its own `openWorkspace`, and it is the only e2e
@@ -885,7 +883,7 @@ this table or explicitly marked as not blocking.
 | 3   | **Layer thumbnail** (`HAVE`)                | Live 48x32 previews are implemented; remaining gaps are thumbnail-size preference and the Smart Object marker ([§3](#3-layer-row-anatomy))                                                     |
 | 4   | **Bottom action bar** (`PARTIAL`)           | New Layer and Delete are implemented, including insertion above the selected layer and drag-to-trash; the remaining five controls need their model support ([§2.6](#26-the-bottom-action-bar)) |
 | 5   | **Opacity + blend mode** (`PARTIAL`)        | Opacity and 16 supported blend modes are editable on desktop and tablet; Photoshop's exact opacity presets and unsupported blend modes remain absent ([§2.4](#24-blend-mode-and-opacity))      |
-| 6   | **Lock controls** (`PARTIAL`)               | Lock All is replayable; three partial flags and full PSD lock round-trip remain unimplemented ([§2.5](#25-the-lock-row-and-fill))                                                              |
+| 6   | **Lock controls + Fill** (`PARTIAL`)        | Lock All and independent Fill opacity are replayable; three partial lock flags remain unavailable ([§2.5](#25-the-lock-row-and-fill))                                                          |
 | 7   | **Selection set**                           | The Move tool's Shift-click row (`docs/TOOLS.md` §Move Tool) and Shift-click-to-extend selection ([§5](#5-selection))                                                                          |
 | 8   | **Group nesting**                           | The new-group button, the folder row, the filter icons, the mask column, and the `Pass Through` default. The largest model change, so it gates rather than follows ([§4](#4-groups))           |
 | 9   | **Panel menu + Panel Options**              | Routes Merge out of two tool bars and into the panel it belongs in ([§2.7](#27-the-panel-menu))                                                                                                |
@@ -955,12 +953,9 @@ A requirement is not done until a test fails without the change. For this panel 
    `selections` / `activeSelectionId` fields are marquee state that must not be reused
    ([§5](#5-selection)). This is the largest single decision in the panel and it belongs to whoever
    owns `StoreContext.tsx`.
-4. **Does Fill get a real field now, or is collapsing it into `opacity` recorded as accepted?** See
-   [§9.1](#91-opacity-and-fill-are-not-the-same-field). Collapsing is defensible while there are no
-   layer effects; it is a migration the day there are.
-5. **Resolved: the separate drag-handle glyph is removed.** Photoshop's row itself is the drag
+4. **Resolved: the separate drag-handle glyph is removed.** Photoshop's row itself is the drag
    target ([§3](#3-layer-row-anatomy)).
-6. **What is the keyboard and focus contract for layer rows?** A prior hardening plan proposed
+5. **What is the keyboard and focus contract for layer rows?** A prior hardening plan proposed
    listbox semantics, arrow/Home/End navigation, and comma and `Alt`-bracket shortcuts, but did not
    establish these as Photoshop behavior. `Ctrl+/` is already documented as the Photoshop lock
    shortcut in [§2.5](#25-the-lock-row-and-fill); validate accessible focus semantics and any

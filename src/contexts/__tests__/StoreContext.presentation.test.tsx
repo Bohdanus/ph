@@ -140,6 +140,7 @@ describe('durable render presentation guard', () => {
         isBedrock: existing.isBedrock,
         visible: existing.visible,
         opacity: existing.opacity,
+        fillOpacity: existing.fillOpacity ?? 1,
         locked: existing.locked,
         blendMode: existing.blendMode,
         order: existing.order,

@@ -40,6 +40,7 @@ import {
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
@@ -574,6 +575,12 @@ describe('planHistoryAppend: layer-property translation', () => {
       actionName: SET_LAYER_OPACITY_ACTION,
       args: { opacity: 0.42 },
       patch: { opacity: 0.42 },
+    },
+    {
+      label: 'a Fill opacity update',
+      actionName: SET_LAYER_FILL_OPACITY_ACTION,
+      args: { fillOpacity: 0.42 },
+      patch: { fillOpacity: 0.42 },
     },
     {
       label: 'a lower opacity update',
