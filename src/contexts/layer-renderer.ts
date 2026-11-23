@@ -508,17 +508,17 @@ function restoreVisibleCanvas(
   snapshot: SnapshotSurface | null
 ): boolean {
   try {
+    if (!snapshot) return false;
+    const context = canvas.getContext('2d');
+    if (!context) return false;
+    // Check the source and destination before resizing, which clears the visible canvas.
     canvas.width = backingSize.width;
     canvas.height = backingSize.height;
     if (backingScale !== 1) {
-      canvas.getContext('2d')?.setTransform(backingScale, 0, 0, backingScale, 0, 0);
       canvas.setAttribute('data-hidpi-ratio', String(backingScale));
     } else {
       canvas.removeAttribute('data-hidpi-ratio');
     }
-    if (!snapshot) return false;
-    const context = canvas.getContext('2d');
-    if (!context) return false;
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.drawImage(snapshot, 0, 0);
     context.setTransform(backingScale, 0, 0, backingScale, 0, 0);
