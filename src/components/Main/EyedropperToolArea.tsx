@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject } from 'react';
+import { useRef, type PointerEvent, type RefObject } from 'react';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -67,6 +67,7 @@ const shiftClickPlacesSampler = (event: PointerEvent<HTMLDivElement>): boolean =
 export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
   const [{ canvasRef, containerRef, totalSize, documentFrame, renderSelector }, dispatch] = useStore();
   const { toolArgs } = useCurrentTool();
+  const dragRef = useRef<{ pointerId: number; allowShiftGesture: boolean } | null>(null);
 
   const args = toolArgs as EyedropperToolArgs;
 
@@ -75,11 +76,8 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     imageSize: totalSize,
   });
 
-  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
+  const sampleAtEvent = (event: PointerEvent<HTMLDivElement>, allowShiftGesture: boolean) => {
     if (args.toolName !== 'eyedropper') return;
-
-    event.preventDefault();
 
     if (args.sampleAllLayers) {
       console.error(EYEDROPPER_ALL_LAYERS_UNSUPPORTED, 'the eyedropper samples the composited canvas only');
@@ -100,7 +98,7 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     const centerX = Math.floor(canvasSeed.x);
     const centerY = Math.floor(canvasSeed.y);
     const frameSize = documentFrameSize(documentFrame);
-    const shiftClick = shiftClickPlacesSampler(event);
+    const shiftClick = allowShiftGesture && shiftClickPlacesSampler(event);
     const hit = shiftClick ? colorSamplerAt(canvasSeed) : null;
     if (hit && event.altKey) {
       // Marker deletion does not read pixels, so it remains available while the previous canvas
@@ -139,14 +137,51 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     // Alpha is dropped: the store's foreground is a CSS colour consumed by an `<input type="color">`,
     // which cannot express it, and the composited canvas has already resolved it.
     //
-    // Alt-click writes the BACKGROUND swatch instead, which is Adobe's own rule: "Alt-click
-    // (Windows) / Command-Option-click (Mac) to sample to the background color"
-    // (https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html). The modifier
-    // is `altKey` on both platforms, so there is no platform branch here.
+    // Alt (Windows) or Option (macOS) writes the BACKGROUND swatch instead.
+    // The DOM exposes Option as `altKey`, so there is no platform branch here.
     dispatch({ type: event.altKey ? 'SET_BACKGROUND_COLOR' : 'SET_COLOR', payload: readback.color });
   };
 
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if (args.toolName !== 'eyedropper') return;
+
+    event.preventDefault();
+    const shiftGesture = shiftClickPlacesSampler(event);
+    dragRef.current = { pointerId: event.pointerId, allowShiftGesture: !shiftGesture };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    sampleAtEvent(event, true);
+  };
+
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !drag.allowShiftGesture) return;
+    sampleAtEvent(event, false);
+  };
+
+  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.allowShiftGesture) sampleAtEvent(event, false);
+    dragRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  };
+
+  const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  };
+
   return (
-    <div className={`${className} cursor-crosshair`} onPointerDown={handlePointerDown} style={{ userSelect: 'none' }} />
+    <div
+      className={`${className} cursor-crosshair`}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
+      style={{ userSelect: 'none' }}
+    />
   );
 };

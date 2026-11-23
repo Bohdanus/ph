@@ -107,9 +107,11 @@ in the shadows and highlights. This option also tries to keep colors from shifti
 (<https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=217>). The **rebuild** is
 the later of the two and is **CS5**: "Luckily, back in Photoshop CS5, Adobe updated these tools,
 which totally fixed the problem" (<https://planetphotoshop.com/using-the-dodge-and-burn-tools-2.html>).
-So the two are now separate rows. The **default-ON** state is unchanged and still rests on
-`fstoptraining` alone; no source here states a default for it, and the row says so by omission
-rather than claiming otherwise.
+So the two are now separate rows. Adobe's May 2024 Photoshop for iPad guide says `Protect Tones` is
+on by default; the current desktop page documents the control's purpose but does not state a desktop
+default. The 2021 `fstoptraining` guide also reports a checked default at publication. The
+descriptor identifies the iPad evidence and does not transfer that default to desktop without a
+desktop-specific source.
 
 ## Blur Tool
 
@@ -285,16 +287,17 @@ the bar today, in the order the table uses: set Size and Hardness in the Brush S
 pixelation and maintain image quality", then "Select **Sample All Layers** if you want sharpening to
 use data from all visible layers"
 (<https://helpx.adobe.com/photoshop/desktop/effects-filters/smart-filters/sharpen-a-selection.html>).
-That enumeration is also why the two rows moved: `Protect Detail` sat after `Sample All Layers` in
-the array, and the type contract asks for bar order. It now sits between `Strength` and
-`Sample All Layers`, which is where Adobe puts it. `Mode` stays where it was — Adobe's current page
-does not mention a `Mode` on this bar at all, so there is no Adobe order to defer to, and the
-third-party sources that place it put it after `Strength`. The Elements reference is kept, not
+Adobe's February and October 2026 desktop guides give different sequences for `Protect Detail` and
+`Sample All Layers`, so the prose sequence does not establish the controls' visual order in the bar.
+The October 2026 Sharpen guide explicitly lists a blend Mode in Brush Settings before Strength.
+Those current desktop guides differ in how completely they enumerate the controls, so Mode's
+existence is established while its available choices and default are not. The Elements reference is kept, not
 because it is the only evidence but because it carries the longer wording the row quotes ("The
 Sharpen tool now has a Protect Detail option, that ensures minimized pixelated artifacts while
 enhancing and sharpening"), and because the third-party pages that hedged about it were hedging
-about a version range the desktop bar has long since settled. `## Unverified` 5 is now about the
-`Protect Tones` default, not about this control's existence.
+about a version range the desktop bar has long since settled. Adobe does not specify the checkbox's
+current initial state; a 2010 Deke McClelland article reports it checked by default for the CS5-era
+tool. The descriptor records that historical qualification rather than asserting a current default.
 
 **App verdict: the Unsharp Mask filter under the tool's name.** The bar is `Amount`
 (`src/components/ToolbarsRight/Sharpen/Sharpen.tsx` — `Sharpen()`'s `Amount` slider, 0–500%, seeded
@@ -497,8 +500,10 @@ The Dodge tool is the darkroom dodging: a printer holds light back under a finge
 part of the print. Adobe's current help page names the whole bar — brush preset, Range, Exposure,
 Airbrush, and "Select the **Protect Tones** checkbox to help maintain color and prevent clipping in
 highlights and shadows". A 2021 training write-up documents the rebuild: the two tools were
-"completely reworked" underneath, `Range` isolates a luminance band so the effect does not spill
-into neighbouring tones, and `Protect Tones` is **checked by default** in the current version.
+"completely reworked" underneath and `Range` isolates a luminance band so the effect does not spill
+into neighbouring tones. Adobe's May 2024 Photoshop for iPad guide states that `Protect Tones` is
+checked by default; Adobe's current desktop page does not state a desktop default. The 2021 training
+write-up also reports the checkbox on in the version it describes.
 
 **There is no `Mode` control on the Dodge or Burn bar, and the row has been removed.** The earlier
 draft carried a `Mode` row for both tools, describing "a short list of three that the control cycles
@@ -567,13 +572,13 @@ because a build-up accelerator that shipped on would be the surprise, and hedgin
 in the family would make the table unreadable. It is the same species of claim as `## Unverified` 5
 and it is flagged as such here.
 
-| Control             | Photoshop behaviour                               | Default / range | App status | App source                                                                                 |
-| ------------------- | ------------------------------------------------- | --------------- | ---------- | ------------------------------------------------------------------------------------------ |
-| Brush Preset Picker | The tip, with Size and Hardness                   | preset library  | `partial`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Size` and `Hardness` sliders |
-| Range               | Shadows / Midtones / Highlights                   | Midtones        | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Range` dropdown              |
-| Exposure            | Strength of each pass; the only intensity control | 50%, 0–100      | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Exposure` slider             |
-| Protect Tones       | Stop lightening desaturating and clipping         | on              | `missing`  | —                                                                                          |
-| Airbrush            | Keep building while the brush rests               | off (unsourced) | `missing`  | —                                                                                          |
+| Control             | Photoshop behaviour                               | Default / range                | App status | App source                                                                                 |
+| ------------------- | ------------------------------------------------- | ------------------------------ | ---------- | ------------------------------------------------------------------------------------------ |
+| Brush Preset Picker | The tip, with Size and Hardness                   | preset library                 | `partial`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Size` and `Hardness` sliders |
+| Range               | Shadows / Midtones / Highlights                   | Midtones                       | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Range` dropdown              |
+| Exposure            | Strength of each pass; the only intensity control | 50%, 0–100                     | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Exposure` slider             |
+| Protect Tones       | Stop lightening desaturating and clipping         | on (iPad; desktop unspecified) | `missing`  | —                                                                                          |
+| Airbrush            | Keep building while the brush rests               | off (unsourced)                | `missing`  | —                                                                                          |
 
 **App verdict: Range and Exposure are real; the defining interaction is absent.** Range writes a
 field the processor reads, and Exposure drives a per-pixel amount rather than a display-only value,
@@ -610,6 +615,7 @@ it off `placeholder`: a real raster and a real history entry come out of the oth
 **Sources**
 
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html>
+- <https://helpx.adobe.com/photoshop/ipad/retouch-and-adjust-images/dodge-burn-ipad.html>
 - <https://helpx.adobe.com/photoshop/using/painting-tools.html>
 - <https://www.peachpit.com/articles/article.aspx?p=3104540>
 - <https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>
@@ -638,13 +644,13 @@ two `missing` controls, the `partial` preset picker, the absent build-up — and
 bindings and the `[`/`]` brush-size pair apply to it exactly as they do to the Dodge. The app binds
 none of the four.
 
-| Control             | Photoshop behaviour                               | Default / range | App status | App source                                                                                 |
-| ------------------- | ------------------------------------------------- | --------------- | ---------- | ------------------------------------------------------------------------------------------ |
-| Brush Preset Picker | The tip, with Size and Hardness                   | preset library  | `partial`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Size` and `Hardness` sliders |
-| Range               | Shadows / Midtones / Highlights                   | Midtones        | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Range` dropdown              |
-| Exposure            | Strength of each pass; the only intensity control | 50%, 0–100      | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Exposure` slider             |
-| Protect Tones       | Stop darkening raising saturation or clipping     | on              | `missing`  | —                                                                                          |
-| Airbrush            | Keep building while the brush rests               | off (unsourced) | `missing`  | —                                                                                          |
+| Control             | Photoshop behaviour                               | Default / range                | App status | App source                                                                                 |
+| ------------------- | ------------------------------------------------- | ------------------------------ | ---------- | ------------------------------------------------------------------------------------------ |
+| Brush Preset Picker | The tip, with Size and Hardness                   | preset library                 | `partial`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Size` and `Hardness` sliders |
+| Range               | Shadows / Midtones / Highlights                   | Midtones                       | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Range` dropdown              |
+| Exposure            | Strength of each pass; the only intensity control | 50%, 0–100                     | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Exposure` slider             |
+| Protect Tones       | Stop darkening raising saturation or clipping     | on (iPad; desktop unspecified) | `missing`  | —                                                                                          |
+| Airbrush            | Keep building while the brush rests               | off (unsourced)                | `missing`  | —                                                                                          |
 
 **App verdict: same processor, other endpoint, same gaps — including the `partial` verdict.** Burn
 is `applyDodgeBurn(..., false)` against the dodge's `true` (`src/tools/dodgeBurn.ts` — `burn()`), so
@@ -672,7 +678,7 @@ the value itself, and no dwell anywhere in the stroke hook to accumulate more.
 
 ## Sponge Tool
 
-The seventh member of this family, and the only **chroma** operation in it. Where the Dodge and the
+The seventh member of this family, and on color images the only **chroma** operation in it. Where the Dodge and the
 Burn scale a channel towards white or black inside a chosen tonal band, the Sponge scales a pixel's
 distance from its own luminance — which is exactly why its bar carries `Mode` and `Flow` where the
 pair carry `Range` and `Exposure`, and why this family's notes had to be reopened rather than
@@ -1034,27 +1040,20 @@ a binding is **absent**, which is the stronger form of the same objection.
    of the range", and do not quote 85/170 as Photoshop's values.** The app's own split is luma 128
    (`TONAL_SPLIT` in `src/tools/dodgeBurn.ts`), which is a different proposition and is
    verifiable in the tree.
-4. **`Protect Texture` as the desktop control name.** The recovered research states the control is
-   **Protect Texture**, and that Adobe's iPad documentation says so explicitly for the equivalent
-   "Protect Tones", defaulting it ON. Two searches returned nothing relevant, and **the iPad page
-   was never opened**. Adobe's _desktop_ help page that I did open uses **Protect Tones**
-   (<https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html>),
-   as does the 2021 training page. The data file uses `Protect Tones` because that is the spelling a
-   page I opened puts on the desktop bar, and the type contract asks for the current options-bar
-   label verbatim. If `Protect Texture` is correct for the desktop bar and `Protect Tones` is the
-   iPad or legacy spelling, three control names change and the citation changes with them. The
-   **default-ON** state _is_ independently sourced, by `fstoptraining`, and is asserted.
-5. **The Dodge/Burn `Protect Tones` **default**, not the control.** The control's existence and its
-   current desktop spelling are settled (see item 4 and the version table), and the **default-ON**
-   state is the weaker half: `fstoptraining` is the only source, and Adobe's current page does not
-   state a default for it. The data file asserts it anyway, because a positive third-party
-   statement beats silence, but this is the item to close if someone opens the bar and finds it
-   off. The CS5 write-up behind the Sharpen's `Protect Detail` does say that control's box is on by
-   default (<https://www.deke.com/content/advanced-sharpening-techniques-or-close-to-the-edge-part-deux>),
-   which is a different product's control and does not transfer. The `Airbrush` rows on both tools
-   carry the same species of unsourced default and the same reasoning, and the Dodge table now marks
-   it "off (unsourced)" so the reader can see it. The Elements-era `Protect Detail` question this
-   item used to hold is gone: see the header above.
+4. **`Protect Texture` versus `Protect Tones`.** The recovered research proposed **Protect Texture**
+   for desktop and said iPad uses **Protect Tones**. Adobe's current desktop and May 2024 iPad pages
+   both use **Protect Tones**, so the descriptor uses that exact label for both. Adobe's iPad page
+   says the checkbox is on by default; the current desktop page does not state a desktop default.
+5. **The Dodge/Burn `Protect Tones` default on desktop.** Adobe's May 2024 Photoshop for iPad guide
+   says the checkbox is on by default on iPad; Adobe's current desktop page documents its purpose but
+   does not state the desktop default. The 2021 `fstoptraining` source also reports it checked in the
+   version it describes. The table labels the platform rather than transferring the iPad state to
+   desktop. The CS5 write-up behind Sharpen's `Protect Detail` reports that different control checked by
+   default (<https://www.deke.com/content/advanced-sharpening-techniques-or-close-to-the-edge-part-deux>);
+   that historical report does not establish the current Dodge/Burn default. The `Airbrush` rows on
+   both tools carry the same species of unsourced default and the same reasoning, and the Dodge table
+   now marks it "off (unsourced)" so the reader can see it. The Elements-era `Protect Detail`
+   question this item used to hold is gone: see the header above.
 6. **The Blur tool's `Sample Size` control.** The only source that puts "Sample Size" near the Blur
    tool is the `flylib` CS2 reference, whose Blur section carries a stray bullet "Double-check the
    Sample Size pop-up menu" immediately after the Blur controls — but the same book documents
@@ -1108,15 +1107,17 @@ a binding is **absent**, which is the stronger form of the same objection.
     desktop Smudge guide says `R` cycles through retouching tools until Smudge appears, while its
     2024 Rotate View guide labels Rotate View as `R` and the 2019 Photoshop reference also lists
     Rotate View as `R`. The Smudge entry therefore records both first-party claims and leaves the
-    default unresolved; do not infer `R` for Blur or Sharpen from their shared tool group. Photoshop
-    Elements' reference prints `R` for the three-tool group
+    default unresolved; do not infer `R` for Blur or Sharpen from their shared tool group. Adobe's
+    October 2026 desktop Sharpen guide has now been opened: it names Brush tip, blend Mode, Strength,
+    Sample All Layers, and Protect Detail, but gives no keyboard binding. The current Blur guide
+    also names no letter. Photoshop Elements' reference prints `R` for the three-tool group
     (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>).
     The two CS-era sources that give the group `R`
     (`flylib`, and the CS2 keyboard sheet on
     <https://alexandru2882.wordpress.com/wp-content/uploads/2016/10/2074975-adobe-photoshop-cs2-tools-and-basics.pdf>)
-    now only corroborate it. **Still open: the Blur and the Sharpen.** Adobe's current Blur page
-    names no letter, and the current Sharpen page could not be opened, so neither carries an `R`
-    row — the same rule the other five controls in this file follow, where a claim goes in the data
+    now only corroborate it. **Still open: the Blur and the Sharpen.** Neither current tool-specific
+    guide names a letter, so neither carries an `R` row — the same rule the other five controls in
+    this file follow, where a claim goes in the data
     file only if a page puts it on that tool. The app binds none of the three: the `Blur`, `Sharpen`
     and `Smudge` entries in `toolbar-mapping.ts`'s Focus flyout all declare no `shortcut`, so this
     is an accuracy question, not an app-fidelity one.
@@ -1177,3 +1178,12 @@ a binding is **absent**, which is the stronger form of the same objection.
     tutorial describes it as boosting _subtle_ colours more than saturated ones, which is the
     Lightroom semantic, against Adobe's own "minimize clipping". Recorded because a future reader
     meeting that tutorial will otherwise think the app got it wrong.
+21. **Which blending modes the current Sharpen tool offers, and its default.** Adobe's October 2026
+    desktop Sharpen guide tells users to choose a blend Mode in Brush Settings but does not list the
+    tool-specific choices or default. A February 2026 selection guide omits Mode from its control
+    sequence, so Adobe's pages differ in completeness; the newer explicit Sharpen-specific statement
+    establishes that the control exists, not which values it offers. Separately, Adobe's general
+    blending-mode reference lists 11 modes for 32-bit images, while its 32-bpc HDR support guide lists
+    15 for 32-bpc HDR images. These page-level lists overlap in 32-bit scope and Adobe does not
+    reconcile their counts or map either list to Sharpen's control. The HDR guide includes Sharpen
+    among supported tools.

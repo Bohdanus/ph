@@ -154,7 +154,7 @@ export const REFUSALS = {
   'main-worktree': () =>
     'This is the main checkout. It is never a deletion candidate — it is the landing site every other session resolves paths through.',
   'main-worktree-path-unavailable': () =>
-    'Git did not verify a registered main checkout and its common Git directory. The disposer needs both to verify the base and delete the branch after removing this worktree.',
+    'Git did not verify the common Git directory and, when deleting the branch, a registered main checkout. The disposer needs stable repository access after removing this worktree.',
   detached: () => 'HEAD is detached, so there is no branch to delete and no name to anchor. Resolve the branch first.',
   'no-branch': () => 'This worktree reports no branch, so there is nothing safe to delete after the worktree goes.',
   locked: (reason) =>
@@ -220,11 +220,11 @@ export const REFUSALS = {
   'ignored-content': (count, paths) =>
     `The working tree holds ${count} gitignored path(s) that no command rebuilds, so they exist in no commit, no ref and no reflog: ${paths.slice(0, 8).join(', ')}${paths.length > 8 ? `, +${paths.length - 8} more` : ''}. \`git status\` does not list these, which is why a tree holding only them reads as clean. Commit them with \`git add -f\`, or move them out, before removing the directory.`,
   'operation-in-progress': (detail, remedy, ownership, remedyless) =>
-    `A git operation is in progress in this worktree, and removing the directory deletes the state files that are its only record: ${detail}. Nothing about it is in a commit, a ref or the reflog, so this is unrecoverable rather than merely inconvenient. ` +
+    `Git operation state is present in this worktree, and removing the directory deletes the state files that are its only record: ${detail}. Nothing about that state is in a commit, a ref or the reflog, so this is unrecoverable rather than merely inconvenient. ` +
     (remedy
       ? `Finish or abandon it deliberately — ${remedy} — and re-run this. If every conflict is already resolved, COMMIT it instead: the abort throws the resolution away, which is the one outcome this refusal exists to prevent. `
       : remedyless
-        ? `Git has no command that abandons ${remedyless}, so there is nothing to run: finish or commit the resolution there, or reset the worktree by hand. `
+        ? `No safe abort command can be selected for ${remedyless}. Verify the owner and follow the owner-checked recovery procedure before changing any marker; otherwise finish or commit the resolution there, or reset the worktree by hand. `
         : `No operation marker is set, so no abort will clean this up — inspect \`git diff --name-only --diff-filter=U\` there and resolve or stage it by hand. `) +
     (ownership ?? ''),
   'operation-state-unreadable': (detail, command) =>
@@ -493,7 +493,7 @@ export function preflight({
   // bare working directory. Protect the base branch independently of Git's
   // `isPrimary` marker so a stale inventory cannot classify it for removal.
   if (gitState.isPrimary || gitState.branch === 'main') refuse('main-worktree');
-  if (!keepBranch && (!gitState.mainWorktreePath || !gitState.commonDir)) refuse('main-worktree-path-unavailable');
+  if (!gitState.commonDir || (!keepBranch && !gitState.mainWorktreePath)) refuse('main-worktree-path-unavailable');
   if (gitState.detached) refuse('detached');
   // `readGitState` writes one of two parenthesised placeholders when
   // `git worktree list --porcelain` gave no `branch` line. They are matched by
@@ -628,7 +628,11 @@ export function preflight({
   } else if (state.readError) {
     refuse('operation-state-unreadable', state.readError, 'git diff --name-only --diff-filter=U');
   } else if (state.operations.length > 0 || state.unmerged.length > 0) {
-    const named = state.operations.map((o) => `${o.operation} (${o.marker}${o.value ? ` -> ${o.value}` : ''})`);
+    const named = state.operations.map((o) =>
+      typeof o.operation === 'string'
+        ? `${o.operation} (${o.marker}${o.value ? ` -> ${o.value}` : ''})`
+        : `${o.marker ?? 'Unknown'} marker without a primary operation marker`
+    );
     const unmerged = state.unmerged.length > 0 ? [`${state.unmerged.length} unmerged path(s) in the index`] : [];
     // No remedy name when there is no command to name. `git merge --abort` does nothing
     // for an unresolvable index with no operation behind it, and a squash has no abandon
@@ -642,7 +646,11 @@ export function preflight({
       remedy === '' && state.operations.length > 0
         ? state.operations
             .filter((o) => abortCommand(o) === null)
-            .map((o) => `a ${o.operation}`)
+            .map((o) =>
+              typeof o.operation === 'string'
+                ? `a ${o.operation}`
+                : `the unpaired ${o.marker ?? 'unknown'} marker, which does not identify an operation`
+            )
             .join(' or ')
         : null;
     refuse(
@@ -1586,9 +1594,9 @@ export function dispose(
   } = {}
 ) {
   const steps = [];
-  if (!keepBranch && (!gitState.mainWorktreePath || !gitState.commonDir)) {
+  if (!gitState.commonDir || (!keepBranch && !gitState.mainWorktreePath)) {
     steps.push(
-      `KEPT worktree ${gitState.absolutePath}: Git did not report a registered main checkout and common directory to use after removal`
+      `KEPT worktree ${gitState.absolutePath}: Git did not report the common directory and, for branch deletion, a registered main checkout to use after removal`
     );
     return {
       steps,
@@ -1596,20 +1604,36 @@ export function dispose(
       worktreeRemoved: false,
       anchorRef: null,
       salvage: null,
-      branchKept: false,
+      branchKept: null,
     };
   }
   const mainWorktreeCwd = gitState.mainWorktreePath ?? cwd;
   // Keep ref operations bound to the captured repository even if that checkout
   // path is replaced after readGitState validates it.
   const runInRepository = (args) => run(mainWorktreeCwd, ['--git-dir', gitState.commonDir, ...args]);
+  const runInCommonDir = (args) => run(gitState.commonDir, ['--git-dir', gitState.commonDir, ...args]);
+  let branchRefCheckError = null;
+  const branchRefExists = () => {
+    if (!gitState.branch) return null;
+    try {
+      const ref = `refs/heads/${gitState.branch}`;
+      const refs = runInCommonDir(['for-each-ref', '--format=%(refname)', '--', ref])
+        .stdout.split('\n')
+        .map((entry) => entry.trim());
+      branchRefCheckError = null;
+      return refs.includes(ref);
+    } catch (err) {
+      branchRefCheckError = firstLine(err);
+      return null;
+    }
+  };
   // NO ANCHOR WHEN THE BRANCH SURVIVES. The anchor exists so a deleted branch is
   // still reachable; a branch that is deliberately kept is already reachable,
   // and writing `refs/keep/disposed/<slug>` for it would put a ref that reads as
   // evidence of a disposal next to a branch that was never disposed. The
   // asymmetry is the point: `disposed/` means "this was removed and this is the
   // only copy", and it must keep meaning that.
-  const ref = keepBranch ? null : anchor(cwd, gitState, { run });
+  let ref = keepBranch ? null : anchor(cwd, gitState, { run });
   if (ref) steps.push(`anchored ${gitState.tip} at ${ref}`);
   else if (keepBranch) steps.push(`no anchor ref: the branch ${gitState.branch} is being kept`);
   else {
@@ -1620,7 +1644,7 @@ export function dispose(
       worktreeRemoved: false,
       anchorRef: null,
       salvage: null,
-      branchKept: false,
+      branchKept: null,
     };
   }
 
@@ -1643,7 +1667,7 @@ export function dispose(
       worktreeRemoved: false,
       anchorRef: ref,
       salvage: null,
-      branchKept: true,
+      branchKept: null,
     };
   }
 
@@ -1662,7 +1686,7 @@ export function dispose(
       worktreeRemoved: false,
       anchorRef: ref,
       salvage: saved,
-      branchKept: keepBranch,
+      branchKept: null,
     };
   }
 
@@ -1676,7 +1700,7 @@ export function dispose(
         worktreeRemoved: false,
         anchorRef: ref,
         salvage: saved,
-        branchKept: true,
+        branchKept: null,
       };
     }
     try {
@@ -1693,7 +1717,7 @@ export function dispose(
         worktreeRemoved: false,
         anchorRef: ref,
         salvage: saved,
-        branchKept: true,
+        branchKept: null,
       };
     }
   }
@@ -1708,7 +1732,7 @@ export function dispose(
       worktreeRemoved: false,
       anchorRef: ref,
       salvage: saved,
-      branchKept: true,
+      branchKept: null,
     };
   }
 
@@ -1730,25 +1754,48 @@ export function dispose(
       worktreeRemoved: false,
       anchorRef: ref,
       salvage: saved,
-      branchKept: keepBranch,
+      branchKept: null,
     };
   }
 
   let branchDeleted = false;
+  let branchKept = null;
   if (keepBranch) {
     // THE WHOLE POINT OF THE STATUS, IN ONE BRANCH OF ONE FUNCTION. A legacy
     // worktree's directory goes and its branch stays: git holds a branch with no
     // worktree, so this costs a ref and saves the checkout, its `node_modules`
     // and its `dist/`.
-    steps.push(`KEPT branch ${gitState.branch}: the branch-preserving disposal mode leaves its ref in place`);
+    branchKept = branchRefExists();
+    const outcome = branchKept === true ? 'KEPT' : branchKept === false ? 'MISSING' : 'UNVERIFIED';
+    if (branchKept === false) {
+      // The branch was the only recovery point for a branch-preserving
+      // disposal. If it vanished during removal, preserve the captured tip
+      // before returning the failure so the caller has a recoverable ref.
+      ref = anchor(cwd, gitState, { run });
+    }
+    const recovery =
+      branchKept === false
+        ? ref
+          ? `; captured tip anchored at ${ref}`
+          : '; no recovery anchor could be created'
+        : branchKept === null && branchRefCheckError
+          ? `; ref check failed: ${branchRefCheckError}`
+          : '';
+    steps.push(
+      `${outcome} branch ${gitState.branch} after worktree removal in branch-preserving disposal mode${recovery}`
+    );
   } else {
     if (!noOpMergeBaseIsCurrent()) {
+      branchKept = branchRefExists();
+      const branchState =
+        branchKept === true ? 'is still present' : branchKept === false ? 'is absent' : 'is unverified';
       steps.push(
-        `KEPT branch ${gitState.branch}: main moved or became unreadable after worktree removal; its commits remain at ${ref}`
+        `removed worktree ${gitState.absolutePath}, but did not delete branch ${gitState.branch}: main moved or became unreadable after worktree removal; its ref ${branchState}${branchRefCheckError ? ` (${branchRefCheckError})` : ''}; captured tip remains anchored at ${ref}`
       );
-      return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept: true };
+      return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept };
     }
     const deleteFlag = deleteUnmergedBranch ? '-D' : '-d';
+    let deleteError = null;
     try {
       runInRepository(['branch', deleteFlag, gitState.branch]);
       branchDeleted = true;
@@ -1758,12 +1805,36 @@ export function dispose(
         );
       } else steps.push(`deleted branch ${gitState.branch}`);
     } catch (err) {
+      deleteError = err;
+    }
+    branchKept = branchRefExists();
+    if (deleteError) {
+      const outcome = branchKept === true ? 'KEPT' : branchKept === false ? 'MISSING' : 'UNVERIFIED';
+      const recovery = ref ? `The captured tip remains anchored at ${ref}.` : 'No recovery anchor exists.';
       steps.push(
-        `KEPT branch ${gitState.branch}: could not delete it with \`git branch ${deleteFlag}\` (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
+        `${outcome} branch ${gitState.branch}: could not delete it with \`git branch ${deleteFlag}\` (${firstLine(deleteError)}). ${branchRefCheckError ? `Ref verification also failed: ${branchRefCheckError}. ` : ''}${recovery}`
+      );
+      return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept };
+    }
+    if (branchKept === true) {
+      steps.push(`branch ref ${gitState.branch} exists after the deletion command; disposal is incomplete`);
+    } else if (branchKept === null) {
+      steps.push(
+        `UNVERIFIED branch ${gitState.branch}: could not confirm its ref was deleted${branchRefCheckError ? ` (${branchRefCheckError})` : ''}`
       );
     }
   }
-  return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept: keepBranch };
+  return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept };
+}
+
+/**
+ * Return success only when the requested worktree and branch outcome occurred.
+ * `branchKept` is a verified post-removal ref state; `null` never means success.
+ */
+export function disposalExitCode(result, { keepBranch = false } = {}) {
+  if (!result?.worktreeRemoved) return 2;
+  if (keepBranch) return !result.branchDeleted && result.branchKept === true ? 0 : 2;
+  return result.branchDeleted && result.branchKept === false ? 0 : 2;
 }
 
 function realpathIfExists(p) {
@@ -1994,7 +2065,36 @@ function main(argv) {
   });
   for (const step of result.steps) process.stdout.write(`  ${step}\n`);
   if (!result.worktreeRemoved) {
-    process.stderr.write('dispose: nothing was deleted.\n');
+    process.stderr.write(
+      `dispose: no worktree or active branch was deleted.${result.anchorRef ? ` The reviewed tip remains anchored at ${result.anchorRef}.` : ''}\n`
+    );
+    return 2;
+  }
+  if (result.branchKept === null) {
+    const recovery = result.anchorRef
+      ? `The captured tip is anchored at ${result.anchorRef}.`
+      : 'No recovery anchor was created.';
+    process.stderr.write(
+      `dispose: ${gitState.name} worktree was removed, but branch ${gitState.branch} state could not be confirmed. ${recovery} Inspect the branch ref before taking any further action.\n`
+    );
+    return 2;
+  }
+  if (!verdict.keepBranch && (!result.branchDeleted || result.branchKept !== false)) {
+    const command = result.branchDeleted ? 'Git reported deletion complete, but' : 'Git did not complete deletion, and';
+    const recovery = result.anchorRef
+      ? `The captured tip is anchored at ${result.anchorRef}.`
+      : 'No recovery anchor exists.';
+    process.stderr.write(
+      `dispose: ${gitState.name} worktree was removed, but ${command} branch ${gitState.branch} ${result.branchKept ? 'ref is still present' : 'ref is absent'} after disposal. ${recovery} Recheck before any retry.\n`
+    );
+    return 2;
+  }
+  if (verdict.keepBranch && (result.branchDeleted || result.branchKept !== true)) {
+    const outcome = result.branchKept === false ? 'the branch ref is absent' : 'branch retention was not confirmed';
+    const recovery = result.anchorRef
+      ? `The captured tip is anchored at ${result.anchorRef}.`
+      : 'No recovery anchor was created.';
+    process.stderr.write(`dispose: ${gitState.name} worktree was removed, but ${outcome}. ${recovery}\n`);
     return 2;
   }
   process.stdout.write(
@@ -2005,7 +2105,7 @@ function main(argv) {
   // A kept branch is not a failed deletion, so it must not report exit 2 — that
   // code means "git refused" and is what a caller reads as "nothing was done".
   // The worktree is gone and the branch survived, which is the whole request.
-  return result.branchDeleted || result.branchKept ? 0 : 2;
+  return disposalExitCode(result, { keepBranch: verdict.keepBranch });
 }
 
 /**

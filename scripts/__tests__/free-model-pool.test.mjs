@@ -1,16 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync, realpathSync, symlinkSync } from 'node:fs';
+import { link, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, join } from 'node:path';
+import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 import {
   catalogCandidates,
   completeWithFreeModel as completeWithFreeModelImplementation,
   CONTROL_PLANE_TIMEOUT_MS,
   discoverGroqKeyFiles,
+  filterOpenCodePath,
   isContentPolicyError,
   loadCatalogs,
   main,
@@ -19,6 +20,7 @@ import {
   normalizeGroqKeys,
   orderFreeModelRoutes,
   readBoundedPrompt,
+  resolveOpenCodeCommand,
   runOpenCodeCompletion,
   zeroPriced,
 } from '../free-model-pool.mjs';
@@ -48,8 +50,8 @@ const completeWithFreeModel = async (prompt, options = {}) => {
   }
 };
 
-async function writeFakeOpenCode(directory, source) {
-  const commandPath = join(directory, 'fake-opencode');
+async function writeFakeOpenCode(directory, source, name = 'fake-opencode') {
+  const commandPath = join(directory, name);
   if (process.platform === 'win32') {
     const scriptPath = `${commandPath}.cjs`;
     const shimPath = `${commandPath}.cmd`;
@@ -383,6 +385,22 @@ describe('free model catalog filtering', () => {
     });
   });
 
+  it('exhausts OpenCode for the run after bare executable lookup returns ENOENT', async () => {
+    const fetchImpl = catalogFetch({
+      opencode: [
+        { id: 'beam-free', owned_by: 'opencode' },
+        { id: 'deepseek-v4.1-flash-free', owned_by: 'opencode' },
+      ],
+    });
+    const missingExecutable = Object.assign(new Error('OpenCode CLI was not found'), { code: 'ENOENT' });
+    const runOpenCode = vi.fn().mockRejectedValue(missingExecutable);
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, opencodeCommand: 'opencode', runOpenCode })
+    ).rejects.toThrow(/No free model completed/);
+    expect(runOpenCode).toHaveBeenCalledTimes(1);
+  });
+
   it('honors an explicit Nemotron token budget above the default', async () => {
     const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     const fetchImpl = catalogFetch({ kilo: [kiloRow(model)] });
@@ -399,6 +417,34 @@ describe('free model catalog filtering', () => {
       maxTokens: 8192,
       timeoutMs: 12 * 60 * 1000,
     });
+  });
+
+  it('retries truncated Kilo Nemotron once with a larger response-length budget', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({ kilo: [kiloRow(model)] });
+    const runKilo = vi
+      .fn()
+      .mockResolvedValueOnce({ model, content: 'partial', finishReason: 'length' })
+      .mockResolvedValueOnce({ model, content: 'complete', finishReason: 'stop' });
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, kiloCommand: '/fake-kilo', runKilo })
+    ).resolves.toMatchObject({ source: 'kilo', model, content: 'complete' });
+    expect(runKilo.mock.calls.map(([options]) => options?.maxTokens)).toEqual([4096, 6144]);
+  });
+
+  it('retries truncated OpenCode Nemotron once with a larger response-length budget', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({ opencode: [{ id: model, owned_by: 'opencode' }] });
+    const runOpenCode = vi
+      .fn()
+      .mockResolvedValueOnce({ model, content: 'partial', finishReason: 'length' })
+      .mockResolvedValueOnce({ model, content: 'complete', finishReason: 'stop' });
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, opencodeCommand: '/fake-opencode', runOpenCode })
+    ).resolves.toMatchObject({ source: 'opencode', model, content: 'complete' });
+    expect(runOpenCode.mock.calls.map(([options]) => options?.maxTokens)).toEqual([4096, 6144]);
   });
 
   it('blocks noncanonical Nemotron variants before any inference request', async () => {
@@ -867,18 +913,610 @@ describe('free model rotation', () => {
     const command = await writeFakeOpenCode(
       directory,
       `const fs = require('node:fs');
+const path = require('node:path');
 const args = process.argv.slice(2);
 const model = args[args.indexOf('--model') + 1];
-if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(9);
+const policies = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT).policies;
+for (const action of ['tool.use', 'mcp.use', 'skill.use', 'plugin.use', 'websearch.use', 'integration.connect']) {
+  if (!policies.some((policy) => policy.action === action && policy.resource === '*' && policy.effect === 'deny')) {
+    process.exit(9);
+  }
+}
+for (const action of ['provider.use', 'integration.use']) {
+  if (!policies.some((policy) => policy.action === action && policy.resource === '*' && policy.effect === 'deny')) {
+    process.exit(12);
+  }
+  const finalDecision = policies
+    .filter((policy) => policy.action === action && ['*', 'opencode'].includes(policy.resource))
+    .pop();
+  if (finalDecision?.resource !== 'opencode' || finalDecision.effect !== 'allow') {
+    process.exit(13);
+  }
+}
+if (process.env.OPENCODE_PURE !== '1' || process.env.OPENCODE_DISABLE_PROJECT_CONFIG !== '1') process.exit(10);
 if (!fs.readFileSync(args[args.indexOf('--file') + 1], 'utf8').includes('private prompt')) process.exit(8);
+const isolatedHome = fs.realpathSync(process.env.HOME);
+if (isolatedHome !== fs.realpathSync(process.cwd())) process.exit(7);
+for (const [key, suffix] of [['XDG_CONFIG_HOME', 'xdg-config'], ['XDG_DATA_HOME', 'xdg-data'], ['XDG_CACHE_HOME', 'xdg-cache']]) {
+  if (path.basename(process.env[key]) !== suffix || fs.realpathSync(path.dirname(process.env[key])) !== isolatedHome) process.exit(11);
+}
+if (process.env.USERPROFILE && fs.realpathSync(process.env.USERPROFILE) !== isolatedHome) process.exit(5);
+if (process.env.APPDATA && process.env.APPDATA !== path.join(process.env.HOME, 'AppData', 'Roaming')) process.exit(4);
+if (process.env.LOCALAPPDATA && process.env.LOCALAPPDATA !== path.join(process.env.HOME, 'AppData', 'Local')) process.exit(3);
+if (
+  process.env.OPENROUTER_API_KEY ||
+  process.env.ANTHROPIC_API_KEY ||
+  process.env.OPENCODE_API_KEY ||
+  process.env.OPENCODE_CONFIG_DIR ||
+  process.env.UNRELATED_SECRET
+) process.exit(6);
 console.log(JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }));
 console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }));`
     );
 
     try {
       await expect(
-        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'private prompt', maxTokens: 64 })
+        runOpenCodeCompletion({
+          command,
+          model: 'beam-free',
+          prompt: 'private prompt',
+          maxTokens: 64,
+          environment: {
+            PATH: process.env.PATH,
+            HOME: '/fixture/home',
+            USERPROFILE: '/fixture/profile',
+            XDG_CONFIG_HOME: '/fixture/opencode-config',
+            XDG_DATA_HOME: '/fixture/opencode-data',
+            XDG_CACHE_HOME: '/fixture/opencode-cache',
+            APPDATA: '/fixture/roaming',
+            LOCALAPPDATA: '/fixture/local-app-data',
+            OPENROUTER_API_KEY: 'do-not-forward-openrouter',
+            ANTHROPIC_API_KEY: 'do-not-forward-anthropic',
+            OPENCODE_API_KEY: 'do-not-forward-opencode',
+            OPENCODE_CONFIG_DIR: '/fixture/custom-config',
+            UNRELATED_SECRET: 'do-not-forward',
+          },
+        })
       ).resolves.toMatchObject({ content: 'complete answer', finishReason: 'stop', model: 'beam-free', usage: null });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not resolve OpenCode from repository-local PATH entries or aliases', async () => {
+    const projectRoot = resolve(import.meta.dirname, '../..');
+    const projectBin = await mkdtemp(join(projectRoot, '.opencode-path-shadow-'));
+    let trustedBin;
+    try {
+      trustedBin = await mkdtemp(join(tmpdir(), 'free-model-opencode-trusted-'));
+      const aliasBin = join(trustedBin, 'aliases');
+      await mkdir(aliasBin);
+      const commandName = basename(projectBin).replaceAll('.', '');
+      const projectCommand = await writeFakeOpenCode(
+        projectBin,
+        "console.log(JSON.stringify({ type: 'text', part: { text: 'project shadow' } }));",
+        commandName
+      );
+      const trustedCommand = await writeFakeOpenCode(
+        trustedBin,
+        "console.log(JSON.stringify({ type: 'text', part: { text: 'trusted command' } }));",
+        commandName
+      );
+      if (process.platform !== 'win32') {
+        symlinkSync(projectCommand, join(aliasBin, basename(projectCommand)));
+      }
+      const enclosingNpmBin = resolve(projectRoot, '..', 'node_modules', '.bin');
+      const workspaceNpmBin = resolve(projectRoot, '..', '..', '..', 'node_modules', '.bin');
+      const suppliedPath = [
+        projectBin,
+        relative(process.cwd(), projectBin),
+        enclosingNpmBin,
+        relative(process.cwd(), workspaceNpmBin),
+        aliasBin,
+        trustedBin,
+        process.env.PATH ?? '',
+      ].join(delimiter);
+      const filteredPath = filterOpenCodePath(suppliedPath, {
+        cwd: process.cwd(),
+        projectRoot,
+        platform: process.platform,
+      });
+      const filteredEntries = filteredPath.split(delimiter);
+      expect(filteredEntries).not.toContain(realpathSync.native(projectBin));
+      expect(filteredEntries).not.toContain(enclosingNpmBin);
+      expect(filteredEntries).not.toContain(workspaceNpmBin);
+      const resolvedCommand = resolveOpenCodeCommand(commandName, {
+        environment: { PATH: suppliedPath },
+        cwd: process.cwd(),
+        projectRoot,
+        platform: process.platform,
+      });
+      expect(resolvedCommand).toBe(realpathSync.native(trustedCommand));
+      await expect(
+        runOpenCodeCompletion({
+          command: commandName,
+          model: 'beam-free',
+          prompt: 'prompt',
+          maxTokens: 64,
+          environment: { PATH: suppliedPath },
+        })
+      ).resolves.toMatchObject({ content: 'trusted command', finishReason: 'stop', model: 'beam-free' });
+    } finally {
+      await rm(projectBin, { recursive: true, force: true });
+      if (trustedBin) await rm(trustedBin, { recursive: true, force: true });
+    }
+  });
+
+  it('excludes caller project bins when the runner is invoked from another project', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-distinct-projects-'));
+    const runnerRoot = join(parent, 'runner');
+    const callerRoot = join(parent, 'caller');
+    const callerBin = join(callerRoot, 'node_modules', '.bin');
+    const trustedBin = join(parent, 'trusted');
+    let cwdSpy;
+    try {
+      await mkdir(runnerRoot, { recursive: true });
+      await mkdir(callerBin, { recursive: true });
+      await mkdir(trustedBin, { recursive: true });
+      await writeFakeOpenCode(
+        callerBin,
+        "console.log(JSON.stringify({ type: 'text', part: { text: 'caller project shadow' } }));",
+        'opencode'
+      );
+      const trustedCommand = await writeFakeOpenCode(
+        trustedBin,
+        "console.log(JSON.stringify({ type: 'text', part: { text: 'trusted command' } }));",
+        'opencode'
+      );
+      const suppliedPath = [callerBin, trustedBin, process.env.PATH ?? ''].filter(Boolean).join(delimiter);
+      const expectedPath = realpathSync.native(trustedBin);
+      const environment = {
+        PATH: suppliedPath,
+        ComSpec: process.env.ComSpec,
+        SystemRoot: process.env.SystemRoot,
+      };
+
+      cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(callerRoot);
+
+      const filteredPath = filterOpenCodePath(suppliedPath, { cwd: callerRoot, projectRoot: runnerRoot });
+      expect(filteredPath.split(delimiter)).toContain(expectedPath);
+      expect(filteredPath.split(delimiter)).not.toContain(realpathSync.native(callerBin));
+      expect(
+        resolveOpenCodeCommand('opencode', {
+          environment,
+          cwd: callerRoot,
+          projectRoot: runnerRoot,
+          platform: process.platform,
+        })
+      ).toBe(realpathSync.native(trustedCommand));
+      await expect(
+        runOpenCodeCompletion({
+          command: 'opencode',
+          model: 'beam-free',
+          prompt: 'prompt',
+          maxTokens: 64,
+          environment,
+        })
+      ).resolves.toMatchObject({ content: 'trusted command', finishReason: 'stop', model: 'beam-free' });
+    } finally {
+      cwdSpy?.mockRestore();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('excludes caller ancestor bins when the caller root is a symlink', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-symlinked-caller-root-'));
+    const callerParent = join(parent, 'caller-parent');
+    const callerRoot = join(callerParent, 'project');
+    const callerRootAlias = join(parent, 'caller-link');
+    const callerBin = join(callerParent, 'node_modules', '.bin');
+    const packageBin = join(parent, 'outside-package');
+    const aliasBin = join(parent, 'aliases');
+    const runnerRoot = join(parent, 'runner');
+    try {
+      await Promise.all(
+        [callerRoot, callerBin, packageBin, aliasBin, runnerRoot].map((directory) =>
+          mkdir(directory, { recursive: true })
+        )
+      );
+      const packageCommand = await writeFakeOpenCode(
+        packageBin,
+        "console.log('ancestor package command');",
+        'opencode'
+      );
+      const callerCommand = join(callerBin, 'opencode');
+      symlinkSync(packageCommand, callerCommand);
+      symlinkSync(callerRoot, callerRootAlias, 'dir');
+      symlinkSync(callerCommand, join(aliasBin, 'opencode'));
+      const environment = { PATH: aliasBin };
+
+      expect(
+        resolveOpenCodeCommand('opencode', {
+          environment,
+          cwd: callerRootAlias,
+          projectRoot: runnerRoot,
+          platform: process.platform,
+        })
+      ).toBeNull();
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects hard-link aliases to runner and caller project executables', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-hard-link-aliases-'));
+    const runnerBin = join(parent, 'runner', 'node_modules', '.bin');
+    const callerBin = join(parent, 'caller', 'node_modules', '.bin');
+    const runnerScripts = join(parent, 'runner', 'scripts');
+    const callerScripts = join(parent, 'caller', 'scripts');
+    const runnerAliasBin = join(parent, 'aliases', 'runner');
+    const callerAliasBin = join(parent, 'aliases', 'caller');
+    const runnerScriptAliasBin = join(parent, 'aliases', 'runner-scripts');
+    const callerScriptAliasBin = join(parent, 'aliases', 'caller-scripts');
+    const trustedBin = join(parent, 'trusted');
+    try {
+      await Promise.all(
+        [
+          runnerBin,
+          callerBin,
+          runnerScripts,
+          callerScripts,
+          runnerAliasBin,
+          callerAliasBin,
+          runnerScriptAliasBin,
+          callerScriptAliasBin,
+          trustedBin,
+        ].map((directory) => mkdir(directory, { recursive: true }))
+      );
+      const runnerCommand = await writeFakeOpenCode(runnerBin, "console.log('runner project command');", 'opencode');
+      const callerCommand = await writeFakeOpenCode(callerBin, "console.log('caller project command');", 'opencode');
+      const runnerScriptCommand = await writeFakeOpenCode(
+        runnerScripts,
+        "console.log('runner scripts command');",
+        'opencode'
+      );
+      const callerScriptCommand = await writeFakeOpenCode(
+        callerScripts,
+        "console.log('caller scripts command');",
+        'opencode'
+      );
+      const trustedCommand = await writeFakeOpenCode(trustedBin, "console.log('trusted command');", 'opencode');
+      await link(runnerCommand, join(runnerAliasBin, basename(runnerCommand)));
+      await link(callerCommand, join(callerAliasBin, basename(callerCommand)));
+      await link(runnerScriptCommand, join(runnerScriptAliasBin, basename(runnerScriptCommand)));
+      await link(callerScriptCommand, join(callerScriptAliasBin, basename(callerScriptCommand)));
+      const suppliedPath = [
+        runnerAliasBin,
+        callerAliasBin,
+        runnerScriptAliasBin,
+        callerScriptAliasBin,
+        trustedBin,
+      ].join(delimiter);
+      const environment = { PATH: suppliedPath, ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot };
+
+      expect(
+        resolveOpenCodeCommand('opencode', {
+          environment,
+          cwd: join(parent, 'caller'),
+          projectRoot: join(parent, 'runner'),
+          platform: process.platform,
+        })
+      ).toBe(realpathSync.native(trustedCommand));
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('filters npm ancestor bins with Windows path semantics', () => {
+    const projectRoot = 'C:\\Users\\dev\\repo\\worktree';
+    const filtered = filterOpenCodePath(
+      [
+        `${projectRoot}\\node_modules\\.bin`,
+        'node_modules\\.bin',
+        'C:\\Users\\dev\\repo\\node_modules\\.bin',
+        'C:\\Users\\dev\\node_modules\\.bin',
+        'C:\\node_modules\\.bin',
+      ].join(';'),
+      { cwd: projectRoot, projectRoot, platform: 'win32' }
+    );
+
+    expect(filtered).toBe('');
+  });
+
+  it.skipIf(process.platform === 'win32')('drops canonical PATH aliases containing the PATH delimiter', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-path-delimiter-'));
+    const target = join(parent, `trusted${delimiter}split`);
+    const alias = join(parent, 'trusted-alias');
+    const missingAlias = join(parent, 'missing-alias');
+    try {
+      await mkdir(target);
+      symlinkSync(target, alias);
+      symlinkSync(join(parent, 'not-created'), missingAlias);
+
+      const filteredPath = filterOpenCodePath([alias, missingAlias].join(delimiter), { cwd: process.cwd() });
+      expect(filteredPath).toBe('');
+      expect(
+        resolveOpenCodeCommand('opencode', {
+          environment: { PATH: filteredPath },
+          cwd: process.cwd(),
+          platform: process.platform,
+        })
+      ).toBeNull();
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('fails closed when an npm ancestor bin cannot be inspected', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-uninspectable-bin-'));
+    const projectRoot = join(parent, 'repo', 'worktree');
+    const ancestorBin = join(parent, 'repo', 'node_modules', '.bin');
+    const trustedBin = join(parent, 'trusted');
+    try {
+      await mkdir(projectRoot, { recursive: true });
+      await mkdir(dirname(ancestorBin), { recursive: true });
+      await mkdir(trustedBin);
+      symlinkSync(ancestorBin, ancestorBin, 'dir');
+      await writeFakeOpenCode(trustedBin, "console.log('must not run');", 'uninspectable-opencode');
+
+      expect(filterOpenCodePath(trustedBin, { cwd: projectRoot, projectRoot, platform: process.platform })).toBe('');
+      expect(
+        resolveOpenCodeCommand('uninspectable-opencode', {
+          environment: { PATH: trustedBin },
+          cwd: projectRoot,
+          projectRoot,
+          platform: process.platform,
+        })
+      ).toBeNull();
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects PATH aliases that resolve into an npm ancestor bin', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-ancestor-bin-'));
+    const projectRoot = join(parent, 'repo', 'worktree');
+    const nodeModules = join(parent, 'repo', 'node_modules');
+    const ancestorBin = join(nodeModules, '.bin');
+    const actualBin = join(parent, 'npm-bin-target');
+    const packageBin = join(nodeModules, 'ancestor-package', 'bin');
+    const aliasDirectory = join(parent, 'trusted');
+    const aliasBinDirectory = join(parent, 'trusted-bin-alias');
+    const directAliasDirectory = join(parent, 'trusted-direct-alias');
+    try {
+      await mkdir(projectRoot, { recursive: true });
+      await mkdir(nodeModules, { recursive: true });
+      await mkdir(actualBin);
+      await mkdir(packageBin, { recursive: true });
+      await mkdir(aliasDirectory);
+      await mkdir(directAliasDirectory);
+      const target = await writeFakeOpenCode(packageBin, "console.log('should not run');", 'ancestor-opencode');
+      const npmEntry = join(actualBin, basename(target));
+      symlinkSync(target, npmEntry);
+      symlinkSync(actualBin, ancestorBin, 'dir');
+      symlinkSync(ancestorBin, aliasBinDirectory, 'dir');
+      symlinkSync(join(ancestorBin, basename(target)), join(aliasDirectory, basename(target)));
+      symlinkSync(target, join(directAliasDirectory, basename(target)));
+
+      expect(filterOpenCodePath(aliasBinDirectory, { cwd: projectRoot, projectRoot, platform: process.platform })).toBe(
+        ''
+      );
+
+      expect(
+        resolveOpenCodeCommand('ancestor-opencode', {
+          environment: { PATH: aliasDirectory },
+          cwd: projectRoot,
+          projectRoot,
+          platform: process.platform,
+        })
+      ).toBeNull();
+      expect(
+        filterOpenCodePath(directAliasDirectory, { cwd: projectRoot, projectRoot, platform: process.platform })
+      ).toBe(realpathSync.native(directAliasDirectory));
+      expect(
+        resolveOpenCodeCommand('ancestor-opencode', {
+          environment: { PATH: directAliasDirectory },
+          cwd: projectRoot,
+          projectRoot,
+          platform: process.platform,
+        })
+      ).toBeNull();
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'win32')(
+    'resolves Windows PATH and PATHEXT case-insensitively in caller order',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-windows-env-'));
+      try {
+        const command = await writeFakeOpenCode(
+          directory,
+          "console.log(JSON.stringify({ type: 'text', part: { text: 'windows path and pathext' } }));",
+          'case-insensitive-opencode'
+        );
+        await writeFile(`${command.slice(0, -4)}.exe`, 'intentionally invalid executable');
+        const callerPath = Object.entries(process.env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] ?? '';
+        const environment = {
+          Path: [directory, callerPath].filter(Boolean).join(';'),
+          PATHEXT: '.CMD;.EXE',
+          ComSpec: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'COMSPEC')?.[1],
+          SystemRoot: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'SYSTEMROOT')?.[1],
+        };
+
+        expect(
+          resolveOpenCodeCommand(basename(command, '.cmd'), {
+            environment,
+            cwd: process.cwd(),
+            projectRoot: process.cwd(),
+            platform: 'win32',
+          })
+        ).toBe(realpathSync.native(command));
+
+        await expect(
+          runOpenCodeCompletion({
+            command: basename(command, '.cmd'),
+            model: 'beam-free',
+            prompt: 'prompt',
+            maxTokens: 64,
+            environment,
+          })
+        ).resolves.toMatchObject({ content: 'windows path and pathext', finishReason: 'stop', model: 'beam-free' });
+        await expect(
+          runOpenCodeCompletion({
+            command: command.slice(0, -4),
+            model: 'beam-free',
+            prompt: 'prompt',
+            maxTokens: 64,
+            environment,
+          })
+        ).resolves.toMatchObject({ content: 'windows path and pathext', finishReason: 'stop', model: 'beam-free' });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.skipIf(process.platform !== 'win32')(
+    'rejects unsupported .js bare Windows commands while preserving explicit path overrides',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-windows-suffix-'));
+      try {
+        const command = await writeFakeOpenCode(
+          directory,
+          "console.log(JSON.stringify({ type: 'text', part: { text: 'trusted cmd' } }));",
+          'suffix-policy-opencode'
+        );
+        const script = `${command.slice(0, -4)}.js`;
+        await writeFile(script, 'inert unsupported suffix fixture');
+        const environment = {
+          Path: directory,
+          PATHEXT: '.CMD;.EXE',
+          ComSpec: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'COMSPEC')?.[1],
+          SystemRoot: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'SYSTEMROOT')?.[1],
+        };
+        const options = {
+          environment,
+          cwd: process.cwd(),
+          projectRoot: process.cwd(),
+          platform: 'win32',
+        };
+
+        expect(resolveOpenCodeCommand(basename(script), options)).toBeNull();
+        expect(resolveOpenCodeCommand(command, options)).toBe(realpathSync.native(command));
+        expect(resolveOpenCodeCommand(script, options)).toBe(script);
+        await expect(
+          runOpenCodeCompletion({
+            command: basename(script),
+            model: 'beam-free',
+            prompt: 'prompt',
+            maxTokens: 64,
+            environment,
+          })
+        ).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.skipIf(process.platform !== 'win32')(
+    'rejects a Windows PATH alias whose target changes the selected executable extension',
+    async (context) => {
+      const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-windows-alias-'));
+      const targetDirectory = join(directory, 'target');
+      const aliasDirectory = join(directory, 'alias');
+      try {
+        await mkdir(targetDirectory);
+        await mkdir(aliasDirectory);
+        const extensionlessTarget = join(targetDirectory, 'opencode-target');
+        await writeFile(extensionlessTarget, 'not a supported executable');
+        await writeFile(`${extensionlessTarget}.exe`, 'intentionally invalid executable');
+        const alias = join(aliasDirectory, 'opencode.cmd');
+        try {
+          symlinkSync(extensionlessTarget, alias, 'file');
+        } catch (error) {
+          if (['EACCES', 'EPERM', 'ENOTSUP'].includes(error?.code)) {
+            context.skip(`Windows file symlinks are unavailable: ${error.code}`);
+          }
+          throw error;
+        }
+        const environment = {
+          Path: aliasDirectory,
+          PATHEXT: '.CMD;.EXE',
+          ComSpec: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'COMSPEC')?.[1],
+          SystemRoot: Object.entries(process.env).find(([key]) => key.toUpperCase() === 'SYSTEMROOT')?.[1],
+        };
+
+        expect(
+          resolveOpenCodeCommand('opencode', {
+            environment,
+            cwd: process.cwd(),
+            projectRoot: process.cwd(),
+            platform: 'win32',
+          })
+        ).toBeNull();
+        await expect(
+          runOpenCodeCompletion({
+            command: 'opencode',
+            model: 'beam-free',
+            prompt: 'prompt',
+            maxTokens: 64,
+            environment,
+          })
+        ).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it('marks an unresolved bare OpenCode executable as ENOENT', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-missing-'));
+    try {
+      await expect(
+        runOpenCodeCompletion({
+          command: 'missing-opencode-for-free-model-pool-test',
+          model: 'beam-free',
+          prompt: 'prompt',
+          maxTokens: 64,
+          environment: { PATH: directory },
+        })
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'win32')('treats drive-relative OpenCode overrides as explicit paths', () => {
+    expect(
+      resolveOpenCodeCommand('C:opencode.cmd', {
+        environment: { Path: '' },
+        cwd: 'C:\\Users\\dev\\repo',
+        projectRoot: 'C:\\Users\\dev\\repo',
+        platform: 'win32',
+      })
+    ).toBe('C:\\Users\\dev\\repo\\opencode.cmd');
+  });
+
+  it('preserves an explicit OpenCode length finish reason instead of inferring a complete free response', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'partial answer' } }));
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'length', tokens: { input: 12, output: 64 } } }));`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 64 })
+      ).resolves.toMatchObject({
+        model: 'beam-free',
+        content: 'partial answer',
+        finishReason: 'length',
+        usage: { input_tokens: 12, output_tokens: 64 },
+      });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -900,18 +1538,42 @@ console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }))
     const previous = new Map(Object.keys(overrides).map((key) => [key, process.env[key]]));
     const command = await writeFakeOpenCode(
       directory,
-      `const expectedRuntime = {
+      `const path = require('node:path');
+const isolatedHome = process.env.HOME;
+const callerProfilePaths = {
   HOME: '/fixture/opencode-home',
   XDG_CONFIG_HOME: '/fixture/opencode-config',
   XDG_DATA_HOME: '/fixture/opencode-data',
 };
-const mismatched = Object.entries(expectedRuntime).filter(([key, value]) => process.env[key] !== value);
+const mismatched = Object.entries(callerProfilePaths).filter(([key, value]) => process.env[key] === value);
+const isolatedProfilePaths = [
+  ['XDG_CONFIG_HOME', 'xdg-config'],
+  ['XDG_DATA_HOME', 'xdg-data'],
+  ['XDG_CACHE_HOME', 'xdg-cache'],
+].filter(([key, suffix]) => path.resolve(process.env[key]) !== path.resolve(isolatedHome, suffix));
 const leaked = ['OPENROUTER_API_KEY', 'GROQ_API_KEY', 'KILO_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR', 'UNRELATED_SECRET']
   .filter((key) => process.env[key] !== undefined);
-if (mismatched.length || leaked.length) process.exit(10);
+if (mismatched.length || isolatedProfilePaths.length || leaked.length) process.exit(10);
 if (process.env.OPENCODE_CONFIG_CONTENT === 'caller-config-must-be-replaced') process.exit(11);
-if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(12);
+const policies = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT).policies;
+for (const action of ['tool.use', 'mcp.use', 'skill.use', 'plugin.use', 'websearch.use', 'integration.connect']) {
+  if (!policies.some((policy) => policy.action === action && policy.resource === '*' && policy.effect === 'deny')) {
+    process.exit(12);
+  }
+}
+for (const action of ['provider.use', 'integration.use']) {
+  if (!policies.some((policy) => policy.action === action && policy.resource === '*' && policy.effect === 'deny')) {
+    process.exit(16);
+  }
+  const finalDecision = policies
+    .filter((policy) => policy.action === action && ['*', 'opencode'].includes(policy.resource))
+    .pop();
+  if (finalDecision?.resource !== 'opencode' || finalDecision.effect !== 'allow') {
+    process.exit(17);
+  }
+}
 if (process.env.OPENCODE_DISABLE_AUTOUPDATE !== '1' || process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS !== '1') process.exit(13);
+if (process.env.OPENCODE_PURE !== '1' || process.env.OPENCODE_DISABLE_PROJECT_CONFIG !== '1') process.exit(14);
 console.log(JSON.stringify({ type: 'text', part: { text: 'isolated answer' } }));`
     );
 
@@ -1177,7 +1839,7 @@ process.exit(1);`
     });
     const terminateWindowsProcessTreeImpl = vi.fn(() => termination);
     const completion = runOpenCodeCompletion({
-      command: process.execPath,
+      command: process.platform === 'win32' ? process.execPath : `${process.execPath}.exe`,
       model: 'beam-free',
       prompt: 'prompt',
       maxTokens: 8,
@@ -1265,7 +1927,7 @@ process.stdout.write('x'.repeat(2 * 1024 * 1024));`
     const terminateWindowsProcessTreeImpl = vi.fn(() => Promise.reject(new Error('taskkill failed')));
 
     const error = await runOpenCodeCompletion({
-      command: '/unused/opencode',
+      command: process.platform === 'win32' ? process.execPath : `${process.execPath}.exe`,
       model: 'beam-free',
       prompt: 'prompt',
       maxTokens: 8,
@@ -1367,6 +2029,20 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
         finishReason: 'stop',
         usage: { cost: 0 },
       });
+
+      const noTerminalCommand = await writeFakeOpenCode(
+        directory,
+        `console.log(JSON.stringify({ type: 'text', part: { text: 'provider-owned Nemotron result' } }));`
+      );
+      await expect(
+        runOpenCodeCompletion({
+          command: noTerminalCommand,
+          model,
+          prompt: 'private prompt',
+          maxTokens: 1200,
+          providerOwned: true,
+        })
+      ).resolves.toEqual({ error: 'OpenCode did not return a complete non-empty response' });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

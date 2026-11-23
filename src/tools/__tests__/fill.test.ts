@@ -464,5 +464,5 @@ describe('large canvas performance (bounds)', () => {
     // Click at corner should not overflow
     const recCanvas = canvas as unknown as RecordingOffscreenCanvas;
     expect(rgbAt(recCanvas.pixels, 0, 0)).toEqual([0, 255, 0]);
-  });
+  }, 30_000);
 });

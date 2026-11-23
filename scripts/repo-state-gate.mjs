@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Reports the git operations in progress across every worktree in this repository.
+ * Reports Git operation markers and unresolved paths across every worktree in this repository.
  * --------------------------------------------------------------------------------
  * `docs/ORCHESTRATION.md` says a worktree is where work happens and `main` is where
  * a finished branch lands. Nothing in that document, and nothing in this repository
