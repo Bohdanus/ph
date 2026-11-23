@@ -86,6 +86,55 @@ Binding to `0.0.0.0` listens on all WSL interfaces; depending on WSL networking
 and firewall settings, the server may be reachable from other devices on your
 local network. Use it only on a trusted network, and stop the server when done.
 
+## OpenRouter key for free-model tools
+
+The free-model runner reads `OPENROUTER_API_KEY` from the process environment.
+It does not read Kilo's saved OpenRouter credential. Do not assume a Windows
+environment variable is available to WSL; set the key in the environment that
+launches Node. Prefer a secret manager. Do not pass the key as a command-line
+argument, print it, save it in the repository, or add it to `.bashrc` or
+`.profile`.
+
+For a one-time check from a WSL task worktree, explicitly load Linux Node for
+non-interactive shells, then enter the key without echoing it:
+
+```bash
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+source "$NVM_DIR/nvm.sh"
+nvm use
+read -r -s -p 'OpenRouter API key: ' OPENROUTER_API_KEY
+printf '\n'
+export OPENROUTER_API_KEY
+node scripts/free-model-pool.mjs --openrouter-quota
+unset OPENROUTER_API_KEY
+```
+
+In Windows PowerShell, the same quota check can use a hidden prompt for the
+current process:
+
+```powershell
+$secret = Read-Host 'OpenRouter API key' -AsSecureString
+$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+try {
+  $env:OPENROUTER_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+  node scripts/free-model-pool.mjs --openrouter-quota
+} finally {
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+  Remove-Item Env:OPENROUTER_API_KEY -ErrorAction SilentlyContinue
+  Remove-Variable secret, ptr -ErrorAction SilentlyContinue
+}
+```
+
+`--openrouter-quota` calls OpenRouter's `GET /api/v1/key` endpoint and sends no
+inference request. A `no_key` result means the current process did not receive
+the environment variable. A `401` means the endpoint rejected the request, but
+it does not by itself prove the key is invalid: OpenRouter has documented
+`401 "User not found"` responses during an authentication lookup outage. Check
+[OpenRouter status](https://status.openrouter.ai/); if the error persists while
+the service is healthy, confirm that the key is enabled before replacing it.
+See the [quota endpoint reference](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key)
+and [OpenRouter's incident report](https://openrouter.ai/blog/announcements/openrouter-outages-on-february-17-and-19-2026).
+
 Run the headless checks with:
 
 ```bash

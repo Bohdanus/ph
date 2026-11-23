@@ -2175,6 +2175,18 @@ export async function main(
     }
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota.reason !== 'ok') {
+      if (quota.reason === 'no_key') {
+        stderr.write(
+          'OPENROUTER_API_KEY is not set in this process; provide it through a secret manager or this shell environment. No request or inference was sent.\n'
+        );
+        return 2;
+      }
+      if (quota.reason === 'http_401') {
+        stderr.write(
+          'OpenRouter rejected the quota request with HTTP 401. Check OpenRouter status and confirm the key is active if the error persists; a 401 alone does not prove the key is invalid. No inference request was sent.\n'
+        );
+        return 2;
+      }
       stderr.write(
         `Unable to read OpenRouter daily quota (${sanitizeErrorMessage(quota.reason)}${quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : ''}); check the API key and network. No inference request was sent.\n`
       );
