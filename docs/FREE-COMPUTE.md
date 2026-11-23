@@ -140,6 +140,26 @@ a host task is configured to use that provider.
 - **Catalog discovery:** `node scripts/free-model-pool.mjs --list` reads public Kilo, OpenRouter, and OpenCode catalogs plus the Groq model catalog when a key is configured. It marks whether provider credentials or the Groq free-plan opt-in are configured; this does not check quota or capacity.
 - **Request counter:** `node scripts/free-model-pool.mjs --openrouter-quota` prints server-side daily `used`, `limit`, and `remaining` without inference. Query before and after fan-out to include other tools and concurrent free subagents. The inference runner also prints per-run attempted requests; those attempts do not replace the server counter.
 
+## OpenRouter Free Models — Recommended (Nov 2026)
+
+Benchmarks from TeamDay (Nov 6), RefusalRate (Nov 2), Branolabs (Nov 21), codyvolckmar (Oct 4). Free endpoints churn; re-verify before committing.
+
+| Model ID                                             | Benchmarks                                             | Availability         | Best For                                      |
+| ---------------------------------------------------- | ------------------------------------------------------ | -------------------- | --------------------------------------------- |
+| `nvidia/nemotron-3.5-super-vl:free`                  | 20/20 answered & passed, 106 tok/s, 1M ctx, multimodal | ✅ Best uptime       | General reasoning + coding, agentic workflows |
+| `cohere/north-mini-code:free`                        | 20/20 answered, 18/20 passed, no training on prompts   | ✅ Reliable          | Privacy-sensitive coding, no-prompt-training  |
+| `nvidia/nemotron-3-ultra-550b-a55b:free`             | 20/20 passed, 29 tok/s, 1M ctx, 550B/55B MoE           | ✅ Reliable but slow | Long-context orchestration, deep research     |
+| `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` | 17/17 passed, 95 tok/s, audio+video+image              | ✅ Good              | Perception sub-agent, multimodal input        |
+
+### Excluded (flaky / low pass rate / withdrawn)
+
+- `thinkingmachines/inkling-small:free` — 80.2% SWE-bench but 403 on some endpoints
+- `recursive/flint-v1.0:free` — 8/20 answered (intermittent)
+- `dots-studio/dots-3-note-preview:free` — 13/20 passed
+- `nvidia/nemotron-3.5-lightning:free` — 12/20 passed
+- `qwen/qwen3.8-27b:free` — variable availability
+- Poolside Laguna, Gemma 4, Inkling, Content Safety — withdrawn or 0/20 answered
+
 ## Token-Saving Patterns
 
 The dominant token cost in orchestrated work is the **root conversation context**, not
