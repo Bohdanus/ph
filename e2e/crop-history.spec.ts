@@ -6252,42 +6252,69 @@ test.describe('Crop history', () => {
   test('crop horizontal selection edges do not continue outside the crop', async ({ page }) => {
     await openDocument(page);
     const fit = await openCropTool(page);
-    await dragOnCanvas(page, fit, { x: 100, y: 100 }, { x: 700, y: 500 });
-    await dragOnCanvas(page, fit, { x: 400, y: 300 }, { x: 430, y: 330 });
-
+    await expect(page.locator('.cursor-crop'), 'the crop starts unrotated').toHaveAttribute('data-rotation', '0');
     const workspace = page.getByTestId('workspace-container');
-    const workspaceBox = await workspace.boundingBox();
-    const cropBox = await page.getByTestId('crop-selection-outline').boundingBox();
-    expect(workspaceBox).not.toBeNull();
-    expect(cropBox).not.toBeNull();
-    const screenshot = await workspace.screenshot();
-    const { data, info } = await sharp(screenshot).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-    const scaleX = info.width / workspaceBox!.width;
-    const scaleY = info.height / workspaceBox!.height;
-    const left = Math.max(2, Math.floor((cropBox!.x - workspaceBox!.x - 5) * scaleX));
-    const right = Math.min(info.width - 2, Math.ceil((cropBox!.x + cropBox!.width - workspaceBox!.x + 5) * scaleX));
-    const top = Math.round((cropBox!.y - workspaceBox!.y) * scaleY);
-    const bottom = Math.round((cropBox!.y + cropBox!.height - workspaceBox!.y) * scaleY);
-    const luminance = (x: number, y: number) => {
-      const offset = (y * info.width + x) * info.channels;
-      return 0.2126 * data[offset]! + 0.7152 * data[offset + 1]! + 0.0722 * data[offset + 2]!;
-    };
-    const edgeContrast = (edgeY: number) => {
-      let pixels = 0;
-      for (const y of [edgeY - 1, edgeY, edgeY + 1]) {
-        for (let x = 2; x < info.width - 2; x++) {
-          if (x >= left && x < right) continue;
-          const center = luminance(x, y);
-          if (Math.abs(center - luminance(x, y - 3)) > 18 && Math.abs(center - luminance(x, y + 3)) > 18) {
-            pixels++;
+    const expectNoHorizontalContinuation = async (stage: string) => {
+      await expect(page.getByTestId('crop-selection-outline'), `${stage}: crop outline is painted`).toBeVisible();
+      await expect(page.getByTestId('crop-frame-dim'), `${stage}: crop mask is painted`).toBeVisible();
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          })
+      );
+      const workspaceBox = await workspace.boundingBox();
+      const cropBox = await page.getByTestId('crop-selection-outline').boundingBox();
+      expect(workspaceBox, `${stage}: workspace bounds`).not.toBeNull();
+      expect(cropBox, `${stage}: crop outline bounds`).not.toBeNull();
+      const screenshot = await workspace.screenshot();
+      const { data, info } = await sharp(screenshot).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      const scaleX = info.width / workspaceBox!.width;
+      const scaleY = info.height / workspaceBox!.height;
+      const frameTopLeft = documentPoint(fit, 0, 0);
+      const frameBottomRight = documentPoint(fit, fit.documentWidth, fit.documentHeight);
+      const frameLeft = Math.max(2, Math.floor((frameTopLeft.x - workspaceBox!.x) * scaleX));
+      const frameRight = Math.min(info.width - 2, Math.ceil((frameBottomRight.x - workspaceBox!.x) * scaleX));
+      const cropGuardLeft = Math.max(2, Math.floor((cropBox!.x - workspaceBox!.x - 5) * scaleX));
+      const cropGuardRight = Math.min(
+        info.width - 2,
+        Math.ceil((cropBox!.x + cropBox!.width - workspaceBox!.x + 5) * scaleX)
+      );
+      // The artifact starts at the crop edge; these strips catch it without sampling distant page content.
+      const edgeWindows = [
+        [Math.max(frameLeft, cropGuardLeft - 64), Math.min(frameRight, cropGuardLeft)],
+        [Math.max(frameLeft, cropGuardRight), Math.min(frameRight, cropGuardRight + 64)],
+      ] as const;
+      const top = Math.round((cropBox!.y - workspaceBox!.y) * scaleY);
+      const bottom = Math.round((cropBox!.y + cropBox!.height - workspaceBox!.y) * scaleY);
+      const luminance = (x: number, y: number) => {
+        const offset = (y * info.width + x) * info.channels;
+        return 0.2126 * data[offset]! + 0.7152 * data[offset + 1]! + 0.0722 * data[offset + 2]!;
+      };
+      const edgeContrast = (edgeY: number) => {
+        let pixels = 0;
+        for (const y of [edgeY - 1, edgeY, edgeY + 1]) {
+          for (const [start, end] of edgeWindows) {
+            for (let x = start; x < end; x++) {
+              const center = luminance(x, y);
+              if (Math.abs(center - luminance(x, y - 3)) > 18 && Math.abs(center - luminance(x, y + 3)) > 18) {
+                pixels++;
+              }
+            }
           }
         }
-      }
-      return pixels;
+        return pixels;
+      };
+
+      expect(edgeContrast(top), `${stage}: top crop edge pixels outside selection`).toBeLessThan(10);
+      expect(edgeContrast(bottom), `${stage}: bottom crop edge pixels outside selection`).toBeLessThan(10);
     };
 
-    expect(edgeContrast(top), 'top crop edge pixels outside selection').toBeLessThan(10);
-    expect(edgeContrast(bottom), 'bottom crop edge pixels outside selection').toBeLessThan(10);
+    await dragOnCanvas(page, fit, { x: 100, y: 100 }, { x: 700, y: 500 });
+    await expectNoHorizontalContinuation('fresh selection');
+
+    await dragOnCanvas(page, fit, { x: 400, y: 300 }, { x: 430, y: 330 });
+    await expectNoHorizontalContinuation('moved selection');
   });
 
   test('the crop overlay selector exposes six guides and O cycles the active guide', async ({ page }) => {
