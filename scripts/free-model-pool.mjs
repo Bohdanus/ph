@@ -2594,6 +2594,18 @@ export async function main(
         );
         return 2;
       }
+      if (quota.reason === 'http_429') {
+        stderr.write(
+          'OpenRouter rate-limited the quota request with HTTP 429. Wait before retrying; if it continues, check OpenRouter status. No inference request was sent.\n'
+        );
+        return 2;
+      }
+      if (/^http_5\d\d$/.test(quota.reason)) {
+        stderr.write(
+          'OpenRouter returned a server error for the quota request; check OpenRouter status and try again later. No inference request was sent.\n'
+        );
+        return 2;
+      }
       if (quota.reason === 'http_401') {
         stderr.write(
           'OpenRouter rejected the quota request with HTTP 401. Check OpenRouter status and confirm the key is active if the error persists; a 401 alone does not prove the key is invalid. No inference request was sent.\n'
@@ -2601,7 +2613,7 @@ export async function main(
         return 2;
       }
       stderr.write(
-        `Unable to read OpenRouter daily quota (${sanitizeErrorMessage(quota.reason)}${quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : ''}); check the API key and network. No inference request was sent.\n`
+        `Unable to read OpenRouter daily quota (${sanitizeErrorMessage(quota.reason)}${quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : ''}); check OpenRouter status and network. No inference request was sent.\n`
       );
       return 2;
     }

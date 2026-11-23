@@ -132,6 +132,8 @@ it does not by itself prove the key is invalid: OpenRouter has documented
 `401 "User not found"` responses during an authentication lookup outage. Check
 [OpenRouter status](https://status.openrouter.ai/); if the error persists while
 the service is healthy, confirm that the key is enabled before replacing it.
+If the endpoint returns HTTP 429, wait before retrying. For HTTP 5xx, check status and try again later.
+Neither response by itself proves the key is invalid.
 See the [quota endpoint reference](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key)
 and [OpenRouter's incident report](https://openrouter.ai/blog/announcements/openrouter-outages-on-february-17-and-19-2026).
 
