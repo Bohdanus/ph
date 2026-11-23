@@ -51,11 +51,12 @@ function refreshSummary(): void {
     const sample = ring[index];
     if (
       sample &&
-      sample.outcome === 'published' &&
+      (sample.outcome === 'published' || sample.outcome === 'published-with-skips') &&
       sample.documentWidth === latest.documentWidth &&
       sample.documentHeight === latest.documentHeight &&
       sample.backingScale === latest.backingScale &&
-      sample.visibleLayerCount === latest.visibleLayerCount
+      sample.visibleLayerCount === latest.visibleLayerCount &&
+      sample.skippedLayerCount === latest.skippedLayerCount
     ) {
       durationTotal += sample.durationMs;
       sampleCount += 1;
