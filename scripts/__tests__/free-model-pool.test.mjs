@@ -242,6 +242,33 @@ describe('free model catalog filtering', () => {
     ).toEqual([nemotron]);
   });
 
+  it('only requests catalogs from an explicitly selected provider', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-provider-filter-'));
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('kilo-model:free')],
+      openrouter: [openRouterRow('other/model')],
+      opencode: [{ id: 'vendor/other-free', owned_by: 'opencode' }],
+      groq: [{ id: 'openai/gpt-oss-120b' }],
+      chat: vi.fn(),
+    });
+
+    try {
+      const candidates = await loadCatalogs({
+        fetchImpl,
+        provider: 'kilo',
+        openRouterKey: 'openrouter-key',
+        groqApiKey: 'groq-key',
+        includeGroq: true,
+        quarantineFile: join(directory, 'quarantine.json'),
+      });
+      expect(candidates.map((candidate) => candidate.model)).toEqual(['kilo-model:free']);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.kilo.ai/api/gateway/models');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed before requesting catalogs when quarantine state is corrupt', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-corrupt-'));
     const quarantineFile = join(directory, 'quarantine.json');
@@ -417,6 +444,64 @@ describe('free model catalog filtering', () => {
       maxTokens: 8192,
       timeoutMs: 12 * 60 * 1000,
     });
+  });
+
+  it('pins a request to the exact free provider and model without fallback', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow(model), kiloRow('other-model:free')],
+      openrouter: [openRouterRow(model.slice(0, -':free'.length))],
+      opencode: [{ id: model, owned_by: 'opencode' }],
+      chat: vi.fn(),
+    });
+    const runKilo = vi.fn().mockResolvedValue({
+      model,
+      content: 'Pinned Kilo Nemotron',
+      finishReason: 'stop',
+      usage: { cost: 0 },
+    });
+
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      provider: 'kilo',
+      model,
+      openRouterKey: 'openrouter-key',
+      kiloCommand: '/fake-kilo',
+      runKilo,
+      opencodeCommand: '/fake-opencode',
+      maxTokens: 8192,
+    });
+
+    expect(result).toMatchObject({ source: 'kilo', model, content: 'Pinned Kilo Nemotron' });
+    expect(result.usage).toEqual({ cost: 0 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.kilo.ai/api/gateway/models');
+    expect(runKilo).toHaveBeenCalledTimes(1);
+    expect(runKilo).toHaveBeenCalledWith({
+      command: '/fake-kilo',
+      source: 'kilo',
+      model,
+      prompt: 'prompt',
+      maxTokens: 8192,
+      timeoutMs: 12 * 60 * 1000,
+    });
+  });
+
+  it('does not infer when a pinned provider/model pair is absent from its live catalog', async () => {
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('other-model:free')] });
+    const runKilo = vi.fn();
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        provider: 'kilo',
+        model,
+        kiloCommand: '/fake-kilo',
+        runKilo,
+      })
+    ).rejects.toThrow('No verified free model route matches kilo/' + model);
+    expect(runKilo).not.toHaveBeenCalled();
   });
 
   it('retries truncated Kilo Nemotron once with a larger response-length budget', async () => {
@@ -2967,6 +3052,59 @@ describe('free model runner CLI', () => {
       );
       expect(stdout.write).not.toHaveBeenCalled();
       expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Result written to'));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('passes an exact Kilo Nemotron route and 8K budget from the CLI', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-pinned-route-'));
+    const promptPath = join(directory, 'prompt.txt');
+    const stdout = { write: vi.fn() };
+    const stderr = { write: vi.fn() };
+    const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow(model), kiloRow('other-model:free')],
+      openrouter: [openRouterRow(model.slice(0, -':free'.length))],
+      chat: vi.fn(),
+    });
+    const runKilo = vi.fn().mockResolvedValue({
+      model,
+      content: 'Pinned Kilo Nemotron',
+      finishReason: 'stop',
+      usage: { cost: 0 },
+    });
+
+    try {
+      await writeFile(promptPath, 'review the bounded audit facts', 'utf8');
+      const code = await main(
+        ['--prompt-file', promptPath, '--provider', 'kilo', '--model', model, '--max-tokens', '8192'],
+        {
+          fetchImpl,
+          openRouterKey: 'openrouter-key',
+          kiloCommand: '/fake-kilo',
+          runKilo,
+          opencodeCommand: '/fake-opencode',
+          quarantineFile: join(directory, 'quarantine.json'),
+          poolStateFile: join(directory, 'pool-state.json'),
+          initializeLegacyQuarantine: false,
+          stdout,
+          stderr,
+        }
+      );
+
+      expect(code).toBe(0);
+      expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('[kilo/' + model + ']'));
+      expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('\"cost\":0'));
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(runKilo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'kilo',
+          model,
+          maxTokens: 8192,
+          timeoutMs: 12 * 60 * 1000,
+        })
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
