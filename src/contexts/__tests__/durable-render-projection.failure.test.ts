@@ -34,6 +34,7 @@ function layer(
     isBedrock: false,
     visible: options.visible ?? true,
     opacity: options.opacity ?? 1,
+    fillOpacity: 1,
     locked: false,
     blendMode: options.blendMode ?? 'source-over',
     order,

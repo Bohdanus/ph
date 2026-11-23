@@ -26,6 +26,7 @@ function layer(id: string, overrides: Partial<DurableLayerSnapshot> = {}): Durab
     isBedrock: false,
     visible: true,
     opacity: 1,
+    fillOpacity: 1,
     locked: false,
     blendMode: 'source-over',
     order: 0,

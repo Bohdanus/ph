@@ -98,6 +98,7 @@ export type DurableLayerSnapshot = Readonly<{
   isBedrock: boolean;
   visible: boolean;
   opacity: number;
+  fillOpacity: number;
   locked: boolean;
   blendMode: GlobalCompositeOperation;
   order: number;
@@ -120,7 +121,7 @@ export type DurableFilter = Readonly<{
 }>;
 
 export type DurableLayerPropertyPatch = Readonly<
-  Partial<Pick<DurableLayerSnapshot, 'name' | 'visible' | 'opacity' | 'locked' | 'blendMode' | 'pos'>>
+  Partial<Pick<DurableLayerSnapshot, 'name' | 'visible' | 'opacity' | 'fillOpacity' | 'locked' | 'blendMode' | 'pos'>>
 >;
 
 /** Compatibility alias used by callers of the provisional model. */
@@ -363,12 +364,12 @@ function cloneEditableLayerSource(source: EditableDurableLayerSource): EditableD
   return cloned;
 }
 
-export function toLayerSnapshot(
-  layer: Omit<DurableLayerSnapshot, 'source'>,
-  source: DurableLayerSource
-): DurableLayerSnapshot {
+type DurableLayerSnapshotMetadata = Omit<DurableLayerSnapshot, 'source' | 'fillOpacity'> & { fillOpacity?: number };
+
+export function toLayerSnapshot(layer: DurableLayerSnapshotMetadata, source: DurableLayerSource): DurableLayerSnapshot {
   return Object.freeze({
     ...layer,
+    fillOpacity: layer.fillOpacity ?? 1,
     pos: Object.freeze({ ...layer.pos }),
     source: cloneLayerSource(source),
   });
@@ -382,6 +383,7 @@ export function cloneLayerSnapshot(layer: DurableLayerSnapshot): DurableLayerSna
       isBedrock: layer.isBedrock,
       visible: layer.visible,
       opacity: layer.opacity,
+      fillOpacity: layer.fillOpacity ?? 1,
       locked: layer.locked,
       blendMode: layer.blendMode,
       order: layer.order,

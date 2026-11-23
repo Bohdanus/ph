@@ -8,6 +8,7 @@ import {
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
 } from '@/util/constants.ts';
 import { createMockStoreState, type MockStoreState } from '@/__tests__/fixtures/store.ts';
@@ -249,6 +250,44 @@ describe('LayersTab actions reaching the store', () => {
             kind: 'set-layer-properties',
             layerId: 'layer-2',
             patch: { blendMode: 'multiply' },
+          },
+        },
+      },
+    });
+  });
+
+  it('commits Fill opacity as its own durable history action', () => {
+    render(<LayersTab />);
+    fireEvent.click(screen.getByTestId('layer-fill-opacity-summary'));
+    const slider = screen.getByRole('slider', { name: 'Layer fill opacity' });
+    fireEvent.pointerDown(slider, { pointerId: 3 });
+    fireEvent.change(slider, { target: { value: '42' } });
+    fireEvent.pointerUp(slider, { pointerId: 3 });
+
+    expect(onlyDispatched()).toEqual({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates: {
+          layers: expect.objectContaining({
+            'layer-2': expect.objectContaining({ id: 'layer-2', fillOpacity: 0.42 }),
+          }),
+        },
+        historyItem: {
+          id: 'history-id',
+          layerId: 'layer-2',
+          actionName: SET_LAYER_FILL_OPACITY_ACTION,
+          args: { fillOpacity: 0.42 },
+        },
+        durableDiagnostics: [],
+        durableEntry: {
+          id: 'history-id',
+          schemaVersion: DURABLE_SCHEMA_VERSION,
+          enabled: true,
+          provenance: { actionName: SET_LAYER_FILL_OPACITY_ACTION },
+          operation: {
+            kind: 'set-layer-properties',
+            layerId: 'layer-2',
+            patch: { fillOpacity: 0.42 },
           },
         },
       },

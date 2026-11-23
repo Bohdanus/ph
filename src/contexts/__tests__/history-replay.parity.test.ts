@@ -26,6 +26,7 @@ import {
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
@@ -151,6 +152,7 @@ const cases: ReadonlyArray<{
       item('show', SHOW_LAYER_ACTION, layerA),
       item('rename', RENAME_LAYER_ACTION, layerA, { name: 'Renamed' }),
       item('opacity', SET_LAYER_OPACITY_ACTION, layerA, { opacity: 0.5 }),
+      item('fill-opacity', SET_LAYER_FILL_OPACITY_ACTION, layerA, { fillOpacity: 0.35 }),
       item('blend-mode', SET_LAYER_BLEND_MODE_ACTION, layerA, { blendMode: 'multiply' }),
       item('lock', LOCK_LAYER_ACTION, layerA, { locked: true }),
       item('unlock', UNLOCK_LAYER_ACTION, layerA, { locked: false }),
@@ -414,6 +416,7 @@ function normalizeLegacy(result: HistoryReplayResult) {
         visible: layer.visible ?? true,
         locked: layer.locked,
         opacity: layer.opacity,
+        fillOpacity: layer.fillOpacity ?? 1,
         blendMode: layer.blendMode,
         pos: layer.pos,
         sourceKind: sourceKind(layer.source),
@@ -441,6 +444,7 @@ function normalizeDurable(result: DurableReplayResult) {
         visible: snapshot.visible ?? true,
         locked: snapshot.locked,
         opacity: snapshot.opacity,
+        fillOpacity: snapshot.fillOpacity,
         blendMode: snapshot.blendMode,
         pos: snapshot.pos,
         sourceKind: durableSourceKind(snapshot.source),
@@ -511,6 +515,22 @@ describe('legacy/durable logical replay parity', () => {
       }
     }
   );
+
+  it('restores the prior Fill value when replay moves back before its history action', () => {
+    const history = [
+      baseline({ [layerA]: { ...runtimeLayer(layerA, 0), fillOpacity: 0.8 } }),
+      item('fill-opacity', SET_LAYER_FILL_OPACITY_ACTION, layerA, { fillOpacity: 0.35 }),
+    ];
+
+    const before = replayHistory(history, 0, size, replayDependencies(), frame);
+    const after = replayHistory(history, 1, size, replayDependencies(), frame);
+    const undo = replayHistory(history, 0, size, replayDependencies(), frame);
+
+    expect(before.layers[layerA]?.fillOpacity).toBe(0.8);
+    expect(after.layers[layerA]?.fillOpacity).toBe(0.35);
+    expect(undo.layers[layerA]?.fillOpacity).toBe(0.8);
+    expect(after.diagnostics).toEqual([]);
+  });
 
   it('keeps invalid cursor behavior outside the parity oracle', () => {
     const history = cases[0]!.history;

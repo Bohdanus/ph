@@ -30,6 +30,7 @@ export function durableExportRecords(replay: DurableReplayResult, composite: Dur
       tmpCanvas: null,
       visible: snapshot.visible,
       opacity: snapshot.opacity,
+      fillOpacity: snapshot.fillOpacity,
       locked: snapshot.locked,
       blendMode: snapshot.blendMode,
       order: snapshot.order,

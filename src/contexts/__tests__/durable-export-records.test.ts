@@ -24,6 +24,7 @@ function snapshot(id: string, visible: boolean, order: number, source?: DurableL
     isBedrock: false,
     visible,
     opacity: 1,
+    fillOpacity: 1,
     locked: false,
     blendMode: 'source-over' as const,
     order,

@@ -276,8 +276,8 @@ export function drawLayerSource(
     isPositionedDrawSource(source) &&
     !source.args.blockStamp &&
     source.args.composite !== 'destination-out' &&
-    // Spray stamps overlap; reduced layer opacity must composite the cached stroke as a group.
-    (source.args.penType !== 'spray' || layer.opacity === 1) &&
+    // Spray stamps overlap; any transparency must composite the cached stroke as a group.
+    (source.args.penType !== 'spray' || (layer.opacity === 1 && (layer.fillOpacity ?? 1) === 1)) &&
     operations.length === 0 &&
     (presentationBounds === null || presentationBounds === undefined) &&
     layer.blendMode === 'source-over' &&
@@ -437,7 +437,7 @@ export function drawLayer(
 ): boolean {
   ctx.save();
   try {
-    ctx.globalAlpha = layer.opacity;
+    ctx.globalAlpha = layer.opacity * (layer.fillOpacity ?? 1);
     ctx.globalCompositeOperation = layer.blendMode;
     return drawLayerSource(ctx, layer, layer.pos, documentFrame, preferCachedSource);
   } finally {
