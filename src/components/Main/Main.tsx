@@ -47,6 +47,7 @@ import { DEFAULT_VIEW_STATE, effectiveViewZoom } from '../../contexts/view-state
 import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 import { isDocumentGestureOpen, subscribeDocumentGesture } from '../../hooks/document-gesture.ts';
 import { setTemporaryHandActive } from '../../hooks/temporary-hand.ts';
+import { useCanvasTouchNavigation } from '../../hooks/useCanvasTouchNavigation.ts';
 
 /**
  * The interaction modes whose tool owns a selection, which is every mode that can have a
@@ -99,6 +100,7 @@ const Main = () => {
 
   const [isDragging, setIsDragging] = useState(false);
   const [spacePressed, setSpacePressed] = useState(false);
+  const touchNavigation = useCanvasTouchNavigation();
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -381,7 +383,15 @@ const Main = () => {
         className={`absolute left-0 top-0 flex h-full w-full items-center justify-center ${theme === 'dark' ? 'chessboard-dark' : 'chessboard-light'}`}
         style={{ display: hasImage ? undefined : 'none' }}
       >
-        <div className="zoom-container relative h-full w-full" style={{ transform: viewTransform }}>
+        <div
+          className="zoom-container relative h-full w-full"
+          style={{ transform: viewTransform }}
+          onPointerDownCapture={touchNavigation.onPointerDownCapture}
+          onPointerMoveCapture={touchNavigation.onPointerMoveCapture}
+          onPointerUpCapture={touchNavigation.onPointerUpCapture}
+          onPointerCancelCapture={touchNavigation.onPointerCancelCapture}
+          onLostPointerCaptureCapture={touchNavigation.onLostPointerCaptureCapture}
+        >
           <canvas
             ref={canvasRef}
             data-testid="workspace-canvas"
@@ -468,7 +478,9 @@ const Main = () => {
         {(['hand', 'zoom', 'rotate-view'] as string[]).includes(interactionMode) ? (
           <ViewToolArea className="absolute inset-0 h-full w-full" mode={interactionMode as ViewToolMode} />
         ) : (
-          <EventHandler className="absolute inset-0 h-full w-full" overlayCtxRef={toolCtxRef} />
+          // Keep browser touch-action suppression on this selected tool surface. The in-place
+          // text editor is a sibling, so it does not inherit the canvas gesture policy.
+          <EventHandler className="absolute inset-0 h-full w-full touch-none" overlayCtxRef={toolCtxRef} />
         )}
         {/*
          * LAST, by DOM order rather than by z-index: this app stacks nothing by z-index at all, so

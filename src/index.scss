@@ -99,8 +99,9 @@ body {
 //
 // `touch-action: none` is the intersection of every ancestor's value, so putting it on
 // `body` silently disabled touch panning in the layers list, the history list, the new
-// image dialog, the save dialog and the lasso help panel. Canvas gestures get it from
-// `.zoom-container` and `<main>`, which is the only place that needs it.
+// image dialog, the save dialog and the lasso help panel. Canvas tool areas apply it to
+// their own hit surface; the in-place text editor sits beside those areas and retains its
+// native touch behavior.
 @media (max-width: 767.98px) {
   html,
   body,

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { PAINT_TOOLS_TEST_TIMEOUT_MS, DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
+import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
 import { toolbarMap, type ToolbarTool } from '../toolbar-mapping.ts';
 
 /**
@@ -325,6 +326,26 @@ test.describe('Toolbar fit', () => {
 
     const fitStyles = await page.locator('style[data-toolbar-fit-styles]').textContent();
     expect(fitStyles, 'the initial rail installed its container-query fit rules').toContain('@container');
+  });
+
+  test('selects a collapsed tool through More Tools while its hidden button remains mounted', async ({ page }) => {
+    await open(page, 600);
+    const layoutToggle = page.getByTestId('toolbar-layout-toggle');
+    await expect(layoutToggle).toBeVisible();
+    if ((await layoutToggle.getAttribute('aria-pressed')) !== 'true') await layoutToggle.click();
+    await expect(layoutToggle).toHaveAttribute('aria-pressed', 'true');
+
+    const hiddenBlurButton = page.getByTestId('tool-button-blur');
+    await expect(hiddenBlurButton).toHaveCount(1);
+    await expect(hiddenBlurButton).toBeHidden();
+    await expect(page.getByTestId('tool-overflow-tile')).toBeVisible();
+
+    await clickToolButton(page, 'blur');
+
+    await expectToolSelected(page, 'blur');
+    await expect(page.getByRole('region', { name: 'blur tool options', exact: true })).toBeVisible();
+    await expect(hiddenBlurButton).toHaveCount(1);
+    await expect(hiddenBlurButton).toBeHidden();
   });
 
   test('the rendered grid fits its slot, and leaves less than a row behind, at every window height', async ({

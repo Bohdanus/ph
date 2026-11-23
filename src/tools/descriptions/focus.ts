@@ -30,13 +30,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       },
     ],
     modifiers: [],
-    shortcuts: [
-      {
-        keys: 'R',
-        action:
-          'Photoshop assigns R to the Blur/Sharpen/Smudge family. THIS APP DIVERGES: R selects Rotate View; it has no Shift+R cycle for this family.',
-      },
-    ],
+    shortcuts: [],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/blur.ts:11',
@@ -70,7 +64,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     summary:
       'Paints extra edge contrast where you drag, so a soft area reads sharper without sharpening the rest of the image at all.',
     purpose:
-      'The Sharpen tool increases local contrast at edges, and therefore the apparent sharpness, only in the areas you brush. It shares one options bar and one tip with the Blur and Smudge tools, and what separates it from the Blur is the direction of the local change: the Blur smooths, the Sharpen exaggerates the difference between neighbouring pixels over a wider radius, with a falloff that behaves like an unsharp mask rather than a flat average. Its bar carries a brush preset, a Mode, a Strength percentage, Sample All Layers and Protect Detail. It is not the Filter > Sharpen family: those are one-shot commands with no brush and no per-stroke build-up, and Sharpen More in particular is simply the Sharpen filter with a larger fixed amount and no controls of its own.',
+      'The Sharpen tool increases local contrast at edges, and therefore the apparent sharpness, only in the areas you brush. It shares one options bar and one tip with the Blur and Smudge tools, and what separates it from the Blur is the direction of the local change: the Blur smooths, the Sharpen exaggerates the difference between neighbouring pixels over a wider radius, with a falloff that behaves like an unsharp mask rather than a flat average. Adobe’s October 2026 desktop guide lists a Brush tip, blend Mode and Strength in Brush Settings; Adobe also documents Sample All Layers and Protect Detail. Another current desktop guide omits Mode, and Adobe does not give the tool-specific blend-mode choices or default. It is not the Filter > Sharpen family: those are one-shot commands with no brush and no per-stroke build-up, and Sharpen More in particular is simply the Sharpen filter with a larger fixed amount and no controls of its own.',
     options: [
       {
         control: 'Brush Preset Picker',
@@ -81,7 +75,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       {
         control: 'Mode',
         detail:
-          'The blend mode the sharpened result is composited with as you brush. Adobe’s October 2026 desktop guide lists this control, but neither page enumerates Sharpen’s tool-specific blend-mode set. Adobe’s blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts. The HDR page includes Sharpen among supported tools.',
+          'Adobe’s October 2026 desktop guide lists this control in the Brush Settings menu, but neither page enumerates Sharpen’s tool-specific blend-mode set. Adobe’s blending-mode page lists 11 modes for 32-bit images; its 32-bpc HDR support page lists 15 for 32-bpc HDR images. Since 32-bpc HDR is a 32-bit scope, the lists overlap, and Adobe does not reconcile their different counts. Neither page establishes Sharpen’s available choices or default; the HDR page includes Sharpen among supported tools.',
         status: 'missing',
       },
       {
@@ -93,7 +87,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       {
         control: 'Protect Detail',
         detail:
-          'On by default, and on the current desktop bar rather than an Elements leftover. Adobe enumerates it there between Strength and Sample All Layers as "Select Protect Detail to minimize pixelation and maintain image quality" - the sharpening is what produces the pixelation and this is the checkbox that keeps it from doing so. The wording is the same one Adobe used for the Sharpen tool in Photoshop Elements, where it "ensures minimized pixelated artifacts while enhancing and sharpening".',
+          'Adobe’s current desktop guide documents this checkbox and says it reduces pixelation while maintaining image quality, but does not state its initial state. A 2010 Deke McClelland guide reports it checked by default for the Photoshop CS5-era tool.',
         status: 'missing',
       },
       {
@@ -104,13 +98,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       },
     ],
     modifiers: [],
-    shortcuts: [
-      {
-        keys: 'R',
-        action:
-          'Photoshop assigns R to the Blur/Sharpen/Smudge family. THIS APP DIVERGES: R selects Rotate View; it has no Shift+R cycle for this family.',
-      },
-    ],
+    shortcuts: [],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/sharpen.ts:243',
@@ -179,7 +167,13 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
         status: 'missing',
       },
     ],
-    modifiers: [],
+    modifiers: [
+      {
+        keys: 'Alt',
+        action:
+          'Temporarily reverses the Finger Painting setting for the drag; holding Alt/Option toggles it on or off, and releasing the key restores the option-bar setting.',
+      },
+    ],
     shortcuts: [
       {
         keys: 'R',
@@ -208,7 +202,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       'src/tools/toolProcessors.ts:252',
     ],
     appNotes:
-      "This is the closest match in the family. The processor reads each covered pixel from the untouched source raster at the texel one dab-behind along the drag, never from the buffer it is writing, so colour travels exactly one segment per dab instead of compounding into a single streak; the falloff is the shared brush engine's tipAlphaAt, so the smudge's soft edge is the same edge the Brush, Eraser, Dodge, Burn and Clone Stamp stamp. Strength is a real per-dab coverage seeded at 50% as in Photoshop, and it is `partial` rather than `present` for one narrow reason: the bar lets the slider reach 0, where `SMUDGE_STRENGTH_MIN` is 0 and the module says so in caps, while every source that states a floor for this Strength puts it at 1%. The transport semantics are right, and the app matches Photoshop's layering rule without being told to: the stroke edits the active layer, which is exactly what Sample All Layers does not change. Three controls are missing rather than wrong. Mode has nowhere to live because no control anywhere in the app edits a layer's blend mode: `Layer.blendMode` is a data field the paint tool's own Mode select writes and the PSD importer sets, and a grep for `blendMode` across `src/components/` finds only that select - the Layers panel has no blend-mode control at all. Finger Painting needs an args field of its own before it can be a control, and it is a per-dab source selection rather than a setting on the same axis as the other three. Sample All Layers would need the composite, and the processor is handed one layer's bitmap. The Brush Preset Picker is partial rather than absent because this editor has one tip shape and no presets, though Size and Hardness - the preset's two live parameters - are both there. Alt is not bound to Finger Painting. There is no build-up while the button is held: the shared stroke hook appends a point to the drag on a pointer move and there is no timer and no dwell accumulation anywhere in it, so holding the brush still deposits nothing, and one stroke is one undo entry. That is the same absence this file calls the tool's defining interaction on the Dodge and the Burn, and it is why this tool is filed `partial` on the same bar rather than `implemented` - not because the drag misbehaves, which it does not, but because the interaction the tool exists for is not there.",
+      "This is the closest match in the family. The processor reads each covered pixel from the untouched source raster at the texel one dab-behind along the drag, never from the buffer it is writing, so colour travels exactly one segment per dab instead of compounding into a single streak; the falloff is the shared brush engine's tipAlphaAt, so the smudge's soft edge is the same edge the Brush, Eraser, Dodge, Burn and Clone Stamp stamp. Strength is a real per-dab coverage seeded at 50% as in Photoshop, and it is `partial` rather than `present` for one narrow reason: the bar lets the slider reach 0, where `SMUDGE_STRENGTH_MIN` is 0 and the module says so in caps, while every source that states a floor for this Strength puts it at 1%. The transport semantics are right, and the app matches Photoshop's layering rule without being told to: the stroke edits the active layer, which is exactly what Sample All Layers does not change. Three controls are missing rather than wrong. Mode has nowhere to live because no control anywhere in the app edits a layer's blend mode: `Layer.blendMode` is a data field the paint tool's own Mode select writes and the PSD importer sets, and a grep for `blendMode` across `src/components/` finds only that select - the Layers panel has no blend-mode control at all. Finger Painting needs an args field of its own before it can be a control, and it is a per-dab source selection rather than a setting on the same axis as the other three. Sample All Layers would need the composite, and the processor is handed one layer's bitmap. The Brush Preset Picker is partial rather than absent because this editor has one tip shape and no presets, though Size and Hardness - the preset's two live parameters - are both there. This app does not bind Alt/Option to Finger Painting. There is no build-up while the button is held: the shared stroke hook appends a point to the drag on a pointer move and there is no timer and no dwell accumulation anywhere in it, so holding the brush still deposits nothing, and one stroke is one undo entry. That is the same absence this file calls the tool's defining interaction on the Dodge and the Burn, and it is why this tool is filed `partial` on the same bar rather than `implemented` - not because the drag misbehaves, which it does not, but because the interaction the tool exists for is not there.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/smudge-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/smudge-image-areas.html',
@@ -230,7 +224,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     summary:
       'Lightens the tonal range you choose as you paint, the way holding back paper under a finger brightens a print.',
     purpose:
-      'The Dodge tool comes from the darkroom: a printer holds light back under a finger to lighten that part of the print, and this is the digital version. Dragging it lightens the pixels it passes over, and it keeps doing so for as long as the button is held, so the effect is built by dwelling rather than by painting more. It is a tone operation gated by a tonal range, which is what separates it from the Sponge tool in the same flyout - the Sponge is a chroma operation with a Saturate/Desaturate mode and neither a Range nor an Exposure. Exposure is the only intensity control on the bar: there is no Opacity and no Flow, unlike the paint tools. The bar also offers Airbrush, which makes the build-up automatic while the brush rests, and Protect Tones, which is on by default and keeps the lightening from shifting hue or clipping the ends of the range.',
+      'The Dodge tool comes from the darkroom: a printer holds light back under a finger to lighten that part of the print, and this is the digital version. Dragging it lightens the pixels it passes over, and it keeps doing so for as long as the button is held, so the effect is built by dwelling rather than by painting more. It is a tone operation gated by a tonal range, which is what separates it from the Sponge tool in the same flyout - the Sponge is a chroma operation with a Saturate/Desaturate mode and neither a Range nor an Exposure. Exposure is the only intensity control on the bar: there is no Opacity and no Flow, unlike the paint tools. The bar also offers Airbrush, which makes the build-up automatic while the brush rests, and Protect Tones, which helps maintain color and prevent clipping in highlights and shadows.',
     options: [
       {
         control: 'Brush Preset Picker',
@@ -256,7 +250,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       {
         control: 'Protect Tones',
         detail:
-          "On by default. A boolean that changes which pixels the stroke will touch: it helps maintain colour and prevents clipping in the highlights and shadows, which is the same work Adobe's older bar called Protect Skin Tone.",
+          'Helps maintain color and prevent clipping in highlights and shadows. Adobe’s 2024 Photoshop for iPad guide states that it is on by default; the current desktop guide does not state a desktop default. A 2021 fstoptraining guide also reports it on by default.',
         status: 'missing',
       },
       {
@@ -309,6 +303,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       "Range and Exposure are both real and both wired: Range writes a field the processor reads, and Exposure drives a per-pixel amount rather than a display-only value, with the band's power driven by the exposure so a high value narrows the band instead of dragging a hard edge across the picture. The band itself is a quadratic falloff in Rec.709 luma of the encoded sRGB the editor stores, split at a flat luma 128. That is a defensible reading of what the tool does - Photoshop also scales stored channel values towards 255 - but it is a single hard split against a real tonal scale, and the three Photoshop bands are not equal halves of the range. The bar also matches Photoshop in a negative that is easy to get wrong: there is no Opacity and no Flow, only Exposure, which is why `DodgeBurnToolArgs` has no opacity or spacing field and takes both from the shared engine's defaults. Three controls are missing. There is no `Mode` control on the Dodge or Burn bar to be missing: the blend mode is fixed, and Peachpit's account of the tools is that they 'are effectively operating with the Color Burn and Color Dodge blending modes', which is why they shift colour and why Protect Tones has to be there to hold the colour back. Protect Tones is a real omission and the component says so: there is no field for it, so a checkbox would read as on while doing nothing. Airbrush is missing for the same reason. The Brush Preset Picker is partial rather than absent because Size and Hardness, the preset's two live parameters, are both present and clamped to 1-500 px and 0-100%. The largest behavioural gap is not a control: there is NO BUILD-UP. Each stroke commits once, at the slider's full Exposure value in a single pass, because a one-shot commit has to be a pure function of its args, which is also what makes the registry's replay reproduce it exactly. Holding the button still does nothing, so the tool's defining interaction is absent - and Airbrush, which exists precisely to make that build-up automatic when you cannot hold still, is missing for the same reason. Dodge and Burn deliberately share one options component, so a change to this control set cannot land on one tool and miss the other.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html',
+      'https://helpx.adobe.com/photoshop/ipad/retouch-and-adjust-images/dodge-burn-ipad.html',
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       'https://www.peachpit.com/articles/article.aspx?p=3104540',
@@ -326,7 +321,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
     summary:
       'Darkens the tonal range you choose as you paint, the way letting more light onto a print deepens its shadows.',
     purpose:
-      "The Burn tool is the Dodge tool measured from the other end: instead of holding light back, you let more of it onto the print, which deepens that part of the image. Dragging darkens the pixels it passes over, and it keeps darkening for as long as the button is held. Range confines the work to Shadows, Midtones or Highlights, and Exposure - the bar's only intensity control, with no Opacity and no Flow - sets how hard each pass works. Airbrush makes the build-up automatic while the brush rests, and Protect Tones is on by default and keeps the darkening from raising saturation or clipping the shadows and highlights.",
+      "The Burn tool is the Dodge tool measured from the other end: instead of holding light back, you let more of it onto the print, which deepens that part of the image. Dragging darkens the pixels it passes over, and it keeps darkening for as long as the button is held. Range confines the work to Shadows, Midtones or Highlights, and Exposure - the bar's only intensity control, with no Opacity and no Flow - sets how hard each pass works. Airbrush makes the build-up automatic while the brush rests, and Protect Tones helps maintain color and prevent clipping in highlights and shadows.",
     options: [
       {
         control: 'Brush Preset Picker',
@@ -352,7 +347,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       {
         control: 'Protect Tones',
         detail:
-          "On by default. A boolean that changes which pixels the stroke will touch: without it a burn raises the saturation of what it darkens as well as darkening it, and it can clip the ends of the range. This is the control Adobe's older bar called Protect Skin Tone.",
+          'Helps maintain color and prevent clipping in highlights and shadows. Adobe’s 2024 Photoshop for iPad guide states that it is on by default; the current desktop guide does not state a desktop default. A 2021 fstoptraining guide also reports it on by default.',
         status: 'missing',
       },
       {
@@ -400,6 +395,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       "The same processor as the Dodge, with the endpoint swapped: the burn's rule is c' = c - c * amount against the dodge's c' = c + (255 - c) * amount, and the module is explicit that burn is not the inverse of dodge. Range and Exposure are both wired to real per-pixel work through the same band function, and the band is a quadratic falloff in Rec.709 luma of the encoded sRGB the editor stores - a defensible reading, since Photoshop also scales stored channel values towards 0, but a single hard split at luma 128 where the three real tonal bands are not equal halves of the range. Protect Tones and Airbrush are both missing for the same reason as on the Dodge: `DodgeBurnToolArgs` has no field to hold them, and a control that renders a value the processor never reads is the failure this bar is written against. As on the Dodge there is no `Mode` control to miss, because the blend mode is fixed in Photoshop rather than selectable. The Brush Preset Picker is partial because Size and Hardness are present. The defining gap is again the absence of build-up while the button is held - one stroke, one commit, at the slider's full Exposure value in a single pass - which is a deliberate choice to keep the commit a pure function of its args so the registry replays it exactly, and which costs the tool the behaviour it exists for. This tool and the Dodge share one options component by design, so the control set cannot drift between them.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html',
+      'https://helpx.adobe.com/photoshop/ipad/retouch-and-adjust-images/dodge-burn-ipad.html',
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/content/dam/help/en/pdf/photoshop_reference.pdf',
       'https://www.peachpit.com/articles/article.aspx?p=3104540',
@@ -415,9 +411,9 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
   sponge: {
     photoshopName: 'Sponge Tool',
     summary:
-      'Raises or lowers the colour saturation under the brush, so a flat area gains colour or a loud one loses it, and the lightness underneath is untouched.',
+      'On color images, adjusts saturation under the brush. In Grayscale mode, Photoshop changes contrast by moving gray levels toward or away from middle gray.',
     purpose:
-      "The Sponge tool subtly changes the colour saturation of an area. Saturate intensifies the colour's saturation and Desaturate dilutes it, and the tool reaches no further than that: it is the one brush in the toning flyout that acts on chroma rather than on tone, which is what separates it from the Dodge and the Burn beside it, and neither a Range nor an Exposure appears on its bar because neither means anything to a chroma operation. Flow is the bar's only intensity control, and where the Dodge and the Burn have neither Opacity nor Flow the Sponge has Flow and no Opacity. A generic Photoshop shortcut reference assigns Shift+number to Flow, but the current Sponge-specific guide does not confirm a numeric binding; treat that generic evidence cautiously, especially for Airbrush. Dragging compounds: the effect builds up pass by pass and keeps building for as long as the button is held, which is why retouching with it is done at a low Flow with repeated passes. Adobe documents one more thing about it that belongs here rather than in the option table, because it is a rule rather than a control: when an image is in Grayscale mode the tool increases or decreases contrast by moving grey levels away from or toward the middle grey. Vibrance, the checkbox that sits beside Flow, is what keeps the Saturate direction from pushing an already-bright colour off the end of its range; it arrived with the CS4 rework of all three toning tools, which is the same release that gave the Dodge and the Burn Protect Tones.",
+      'On color images, the Sponge tool changes saturation: Saturate intensifies the colour and Desaturate dilutes it. In Grayscale mode, Photoshop instead changes contrast by moving gray levels away from or toward middle gray. On color images, this makes the Sponge distinct from Dodge and Burn, which adjust tone. The Sponge bar has Flow but no Opacity; Flow is its intensity control. A generic Photoshop shortcut reference assigns Shift+number to Flow, but the current Sponge-specific guide does not confirm a numeric binding; treat that generic evidence cautiously, especially for Airbrush. Dragging compounds: the effect builds up pass by pass and keeps building for as long as the button is held, which is why retouching with it is done at a low Flow with repeated passes. Vibrance, the checkbox beside Flow, helps prevent clipping when colors are fully saturated or desaturated. Adobe introduced it in the CS4 rework of the toning tools, which also gave Dodge and Burn Protect Tones.',
     options: [
       {
         control: 'Brush Preset Picker',

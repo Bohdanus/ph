@@ -1032,6 +1032,16 @@ test.describe('Rectangular Marquee Tool', () => {
     await expect(page.getByTestId('undo-button')).toBeDisabled();
   });
 
+  test('rectangular marquee is reachable from the sidebar flyout by keyboard', async ({ page }) => {
+    await selectEllipticalMarqueeFromSidebar(page);
+    await openToolFlyoutViaKeyboard(page, 'elliptical-selection');
+    await navigateAndSelectInFlyout(page, 'rectangular-selection', 'Rectangular Marquee Tool');
+    await expectToolSelected(page, 'rectangular-selection');
+    await expect(
+      page.getByText('Drag to draw a rectangle. Hold Shift for a square, Alt to draw from the centre.')
+    ).toBeVisible();
+  });
+
   test('a rectangular marquee drag commits a rectangle matching the drag bounds', async ({ page }) => {
     await clickToolButton(page, 'rectangular-selection');
     const box = await measureCanvas(page);
@@ -1165,7 +1175,7 @@ test.describe('Rectangular Marquee Tool', () => {
 
       const box = await measureCanvas(page);
       const press = { x: box.x + box.width * 0.4, y: box.y + box.height * 0.4 };
-      const drag = { x: press.x + 24, y: press.y + 12 };
+      const drag = { x: press.x + 24, y: press.y + 9 };
       expect(Math.abs(Number(fixedWidth) * (1 - fitScale))).toBeGreaterThan(OUTLINE_BOUNDS_TOLERANCE_PX);
       expect(Math.abs(Number(fixedHeight) * (1 - fitScale))).toBeGreaterThan(OUTLINE_BOUNDS_TOLERANCE_PX);
 

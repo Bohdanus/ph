@@ -70,7 +70,8 @@ vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => ({ openLoadImag
 vi.mock('../../../contexts/useLayer.ts', () => ({ useLayers: () => ({ drawAllLayers }) }));
 const marker = vi.hoisted(() => {
   return (name: string) => {
-    const Component = () => createElement('div', { 'data-testid': `tool-area-${name}` });
+    const Component = ({ className }: { className?: string }) =>
+      createElement('div', { className, 'data-testid': `tool-area-${name}` });
     Component.displayName = name;
     return Component;
   };
@@ -215,6 +216,60 @@ afterEach(() => {
 });
 
 describe('Main tool-area routing', () => {
+  it('keeps touch-action suppression on the active tool surface, outside the editable text overlay', () => {
+    storeState.toolName = 'text';
+
+    const { container } = render(<GuardedMain />);
+
+    expect(screen.getByTestId('tool-area-text')).toHaveClass('touch-none');
+    expect(container.querySelector('.zoom-container')).not.toHaveStyle({ touchAction: 'none' });
+    expect(screen.getByTestId('text-edit-overlay-marker')).toBeInTheDocument();
+  });
+
+  it('does not apply touch-none to view tools (hand, zoom, rotate-view)', () => {
+    for (const toolName of ['hand', 'zoom', 'rotate-view'] as const) {
+      storeState.toolName = toolName;
+      const { container, unmount } = render(<GuardedMain />);
+
+      // View tools use ViewToolArea which does NOT have touch-none
+      expect(container.querySelector('[data-testid="tool-area-view"]')).not.toHaveClass('touch-none');
+      expect(container.querySelector('.zoom-container')).not.toHaveStyle({ touchAction: 'none' });
+      unmount();
+    }
+  });
+
+  it('applies touch-none to EventHandler wrapper for non-view tools including text', () => {
+    for (const toolName of ['reposition', 'brush', 'crop', 'shape', 'eraser', 'text'] as const) {
+      storeState.toolName = toolName;
+      const { container, unmount } = render(<GuardedMain />);
+
+      // All non-view tools use EventHandler with touch-none
+      const eventHandler = container.querySelector('[data-testid^="tool-area-"]');
+      expect(eventHandler).toHaveClass('touch-none');
+      unmount();
+    }
+  });
+
+  it('applies touch-none only to the text tool area, not the zoom container', () => {
+    storeState.toolName = 'text';
+    const { container } = render(<GuardedMain />);
+
+    const toolArea = screen.getByTestId('tool-area-text');
+    const zoomContainer = container.querySelector('.zoom-container');
+
+    expect(toolArea).toHaveClass('touch-none');
+    expect(zoomContainer).not.toHaveClass('touch-none');
+    expect(zoomContainer).not.toHaveStyle({ touchAction: 'none' });
+  });
+
+  it('applies touch-none to the EventHandler wrapper for text tool', () => {
+    storeState.toolName = 'text';
+    const { container } = render(<GuardedMain />);
+
+    const eventHandler = container.querySelector('[data-testid="tool-area-text"]');
+    expect(eventHandler).toHaveClass('touch-none');
+  });
+
   it.each([
     ['reposition', 'move'],
     ['hand', 'view'],
@@ -239,12 +294,12 @@ describe('Main tool-area routing', () => {
     ['feather-magnetic-lasso', 'feather-magnetic-lasso'],
     ['magic-wand', 'magic-wand'],
     ['rectangular-selection', 'rectangular-selection'],
+    ['elliptical-selection', 'elliptical-selection'],
     // Each of the new tools got its own tool area rather than sharing the `draw` one, so each
     // row below pins a DISTINCT area: a tool accidentally pointed at a neighbour's component
     // would render that neighbour's marker and fail here. The eraser is a drag area that is NOT
     // `DrawToolArea`, so it gets its own mode too. The two fill tools share one area because
     // they differ only in what their processor writes into the fill mask.
-    ['elliptical-selection', 'elliptical-selection'],
     ['quick-selection', 'quick-selection'],
     ['eyedropper', 'eyedropper'],
     ['eraser', 'eraser'],

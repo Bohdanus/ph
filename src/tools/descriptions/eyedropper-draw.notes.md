@@ -1575,14 +1575,9 @@ this pass: the E4 finding's own evidence is `src/util/draw.ts` — `drawPen()` �
 is only useful if it still resolves, and a `grep` sweep does not catch this — the text
 at the stale site still reads plausibly.
 
-## Incidental observation, not fixed here
+## Checked observation: composite comment
 
-`src/tools/draw.ts` — the doc comment above the `composite` field in `DrawToolArgs` — contains a
-duplicated `/**`, two consecutive block-comment openers, the
-first of which swallows the second as comment text. It parses (JavaScript block comments do not
-nest), so nothing fails; the effect is that the `composite` field's doc comment is malformed from
-its first line. The surrounding declarations are unaffected, so no reference into this file moves.
-Flagged because
-this file is load-bearing for the Draw description and for the `PaintToolArgs` derivation, and the
-malformed comment is the kind of thing an agent re-deriving a citation from a doc comment would
-trip over.
+An earlier inspection described a duplicated `/**` above `DrawToolArgs.composite`. That report was
+incorrect: the current declaration has one well-formed block comment, and commit `80eb207cb8`
+introduced the field and comment together. Its parent does not contain the field. No source fix is
+needed.

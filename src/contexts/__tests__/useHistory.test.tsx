@@ -861,6 +861,79 @@ describe('useHistory undo replay', () => {
     expect(state.branchRevision).toBe(2);
   });
 
+  it('preserves the current state when disabling a create that a later create uses as its insertion anchor', async () => {
+    const source: LayerSource = {
+      kind: 'blank',
+      color: '#ffffff',
+      opacity: 1,
+      isBedrock: false,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    };
+    const history: HistoryItem[] = [
+      {
+        id: 'opening',
+        layerId: 'base',
+        actionName: OPEN_DOCUMENT_ACTION,
+        documentSource: {
+          layers: { base: makeReplayLayer('base', 0, { width: 40, height: 20 } as ImageBitmap) },
+          size: { width: 128, height: 64 },
+        },
+      },
+      { id: 'anchor', layerId: 'anchor', actionName: NEW_LAYER_ACTION, layerSource: source },
+      {
+        id: 'dependent',
+        layerId: 'dependent',
+        actionName: NEW_LAYER_ACTION,
+        layerSource: source,
+        insertAfterLayerId: 'anchor',
+      },
+    ];
+    const { state } = setup(history);
+
+    await useHistory().resetHistoryTo(2);
+    expect(Object.keys(state.layers)).toEqual(['base', 'anchor', 'dependent']);
+
+    dispatchMock.mockClear();
+    replayControl.calls = [];
+    rendererControl.drawCalls.length = 0;
+    const previousHistory = state.history;
+    const previousLayers = state.layers;
+    const previousActiveLayerId = state.activeLayerId;
+    const previousCursor = state.historyIndex;
+    const previousBranchRevision = state.branchRevision;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await useHistory().toggleDisabled('anchor');
+
+    expect(replayControl.calls).toHaveLength(1);
+    expect(replayControl.calls[0]?.targetIndex).toBe(2);
+    expect(replayControl.calls[0]?.entries.find((entry) => entry.id === 'anchor')).toMatchObject({ disabled: true });
+    expect(replayControl.calls[0]?.entries.find((entry) => entry.id === 'dependent')).toMatchObject({
+      id: 'dependent',
+      insertAfterLayerId: 'anchor',
+    });
+    expect(replayControl.calls[0]?.entries.find((entry) => entry.id === 'dependent')?.disabled).not.toBe(true);
+    expect(dispatchedTypes()).toEqual(['SET_DURABLE_STATUS']);
+    expect(dispatchedActions()[0]?.payload?.status).toBe('unavailable');
+    expect(dispatchedActions()[0]?.payload?.diagnostics?.[0]).toMatchObject({
+      historyId: 'dependent',
+      actionName: NEW_LAYER_ACTION,
+      severity: 'error',
+      code: 'conversion-failed',
+      message: 'Cannot insert a layer after missing layer "anchor"',
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      'History replay is unavailable',
+      expect.objectContaining({ message: 'Cannot insert a layer after missing layer "anchor"' })
+    );
+    expect(rendererControl.drawCalls).toEqual([]);
+    expect(state.history).toBe(previousHistory);
+    expect(state.layers).toBe(previousLayers);
+    expect(state.activeLayerId).toBe(previousActiveLayerId);
+    expect(state.historyIndex).toBe(previousCursor);
+    expect(state.branchRevision).toBe(previousBranchRevision);
+  });
+
   it('selects a surviving layer when redoing deletion', () => {
     const history = createHistory('layerSource');
     history.push({ ...history[0], id: 'second', layerId: 'second' });

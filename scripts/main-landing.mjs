@@ -10,14 +10,21 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import {
-  appendFileSync,
+  closeSync,
   copyFileSync,
+  constants,
   existsSync,
+  fstatSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { hostname } from 'node:os';
@@ -28,16 +35,33 @@ import { fileURLToPath } from 'node:url';
 import { readMergeHeadRefs, resolveWorktree } from './main-worktree-guard.mjs';
 import { readOperations } from './lib/git-operation-state.mjs';
 import { samePath } from './lib/path-identity.mjs';
+import {
+  pidExists,
+  processRuntimeScopeToken,
+  processStartToken,
+  recordedProcessIsAlive,
+} from './lib/process-identity.mjs';
 import { isProjectMainWorktree } from './merge-takeover-guard.mjs';
 
 const OWNER_FILE = 'owner.json';
 const LOCK_DIR = 'main-landing-occupancy';
 const HEARTBEAT_MS = 30_000;
 const WATCH_POLL_MS = 30_000;
+const WATCHER_READ_RETRY_MAX = 3;
+const WATCHER_READ_RETRY_BASE_MS = 500;
 const WATCHER_READY_TIMEOUT_MS = 10_000;
 const AUTO_MERGE_RECOVERY_MS = 30 * 60_000;
 const AUTO_MERGE_OBSERVATION_GAP_MS = WATCH_POLL_MS * 3;
 const PENDING_RECOVERY_EXIT = 75;
+const FAILURE_LOG_MAX_BYTES = 256 * 1024;
+const FAILURE_LOG_MAX_LINES = 128;
+const FAILURE_LOG_MAX_LINE_CHARS = 512;
+const FAILURE_LOG_LOCK_FILE = 'alert-failures.lock';
+const FAILURE_LOG_LOCK_MAX_BYTES = 4096;
+const FAILURE_LOG_LOCK_RETRY_ATTEMPTS = 100;
+const FAILURE_LOG_LOCK_RETRY_MS = 10;
+const OWNER_CONTROL_LOCK_BUSY_ERROR = 'main landing owner-control lock is held or its process liveness is unknown';
+const INVALID_TIMESTAMP_ALERT = 'invalid-timestamp';
 const ALERTS = [
   { minutes: 15, label: '15 minutes' },
   { minutes: 240, label: '4 hours' },
@@ -97,6 +121,26 @@ function resolvePath(value, base) {
   return resolve(isAbsolute(value) ? value : join(base, value));
 }
 
+function sameDirectory(left, right) {
+  if (samePath(left, right)) return true;
+  try {
+    const leftStats = statSync(left, { bigint: true });
+    const rightStats = statSync(right, { bigint: true });
+    return (
+      leftStats.isDirectory() &&
+      rightStats.isDirectory() &&
+      leftStats.dev !== 0n &&
+      rightStats.dev !== 0n &&
+      leftStats.ino !== 0n &&
+      rightStats.ino !== 0n &&
+      leftStats.dev === rightStats.dev &&
+      leftStats.ino === rightStats.ino
+    );
+  } catch {
+    return false;
+  }
+}
+
 function resolvePaths(cwd = process.cwd()) {
   const registeredGitDir = gitConfigValue('ph.mainWorktreeGitDir', cwd);
   const registeredPath = gitConfigValue('ph.mainWorktreePath', cwd);
@@ -119,6 +163,42 @@ function resolvePaths(cwd = process.cwd()) {
   const commonDir = resolvePath(commonRaw, cwd);
   const mainGitDir = resolvePath(registeredGitDir, cwd);
   const mainPath = resolvePath(registeredPath, cwd);
+  let registeredCommonDir;
+  let actualMainGitDir;
+  let actualMainPath;
+  try {
+    registeredCommonDir = resolvePath(
+      gitText(['rev-parse', '--path-format=absolute', '--git-common-dir'], mainPath),
+      mainPath
+    );
+    actualMainGitDir = resolvePath(gitText(['rev-parse', '--absolute-git-dir'], mainPath), mainPath);
+    actualMainPath = resolvePath(gitText(['rev-parse', '--show-toplevel'], mainPath), mainPath);
+  } catch {
+    throw new Error(
+      'registered main worktree cannot be verified against this repository; preserve state and repair the shared main-worktree registration'
+    );
+  }
+  if (
+    !sameDirectory(registeredCommonDir, commonDir) ||
+    !sameDirectory(actualMainGitDir, mainGitDir) ||
+    !sameDirectory(actualMainPath, mainPath)
+  ) {
+    throw new Error(
+      'registered main worktree does not belong to this repository; preserve state and repair the shared main-worktree registration'
+    );
+  }
+  const registeredIdentity = gitConfigValue('ph.mainWorktreeIdentity', cwd);
+  let currentMainIdentity = null;
+  try {
+    currentMainIdentity = readFileSync(join(mainGitDir, 'kilo-main-worktree-identity'), 'utf8').trim() || null;
+  } catch {
+    // A missing or unreadable identity marker cannot establish this worktree's registration.
+  }
+  if (!registeredIdentity || currentMainIdentity !== registeredIdentity) {
+    throw new Error(
+      'registered main worktree identity does not match its private git directory; preserve state and reinstall hooks from main'
+    );
+  }
   return {
     cwd,
     commonDir,
@@ -141,6 +221,39 @@ function readOwner(paths) {
   } catch (error) {
     throw new Error('the main landing owner record is unreadable: ' + (error?.message ?? String(error)));
   }
+}
+
+const sleepFor = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+
+async function readOwnerForWatcher(paths, { sleep = sleepFor, readOwnerImpl = readOwner } = {}) {
+  const logFailure = (message) => {
+    try {
+      appendFailureLog(paths, message);
+    } catch {
+      // Failure-log contention or I/O must not skip the owner-read retry sequence.
+    }
+  };
+
+  for (let attempt = 1; attempt <= WATCHER_READ_RETRY_MAX; attempt += 1) {
+    try {
+      return { ok: true, owner: readOwnerImpl(paths) };
+    } catch (error) {
+      logFailure(
+        'watcher readOwner failed (attempt ' +
+          attempt +
+          '/' +
+          WATCHER_READ_RETRY_MAX +
+          '): ' +
+          (error?.message ?? String(error))
+      );
+      if (attempt === WATCHER_READ_RETRY_MAX) {
+        logFailure('watcher: readOwner failed ' + WATCHER_READ_RETRY_MAX + ' consecutive times; exiting');
+        return { ok: false, error };
+      }
+      await sleep(WATCHER_READ_RETRY_BASE_MS * attempt);
+    }
+  }
+  return { ok: false, error: new Error('watcher readOwner retry loop exited unexpectedly') };
 }
 
 function readControlLock(paths) {
@@ -189,27 +302,27 @@ function alertText(value, max = 120) {
   return safeText(value, max).replace(/[^\x20-\x7e]/g, '?');
 }
 
-function sameRuntime(owner) {
-  return String(owner?.host ?? '').toLowerCase() === hostname().toLowerCase() && owner?.platform === process.platform;
+function sameRuntime(owner, { host = hostname(), platform = process.platform, runtimeScopeToken } = {}) {
+  if (String(owner?.host ?? '').toLowerCase() !== host.toLowerCase() || owner?.platform !== platform) return false;
+  if (platform !== 'linux') return true;
+  const currentScopeToken = runtimeScopeToken === undefined ? processRuntimeScopeToken() : runtimeScopeToken;
+  return typeof owner?.runtimeScopeToken === 'string' && owner.runtimeScopeToken === currentScopeToken;
 }
 
-function pidExists(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error?.code === 'EPERM') return true;
-    if (error?.code === 'ESRCH') return false;
-    return null;
-  }
-}
-
-function recordedPidStates(owner) {
-  if (!sameRuntime(owner)) return { owner: null, child: null };
+export function recordedPidStates(
+  owner,
+  { exists = pidExists, startToken = processStartToken, host, platform, runtimeScopeToken } = {}
+) {
+  if (!sameRuntime(owner, { host, platform, runtimeScopeToken })) return { owner: null, child: null };
   return {
-    owner: Number.isInteger(owner?.pid) && owner.pid > 0 ? pidExists(owner.pid) : null,
-    child: Number.isInteger(owner?.childPid) && owner.childPid > 0 ? pidExists(owner.childPid) : null,
+    owner:
+      Number.isSafeInteger(owner?.pid) && owner.pid > 0
+        ? recordedProcessIsAlive(owner.pid, owner.pidStartToken, { exists, startToken })
+        : null,
+    child:
+      Number.isSafeInteger(owner?.childPid) && owner.childPid > 0
+        ? recordedProcessIsAlive(owner.childPid, owner.childStartToken, { exists, startToken })
+        : null,
   };
 }
 
@@ -242,8 +355,20 @@ export function isOrphanAutoMergeState(state) {
     state?.branch === 'main' &&
     Array.isArray(state.operations) &&
     state.operations.length === 1 &&
-    state.operations[0]?.operation === 'in-progress' &&
+    state.operations[0]?.operation === null &&
     state.operations[0]?.marker === 'AUTO_MERGE'
+  );
+}
+
+export function formatOperationSummary(operations) {
+  return (
+    operations
+      .map((entry) =>
+        typeof entry?.operation === 'string'
+          ? `${entry.operation}:${entry.marker}`
+          : `${entry?.marker ?? 'Unknown'} marker without a primary operation marker`
+      )
+      .join(', ') || 'none'
   );
 }
 
@@ -288,7 +413,7 @@ export function observeOrphanAutoMerge(owner, state, signature, now = Date.now()
 export function resetOrphanAutoMergeFailover(owner, state, signature, now = Date.now()) {
   const next = {
     ...owner,
-    owner: { ...(owner.previousOwner ?? owner.owner), childPid: null },
+    owner: { ...(owner.previousOwner ?? owner.owner), childPid: null, childStartToken: null },
     autoMergeFailoverAttempted: false,
     step: 'replacement creation failed before a new worktree existed; restarting the 30-minute AUTO_MERGE observation',
     heartbeatAt: new Date(now).toISOString(),
@@ -333,8 +458,15 @@ export function canRecoverOrphanAutoMerge(owner, now = Date.now(), pids = record
   );
 }
 
-function alertMarker(paths, minutes) {
-  return join(paths.lockDir, 'alert-' + minutes + 'm.json');
+function alertMarker(paths, key) {
+  const label =
+    typeof key === 'number' && ALERTS.some((alert) => alert.minutes === key)
+      ? key + 'm'
+      : key === INVALID_TIMESTAMP_ALERT
+        ? key
+        : null;
+  if (!label) throw new Error('unsupported main landing alert key');
+  return join(paths.lockDir, 'alert-' + label + '.json');
 }
 
 function isValidAlertMarker(alert) {
@@ -367,8 +499,8 @@ function isValidAlertMarker(alert) {
   return false;
 }
 
-function readAlert(paths, minutes) {
-  const file = alertMarker(paths, minutes);
+function readAlert(paths, key) {
+  const file = alertMarker(paths, key);
   if (!existsSync(file)) return null;
   let contents;
   try {
@@ -385,7 +517,8 @@ function readAlert(paths, minutes) {
   return isValidAlertMarker(alert) ? alert : { status: 'corrupt' };
 }
 
-export function claimAlert(paths, owner, minutes) {
+export function claimAlert(paths, owner, key) {
+  if (typeof owner?.leaseId !== 'string' || !owner.leaseId.trim()) return false;
   let controlLock;
   try {
     controlLock = acquireRecoveryControl(paths, owner);
@@ -394,17 +527,19 @@ export function claimAlert(paths, owner, minutes) {
     throw error;
   }
   try {
-    const file = alertMarker(paths, minutes);
-    const existing = readAlert(paths, minutes);
+    const file = alertMarker(paths, key);
+    const existing = readAlert(paths, key);
     if (existing?.status === 'sent') return false;
     if (existing?.status === 'pending') {
       const reporter = {
         host: existing.host,
         platform: existing.platform,
+        runtimeScopeToken: existing.runtimeScopeToken,
         pid: existing.pid,
+        pidStartToken: existing.pidStartToken,
       };
       if (sameRuntime(reporter)) {
-        if (pidExists(reporter.pid) !== false) return false;
+        if (recordedProcessIsAlive(reporter.pid, reporter.pidStartToken, { exists: pidExists }) !== false) return false;
       } else {
         const pendingSince = Date.parse(existing.startedAt ?? '');
         if (!Number.isFinite(pendingSince) || Date.now() - pendingSince < 60_000) return false;
@@ -429,7 +564,9 @@ export function claimAlert(paths, owner, minutes) {
           leaseId: owner.leaseId,
           host: hostname(),
           platform: process.platform,
+          runtimeScopeToken: processRuntimeScopeToken(),
           pid: process.pid,
+          pidStartToken: processStartToken(process.pid),
           startedAt: new Date().toISOString(),
         }),
         { flag: 'wx', mode: 0o600 }
@@ -491,23 +628,334 @@ function alertMessage(owner, minutes) {
   ).replace(/--/g, '- -');
 }
 
-function notifyIfDue(paths, owner, now = Date.now()) {
+function invalidTimestampMessage(owner) {
+  return (
+    'Main landing lease timestamp is invalid or missing: branch=' +
+    alertText(owner.owner?.branch) +
+    ', chat=' +
+    alertText(owner.owner?.chatId) +
+    ', lease=' +
+    alertText(owner.leaseId) +
+    '. Lease age and recovery thresholds are unknown. Preserve the lease and main state while checking owner-session liveness and its process tree.'
+  ).replace(/--/g, '- -');
+}
+
+export function readFailureLogLock(
+  file,
+  { lstatImpl = lstatSync, openImpl = openSync, fstatImpl = fstatSync, readImpl = readSync, closeImpl = closeSync } = {}
+) {
+  let pathStat;
+  try {
+    pathStat = lstatImpl(file);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { status: 'missing' };
+    throw error;
+  }
+  if (!pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.nlink !== 1) {
+    throw new Error('main landing failure log lock is not a single-link regular file');
+  }
+
+  let descriptor;
+  try {
+    descriptor = openImpl(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    const stat = fstatImpl(descriptor);
+    if (!stat.isFile() || !Number.isSafeInteger(stat.nlink) || stat.nlink > 1) {
+      throw new Error('main landing failure log lock is not a single-link regular file');
+    }
+    if (stat.nlink === 0 || stat.dev !== pathStat.dev || stat.ino !== pathStat.ino) {
+      return { status: 'changing' };
+    }
+    if (
+      !Number.isSafeInteger(pathStat.dev) ||
+      !Number.isSafeInteger(pathStat.ino) ||
+      pathStat.ino <= 0 ||
+      stat.nlink !== 1
+    ) {
+      throw new Error('main landing failure log lock changed during inspection');
+    }
+    if (!Number.isSafeInteger(stat.size) || stat.size <= 0 || stat.size > FAILURE_LOG_LOCK_MAX_BYTES) {
+      return { status: 'unreadable' };
+    }
+
+    const buffer = Buffer.alloc(stat.size);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const count = readImpl(descriptor, buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+      if (count === 0) return { status: 'unreadable' };
+      bytesRead += count;
+    }
+    let record;
+    try {
+      record = JSON.parse(buffer.toString('utf8'));
+    } catch {
+      return { status: 'unreadable' };
+    }
+    const valid =
+      record &&
+      typeof record === 'object' &&
+      typeof record.token === 'string' &&
+      /^[a-f0-9-]{36}$/i.test(record.token) &&
+      Number.isInteger(record.pid) &&
+      record.pid > 0 &&
+      typeof record.host === 'string' &&
+      record.host.length > 0 &&
+      typeof record.platform === 'string' &&
+      record.platform.length > 0 &&
+      Number.isFinite(Date.parse(record.startedAt ?? ''));
+    return valid ? { status: 'record', record } : { status: 'unreadable' };
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { status: 'missing' };
+    throw error;
+  } finally {
+    if (descriptor !== undefined) closeImpl(descriptor);
+  }
+}
+
+function waitForFailureLogLock(waitCell) {
+  Atomics.wait(waitCell, 0, 0, FAILURE_LOG_LOCK_RETRY_MS);
+}
+
+function acquireOwnerControlForFailureLog(paths, waitCell) {
+  for (let attempt = 0; attempt < FAILURE_LOG_LOCK_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return acquireRecoveryControl(paths, { leaseId: null });
+    } catch (error) {
+      if (error?.message !== OWNER_CONTROL_LOCK_BUSY_ERROR || attempt === FAILURE_LOG_LOCK_RETRY_ATTEMPTS - 1) {
+        throw error;
+      }
+      waitForFailureLogLock(waitCell);
+    }
+  }
+  throw new Error(OWNER_CONTROL_LOCK_BUSY_ERROR);
+}
+
+function acquireFailureLogLock(paths) {
+  const file = join(paths.lockDir, FAILURE_LOG_LOCK_FILE);
+  const waitCell = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  const pidStartToken = processStartToken(process.pid);
+  const runtimeScopeToken = processRuntimeScopeToken();
+  if (!pidStartToken || (process.platform === 'linux' && !runtimeScopeToken)) {
+    throw new Error('main landing failure log lock cannot identify its process; refusing the log write');
+  }
+  let lastObservedLockState = 'contended';
+  const processStatesByToken = new Map();
+  const failureLogProcessState = (record, refresh = false) => {
+    if (!sameRuntime(record)) return null;
+    const exists = pidExists(record.pid);
+    if (exists === false) return false;
+    if (exists !== true) return null;
+    if (!refresh && processStatesByToken.has(record.token)) return processStatesByToken.get(record.token);
+    const startToken = processStartToken(record.pid);
+    const state = recordedProcessIsAlive(record.pid, record.pidStartToken, {
+      exists: () => true,
+      startToken: () => startToken,
+    });
+    processStatesByToken.set(record.token, state);
+    return state;
+  };
+
+  for (let attempt = 0; attempt < FAILURE_LOG_LOCK_RETRY_ATTEMPTS; attempt += 1) {
+    const record = {
+      token: randomUUID(),
+      pid: process.pid,
+      pidStartToken,
+      runtimeScopeToken,
+      host: hostname(),
+      platform: process.platform,
+      startedAt: new Date().toISOString(),
+    };
+    try {
+      writeFileSync(file, JSON.stringify(record) + '\n', { flag: 'wx', mode: 0o600 });
+      return record;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+
+    const inspected = readFailureLogLock(file);
+    if (inspected.status === 'missing') {
+      lastObservedLockState = 'changing';
+      continue;
+    }
+    if (inspected.status === 'changing') {
+      lastObservedLockState = 'changing';
+      if (attempt < FAILURE_LOG_LOCK_RETRY_ATTEMPTS - 1) waitForFailureLogLock(waitCell);
+      continue;
+    }
+    if (inspected.status === 'unreadable') {
+      lastObservedLockState = 'unreadable';
+      if (attempt < FAILURE_LOG_LOCK_RETRY_ATTEMPTS - 1) waitForFailureLogLock(waitCell);
+      continue;
+    }
+
+    const existing = inspected.record;
+    if (failureLogProcessState(existing) === false) {
+      const controlLock = acquireOwnerControlForFailureLog(paths, waitCell);
+      try {
+        const current = readFailureLogLock(file);
+        if (
+          current.status === 'record' &&
+          current.record.token === existing.token &&
+          failureLogProcessState(current.record, true) === false
+        ) {
+          try {
+            unlinkSync(file);
+            lastObservedLockState = 'changing';
+          } catch (error) {
+            if (error?.code !== 'ENOENT') throw error;
+            lastObservedLockState = 'changing';
+          }
+        } else if (current.status === 'unreadable') {
+          lastObservedLockState = 'unreadable';
+        } else if (current.status === 'record') {
+          lastObservedLockState = failureLogProcessState(current.record, true) === false ? 'changing' : 'contended';
+        } else {
+          lastObservedLockState = 'changing';
+        }
+      } finally {
+        rmSync(controlLock, { force: true });
+      }
+      continue;
+    }
+
+    lastObservedLockState = 'contended';
+    if (attempt < FAILURE_LOG_LOCK_RETRY_ATTEMPTS - 1) waitForFailureLogLock(waitCell);
+  }
+
+  throw new Error(
+    lastObservedLockState === 'unreadable'
+      ? 'main landing failure log lock is unreadable; manual inspection required'
+      : lastObservedLockState === 'changing'
+        ? 'main landing failure log lock changed repeatedly; manual inspection required'
+        : 'main landing failure log lock is held or its process liveness is unknown'
+  );
+}
+
+function releaseFailureLogLock(paths, token) {
+  const file = join(paths.lockDir, FAILURE_LOG_LOCK_FILE);
+  const current = readFailureLogLock(file);
+  if (current.status !== 'record' || current.record.token !== token) {
+    throw new Error('main landing failure log lock changed; refusing to release it');
+  }
+  unlinkSync(file);
+}
+
+function appendFailureLog(paths, message) {
+  const lock = acquireFailureLogLock(paths);
+  try {
+    appendFailureLogWhileLocked(paths, message);
+  } finally {
+    releaseFailureLogLock(paths, lock.token);
+  }
+}
+
+function appendFailureLogWhileLocked(paths, message) {
+  const file = join(paths.lockDir, 'alert-failures.log');
+  const line = (new Date().toISOString() + ' ' + String(message).replace(/[\r\n]+/g, ' ')).slice(
+    0,
+    FAILURE_LOG_MAX_LINE_CHARS
+  );
+  const entry = Buffer.from(line + '\n', 'utf8');
+  if (entry.length > FAILURE_LOG_MAX_BYTES) throw new Error('main landing failure log entry exceeds byte limit');
+  const previousLimit = Math.max(0, FAILURE_LOG_MAX_BYTES - entry.length);
+  let previous = Buffer.alloc(0);
+  let descriptor;
+  try {
+    let pathStat;
+    try {
+      pathStat = lstatSync(file);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    if (pathStat && !pathStat.isSymbolicLink()) {
+      if (!pathStat.isFile()) throw new Error('main landing failure log is not a regular file');
+      descriptor = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+      const stat = fstatSync(descriptor);
+      if (!stat.isFile()) throw new Error('main landing failure log is not a regular file');
+      const sameSingleLinkFile =
+        Number.isSafeInteger(pathStat.dev) &&
+        Number.isSafeInteger(pathStat.ino) &&
+        pathStat.ino > 0 &&
+        pathStat.nlink === 1 &&
+        stat.dev === pathStat.dev &&
+        stat.ino === pathStat.ino &&
+        stat.nlink === 1;
+      const length = sameSingleLinkFile ? Math.min(stat.size, previousLimit) : 0;
+      if (length > 0) {
+        const buffer = Buffer.alloc(length);
+        const offset = stat.size - length;
+        let bytesRead = 0;
+        while (bytesRead < length) {
+          const count = readSync(descriptor, buffer, bytesRead, length - bytesRead, offset + bytesRead);
+          if (count === 0) break;
+          bytesRead += count;
+        }
+        const tail = buffer.subarray(0, bytesRead);
+        if (offset === 0) {
+          previous = tail;
+        } else {
+          const firstLineEnd = tail.indexOf(0x0a);
+          if (firstLineEnd >= 0) previous = tail.subarray(firstLineEnd + 1);
+        }
+      }
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT' && error?.code !== 'ELOOP') throw error;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+
+  const lines = previous
+    .toString('utf8')
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((previousLine) => previousLine.slice(0, FAILURE_LOG_MAX_LINE_CHARS))
+    .slice(-(FAILURE_LOG_MAX_LINES - 1));
+  lines.push(line);
+  while (
+    lines.length > FAILURE_LOG_MAX_LINES ||
+    Buffer.byteLength(lines.join('\n') + '\n', 'utf8') > FAILURE_LOG_MAX_BYTES
+  ) {
+    lines.shift();
+  }
+  const contents = Buffer.from(lines.join('\n') + '\n', 'utf8');
+  const temporary = file + '.' + process.pid + '.' + randomUUID() + '.tmp';
+  try {
+    writeFileSync(temporary, contents, { flag: 'wx', mode: 0o600 });
+    renameSync(temporary, file);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+function deliverClaimedAlert(paths, owner, key, message, postNote) {
+  const file = alertMarker(paths, key);
+  if (postNote(paths, message)) {
+    writeAtomic(file, {
+      status: 'sent',
+      leaseId: owner.leaseId,
+      sentAt: new Date().toISOString(),
+      message,
+    });
+  } else {
+    try {
+      appendFailureLog(paths, message);
+    } finally {
+      rmSync(file, { force: true });
+    }
+  }
+}
+
+export function notifyIfDue(paths, owner, now = Date.now(), postNote = boardNote) {
   const elapsed = ageMs(owner, now);
-  if (!Number.isFinite(elapsed)) return;
+  if (!Number.isFinite(elapsed)) {
+    if (!claimAlert(paths, owner, INVALID_TIMESTAMP_ALERT)) return;
+    deliverClaimedAlert(paths, owner, INVALID_TIMESTAMP_ALERT, invalidTimestampMessage(owner), postNote);
+    return;
+  }
   for (const alert of ALERTS) {
     if (elapsed < alert.minutes * 60_000 || !claimAlert(paths, owner, alert.minutes)) continue;
-    const message = alertMessage(owner, alert.minutes);
-    if (boardNote(paths, message)) {
-      writeAtomic(alertMarker(paths, alert.minutes), {
-        status: 'sent',
-        leaseId: owner.leaseId,
-        sentAt: new Date().toISOString(),
-        message,
-      });
-    } else {
-      appendFileSync(join(paths.lockDir, 'alert-failures.log'), new Date().toISOString() + ' ' + message + '\n');
-      rmSync(alertMarker(paths, alert.minutes), { force: true });
-    }
+    deliverClaimedAlert(paths, owner, alert.minutes, alertMessage(owner, alert.minutes), postNote);
   }
 }
 
@@ -532,9 +980,21 @@ function releaseLock(paths, leaseId) {
 
 function acquireRecoveryControl(paths, owner) {
   const lock = join(paths.lockDir, 'owner-control.lock');
+  const pidStartToken = processStartToken(process.pid);
+  const runtimeScopeToken = processRuntimeScopeToken();
+  if (!pidStartToken) {
+    throw new Error('main landing owner-control lock cannot identify its process; refusing the recovery operation');
+  }
+  if (process.platform === 'linux' && !runtimeScopeToken) {
+    throw new Error(
+      'main landing owner-control lock cannot identify its Linux process scope; refusing the recovery operation'
+    );
+  }
   const record = {
     leaseId: owner.leaseId,
     pid: process.pid,
+    pidStartToken,
+    runtimeScopeToken,
     host: hostname(),
     platform: process.platform,
     startedAt: new Date().toISOString(),
@@ -550,7 +1010,9 @@ function acquireRecoveryControl(paths, owner) {
     } catch {
       throw new Error('main landing owner-control lock is unreadable; manual inspection required');
     }
-    const state = sameRuntime(existing) ? pidExists(existing.pid) : null;
+    const state = sameRuntime(existing)
+      ? recordedProcessIsAlive(existing.pid, existing.pidStartToken, { exists: pidExists })
+      : null;
     if (state === false) {
       throw new Error(
         'main landing owner-control lock belongs to a stopped process; inspect it before removing the lock'
@@ -563,14 +1025,20 @@ function acquireRecoveryControl(paths, owner) {
 
 function ownerSummary(owner, paths) {
   const state = processState(owner.owner ?? {});
+  const elapsed = ageMs(owner);
+  const ageKnown = Number.isFinite(elapsed);
+  const leaseIdKnown = typeof owner.leaseId === 'string' && owner.leaseId.trim().length > 0;
   return {
     occupied: true,
     mainPath: paths.mainPath,
     gitState: mainGitState(paths),
     ownerControl: readControlLock(paths),
     leaseId: owner.leaseId,
+    leaseIdKnown,
     occupiedSince: owner.occupiedSince,
-    age: formatAge(ageMs(owner)),
+    age: formatAge(elapsed),
+    ageKnown,
+    timestampIntegrityAlert: readAlert(paths, INVALID_TIMESTAMP_ALERT)?.status ?? 'not sent',
     heartbeatAt: owner.heartbeatAt,
     step: owner.step,
     owner: owner.owner,
@@ -603,6 +1071,13 @@ function showStatus(paths, json = false) {
       process.stdout.write(
         'main landing occupied for ' +
           summary.age +
+          [
+            summary.leaseIdKnown ? null : 'missing lease ID',
+            summary.ageKnown ? null : 'invalid or missing lease timestamp',
+          ]
+            .filter(Boolean)
+            .map((warning) => ' (' + warning + ')')
+            .join('') +
           ' by ' +
           safeText(owner.owner?.script) +
           ' on ' +
@@ -683,7 +1158,7 @@ function showStatus(paths, json = false) {
         ' has unowned Git state; owner is unknown. branch=' +
         state.branch +
         ', operations=' +
-        (state.operations.map((entry) => entry.operation + ':' + entry.marker).join(', ') || 'none') +
+        formatOperationSummary(state.operations) +
         ', dirty=' +
         state.dirty +
         ', unmerged=' +
@@ -791,8 +1266,19 @@ function assertMainAvailable(paths) {
   }
 }
 
-function newOwner(pins, mode = 'landing', mainPath = null) {
+export function newOwner(pins, mode = 'landing', mainPath = null, { startToken = processStartToken } = {}) {
   const now = new Date().toISOString();
+  const pid = mode === 'landing' ? process.pid : null;
+  const pidStartToken = pid === null ? null : startToken(pid);
+  const runtimeScopeToken = processRuntimeScopeToken();
+  if (pid !== null && (typeof pidStartToken !== 'string' || pidStartToken.length === 0)) {
+    throw new Error('main landing cannot identify its owner process; refusing to create an unprotected landing lease');
+  }
+  if (pid !== null && process.platform === 'linux' && !runtimeScopeToken) {
+    throw new Error(
+      'main landing cannot identify its Linux process scope; refusing to create an unprotected landing lease'
+    );
+  }
   return {
     version: 1,
     leaseId: randomUUID(),
@@ -809,8 +1295,11 @@ function newOwner(pins, mode = 'landing', mainPath = null) {
     owner: {
       branch: pins.branch,
       chatId: pins.chatId,
-      pid: mode === 'landing' ? process.pid : null,
+      pid,
+      pidStartToken,
+      runtimeScopeToken,
       childPid: null,
+      childStartToken: null,
       host: hostname(),
       platform: process.platform,
       script: mode === 'landing' ? 'scripts/main-landing.mjs' : 'Luna recovery agent',
@@ -980,6 +1469,7 @@ function heartbeat(paths, owner, step = owner.step, childPid = owner.owner.child
     owner.heartbeatAt = new Date().toISOString();
     owner.step = step;
     owner.owner.childPid = childPid ?? null;
+    owner.owner.childStartToken = childPid == null ? null : processStartToken(childPid);
     writeOwner(paths, owner);
   } finally {
     rmSync(controlLock, { force: true });
@@ -1218,7 +1708,7 @@ export async function land(paths, options, cwd, { watcherStarter = startWatcher 
           const isAutoMergeFailure = isOrphanAutoMergeState(state) && Boolean(orphanAutoMergeSignature(paths, state));
           owner = updateOwnedRecord(paths, owner.leaseId, (latest) => ({
             ...latest,
-            owner: { ...latest.owner, childPid: null },
+            owner: { ...latest.owner, childPid: null, childStartToken: null },
             step: 'recovery required: ' + safeText(error.message, 240),
             heartbeatAt: new Date().toISOString(),
             ...(isAutoMergeFailure
@@ -1295,7 +1785,10 @@ function takeover(paths, options) {
         branch,
         chatId,
         pid: null,
+        pidStartToken: null,
+        runtimeScopeToken: processRuntimeScopeToken(),
         childPid: null,
+        childStartToken: null,
         host: hostname(),
         platform: process.platform,
         script: 'Luna recovery agent',
@@ -1383,13 +1876,18 @@ function clearControlLock(paths, options) {
   } catch {
     throw new Error('owner-control lock is unreadable; preserve the owner directory for manual inspection');
   }
-  if (sameRuntime(expected) && pidExists(expected.pid) === true) {
+  if (
+    sameRuntime(expected) &&
+    recordedProcessIsAlive(expected.pid, expected.pidStartToken, { exists: pidExists }) === true
+  ) {
     throw new Error('the owner-control process is still alive; do not clear its lock');
   }
   const latest = JSON.parse(readFileSync(file, 'utf8'));
   if (
     latest.leaseId !== expected.leaseId ||
     latest.pid !== expected.pid ||
+    latest.pidStartToken !== expected.pidStartToken ||
+    latest.runtimeScopeToken !== expected.runtimeScopeToken ||
     latest.host !== expected.host ||
     latest.platform !== expected.platform ||
     latest.startedAt !== expected.startedAt
@@ -1515,6 +2013,14 @@ async function recoverPersistentOrphanAutoMerge(
         throw new Error('the pinned landing owner process tree is still live or cannot be proven stopped');
       }
       assertReviewedPins(currentPaths, pinsFromOwner(current));
+      const pidStartToken = processStartToken(process.pid);
+      const runtimeScopeToken = processRuntimeScopeToken();
+      if (!pidStartToken) {
+        throw new Error('automatic AUTO_MERGE recovery cannot identify its owner process; preserving the lease');
+      }
+      if (process.platform === 'linux' && !runtimeScopeToken) {
+        throw new Error('automatic AUTO_MERGE recovery cannot identify its Linux process scope; preserving the lease');
+      }
       return {
         ...current,
         previousOwner: current.owner,
@@ -1523,7 +2029,10 @@ async function recoverPersistentOrphanAutoMerge(
         owner: {
           ...current.owner,
           pid: process.pid,
+          pidStartToken,
+          runtimeScopeToken,
           childPid: null,
+          childStartToken: null,
           host: hostname(),
           platform: process.platform,
           script: 'automatic stale AUTO_MERGE failover',
@@ -1617,16 +2126,14 @@ async function recoverPersistentOrphanAutoMerge(
       updateOwnedRecord(paths, leaseId, (current) => {
         current.owner = current.previousOwner ?? current.owner;
         current.owner.childPid = null;
+        current.owner.childStartToken = null;
         delete current.previousOwner;
         current.step = 'automatic stale AUTO_MERGE failover failed: ' + message;
         current.heartbeatAt = new Date().toISOString();
         return current;
       });
     } catch (updateError) {
-      appendFileSync(
-        join(paths.lockDir, 'alert-failures.log'),
-        new Date().toISOString() + ' AUTO_MERGE failover: ' + updateError.message + '\n'
-      );
+      appendFailureLog(paths, 'AUTO_MERGE failover: ' + updateError.message);
     }
     note(
       paths,
@@ -1640,51 +2147,16 @@ async function recoverPersistentOrphanAutoMerge(
   }
 }
 
-const WATCHER_READ_RETRY_MAX = 3;
-const WATCHER_READ_RETRY_BASE_MS = 500;
-
 export async function watch(
   paths,
   leaseId,
-  {
-    sleep = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
-    now = Date.now,
-    recoveryOptions = {},
-  } = {}
+  { sleep = sleepFor, now = Date.now, recoveryOptions = {}, readOwnerImpl = readOwner } = {}
 ) {
-  let consecutiveReadFailures = 0;
   for (;;) {
     await sleep(WATCH_POLL_MS);
-    let owner;
-    try {
-      owner = readOwner(paths);
-      consecutiveReadFailures = 0;
-    } catch (error) {
-      consecutiveReadFailures += 1;
-      appendFileSync(
-        join(paths.lockDir, 'alert-failures.log'),
-        new Date().toISOString() +
-          ' watcher readOwner failed (attempt ' +
-          consecutiveReadFailures +
-          '/' +
-          WATCHER_READ_RETRY_MAX +
-          '): ' +
-          error.message +
-          '\n'
-      );
-      if (consecutiveReadFailures >= WATCHER_READ_RETRY_MAX) {
-        appendFileSync(
-          join(paths.lockDir, 'alert-failures.log'),
-          new Date().toISOString() +
-            ' watcher: readOwner failed ' +
-            WATCHER_READ_RETRY_MAX +
-            ' consecutive times; exiting\n'
-        );
-        return 1;
-      }
-      await sleep(WATCHER_READ_RETRY_BASE_MS * consecutiveReadFailures);
-      continue;
-    }
+    const ownerResult = await readOwnerForWatcher(paths, { sleep, readOwnerImpl });
+    if (!ownerResult.ok) return 1;
+    let owner = ownerResult.owner;
     if (!owner || owner.leaseId !== leaseId) return 0;
     try {
       if (owner.mode === 'landing') {
@@ -1731,10 +2203,7 @@ export async function watch(
       notifyIfDue(paths, owner);
     } catch (error) {
       try {
-        appendFileSync(
-          join(paths.lockDir, 'alert-failures.log'),
-          new Date().toISOString() + ' watcher: ' + error.message + '\n'
-        );
+        appendFailureLog(paths, 'watcher: ' + error.message);
       } catch {
         return 1;
       }
@@ -1742,7 +2211,10 @@ export async function watch(
   }
 }
 
-export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), watcherStarter = startWatcher } = {}) {
+export async function main(
+  argv = process.argv.slice(2),
+  { cwd = process.cwd(), watcherStarter = startWatcher, sleep = sleepFor, readOwnerImpl = readOwner } = {}
+) {
   const [action, ...rest] = argv;
   if (!action || action === '--help' || action === '-h') {
     process.stdout.write(USAGE + '\n');
@@ -1752,10 +2224,12 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
     const paths = resolvePaths(cwd);
     const leaseId = rest[0];
     if (!leaseId || rest.length !== 1) throw new Error('watch requires one lease ID');
-    const owner = readOwner(paths);
+    const ownerResult = await readOwnerForWatcher(paths, { sleep, readOwnerImpl });
+    if (!ownerResult.ok) return 1;
+    const owner = ownerResult.owner;
     if (!owner || owner.leaseId !== leaseId || owner.mode !== 'landing') return 0;
     process.stdout.write('KILO_MAIN_LANDING_WATCHER_READY:' + leaseId + '\n');
-    return watch(paths, leaseId);
+    return watch(paths, leaseId, { sleep, readOwnerImpl });
   }
   const options = parseOptions(rest);
   const paths = resolvePaths(cwd);

@@ -834,6 +834,16 @@ export const AppKeyboardShortcuts = () => {
   });
 
   useKeyDownShortcut({
+    key: 't',
+    mod: true,
+    shift: false,
+    alt: false,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => goToTool('transform'),
+  });
+
+  useKeyDownShortcut({
     key: 'l',
     mod: false,
     enabled: hasImage,

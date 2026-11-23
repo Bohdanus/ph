@@ -166,7 +166,7 @@ describe('fill regression contracts', () => {
     const canvas = run(
       magicEraser,
       sourcePixels,
-      args({ toolName: 'magic-eraser', alpha: 0.5, selection: topRowSelection })
+      args({ toolName: 'magic-eraser', alpha: 0.5, tolerance: 64, selection: topRowSelection })
     );
 
     expect(rgbaAt(canvas.pixels, 0, 0)).toEqual([255, 0, 0, 191]);

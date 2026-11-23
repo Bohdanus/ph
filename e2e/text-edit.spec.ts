@@ -414,12 +414,6 @@ const TEXT_COLOR = '#ff0000';
 
 /** `HANDLE_SIZE` from `src/util/constants.ts`; see {@link TEXT_PADDING_DOC_PX} for why it is a copy. */
 const HANDLE_SIZE_DOC_PX = 12;
-/** `ROTATE_HOTZONE` and the rotation arc radius in `src/hooks/useRect.ts`. */
-const ROTATE_HOTZONE_DOC_PX = 24;
-const ROTATE_HANDLE_RADIUS_DOC_PX = 4;
-/** `useRect` draws the rotation arc with `lineWidth: 1 / scale`, one CSS pixel on screen. */
-const ROTATE_HANDLE_STROKE_WIDTH_CSS_PX = 1;
-
 /**
  * How far the corner grips reach outside the box, in CSS px.
  *
@@ -1430,12 +1424,8 @@ test.describe('Text tool in-place editing', () => {
     const screenshotPixelCssHeight = box.height / image.height;
     const handleOverhangX = FRAME_OVERHANG_CSS_PX - screenshotPixelCssWidth / 2;
     const handleOverhangY = FRAME_OVERHANG_CSS_PX - screenshotPixelCssHeight / 2;
-    const rotationGripOverhangY =
-      ROTATE_HOTZONE_DOC_PX / 2 + ROTATE_HANDLE_RADIUS_DOC_PX + ROTATE_HANDLE_STROKE_WIDTH_CSS_PX / 2;
-    const rotationOverhangY = rotationGripOverhangY - screenshotPixelCssHeight / 2;
     const frameOuterWidth = frameCss.right - frameCss.left + screenshotPixelCssWidth;
     const frameOuterHeight = frameCss.bottom - frameCss.top + screenshotPixelCssHeight;
-
     // Containment, in the form that cannot pass on a shifted overlay: each edge of the box, DERIVED
     // from where the blue stops plus the frame's own overhang, has to sit within two CSS pixels of
     // the overlay's edge. A document-point-to-client-pixel mapping bug — the letterbox offset
@@ -1447,7 +1437,7 @@ test.describe('Text tool in-place editing', () => {
       ).toBeLessThanOrEqual(2);
 
     edge(bounds.left, frameCss.left + handleOverhangX, 'left');
-    edge(bounds.top, frameCss.top + rotationOverhangY, 'top');
+    edge(bounds.top, frameCss.top + handleOverhangY, 'top');
     edge(bounds.right, frameCss.right - handleOverhangX, 'right');
     edge(bounds.bottom, frameCss.bottom - handleOverhangY, 'bottom');
 
@@ -1459,7 +1449,7 @@ test.describe('Text tool in-place editing', () => {
       'the overlay is not as wide as the box the canvas drew'
     ).toBeLessThanOrEqual(3);
     expect(
-      Math.abs(bounds.height - (frameOuterHeight - rotationGripOverhangY - FRAME_OVERHANG_CSS_PX)),
+      Math.abs(bounds.height - (frameOuterHeight - 2 * FRAME_OVERHANG_CSS_PX)),
       'the overlay is not as tall as the box the canvas drew'
     ).toBeLessThanOrEqual(2);
   });
