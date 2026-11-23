@@ -89,6 +89,8 @@ const ASCTIME_DATE_PATTERN = new RegExp(
 );
 const DISABLED_MODEL_PREFIXES = ['poolside/laguna'];
 const GROQ_FREE_MODEL = 'openai/gpt-oss-120b';
+const PROVIDER_SOURCES = new Set(['kilo', 'openrouter', 'opencode', 'groq']);
+const MODEL_ID_PATTERN = /^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/;
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
 
@@ -693,6 +695,7 @@ export function orderFreeModelRoutes(candidates) {
 
 export async function loadCatalogs({
   fetchImpl = fetch,
+  provider,
   openRouterKey = process.env.OPENROUTER_API_KEY,
   groqApiKey = process.env.GROQ_API_KEY,
   groqApiKeys = process.env.GROQ_API_KEYS
@@ -706,6 +709,9 @@ export async function loadCatalogs({
   initializeLegacyQuarantine = false,
   onCatalogError = () => {},
 } = {}) {
+  if (provider !== undefined && !PROVIDER_SOURCES.has(provider)) {
+    throw new Error('Unsupported provider: ' + provider);
+  }
   const groqKeys = normalizeGroqKeys(groqApiKey, groqApiKeys);
   const quarantineState = initializeLegacyQuarantine
     ? await loadQuarantineState(quarantineFile)
@@ -717,8 +723,9 @@ export async function loadCatalogs({
   ];
   if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
   if (groqKeys.length > 0 || includeGroq) sources.push({ source: 'groq', url: GROQ_MODELS, groqKeys });
+  const selectedSources = provider === undefined ? sources : sources.filter((entry) => entry.source === provider);
   const results = await Promise.allSettled(
-    sources.map(async ({ source, url, groqKeys: sourceGroqKeys }) => {
+    selectedSources.map(async ({ source, url, groqKeys: sourceGroqKeys }) => {
       const headers = {};
       if (source === 'openrouter' && openRouterKey) headers.Authorization = `Bearer ${openRouterKey}`;
       if (source === 'groq' && sourceGroqKeys && sourceGroqKeys.length > 0) {
@@ -773,7 +780,7 @@ export async function loadCatalogs({
   );
   const candidates = results.flatMap((result, index) => {
     if (result.status === 'fulfilled') return result.value;
-    onCatalogError(sources[index].source, result.reason);
+    onCatalogError(selectedSources[index].source, result.reason);
     return [];
   });
   return candidates;
@@ -1668,6 +1675,8 @@ export async function runOpenCodeCompletion({
 export async function completeWithFreeModel(prompt, options = {}) {
   const {
     fetchImpl = fetch,
+    provider,
+    model,
     openRouterKey = process.env.OPENROUTER_API_KEY,
     groqApiKey = process.env.GROQ_API_KEY,
     groqApiKeys = process.env.GROQ_API_KEYS
@@ -1691,6 +1700,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
     onAllFreeExhausted = () => {},
     stderr = { write: () => {} },
   } = options;
+  if (provider !== undefined && !PROVIDER_SOURCES.has(provider)) {
+    throw new Error('Unsupported provider: ' + provider);
+  }
+  if (model !== undefined && (typeof model !== 'string' || !MODEL_ID_PATTERN.test(model))) {
+    throw new Error('Invalid model ID');
+  }
   if (typeof prompt !== 'string' || prompt.length === 0 || prompt.length > MAX_PROMPT_CHARS) {
     throw new Error(`Prompt must contain 1 to ${MAX_PROMPT_CHARS} characters`);
   }
@@ -1702,9 +1717,10 @@ export async function completeWithFreeModel(prompt, options = {}) {
   }
   const effectiveKiloCommand = kiloCommand === '' ? '' : (kiloCommand ?? (await resolveKiloCli()));
   const groqKeys = normalizeGroqKeys(groqApiKey, groqApiKeys);
-  const available = orderFreeModelRoutes(
+  const orderedCandidates = orderFreeModelRoutes(
     await loadCatalogs({
       fetchImpl,
+      provider,
       openRouterKey,
       groqApiKey: groqFreePlan ? groqKeys[0] : '',
       groqApiKeys: groqFreePlan ? groqKeys : [],
@@ -1713,6 +1729,11 @@ export async function completeWithFreeModel(prompt, options = {}) {
       onCatalogError,
     })
   );
+  const available = orderedCandidates.filter((candidate) => model === undefined || candidate.model === model);
+  if ((provider !== undefined || model !== undefined) && available.length === 0) {
+    const route = [provider, model].filter(Boolean).join('/');
+    throw new Error('No verified free model route matches ' + (route || 'the requested selection'));
+  }
   const poolStateFile =
     requestedPoolStateFile ??
     (quarantineFile === DEFAULT_QUARANTINE_FILE ? DEFAULT_POOL_STATE_FILE : `${quarantineFile}.pool-state.json`);
@@ -2501,7 +2522,7 @@ function usage() {
   return (
     'Usage: node scripts/free-model-pool.mjs --help\n' +
     'Usage: node scripts/free-model-pool.mjs --list [--limit N]\n' +
-    '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH]\n' +
+    '       node scripts/free-model-pool.mjs --prompt-file PATH [--provider ID] [--model ID] [--max-tokens N] [--output-file PATH]\n' +
     '       node scripts/free-model-pool.mjs --openrouter-quota\n' +
     '       node scripts/free-model-pool.mjs --probe-groq [--groq-key-dir DIR] [--groq-key-files PATH1,PATH2]\n' +
     '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
@@ -2509,6 +2530,7 @@ function usage() {
     'configured=false means provider credentials/opt-in are missing, not that a model is invalid.\n' +
     'Model strength determines routing priority: exact Nemotron 3 Ultra routes are attempted across eligible providers before weaker models. Nemotron requests use high reasoning where supported, at least 4,096 output tokens, and a 12-minute timeout. Other routes default to 1,200 tokens; Groq keeps its 1,024-token reasoning floor.\n' +
     'Kilo completions use the authenticated Kilo CLI; set KILO_CLI only when its automatic discovery fails.\n' +
+    'When both --provider and --model are set, only that exact pair is eligible; either flag alone limits only that dimension.\n' +
     'Nemotron inference uses 12 minutes; other inference uses five minutes. Catalog and quota checks use 15 seconds.\n' +
     'Groq routing requires GROQ_API_KEY and GROQ_FREE_PLAN=1 because its catalog does not expose free pricing.\n' +
     'OpenCode free models run through the opencode CLI with tool permissions denied.\n' +
@@ -2554,6 +2576,8 @@ export async function main(
   const outputFileAt = args.indexOf('--output-file');
   const limitAt = args.indexOf('--limit');
   const tokenAt = args.indexOf('--max-tokens');
+  const providerAt = args.indexOf('--provider');
+  const modelAt = args.indexOf('--model');
   const probeGroq = args.includes('--probe-groq');
   const groqKeyDirAt = args.indexOf('--groq-key-dir');
   const groqKeyFilesAt = args.indexOf('--groq-key-files');
@@ -2586,6 +2610,8 @@ export async function main(
     '--output-file',
     '--limit',
     '--max-tokens',
+    '--provider',
+    '--model',
     '--probe-groq',
     '--groq-key-dir',
     '--groq-key-files',
@@ -2598,9 +2624,12 @@ export async function main(
   const hasValue = (index) => index < 0 || (args[index + 1] && !args[index + 1].startsWith('--'));
   if (
     (!list && promptAt < 0 && !probeGroq) ||
-    (list && promptAt >= 0) ||
-    (probeGroq && (list || promptAt >= 0)) ||
+    (list && (promptAt >= 0 || providerAt >= 0 || modelAt >= 0)) ||
+    (probeGroq && (list || promptAt >= 0 || providerAt >= 0 || modelAt >= 0)) ||
+    ((providerAt >= 0 || modelAt >= 0) && promptAt < 0) ||
     (promptAt >= 0 && !hasValue(promptAt)) ||
+    (providerAt >= 0 && !hasValue(providerAt)) ||
+    (modelAt >= 0 && !hasValue(modelAt)) ||
     (outputFileAt >= 0 && !hasValue(outputFileAt)) ||
     (limitAt >= 0 && !hasValue(limitAt)) ||
     (tokenAt >= 0 && !hasValue(tokenAt)) ||
@@ -2608,6 +2637,16 @@ export async function main(
     (groqKeyFilesAt >= 0 && !hasValue(groqKeyFilesAt))
   ) {
     stderr.write(`${usage()}\n`);
+    return 2;
+  }
+  const provider = providerAt >= 0 ? args[providerAt + 1] : undefined;
+  if (provider !== undefined && !PROVIDER_SOURCES.has(provider)) {
+    stderr.write('--provider must be one of: ' + [...PROVIDER_SOURCES].join(', ') + '.\n');
+    return 2;
+  }
+  const model = modelAt >= 0 ? args[modelAt + 1] : undefined;
+  if (model !== undefined && !MODEL_ID_PATTERN.test(model)) {
+    stderr.write('--model must be a model ID from the verified provider catalog.\n');
     return 2;
   }
   if (probeGroq) {
@@ -2695,6 +2734,8 @@ export async function main(
     groqApiKey,
     groqApiKeys,
     groqFreePlan,
+    provider,
+    model,
     kiloCommand: effectiveKiloCommand,
     runKilo,
     opencodeCommand,
