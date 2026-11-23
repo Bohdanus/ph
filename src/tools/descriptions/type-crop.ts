@@ -214,7 +214,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'Holding Ratio, W x H x Resolution, Original Ratio, 1 : 1 (Square), 4 : 5 (8 : 10), 5 : 7, 2 : 3 (4 : 6), 16 : 9 and Front Image, plus New Crop Preset… to save the current values and Delete Crop Preset to remove a saved one. Adobe names the first entry Ratio (not "Free") and defines it as cropping freely without a fixed ratio; clicking the Clear button clears the Width, Height and Resolution fields. The app now offers Free, Original Ratio, Square, 3:4, 4:3, 16:9 and 9:16 with Apply/Clear buttons, but still has no W x H x Resolution fields, Front Image preset or custom preset management (`Crop.tsx`).',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Crop/Crop.tsx',
+        appRef: 'src/components/ToolbarsRight/Crop/Crop.tsx:109',
       },
       {
         control: 'Swap Width and Height values',
