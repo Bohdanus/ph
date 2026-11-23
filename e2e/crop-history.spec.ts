@@ -6257,6 +6257,12 @@ test.describe('Crop history', () => {
     const expectNoHorizontalContinuation = async (stage: string) => {
       await expect(page.getByTestId('crop-selection-outline'), `${stage}: crop outline is painted`).toBeVisible();
       await expect(page.getByTestId('crop-frame-dim'), `${stage}: crop mask is painted`).toBeVisible();
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          })
+      );
       const workspaceBox = await workspace.boundingBox();
       const cropBox = await page.getByTestId('crop-selection-outline').boundingBox();
       expect(workspaceBox, `${stage}: workspace bounds`).not.toBeNull();
