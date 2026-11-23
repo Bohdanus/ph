@@ -1,4 +1,9 @@
-import { SET_DOCUMENT_FRAME_ACTION, SET_LAYER_OPACITY_ACTION, TOOL_ACTION } from '../util/constants.ts';
+import {
+  SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
+  SET_LAYER_OPACITY_ACTION,
+  TOOL_ACTION,
+} from '../util/constants.ts';
 import type { DurableEntryProvenance } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
 
@@ -38,5 +43,6 @@ export function durableEntryTitle(provenance: DurableEntryProvenance): string | 
   if (provenance.actionName === TOOL_ACTION) return undefined;
   if (provenance.actionName === SET_DOCUMENT_FRAME_ACTION) return 'crop';
   if (provenance.actionName === SET_LAYER_OPACITY_ACTION) return 'set layer opacity';
+  if (provenance.actionName === SET_LAYER_FILL_OPACITY_ACTION) return 'set layer fill opacity';
   return provenance.actionName;
 }

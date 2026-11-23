@@ -39,8 +39,14 @@ class RecordingCanvas {
       save: vi.fn(),
       restore: vi.fn(),
       drawImage: vi.fn(),
+      getImageData: vi.fn((_x: number, _y: number, width: number, height: number) => ({
+        data: new Uint8ClampedArray(width * height * 4),
+        width,
+        height,
+      })),
       fillRect: vi.fn(),
       clearRect: vi.fn(),
+      putImageData: vi.fn(),
       translate: vi.fn(),
       transform: vi.fn(),
       setTransform: vi.fn(),
@@ -88,6 +94,7 @@ function layer(
   options: Readonly<{
     visible?: boolean;
     opacity?: number;
+    fillOpacity?: number;
     blendMode?: GlobalCompositeOperation;
     operations?: readonly DurableOperation[];
     pos?: { x: number; y: number; width: number; height: number };
@@ -100,6 +107,7 @@ function layer(
     isBedrock: false,
     visible: options.visible ?? true,
     opacity: options.opacity ?? 1,
+    fillOpacity: options.fillOpacity ?? 1,
     locked: false,
     blendMode: options.blendMode ?? 'source-over',
     order,
@@ -231,6 +239,57 @@ describe('durable document refusal and composition', () => {
     for (const release of releaseSpies) expect(release).toHaveBeenCalledTimes(1);
 
     registry.shutdown();
+  });
+
+  it('composes durable layer content with opacity multiplied by Fill opacity', async () => {
+    vi.stubGlobal('OffscreenCanvas', RecordingCanvas);
+    vi.stubGlobal('createImageBitmap', undefined);
+    const registry = new AssetRegistry();
+    overrideCanvasFilterSupport(true);
+    try {
+      const result = await composeDurableDocument(
+        replay({
+          'layer-filled': layer('layer-filled', 0, { opacity: 0.5, fillOpacity: 0.4 }),
+        }),
+        request(registry)
+      );
+      const compositionCanvas = result.bitmap as unknown as RecordingCanvas;
+      expect(compositionCanvas.getContext().alphaValues.some((alpha) => Math.abs(alpha - 0.2) < 1e-12)).toBe(true);
+      result.release();
+    } finally {
+      registry.shutdown();
+    }
+  });
+
+  it('applies Fill opacity on the direct affine raster path', async () => {
+    vi.stubGlobal('OffscreenCanvas', RecordingCanvas);
+    vi.stubGlobal('createImageBitmap', undefined);
+    const registry = new AssetRegistry();
+    const bitmap = { width: 20, height: 20, close: vi.fn() } as unknown as ImageBitmap;
+    const assetId = registry.registerBaseline('test-document', bitmap, { ownership: 'adopt' });
+    const affineLayer: DurableReplayLayer = Object.freeze({
+      snapshot: Object.freeze({
+        ...layer('layer-affine', 0, { opacity: 0.5, fillOpacity: 0.4 }).snapshot,
+        source: Object.freeze({ kind: 'raster' as const, assetId, width: 20, height: 20 }),
+      }),
+      operations: Object.freeze([
+        Object.freeze({
+          kind: 'apply-affine-transform' as const,
+          layerId: 'layer-affine',
+          transform: { a: 1, b: 0, c: 0, d: 1, e: 4, f: 3 },
+        }),
+      ]),
+    });
+
+    try {
+      const result = await composeDurableDocument(replay({ 'layer-affine': affineLayer }), request(registry));
+      const compositionCanvas = result.bitmap as unknown as RecordingCanvas;
+
+      expect(compositionCanvas.getContext().alphaValues).toContain(0.2);
+      result.release();
+    } finally {
+      registry.shutdown();
+    }
   });
 
   it.each(['abort', 'document disposal'] as const)(

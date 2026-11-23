@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DURABLE_SCHEMA_VERSION,
+  cloneLayerSnapshot,
   cloneDurableDocument,
   freezeDurableDocument,
   refreezeDurableDocument,
@@ -32,6 +33,7 @@ function layer(id: string, overrides: Partial<DurableLayerSnapshot> = {}): Durab
     isBedrock: false,
     visible: true,
     opacity: 1,
+    fillOpacity: 1,
     locked: false,
     blendMode: 'source-over',
     order: 0,
@@ -59,6 +61,14 @@ function entry(
 function provenance(actionName: ActionType, toolName?: string): DurableEntryProvenance {
   return toolName ? { actionName, toolName } : { actionName };
 }
+
+describe('pre-Fill snapshot compatibility', () => {
+  it('defaults Fill to unity when cloning a pre-Fill snapshot', () => {
+    const legacy = { ...layer('legacy'), fillOpacity: undefined } as unknown as DurableLayerSnapshot;
+
+    expect(cloneLayerSnapshot(legacy).fillOpacity).toBe(1);
+  });
+});
 
 function selection(overrides: Partial<Selection> = {}): Selection {
   return {

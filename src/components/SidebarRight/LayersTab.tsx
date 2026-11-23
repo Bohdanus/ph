@@ -17,6 +17,7 @@ import {
   LOCK_LAYER_ACTION,
   RENAME_LAYER_ACTION,
   SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
   SET_LAYER_OPACITY_ACTION,
   UNLOCK_LAYER_ACTION,
 } from '../../util/constants.ts';
@@ -200,6 +201,93 @@ type LayerOpacityControlProps = {
   textEditActive: boolean;
 };
 
+function LayerFillOpacityControl({ layer, updateLayer }: { layer: Layer; updateLayer: UpdateLayer }) {
+  const [draftPercent, setDraftPercent] = useState<number | null>(null);
+  const pointerOwnerRef = useRef<number | null>(null);
+  const currentFillOpacity = layer.fillOpacity ?? 1;
+  const fillOpacityPercent = draftPercent ?? Math.round(currentFillOpacity * 100);
+
+  function finishGesture() {
+    const fillOpacity = draftPercent;
+    setDraftPercent(null);
+    if (layer.locked || layer.isBedrock || fillOpacity === null) return;
+    const nextFillOpacity = fillOpacity / 100;
+    if (currentFillOpacity !== nextFillOpacity) {
+      updateLayer(layer.id, { fillOpacity: nextFillOpacity }, SET_LAYER_FILL_OPACITY_ACTION);
+    }
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLInputElement>) {
+    if (pointerOwnerRef.current !== null && pointerOwnerRef.current !== event.pointerId) {
+      event.preventDefault();
+      return;
+    }
+    pointerOwnerRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function finishPointerGesture(event: ReactPointerEvent<HTMLInputElement>) {
+    if (pointerOwnerRef.current !== event.pointerId) return;
+    pointerOwnerRef.current = null;
+    finishGesture();
+  }
+
+  function cancelPointerGesture(event: ReactPointerEvent<HTMLInputElement>) {
+    if (pointerOwnerRef.current !== event.pointerId) return;
+    pointerOwnerRef.current = null;
+    setDraftPercent(null);
+  }
+
+  function finishKeyboardGesture() {
+    if (pointerOwnerRef.current !== null) return;
+    finishGesture();
+  }
+
+  function finishBlur() {
+    if (pointerOwnerRef.current !== null) return;
+    finishGesture();
+  }
+
+  return (
+    <div className="flex items-center gap-1 text-xs text-gray-600 dark:text-white">
+      <span>Fill:</span>
+      <details className="relative">
+        <summary
+          data-testid="layer-fill-opacity-summary"
+          title="Fill opacity affects layer pixels and preserves layer effects. Layer effects are not supported yet."
+          className="list-none cursor-pointer rounded px-2 py-1 text-sm text-gray-800 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700"
+        >
+          {fillOpacityPercent}%
+        </summary>
+        <div className="absolute right-0 top-full z-20 mt-1 flex min-w-48 items-center gap-2 rounded border bg-white p-3 shadow dark:border-gray-600 dark:bg-gray-800">
+          <input
+            aria-label="Layer fill opacity"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={fillOpacityPercent}
+            disabled={layer.locked || layer.isBedrock}
+            onChange={(event) => {
+              if (!layer.locked && !layer.isBedrock) setDraftPercent(Number(event.currentTarget.value));
+            }}
+            onPointerDown={handlePointerDown}
+            onPointerUp={finishPointerGesture}
+            onPointerCancel={cancelPointerGesture}
+            onLostPointerCapture={cancelPointerGesture}
+            onKeyUp={finishKeyboardGesture}
+            onBlur={finishBlur}
+            className="min-w-0 flex-1"
+          />
+          <output aria-live="polite" className="text-gray-800 dark:text-white">
+            {fillOpacityPercent}%
+          </output>
+        </div>
+      </details>
+    </div>
+  );
+}
+
 function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacityControlProps) {
   const [draftPercent, setDraftPercent] = useState<number | null>(null);
   const pointerOwnerRef = useRef<number | null>(null);
@@ -258,7 +346,10 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
         <div className="flex items-center gap-1">
           <span className="text-xs text-gray-600 dark:text-white">Opacity:</span>
           <details className="relative">
-            <summary className="list-none cursor-pointer rounded px-2 py-1 text-sm text-gray-800 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700">
+            <summary
+              data-testid="layer-opacity-summary"
+              className="list-none cursor-pointer rounded px-2 py-1 text-sm text-gray-800 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700"
+            >
               {opacityPercent}%
             </summary>
             <div className="absolute right-0 top-full z-20 mt-1 flex min-w-48 items-center gap-2 rounded border bg-white p-3 shadow dark:border-gray-600 dark:bg-gray-800">
@@ -288,7 +379,7 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
           </details>
         </div>
       </div>
-      <div className="flex items-center gap-1 text-xs text-gray-600 dark:text-white">
+      <div className="flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-white">
         <span>Lock:</span>
         <div
           role="group"
@@ -312,6 +403,7 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
             className="col-start-4"
           />
         </div>
+        <LayerFillOpacityControl layer={layer} updateLayer={updateLayer} />
       </div>
     </div>
   );
