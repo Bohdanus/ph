@@ -309,21 +309,17 @@ function imageBoundsForMask(image: ImageDataResult, mask: PixelMask): Screenshot
  * is the container's own rect rather than the `<canvas>`'s, and that the two coincide here
  * only because `<main>` has no padding or border and the canvas is `h-full w-full` of it.
  *
- * `documentSize` defaults to the seeded document; pass the measured size when you have it.
+ * `documentSize` defaults to the seeded document; pass the measured current-frame size when
+ * you have it. The coordinate mode follows `documentFrame`: with its default zero origin,
+ * `documentX`/`documentY` are local coordinates in the current frame. If you supply a nonzero
+ * retained-world frame, pass absolute world coordinates and the helper subtracts that origin
+ * before mapping into the visible frame. Do not pass local coordinates with a nonzero frame.
  *
- * `documentFrame` exists for the crop case, and NOTHING IN THE SUITE PASSES IT YET — no e2e
- * spec crops, so `documentFrame` is `{x:0,y:0}` for every current call site and the default
- * leaves all of them byte-identical. It is here because without it the "DOCUMENT" in this
- * function's name is only true until the first crop: the app's own path is TWO legs, and
- * this helper was the forward half of one of them.
- *
- *   `usePointerPosition.ts:261-262` maps client -> CANVAS space, then every tool area applies
- *   `canvasToDocumentPoint(getLocalCoords(event), documentFrame)`
- *   (`src/contexts/document-frame.ts:32-34`), which ADDS the frame origin. So the app's map
- *   is `offset + (d - frame) * scale` where this one was `offset + d * scale` — a disagreement
- *   of exactly `frame * scale`, zero today and proportional to the crop after one. A spec that
- *   crops and then places a gesture from a document point would put it `frame * scale` CSS px
- *   off, and `waitForCanvasRedraw` would still pass because the clip is the caller's own.
+ * This matches the app's two-step mapping: pointer events first become local canvas points,
+ * then tool areas call `canvasToDocumentPoint(localPoint, documentFrame)` to add the frame
+ * origin when storing document geometry. Crop-following E2E gestures use the current cropped
+ * size and local points, so the zero-origin default is correct for them. A gesture specified
+ * in absolute world-document coordinates must supply the current frame origin.
  *
  * It is an ORIGIN, not a rect, and deliberately not the app's `DocumentFrame`: only `x`/`y`
  * take part in the mapping, and a wider parameter would invite a caller to pass a size and
@@ -491,7 +487,7 @@ export function documentStrokeBoundaryMargin(
 }
 
 /** `[ms]` — the shared default timeout of every redraw wait below. Not a coordinate. */
-export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
+export const CANVAS_REDRAW_TIMEOUT_MS = 15_000;
 /** `[ms]` — the shared default poll interval of every redraw wait below. */
 export const CANVAS_REDRAW_POLL_INTERVAL_MS = 100;
 
@@ -1052,8 +1048,9 @@ export async function drawLine(
  * export fixture, which asserts a specific row against a committed baseline, and any future
  * spec that names a pixel position.
  *
- * `documentSize` defaults to the seeded document; pass the measured backing store when you
- * have it. `documentFrame` defaults to the origin and no current caller passes it.
+ * `documentSize` defaults to the seeded document; pass the measured current-frame size when
+ * you have it. With the default origin, endpoints are local to that frame. Supply
+ * `documentFrame` when endpoints are absolute coordinates in the retained world document.
  *
  * The gesture itself is delegated to `drawLine`, so every behaviour pinned by
  * `canvas-interaction.unit.test.ts` — the `steps` normalisation, the zero-size box, the

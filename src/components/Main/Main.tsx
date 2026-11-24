@@ -258,7 +258,7 @@ const Main = () => {
       const toolCtx = toolOverlayRef.current.getContext('2d');
       toolCtxRef.current = toolCtx;
       if (toolCtx) {
-        toolCtx.imageSmoothingEnabled = true;
+        toolCtx.imageSmoothingEnabled = false;
         toolCtx.imageSmoothingQuality = 'low';
       }
     }

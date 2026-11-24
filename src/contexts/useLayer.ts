@@ -630,7 +630,7 @@ export const useLayers = () => {
     adoptLayerBitmaps([source.bitmap]);
     return true;
   };
-  const buildLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
+  const buildLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>, backingScale = 1) => {
     const { args, pos } = sourceArgs;
 
     let source: ToolLayerSource;
@@ -663,12 +663,12 @@ export const useLayers = () => {
       } as ToolLayerSource; // clone args anyway
     }
 
-    const newLayer = createLayerSource({ layers, source });
+    const newLayer = createLayerSource({ layers, source, backingScale });
     return { newLayer, source };
   };
 
   const createLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
-    const { newLayer, source } = buildLayerFromTool(sourceArgs);
+    const { newLayer, source } = buildLayerFromTool(sourceArgs, dpr);
 
     // `_addLayer` publishes the layer and requests its presentation cache.
     _addLayer(newLayer, {
@@ -1161,9 +1161,12 @@ export const useLayers = () => {
     if (requestedLayerId) return null;
 
     const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
-    const { newLayer } = buildLayerFromTool({
-      args: { ...persistedArgs, placeholderUntouched: false },
-    });
+    const { newLayer } = buildLayerFromTool(
+      {
+        args: { ...persistedArgs, placeholderUntouched: false },
+      },
+      dpr
+    );
     return { ...layers, [newLayer.id]: newLayer };
   };
 

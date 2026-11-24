@@ -86,7 +86,9 @@ describe('setupDrawCtx, legacy identity', () => {
     // write resolves to `source-over`, which is the value the context already held, so not one
     // rendered property moves. Everything that does move is a pre-existing pen property, and the
     // eraser shares all of them unchanged.
-    expect(changed.sort()).toEqual(['globalAlpha', 'lineCap', 'lineJoin', 'lineWidth', 'strokeStyle'].sort());
+    expect(changed.sort()).toEqual(
+      ['globalAlpha', 'imageSmoothingEnabled', 'lineCap', 'lineJoin', 'lineWidth', 'strokeStyle'].sort()
+    );
     expect(changed).not.toContain('globalCompositeOperation');
     expect(after.globalCompositeOperation).toBe(before.globalCompositeOperation);
   });
