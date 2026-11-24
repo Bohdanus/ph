@@ -119,7 +119,6 @@ async function setupWorkflowDocument(page: Page, testInfo: TestInfo) {
 
 async function drawWorkflowStroke(
   page: Page,
-  _box: { x: number; y: number; width: number; height: number },
   documentSize: { width: number; height: number },
   color: string,
   start: { x: number; y: number },
@@ -275,7 +274,6 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     // Draw a base layer - simulating a sky gradient with blue
     await drawWorkflowStroke(
       page,
-      box,
       documentSize,
       '#081018', // dark blue
       { x: 100, y: 100 },
@@ -286,7 +284,6 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     // Draw ground - green
     await drawWorkflowStroke(
       page,
-      box,
       documentSize,
       '#081C08', // forest green
       { x: 100, y: 400 },
@@ -382,7 +379,6 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     // ========================================================================
     await drawWorkflowStroke(
       page,
-      box,
       documentSize,
       '#202020', // neutral highlight
       { x: 200, y: 150 },
@@ -395,7 +391,6 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     // ========================================================================
     await drawWorkflowStroke(
       page,
-      box,
       documentSize,
       '#200808', // muted red accent
       { x: 500, y: 200 },
@@ -549,9 +544,9 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
   }, testInfo) => {
     test.setTimeout(WORKFLOW_TIMEOUT_MS);
 
-    const { box, documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
+    const { documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
 
-    await drawWorkflowStroke(page, box, documentSize, '#081828', { x: 100, y: 430 }, { x: 700, y: 430 }, 20);
+    await drawWorkflowStroke(page, documentSize, '#081828', { x: 100, y: 430 }, { x: 700, y: 430 }, 20);
 
     await clickToolButton(page, 'text');
     await expect(page.locator('#text-color')).toBeVisible();
@@ -680,12 +675,11 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
   test('Workflow isolates content by toggling layer visibility', async ({ page }, testInfo) => {
     test.setTimeout(WORKFLOW_TIMEOUT_MS);
 
-    const { box, documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
+    const { documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
 
     // Draw base layer
     await drawWorkflowStroke(
       page,
-      box,
       documentSize,
       '#202020', // dark base
       { x: 50, y: 50 },
@@ -696,7 +690,6 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     // Draw subject on second layer
     await drawWorkflowStroke(
       page,
-      box,
       documentSize,
       '#202008', // muted yellow subject
       { x: 300, y: 200 },
@@ -707,7 +700,6 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     // Draw foreground element on third layer
     await drawWorkflowStroke(
       page,
-      box,
       documentSize,
       '#200808', // muted red foreground
       { x: 200, y: 300 },
@@ -755,12 +747,11 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
   test('Workflow combines layer opacity and blend mode controls', async ({ page }, testInfo) => {
     test.setTimeout(WORKFLOW_TIMEOUT_MS);
 
-    const { box, documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
+    const { documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
 
     // Base image
     await drawWorkflowStroke(
       page,
-      box,
       documentSize,
       '#202020', // mid-gray base
       { x: 100, y: 100 },
@@ -769,7 +760,7 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     );
 
     // Lower the opacity on a separate paint layer.
-    await drawWorkflowStroke(page, box, documentSize, '#202020', { x: 150, y: 150 }, { x: 650, y: 450 }, 20);
+    await drawWorkflowStroke(page, documentSize, '#202020', { x: 150, y: 150 }, { x: 650, y: 450 }, 20);
     // Open layer properties for the top layer (active after drawing)
     await page.getByTestId('layer-opacity-summary').click();
     const opacitySlider1 = page.getByRole('slider', { name: 'Layer opacity' });
@@ -780,7 +771,6 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     // Practice the Color blend mode on a separate tint layer.
     await drawWorkflowStroke(
       page,
-      box,
       documentSize,
       '#201010', // muted red tint
       { x: 200, y: 200 },
@@ -796,7 +786,6 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     // Practice Multiply and opacity on a separate shadow layer.
     await drawWorkflowStroke(
       page,
-      box,
       documentSize,
       '#202020', // dark
       { x: 250, y: 250 },
@@ -856,13 +845,13 @@ test.describe('Photoshop Workflow: PSD Export Hardening', () => {
   test('PSD export preserves layer order, names, opacity, blend modes, and visibility', async ({ page }, testInfo) => {
     test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
 
-    const { box, documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
+    const { documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
 
     // Create a known layer stack
-    await drawWorkflowStroke(page, box, documentSize, '#201010', { x: 100, y: 100 }, { x: 700, y: 100 }); // draw 2 - muted red
-    await drawWorkflowStroke(page, box, documentSize, '#102010', { x: 100, y: 200 }, { x: 700, y: 200 }); // draw 3 - muted green
-    await drawWorkflowStroke(page, box, documentSize, '#101020', { x: 100, y: 300 }, { x: 700, y: 300 }); // draw 4 - muted blue
-    await drawWorkflowStroke(page, box, documentSize, '#202008', { x: 100, y: 400 }, { x: 700, y: 400 }); // draw 5 - muted yellow
+    await drawWorkflowStroke(page, documentSize, '#201010', { x: 100, y: 100 }, { x: 700, y: 100 }); // draw 2 - muted red
+    await drawWorkflowStroke(page, documentSize, '#102010', { x: 100, y: 200 }, { x: 700, y: 200 }); // draw 3 - muted green
+    await drawWorkflowStroke(page, documentSize, '#101020', { x: 100, y: 300 }, { x: 700, y: 300 }); // draw 4 - muted blue
+    await drawWorkflowStroke(page, documentSize, '#202008', { x: 100, y: 400 }, { x: 700, y: 400 }); // draw 5 - muted yellow
 
     const layerRows = page.getByTitle('Drag to reorder');
     await expect(layerRows).toHaveCount(5); // Blank 1 + 4 layers
@@ -976,12 +965,12 @@ test.describe('Photoshop Workflow: PSD Export Hardening', () => {
   test('PSD export with channel data verification', async ({ page }, testInfo) => {
     test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
 
-    const { box, documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
+    const { documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
 
     // Draw with distinct colors to verify channel separation
-    await drawWorkflowStroke(page, box, documentSize, '#201010', { x: 100, y: 100 }, { x: 400, y: 100 }); // muted red
-    await drawWorkflowStroke(page, box, documentSize, '#102010', { x: 100, y: 200 }, { x: 400, y: 200 }); // muted green
-    await drawWorkflowStroke(page, box, documentSize, '#101020', { x: 100, y: 300 }, { x: 400, y: 300 }); // muted blue
+    await drawWorkflowStroke(page, documentSize, '#201010', { x: 100, y: 100 }, { x: 400, y: 100 }); // muted red
+    await drawWorkflowStroke(page, documentSize, '#102010', { x: 100, y: 200 }, { x: 400, y: 200 }); // muted green
+    await drawWorkflowStroke(page, documentSize, '#101020', { x: 100, y: 300 }, { x: 400, y: 300 }); // muted blue
 
     const psdFormat = exportFormats.find((f) => f.extension === '.psd')!;
     await openSaveDialog(page);
@@ -1033,12 +1022,12 @@ test.describe('Photoshop Workflow: PSD Export Hardening', () => {
   test('PSD export round-trip: write and read back preserves structure', async ({ page }, testInfo) => {
     test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
 
-    const { box, documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
+    const { documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
 
     // Create a document with multiple layers
-    await drawWorkflowStroke(page, box, documentSize, '#201008', { x: 150, y: 150 }, { x: 650, y: 150 });
-    await drawWorkflowStroke(page, box, documentSize, '#100820', { x: 150, y: 300 }, { x: 650, y: 300 });
-    await drawWorkflowStroke(page, box, documentSize, '#102010', { x: 150, y: 450 }, { x: 650, y: 450 });
+    await drawWorkflowStroke(page, documentSize, '#201008', { x: 150, y: 150 }, { x: 650, y: 150 });
+    await drawWorkflowStroke(page, documentSize, '#100820', { x: 150, y: 300 }, { x: 650, y: 300 });
+    await drawWorkflowStroke(page, documentSize, '#102010', { x: 150, y: 450 }, { x: 650, y: 450 });
 
     const psdFormat = exportFormats.find((f) => f.extension === '.psd')!;
     await openSaveDialog(page);
@@ -1118,8 +1107,8 @@ test.describe('Photoshop Workflow: PSD Export Hardening', () => {
     expect(documentSize.height).toBe(1200);
 
     // Draw content using drawWorkflowStroke which properly calculates clips
-    await drawWorkflowStroke(page, box, documentSize, '#201010', { x: 100, y: 100 }, { x: 1500, y: 100 }, 20);
-    await drawWorkflowStroke(page, box, documentSize, '#102010', { x: 100, y: 600 }, { x: 1500, y: 600 }, 20);
+    await drawWorkflowStroke(page, documentSize, '#201010', { x: 100, y: 100 }, { x: 1500, y: 100 }, 20);
+    await drawWorkflowStroke(page, documentSize, '#102010', { x: 100, y: 600 }, { x: 1500, y: 600 }, 20);
 
     // Export PSD
     const downloadDirectory = await prepareExportDownloadDirectory(testInfo);
@@ -1155,10 +1144,10 @@ test.describe('Photoshop Workflow: PSD Export Hardening', () => {
   test('PSD export: verify layer bounds and clipping', async ({ page }, testInfo) => {
     test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
 
-    const { box, documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
+    const { documentSize, downloadDirectory } = await setupWorkflowDocument(page, testInfo);
 
     // Draw a small element in the center
-    await drawWorkflowStroke(page, box, documentSize, '#201010', { x: 350, y: 250 }, { x: 450, y: 350 });
+    await drawWorkflowStroke(page, documentSize, '#201010', { x: 350, y: 250 }, { x: 450, y: 350 });
 
     const psdFormat = exportFormats.find((f) => f.extension === '.psd')!;
     await openSaveDialog(page);

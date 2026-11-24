@@ -1,5 +1,5 @@
 import type { Page, Locator } from '@playwright/test';
-import { expect } from '@playwright/test';
+import { errors, expect } from '@playwright/test';
 
 /**
  * The app's unsaved-changes guard, from the outside.
@@ -37,7 +37,14 @@ export async function acceptDiscardPrompt(page: Page): Promise<void> {
  * whose claim is that the guard appears must still call `acceptDiscardPrompt` after asserting it.
  */
 export async function acceptDiscardPromptIfPresent(page: Page): Promise<void> {
-  if (await discardPrompt(page).isVisible()) await acceptDiscardPrompt(page);
+  try {
+    await discardPrompt(page).waitFor({ state: 'visible', timeout: 500 });
+  } catch (error) {
+    if (!(error instanceof errors.TimeoutError)) throw error;
+    return;
+  }
+
+  await acceptDiscardPrompt(page);
 }
 
 /** Answers "Cancel" and waits for the prompt to leave. The gated action must not happen. */

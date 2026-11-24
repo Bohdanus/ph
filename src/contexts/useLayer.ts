@@ -560,7 +560,7 @@ export const useLayers = () => {
     params: BlankImageParams,
     replaceDocument = false,
     insertAfterLayerId?: LayerId,
-    newDocumentOptions: { hasUnsavedChanges?: boolean } = {}
+    newDocumentOptions: { hasUnsavedChanges?: boolean } = { hasUnsavedChanges: true }
   ) => {
     if ('size' in params && params.size.width > 0 && params.size.height > 0) {
       assertWithinDocumentPixelBudget(params.size, 'Document');
