@@ -14,8 +14,14 @@ and [`KILO.md`](KILO.md).
   `task`/`agent_manager` interfaces.
 - Do not assume model/provider routing transfers between hosts. In particular,
   this runtime's `spawn_agent` accepts a model override but no provider field;
-  OpenRouter or Kilo models are usable only if the host explicitly supports and
-  routes them.
+  this tool alone cannot pin an OpenRouter or Kilo route. This limitation applies
+  to this host tool, not to every agent runtime on the machine: Kilo may expose
+  `agent_manager`/`task`, and repository free-model or free-subagent runners may
+  provide other bounded paths. Check the active host's available tools and the
+  current live catalog before concluding that free delegation is unavailable.
+  Never infer a route from another agent's capabilities or from a model name;
+  verify the exact model/provider pair and resolved result as described in
+  [`MODELS.md`](../MODELS.md).
 - Delegates in this collaboration runtime share the current filesystem; launch
   only after creating the task worktree. Give writers disjoint absolute paths.
   The root agent owns Git operations, commits, merges, and disposal, as required
@@ -75,6 +81,13 @@ the lease but cannot prove which model the host actually launched.
   session IDs and a concise evidence file, then read that file in the root. Never
   send private transcripts to an unverified provider.
 - For local history procedures, use the [Skills index](README.md#skills) and open the platform-specific `.skills/kilo-chat-history.md` or `.skills/codex-chat-history.md`; do not assume Codex has Kilo search tools.
+- A Codex `spawn_agent` without provider selection is not a substitute for a
+  verified free Kilo/OpenRouter subagent. If this host cannot route a free child,
+  check whether the current session also exposes Kilo's
+  [read-only research agent](../.kilo/agent/read-only-research.md) and
+  `agent_manager`, or use the repository's free completion runner for
+  text-only research. The completion runner is not a subagent. Do not stop at
+  “Codex cannot set provider” when another verified free route may be available.
 - If no safe free path exists, request explicit authorization before switching to
   paid research; do not treat the user's request for rigor as paid-routing approval.
 
