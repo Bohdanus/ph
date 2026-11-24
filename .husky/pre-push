@@ -1,11 +1,10 @@
 #!/usr/bin/env sh
-# The full app unit suite, once per push, and nothing else.
+# The full app unit suite and isolated flood-fill scaling guard, once per push.
 #
 # It is here rather than in `gate:commit` because the commit gate runs no app
-# test at all, so it cannot approximate this: a commit can pass the commit gate
-# and still land a change whose own test was already failing before the commit
-# started. `npm run test` is also the on-demand full scan — this hook is a
-# reminder that it exists, not a second place to configure it.
+# test at all. The full unit suite runs first; the timing-sensitive flood-fill
+# scaling cases run afterwards with one Vitest worker so the broader parallel
+# suite cannot distort their measurement. Both scripts are available on demand.
 #
 # `tsc` and `build` are deliberately NOT repeated here. An earlier version
 # re-ran all of `gate:commit` and bought nothing with it: a rebase or a
