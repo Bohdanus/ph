@@ -351,12 +351,15 @@ function documentPoint(fit: Fit, documentX: number, documentY: number): PagePoin
 
 /**
  * Find a point just outside a real crop corner that the app identifies as its rotation hotspot,
- * then rotate 90 degrees clockwise around the visible box center. The DOM corner is rendered from
- * rounded document coordinates while the pointer hook hit-tests the fractional selection rect,
- * so a fixed CSS offset can land just inside a corner on one scale and outside the hot zone on
- * another.
+ * then rotate the requested degrees clockwise around the visible box center. The DOM corner is
+ * rendered from rounded document coordinates while the pointer hook hit-tests the fractional
+ * selection rect, so a fixed CSS offset can land just inside a corner on one scale and outside the
+ * hot zone on another. Existing callers use the default quarter turn.
  */
-async function cropRotationGesturePoints(page: Page): Promise<{ start: PagePoint; end: PagePoint }> {
+async function cropRotationGesturePoints(
+  page: Page,
+  rotationDegrees = 90
+): Promise<{ start: PagePoint; end: PagePoint }> {
   const corner = page.locator('[data-testid="crop-selection-handle"][data-corner="top-left"]');
   const outline = page.getByTestId('crop-selection-outline');
   const surface = page.locator('.cursor-crop');
@@ -395,7 +398,15 @@ async function cropRotationGesturePoints(page: Page): Promise<{ start: PagePoint
   };
   const dx = start.x - center.x;
   const dy = start.y - center.y;
-  return { start, end: { x: center.x - dy, y: center.y + dx } };
+  if (rotationDegrees === 90) return { start, end: { x: center.x - dy, y: center.y + dx } };
+  const radians = (rotationDegrees * Math.PI) / 180;
+  return {
+    start,
+    end: {
+      x: center.x + dx * Math.cos(radians) - dy * Math.sin(radians),
+      y: center.y + dx * Math.sin(radians) + dy * Math.cos(radians),
+    },
+  };
 }
 
 async function installCropInputProbe(page: Page): Promise<void> {
@@ -6254,7 +6265,7 @@ test.describe('Crop history', () => {
   // gives for its own viewport, for a different reason.
   test.use({ viewport: { width: 1600, height: 1200 } });
 
-  test('crop horizontal selection edges do not continue outside the crop', async ({ page }) => {
+  test('crop selection edges do not continue outside the crop', async ({ page }) => {
     await openDocument(page);
     const fit = await openCropTool(page);
     await expect(page.locator('.cursor-crop'), 'the crop starts unrotated').toHaveAttribute('data-rotation', '0');
@@ -6280,18 +6291,32 @@ test.describe('Crop history', () => {
       const frameBottomRight = documentPoint(fit, fit.documentWidth, fit.documentHeight);
       const frameLeft = Math.max(2, Math.floor((frameTopLeft.x - workspaceBox!.x) * scaleX));
       const frameRight = Math.min(info.width - 2, Math.ceil((frameBottomRight.x - workspaceBox!.x) * scaleX));
+      const frameTop = Math.max(2, Math.floor((frameTopLeft.y - workspaceBox!.y) * scaleY));
+      const frameBottom = Math.min(info.height - 2, Math.ceil((frameBottomRight.y - workspaceBox!.y) * scaleY));
       const cropGuardLeft = Math.max(2, Math.floor((cropBox!.x - workspaceBox!.x - 5) * scaleX));
       const cropGuardRight = Math.min(
         info.width - 2,
         Math.ceil((cropBox!.x + cropBox!.width - workspaceBox!.x + 5) * scaleX)
       );
-      // The artifact starts at the crop edge; these strips catch it without sampling distant page content.
+      const cropGuardTop = Math.max(2, Math.floor((cropBox!.y - workspaceBox!.y - 5) * scaleY));
+      const cropGuardBottom = Math.min(
+        info.height - 2,
+        Math.ceil((cropBox!.y + cropBox!.height - workspaceBox!.y + 5) * scaleY)
+      );
+      // The artifact starts at the crop edge. Each 64px strip intentionally samples just beyond that
+      // edge, avoiding distant page content while staying inside the measured document frame.
       const edgeWindows = [
         [Math.max(frameLeft, cropGuardLeft - 64), Math.min(frameRight, cropGuardLeft)],
         [Math.max(frameLeft, cropGuardRight), Math.min(frameRight, cropGuardRight + 64)],
       ] as const;
+      const verticalEdgeWindows = [
+        [Math.max(frameTop, cropGuardTop - 64), Math.min(frameBottom, cropGuardTop)],
+        [Math.max(frameTop, cropGuardBottom), Math.min(frameBottom, cropGuardBottom + 64)],
+      ] as const;
       const top = Math.round((cropBox!.y - workspaceBox!.y) * scaleY);
       const bottom = Math.round((cropBox!.y + cropBox!.height - workspaceBox!.y) * scaleY);
+      const left = Math.round((cropBox!.x - workspaceBox!.x) * scaleX);
+      const right = Math.round((cropBox!.x + cropBox!.width - workspaceBox!.x) * scaleX);
       const luminance = (x: number, y: number) => {
         const offset = (y * info.width + x) * info.channels;
         return 0.2126 * data[offset]! + 0.7152 * data[offset + 1]! + 0.0722 * data[offset + 2]!;
@@ -6310,9 +6335,25 @@ test.describe('Crop history', () => {
         }
         return pixels;
       };
+      const verticalEdgeContrast = (edgeX: number) => {
+        let pixels = 0;
+        for (const x of [edgeX - 1, edgeX, edgeX + 1]) {
+          for (const [start, end] of verticalEdgeWindows) {
+            for (let y = start; y < end; y++) {
+              const center = luminance(x, y);
+              if (Math.abs(center - luminance(x - 3, y)) > 18 && Math.abs(center - luminance(x + 3, y)) > 18) {
+                pixels++;
+              }
+            }
+          }
+        }
+        return pixels;
+      };
 
       expect(edgeContrast(top), `${stage}: top crop edge pixels outside selection`).toBeLessThan(10);
       expect(edgeContrast(bottom), `${stage}: bottom crop edge pixels outside selection`).toBeLessThan(10);
+      expect(verticalEdgeContrast(left), `${stage}: left crop edge pixels outside selection`).toBeLessThan(10);
+      expect(verticalEdgeContrast(right), `${stage}: right crop edge pixels outside selection`).toBeLessThan(10);
     };
 
     await dragOnCanvas(page, fit, { x: 100, y: 100 }, { x: 700, y: 500 });
@@ -6328,15 +6369,15 @@ test.describe('Crop history', () => {
     await dragOnCanvas(page, fit, { x: 150, y: 150 }, { x: 650, y: 450 });
 
     const surface = page.locator('.cursor-crop');
-    const rotation = await cropRotationGesturePoints(page);
+    const rotation = await cropRotationGesturePoints(page, 37);
     await page.mouse.move(rotation.start.x, rotation.start.y);
     await page.mouse.down();
     await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
     await page.mouse.up();
-    await expect(surface, 'the crop is rotated before checking its repaint').toHaveAttribute(
-      'data-rotation',
-      /8[5-9]|9[0-5]/
-    );
+    await expect.poll(async () => Number(await surface.getAttribute('data-rotation'))).toBeGreaterThan(34);
+    await expect.poll(async () => Number(await surface.getAttribute('data-rotation'))).toBeLessThan(40);
+    const rotatedAngle = await surface.getAttribute('data-rotation');
+    if (rotatedAngle === null) throw new Error('the rotated crop did not publish its angle');
 
     const workspace = page.getByTestId('workspace-container');
     const expectDimmedOutsideAndClearInside = async (stage: string, outside: PagePoint, inside: PagePoint) => {
@@ -6380,7 +6421,7 @@ test.describe('Crop history', () => {
       expect(insidePatch.mean - outsidePatch.mean, `${stage}: the crop cutout remains visible`).toBeGreaterThan(100);
     };
 
-    await expectDimmedOutsideAndClearInside('rotation only', { x: 200, y: 300 }, { x: 400, y: 300 });
+    await expectDimmedOutsideAndClearInside('rotation only', { x: 165, y: 165 }, { x: 400, y: 300 });
 
     const moveStart = documentPoint(fit, 400, 300);
     const moveEnd = documentPoint(fit, 480, 320);
@@ -6389,8 +6430,10 @@ test.describe('Crop history', () => {
     await page.mouse.down();
     await page.mouse.move(moveEnd.x, moveEnd.y, { steps: 12 });
     await page.mouse.up();
-    await expect(surface, 'moving the crop preserves its rotation').toHaveAttribute('data-rotation', /8[5-9]|9[0-5]/);
-    await expectDimmedOutsideAndClearInside('rotated move', { x: 300, y: 300 }, { x: 480, y: 320 });
+    await expect(surface, 'moving the crop preserves its rotation').toHaveAttribute('data-rotation', rotatedAngle);
+    // This point was inside the old rotated cutout but is more than 12 document pixels outside
+    // the moved crop. If the previous cutout was not cleared, it stays bright here.
+    await expectDimmedOutsideAndClearInside('rotated move', { x: 322, y: 404 }, { x: 480, y: 320 });
   });
 
   test('starting a new crop outside a rotated selection resets its angle', async ({ page }) => {
