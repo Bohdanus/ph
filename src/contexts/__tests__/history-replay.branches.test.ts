@@ -850,8 +850,16 @@ describe('replayHistory tool action branches', () => {
       args: { toolName: 'reposition', resize: { x: 1, y: 2, width: 8, height: 9 } },
       expectedPos: { x: 1, y: 2, width: 8, height: 9 },
     },
-  ])('patches only the logical position for $label', ({ args, expectedPos }) => {
+  ])('patches only the logical position for $label and preserves its raster', ({ args, expectedPos }) => {
     const dependencies = createDependencies();
+    const tmpCanvas = { width: 40, height: 30 } as NonNullable<Layer['tmpCanvas']>;
+    dependencies.createLayer.mockImplementation((input) =>
+      createTestLayer(input.layerId, {
+        pos: { x: 0, y: 0, width: 40, height: 30 },
+        source: input.source,
+        tmpCanvas,
+      })
+    );
     const history: HistoryItem[] = [
       { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
       { id: 'geometry', actionName: TOOL_ACTION, layerId: 'layer-1', args },
@@ -860,7 +868,49 @@ describe('replayHistory tool action branches', () => {
     const result = replayHistory(history, 1, initialSize, dependencies);
 
     expect(result.layers['layer-1'].pos).toEqual(expectedPos);
+    expect(result.layers['layer-1'].tmpCanvas).toBe(tmpCanvas);
     expect(dependencies.applyRasterTool).not.toHaveBeenCalled();
+  });
+
+  it('preserves the newest raster cache after a later geometry action', () => {
+    const dependencies = createDependencies();
+    const originalBitmap = { width: 40, height: 30 } as NonNullable<Layer['bitmap']>;
+    const initialTmpCanvas = { width: 40, height: 30 } as NonNullable<Layer['tmpCanvas']>;
+    const rasterizedTmpCanvas = { width: 42, height: 31 } as NonNullable<Layer['tmpCanvas']>;
+    const source: LayerSource = {
+      kind: 'image',
+      bitmap: originalBitmap,
+      name: 'source.png',
+      isBedrock: false,
+      pos: { x: 0, y: 0, width: 40, height: 30 },
+    };
+    dependencies.createLayer.mockReturnValue(
+      createTestLayer('layer-1', { source, bitmap: originalBitmap, tmpCanvas: initialTmpCanvas })
+    );
+    dependencies.applyRasterTool.mockImplementation((layer) => ({
+      ...layer,
+      source: undefined,
+      tmpCanvas: rasterizedTmpCanvas,
+    }));
+    const history: HistoryItem[] = [
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: source },
+      { id: 'paint', actionName: TOOL_ACTION, layerId: 'layer-1', args: { toolName: 'brush' } },
+      {
+        id: 'move',
+        actionName: TOOL_ACTION,
+        layerId: 'layer-1',
+        args: { toolName: 'reposition', move: { x: 12, y: 34 } },
+      },
+    ];
+
+    const result = replayHistory(history, 2, initialSize, dependencies);
+    const layer = result.layers['layer-1'];
+
+    expect(dependencies.applyRasterTool).toHaveBeenCalledOnce();
+    expect(layer.bitmap).toBe(originalBitmap);
+    expect(layer.tmpCanvas).toBe(rasterizedTmpCanvas);
+    expect(layer.source).toBeUndefined();
+    expect(layer.pos).toEqual({ x: 12, y: 34, width: 40, height: 30 });
   });
 
   it('prefers resize over move when both geometry patches are present', () => {

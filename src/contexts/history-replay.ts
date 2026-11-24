@@ -454,7 +454,7 @@ export function replayHistory(
           [layerId]: {
             ...layer,
             pos: { ...layer.pos, ...patch },
-            tmpCanvas: unpromotedBlankRaster(layer),
+            tmpCanvas: layer.source?.kind === 'blank' ? unpromotedBlankRaster(layer) : layer.tmpCanvas,
             presentationBounds: null,
           },
         };
