@@ -16,7 +16,7 @@ import {
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
-import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { expectNoDiscardPrompt } from './helpers/discard-prompt';
 import { committedAntsOutline, hasNoCommittedAnts, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
 import {
   clickToolButton,
@@ -795,7 +795,7 @@ test.describe('Elliptical marquee', () => {
       await expect(page.getByTestId('footer-dimensions')).toContainText('Dimensions: 800 × 600 px');
       await page.getByTestId('header-file-menu-button').click();
       await page.getByTestId('header-file-new-button').click();
-      await acceptDiscardPrompt(page);
+      await expectNoDiscardPrompt(page);
       const dialog = page.getByTestId('new-image-dialog');
       await expect(dialog).toBeVisible();
       await page.getByTestId('new-image-width-input').fill('1600');
@@ -1131,7 +1131,7 @@ test.describe('Rectangular Marquee Tool', () => {
       await expect(page.getByTestId('footer-dimensions')).toContainText('Dimensions: 800 × 600 px');
       await page.getByTestId('header-file-menu-button').click();
       await page.getByTestId('header-file-new-button').click();
-      await acceptDiscardPrompt(page);
+      await expectNoDiscardPrompt(page);
       const dialog = page.getByTestId('new-image-dialog');
       await expect(dialog).toBeVisible();
       await page.getByTestId('new-image-width-input').fill('1600');

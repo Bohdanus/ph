@@ -31,6 +31,15 @@ export async function acceptDiscardPrompt(page: Page): Promise<void> {
   await expect(discardPrompt(page)).toHaveCount(0);
 }
 
+/**
+ * Accepts the guard only when the current document is dirty. Setup helpers use this when they
+ * can start from either the pristine starter canvas or a document changed by the test; tests
+ * whose claim is that the guard appears must still call `acceptDiscardPrompt` after asserting it.
+ */
+export async function acceptDiscardPromptIfPresent(page: Page): Promise<void> {
+  if (await discardPrompt(page).isVisible()) await acceptDiscardPrompt(page);
+}
+
 /** Answers "Cancel" and waits for the prompt to leave. The gated action must not happen. */
 export async function declineDiscardPrompt(page: Page): Promise<void> {
   await expect(discardPrompt(page), 'the unsaved-changes prompt was never shown').toBeVisible();

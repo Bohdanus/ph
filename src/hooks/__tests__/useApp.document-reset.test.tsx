@@ -496,6 +496,20 @@ describe('creating a new image kills the outgoing document history and layers', 
     expect(canvas?.height).toBe(BLANK.size.height);
   });
 
+  it('keeps a bootstrapped starter clean while ordinary new blank documents stay dirty', async () => {
+    const starter = setup();
+    await act(async () => {
+      starter.current.app.setBlankImage(BLANK, { hasUnsavedChanges: false });
+    });
+    expect(starter.current.store.hasUnsavedChanges).toBe(false);
+
+    const created = setup();
+    await act(async () => {
+      created.current.app.setBlankImage(BLANK);
+    });
+    expect(created.current.store.hasUnsavedChanges).toBe(true);
+  });
+
   it('leaves nothing undoable or redoable and no outgoing state after setBlankImage', async () => {
     const result = setup();
     await seedOutgoingDocument(result);
