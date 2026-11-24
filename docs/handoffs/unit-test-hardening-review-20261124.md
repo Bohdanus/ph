@@ -1,31 +1,39 @@
 # Unit-test hardening review: landing blocked
 
-**State:** Reviewed candidate prepared; landing is blocked by an occupied main lease.
+**State:** Candidate reviewed and gated; protected landing remains blocked by an occupied main lease.
 
-**Source branch:** `task/unit-test-hardening-20261123`
+**Source branch:** `task/unit-test-hardening-20261123` at `cfbf792f09ce71fc8ced39a26e1e4a2efbffb08a`
 
-**Reviewed branch:** `task/unit-test-hardening-review-20261124`
+**Candidate branch:** `task/unit-test-hardening-origin-sync-20261124`
 
-**Reviewed merge commit:** `bd083e11fb693f4878ed22b67e57811e8db013ae`
+**Candidate HEAD:** `396310927464a8415345d87da9e841cacde8dd91`
 
-**Parents:** current main `9c99ea8560e11a6e4e7e52d8341e5c0dbe3615b8`; source candidate `cfbf792f09ce71fc8ced39a26e1e4a2efbffb08a`
+**Candidate tree:** `eefe1b43df8dea8143bd55d2711a3de8125317d0`
 
-## Review result
+**Fetched and merged `origin/main`:** `29bca7ca3315cda52cde050a03db8debb553e8de`
 
-Reviewed the candidate against current main in an isolated worktree. Removed a generated analysis artifact, redundant fake-timer cleanup, placeholder and duplicate format tests, and tests that made claims their assertions did not prove. Fixed the SidebarRight collapse test to assert the actual unmount and expand-button contract. Kept meaningful decoded ICO pixel cases, SVG byte/pixel bounds, malformed TIFF dimension coverage, and hook mock/timer corrections.
+## Review and validation
 
-The merge-takeover guard identified intentional omissions from the source candidate. The prepared merge was inspected and committed with `--no-verify`; the merge commit records that decision and the guard's finding.
+The source branch was reviewed against local main. The refined merge `bd083e11fb693f4878ed22b67e57811e8db013ae` omits placeholder, duplicate, misleading, and generated-artifact tests while retaining meaningful codec, pixel, malformed-input, hook, and timer coverage. The final candidate also validates host-native chat IDs before landing, updates integration fixtures for that contract, asserts the SVG byte boundary and pixel-area limit, and drains fake timers before switching to real timers.
 
-Validation on the reviewed tree:
+An exact-free OpenRouter Nemotron review of the integration patch found two regressions: removing the SVG structure assertion and hard-coding the pixel-ceiling dimensions. Both were corrected. The SVG structure assertion is restored, and the non-square over-limit case is derived from `MAX_CREATABLE_DOCUMENT_PIXELS`.
 
-- Focused tests: 20 files passed, 454 passed, 1 expected failure.
+Validation on the final candidate tree:
+
+- `npm test -- --reporter=json`: 2,448 suites passed; 14,254 tests passed, 20 pending, 0 failed.
 - `npm run tsc`: passed.
 - `npm run build`: passed.
-- `npm run lint:check`: 0 errors, 136 warnings; formatting check passed.
+- `npm run lint:check`: 0 errors, 136 warnings; Prettier check passed.
+- Focused landing guard: 122 tests passed.
+- Focused history pixel parity: 40 passed, 4 expected failures.
 - `git diff --check`: passed.
+- `npm run repo:state -- --for-landing task/unit-test-hardening-origin-sync-20261124`: landing scope clear; unrelated worktree findings remain untouched.
+- `npm run swarm -- doctor --dry-run`: no stale holdings.
 
-## Landing blocker
+## Main landing blocker
 
-At 2026-11-24 13:40 CET, `npm run main:landing -- status --json` reported lease `6d97eecc-cddb-482f-8451-da6e8691ced9`, held for about 9h30 by recorded branch `fix/e2e-cron-20261123`. The designated main worktree is `/Users/bkalynovskyi/ph/.kilo/worktrees/landing-main-recovered-20261112` and contains only an orphan `AUTO_MERGE` marker with no unmerged paths. Automatic failover stopped because reviewed pins changed. Recorded owner PID 43083 was not running, but watcher PID 43520 was still running with its working directory in the damaged main worktree. The recorded owner chat value `2026-11-24T04:30:00Z` did not establish host-session liveness.
+`main:landing status --json` reports lease `6d97eecc-cddb-482f-8451-da6e8691ced9` on `/Users/bkalynovskyi/ph/.kilo/worktrees/landing-main-recovered-20261112`. That checkout is clean except for an orphan `AUTO_MERGE` marker and has no unmerged paths. Automatic failover stopped because main moved after the lease's candidate pins were reviewed.
 
-Do not clear `AUTO_MERGE`, release/take over the lease, stop the watcher, or modify/remove the designated main worktree while owner-session death and the full landing process tree remain unproven. Resume by rechecking `main:landing status`, structured host session liveness, and the complete process tree without opening transcripts. If both the owner chat and process tree are confirmed stopped, follow `docs/ORCHESTRATION.md` § Main landing ownership and deadlock recovery, including its Luna 6 xhigh recovery task worktree and guarded lease takeover. Then revalidate scoped `repo:state`, review the exact pins, and land this candidate through `npm run main:landing -- land ...`.
+The owner record names branch `fix/e2e-cron-20261123`, but its chat ID is the timestamp `2026-11-24T04:30:00Z`, which cannot identify a host session. Recorded owner PID 43083 is absent and child PID is null. Detached watcher PID 43520 remains alive with its working directory in the occupied checkout. The owner chat and full process tree therefore are not proven stopped.
+
+The occupied checkout, its `AUTO_MERGE` marker, watcher, and lease have not been modified. Do not create a competing `main` checkout or take over the lease until structured host liveness and the full holder process tree satisfy `docs/ORCHESTRATION.md` § Main landing ownership and deadlock recovery. Then use the guarded takeover and create the replacement main worktree through the documented playbook. Recompute and review the pins against current main before landing.
