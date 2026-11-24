@@ -912,7 +912,7 @@ Sources:
 
 Drags a stroke that automatically samples surrounding pixels to repair the area, with Type (Proximity Match / Content-Aware / Create Texture) and Diffusion.
 
-The Spot Healing Brush is the Healing Brush without the Alt-click: it infers the source from the neighborhood of each stroke segment. Type decides the algorithm: Proximity Match samples a ring around the stroke; Content-Aware synthesizes new pixels; Create Texture makes a pattern from the area. Diffusion controls how far the sample pool extends. This app implements Proximity Match only — a deterministic outward-ring sample with luminance correction. Content-Aware and Create Texture are deferred (proprietary synthesis).
+The Spot Healing Brush is the Healing Brush without the Alt-click: it infers the source from the neighborhood of each stroke segment. Type decides the algorithm: Proximity Match samples a ring around the stroke; Content-Aware synthesizes new pixels; Create Texture makes a pattern from the area. Diffusion controls how far the sample pool extends. This app implements a deterministic outward-ring sampling approximation without luminance correction. Content-Aware and Create Texture are deferred (proprietary synthesis).
 
 **Options bar**
 
@@ -934,7 +934,7 @@ The Spot Healing Brush is the Healing Brush without the Alt-click: it infers the
 
 - `J` — Photoshop selects the healing-tool family; Shift+J cycles it. THIS APP binds J directly to Healing Brush and does not bind Shift+J.
 
-**In this app:** `partial` — Spot Healing uses deterministic Proximity Match approximation sampling outward ring with luminance correction. Edits active layer only. Size, Hardness, Opacity present. Type/Mode/Sample/Diffusion missing. No Alt modifier. J shortcut selects healing tile.
+**In this app:** `partial` — Spot Healing uses a deterministic outward-ring sampling approximation without luminance correction. Edits active layer only. Size, Hardness, Opacity present. Type/Mode/Sample/Diffusion missing. No Alt modifier. J shortcut selects healing tile.
 
 Implementation:
 

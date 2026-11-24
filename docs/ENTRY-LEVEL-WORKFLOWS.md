@@ -51,25 +51,29 @@ poster-and-recovery journey is a future integration test.
 
 ## 3. Crop and share an existing image
 
-**User goal:** Reframe an imported picture, compare the crop with the previous frame, and export the
-result.
+**User goal:** Reframe an imported picture, remove one small distraction, compare the retouch with
+the previous version, and export the result.
 
 **Starting point:** Start a fresh app session with the untouched starter document open. Choose
 **File > Open** and select the photo; the starter is clean, so the file opens without a discard
 confirmation.
 
-**Steps:** Select Crop, adjust the frame, commit, inspect the result, then Undo or Redo as needed
-before exporting. Drag the crop frame and click **Apply**; use the Undo and Redo buttons to compare
-the previous and cropped frames. Save the result through **File > Save** and choose PNG.
+**Steps:** Select Crop, adjust the frame, and commit. In the Layers panel, click **Layer from
+Background** to make the imported image editable; this keeps its pixels. Select Spot Healing and
+brush over a small distraction. Use Undo and Redo to compare the retouched and unretouched cropped
+image. Save the result through **File > Save** and choose PNG.
 
-**Acceptance:** The committed crop is a single history action, Undo restores the previous frame,
-Redo restores the crop, and the exported PNG has the committed document dimensions and pixels.
+**Acceptance:** The committed crop changes the document dimensions; **Layer from Background** keeps
+the cropped pixels while making the image editable; Spot Healing changes the image; Undo restores
+the exact cropped image and Redo restores the exact retouched image; the exported PNG has the cropped
+dimensions and matches the visible canvas within the PNG pixel oracle.
 
 **E2E:** `Beginner crop: import an image, crop it, undo and redo, then export PNG` in
 [`photoshop-junior-workflow.spec.ts`](../e2e/photoshop-junior-workflow.spec.ts) imports the synthetic
-red/blue fixture, crops it, verifies Undo/Redo restore the document frame, and checks the exported
-PNG's dimensions and representative pixels. `crop-history.spec.ts` and `file-roundtrip.spec.ts`
-continue to cover their narrower cases.
+red/blue fixture and checks crop frame history and representative export pixels.
+`photoshop-photo-workflow.spec.ts` imports an attributed CC0 photograph and checks a crop, Spot
+Healing edit, exact Undo/Redo pixels, and PNG dimensions and pixels. `crop-history.spec.ts` and
+`file-roundtrip.spec.ts` continue to cover narrower cases.
 
 ## 4. Build and refine a layered illustration (entry-to-mid-level)
 
@@ -102,8 +106,7 @@ paths. These capabilities are absent or explicitly incomplete in the current app
 is recorded in [`FEATURES.md`](FEATURES.md), [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md),
 [`LAYERS-PANEL.md`](LAYERS-PANEL.md), and the generated per-tool inventory [`TOOLS.md`](TOOLS.md).
 
-The title-card E2E uses an app-created document and synthetic artwork. The crop E2E uses a synthetic
-test fixture rather than a photograph. Together they demonstrate supported interaction, history,
-layer structure, and export; PSD round-trip support is limited to the documented raster-layer
-features. These tests do not establish photo-retouching quality, broad PSD interoperability, or
-Photoshop feature parity.
+The title-card E2E uses an app-created document and synthetic artwork. The real-photo E2E covers one
+CC0 landscape, one crop, one Spot Healing stroke, history, and PNG export. It does not establish
+general photo-retouching quality, broad PSD interoperability, or Photoshop feature parity. PSD
+round-trip support is limited to the documented raster-layer features.
