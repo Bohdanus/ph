@@ -9,12 +9,15 @@ import {
   type CropOverlayVisibility,
 } from '../../../tools/crop.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
+import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
 import { refitRectWidthToAspect } from '../../../util/rect-aspect.ts';
+import { documentFrameFromSize } from '../../../contexts/document-frame.ts';
 
 const aspectRatios = [
   { label: 'Free', value: null },
+  { label: 'Original Ratio', value: 'original' },
   { label: 'Square (1:1)', value: 1 },
   { label: '3:4', value: 3 / 4 },
   { label: '4:3', value: 4 / 3 },
@@ -32,12 +35,14 @@ const overlayLabels: Record<CropOverlayType, string> = {
 };
 
 const Crop: React.FC<{}> = () => {
+  const [{ totalSize, documentFrame }] = useStore();
   const { applyDocumentCrop } = useLayers();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as CropToolArgs;
   const {
     aspectRatio,
+    useOriginalAspectRatio = false,
     rect,
     preRatioRect,
     overlayType = 'ruleOfThirds',
@@ -46,6 +51,9 @@ const Crop: React.FC<{}> = () => {
     gridDivisions = GRID_DIVISIONS_DEFAULT,
     angle,
   } = args;
+  const currentFrame = documentFrame ?? documentFrameFromSize(totalSize);
+  const originalAspectRatio =
+    currentFrame.width > 0 && currentFrame.height > 0 ? currentFrame.width / currentFrame.height : null;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const orientationValue =
     typeof overlayOrientation === 'number' ? overlayOrientation : overlayOrientation === 'flipped' ? 1 : 0;
@@ -63,24 +71,29 @@ const Crop: React.FC<{}> = () => {
    * the overlay's private ref would crop the document to a region the user never saw.
    *
    * Publishing it is a REGRESSION-CAUSED loss, and this is the way back: the pre-ratio rect was
-   * never stored anywhere, so `Free`/`Original` had nothing to restore and left the rect 16:9
-   * shaped. `preRatioRect` records it on the args the store holds — panel state would go stale the
+   * never stored anywhere, so switching back to `Free` had nothing to restore and left the rect
+   * 16:9 shaped. `preRatioRect` records it on the args the store holds — panel state would go stale the
    * moment the user drags a new rect with the ratio still set — and the first ratio choice wins, so
    * cycling through several presets still returns the user's original framing and not the last
    * intermediate fit.
    */
-  const onRatioChange = (newAspectRatio: number | null) => {
+  const onRatioChange = (newAspectRatio: number | null, isOriginalRatio = false) => {
+    const nextArgs: CropToolArgs = { ...args };
+    delete nextArgs.useOriginalAspectRatio;
+
     if (!newAspectRatio) {
-      onChange({ ...args, aspectRatio: newAspectRatio, rect: preRatioRect ?? rect, preRatioRect: null });
+      nextArgs.aspectRatio = newAspectRatio;
+      nextArgs.rect = preRatioRect ?? rect;
+      nextArgs.preRatioRect = null;
+      onChange(nextArgs);
       return;
     }
 
-    onChange({
-      ...args,
-      aspectRatio: newAspectRatio,
-      rect: rect ? { ...rect, ...refitRectWidthToAspect(rect, newAspectRatio) } : rect,
-      preRatioRect: preRatioRect ?? rect ?? null,
-    });
+    nextArgs.aspectRatio = newAspectRatio;
+    nextArgs.rect = rect ? { ...rect, ...refitRectWidthToAspect(rect, newAspectRatio) } : rect;
+    nextArgs.preRatioRect = preRatioRect ?? rect ?? null;
+    if (isOriginalRatio) nextArgs.useOriginalAspectRatio = true;
+    onChange(nextArgs);
   };
 
   return (
@@ -94,9 +107,13 @@ const Crop: React.FC<{}> = () => {
         </label>
         <select
           id="aspect-ratio"
-          value={aspectRatio ?? ''}
+          value={useOriginalAspectRatio ? 'original' : (aspectRatio ?? '')}
           onChange={(e) => {
             const val = e.target.value;
+            if (val === 'original') {
+              if (originalAspectRatio !== null) onRatioChange(originalAspectRatio, true);
+              return;
+            }
             onRatioChange(val === '' ? null : Number(val));
           }}
           className="rounded border border-gray-300 bg-white px-3 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"

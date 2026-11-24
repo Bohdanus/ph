@@ -6347,6 +6347,27 @@ test.describe('Crop history', () => {
     await expect(overlaySelect, 'O wraps after Golden Spiral').toHaveValue('ruleOfThirds');
   });
 
+  test('Original Ratio follows the current document frame', async ({ page }) => {
+    await openDocument(page);
+    expect(await documentSize(page)).toEqual({ width: DEFAULT_DOCUMENT_WIDTH, height: DEFAULT_DOCUMENT_HEIGHT });
+
+    const openingFit = await openCropTool(page);
+    await dragOnCanvas(page, openingFit, { x: 100, y: 80 }, { x: 400, y: 480 });
+    await applyCrop(page);
+    await expect.poll(() => documentSize(page)).toEqual({ width: 300, height: 400 });
+
+    const ratioSelect = page.locator('#aspect-ratio');
+    await expect(ratioSelect, 'the crop ratio selector remains available after applying a crop').toBeVisible();
+    await ratioSelect.selectOption('original');
+    await expect(ratioSelect, 'Original Ratio is selected').toHaveValue('original');
+
+    const croppedFit = await readFit(page);
+    await dragOnCanvas(page, croppedFit, { x: 20, y: 20 }, { x: 220, y: 220 });
+    const cropBox = await page.getByTestId('crop-selection-outline').boundingBox();
+    expect(cropBox, 'the ratio constrained crop box is rendered').not.toBeNull();
+    expect(cropBox!.width / cropBox!.height, 'the new crop keeps the current 3:4 document ratio').toBeCloseTo(3 / 4, 2);
+  });
+
   test('a committed crop is one history entry that one undo restores in full', async ({ page }) => {
     await openDocument(page);
     const opening = await documentSize(page);
