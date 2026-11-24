@@ -86,6 +86,61 @@ Binding to `0.0.0.0` listens on all WSL interfaces; depending on WSL networking
 and firewall settings, the server may be reachable from other devices on your
 local network. Use it only on a trusted network, and stop the server when done.
 
+## OpenRouter key for free-model tools
+
+The free-model runner reads `OPENROUTER_API_KEY` from the process environment.
+It does not read Kilo's saved OpenRouter credential. Do not assume a Windows
+environment variable is available to WSL; set the key in the environment that
+launches Node. Prefer a secret manager. Do not pass the key as a command-line
+argument, print it, save it in the repository, or add it to `.bashrc` or
+`.profile`.
+
+For a one-time check from a WSL task worktree, explicitly load Linux Node for
+non-interactive shells, then enter the key without echoing it:
+
+```bash
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+source "$NVM_DIR/nvm.sh"
+nvm use
+read -r -s -p 'OpenRouter API key: ' OPENROUTER_API_KEY
+printf '\n'
+export OPENROUTER_API_KEY
+node scripts/free-model-pool.mjs --openrouter-quota
+unset OPENROUTER_API_KEY
+```
+
+In Windows PowerShell, the same quota check can use a hidden prompt for the
+current process. `SecureString` hides the prompt, but Node still needs the key
+as plaintext in its inherited process environment. This avoids console echo and
+persistent shell configuration; it does not protect the value from process-memory
+inspection. Use a secret manager for stricter handling.
+
+```powershell
+$secret = Read-Host 'OpenRouter API key' -AsSecureString
+$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+try {
+  $env:OPENROUTER_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+  node scripts/free-model-pool.mjs --openrouter-quota
+} finally {
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+  Remove-Item Env:OPENROUTER_API_KEY -ErrorAction SilentlyContinue
+  Remove-Variable secret, ptr -ErrorAction SilentlyContinue
+}
+```
+
+`--openrouter-quota` calls OpenRouter's `GET /api/v1/key` endpoint and sends no
+inference request. A `no_key` result means the variable is unset or empty in the current process.
+An HTTP `401` normally means OpenRouter rejected the bearer key. In a documented
+2026 infrastructure incident, an authorization lookup outage returned `401
+"User not found"`; OpenRouter's report says it deployed a correction to return
+`503` for infrastructure authorization lookup failures. If a `401` is unexpected,
+check [OpenRouter status](https://status.openrouter.ai/); if it persists while the
+service is healthy, confirm the key is enabled before replacing it.
+If the endpoint returns HTTP 429, wait before retrying. For HTTP 5xx, check status and try again later.
+Neither response by itself proves the key is invalid.
+See the [quota endpoint reference](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key)
+and [OpenRouter's incident report](https://openrouter.ai/blog/announcements/openrouter-outages-on-february-17-and-19-2026).
+
 Run the headless checks with:
 
 ```bash
