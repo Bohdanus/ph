@@ -3,9 +3,21 @@ import { afterEach, beforeEach, vi } from 'vitest';
 import '@testing-library/jest-dom';
 import '@testing-library/jest-dom/vitest';
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   vi.useRealTimers();
+  // vmThreads isolation: drain microtasks, clear timers, flush pending macrotasks
+  // isolate: true resets per test file, not per test. Async operations (createImageBitmap,
+  // timers, mocked rAF) leak across tests within the same VM thread.
+  // Only run timer flush if fake timers were used.
+  if (vi.isFakeTimers()) {
+    await vi.runOnlyPendingTimersAsync();
+    vi.clearAllTimers();
+  }
+  vi.clearAllMocks();
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
 });
 
 const testGlobal = globalThis as typeof globalThis & {

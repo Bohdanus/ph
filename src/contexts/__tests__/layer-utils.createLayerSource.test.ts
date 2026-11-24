@@ -322,7 +322,7 @@ describe('createLayerSource tool sources', () => {
 
     const layer = createLayerSource({ layers: {}, source });
 
-    expect(processor).toHaveBeenCalledWith({ size: source.pos });
+    expect(processor).toHaveBeenCalledWith({ size: source.pos, backingScale: 1 });
     expect(layer.tmpCanvas).toBe(raster);
     // The patch overrides the source position rather than offsetting it.
     expect(layer.pos).toEqual({ x: 5, y: 6, width: 30, height: 12 });

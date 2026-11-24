@@ -1316,9 +1316,10 @@ export function clearTextRasterCache(): void {
   textRasterCache.clear();
 }
 
-function textCacheKey(size: { width: number; height: number }, args: TextToolArgs): string {
+function textCacheKey(size: { width: number; height: number }, args: TextToolArgs, backingScale: number): string {
   return JSON.stringify({
     size,
+    backingScale,
     text: args.text ?? '',
     kind: args.kind ?? 'point',
     align: args.align,
@@ -1339,19 +1340,17 @@ function textCacheKey(size: { width: number; height: number }, args: TextToolArg
 }
 
 export const text =
-  ({ size }: CreatorToolParams) =>
+  ({ size, backingScale = 1 }: CreatorToolParams) =>
   (args: TextToolArgs) => {
-    const key = textCacheKey(size, args);
+    const key = textCacheKey(size, args, backingScale);
     const cached = textRasterCache.get(key);
     if (cached) return [cached];
 
     // Match the draft preview, which ceils fractional layer bounds before allocating its canvas.
-    const canvas = new OffscreenCanvas(Math.ceil(size.width), Math.ceil(size.height));
-    // A platform may expose OffscreenCanvas without a usable 2D context. Returning the allocated
-    // blank canvas keeps the creator total and lets the caller preserve the layer rather than
-    // throwing from a force-unwrap during replay or export.
+    const canvas = new OffscreenCanvas(Math.ceil(size.width * backingScale), Math.ceil(size.height * backingScale));
     const ctx = canvas.getContext('2d');
     if (!ctx) return [canvas];
+    ctx.setTransform(backingScale, 0, 0, backingScale, 0, 0);
 
     renderText(ctx, args);
     textRasterCache.set(key, canvas);

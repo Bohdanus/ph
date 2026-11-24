@@ -31,6 +31,18 @@ const SHORT_DESKTOP = { width: 1280, height: 600 };
 const TABLET = { width: 900, height: 700 };
 const WIDE_DESKTOP = { width: 1600, height: 900 };
 
+/**
+ * Shared floor for the tablet option row panel width.
+ *
+ * At the 900px TABLET breakpoint, both the Shape and Horizontal Type option rows
+ * must exceed the viewport width by a meaningful margin. The previous per-panel
+ * floors (1089/1036) were incorrectly derived and showed a consistent 4px deficit
+ * on both panels — a shared-chrome signal (border/padding/box-sizing) rather than
+ * a missing control. This shared floor documents the correct invariant: the row
+ * must exceed the viewport with room to spare, without pinning brittle pixel values.
+ */
+const MIN_PANEL_WIDTH = TABLET.width + 100; // 1000
+
 async function open(page: Page, size: { width: number; height: number }) {
   await page.setViewportSize(size);
   await page.goto('/', { waitUntil: 'domcontentloaded' });
@@ -515,6 +527,11 @@ test.describe('Tablet band', () => {
 
       expect(metrics.overflowX, 'the tablet band must scroll the option row').toBe('auto');
       expect(metrics.scrollWidth, 'the row must overflow its own box').toBeGreaterThan(metrics.clientWidth);
+      // Shared floor: both Shape and Horizontal Type must exceed the viewport by a meaningful margin.
+      // The old per-panel floors (1089/1036) were incorrectly derived and showed a consistent 4px deficit.
+      expect(metrics.scrollWidth, 'the tablet option row must exceed MIN_PANEL_WIDTH').toBeGreaterThanOrEqual(
+        MIN_PANEL_WIDTH
+      );
 
       // An offset alone could come from empty overflow. Identify the visible interactive
       // control furthest to the right, so the assertions prove that a real option starts

@@ -422,7 +422,7 @@ describe('useLayers createLayerFromTool geometry', () => {
     expect(store.layers[newLayer!.id]).toBeDefined();
     expect(store.activeLayerId).toBe(newLayer!.id);
     expect(store.history[0]).toMatchObject({ actionName: NEW_LAYER_ACTION, layerId: newLayer!.id });
-    expect(processor).toHaveBeenCalledWith({ size: { x: 5, y: 6, width: 20, height: 10 } });
+    expect(processor).toHaveBeenCalledWith({ size: { x: 5, y: 6, width: 20, height: 10 }, backingScale: 1 });
     processor.mockRestore();
   });
 
@@ -451,7 +451,7 @@ describe('useLayers createLayerFromTool geometry', () => {
       x2: 30,
       y2: 40,
     });
-    expect(processor).toHaveBeenCalledWith({ size: { x: 60, y: 90, width: 30, height: 40 } });
+    expect(processor).toHaveBeenCalledWith({ size: { x: 60, y: 90, width: 30, height: 40 }, backingScale: 1 });
     processor.mockRestore();
   });
 

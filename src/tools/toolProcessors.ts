@@ -35,10 +35,12 @@ export type ProcessorToolParams = {
   size: Size;
   bitmap: BitmapSource;
   previousCanvas?: BitmapSource;
+  backingScale?: number;
 };
 
 export type CreatorToolParams = {
   size: Size;
+  backingScale?: number;
 };
 
 export type ToolResult = [BitmapSource, Partial<Pos>?];
