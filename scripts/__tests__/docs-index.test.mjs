@@ -91,11 +91,6 @@ const ALLOWED_UNLISTED = new Map([
       'index unbounded, and the set grows by exactly one line in HANDOFF.md at a time.',
   ],
   [
-    'docs/handoffs/unit-test-hardening-review-20261124.md',
-    'one-off evidence for this reviewed unit-test hardening and landing; the docs/handoffs/ ' +
-      'directory row covers task-specific records without adding a permanent index row.',
-  ],
-  [
     '.kilo/plans/test-hardening-plan.md',
     'archived history-migration test plan; it records task-specific work already merged ' +
       'to main. The maintained repository-wide workflow is .skills/parallel-test-hardening.md, ' +
