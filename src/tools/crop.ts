@@ -13,8 +13,9 @@ export const GRID_DIVISIONS_MAX = 100;
 export type CropToolArgs = {
   rect?: RectXYSorted | null;
   /**
-   * The rect the user had drawn when they first chose a ratio, kept so `Free`/`Original` can put
-   * it back.
+   * The rect the user had drawn when they first chose a fixed ratio, kept so `Free` can put it
+   * back. `Original Ratio` is a fixed ratio too, and switching between fixed ratios preserves
+   * the same framing to restore.
    *
    * It has to live here, on the args the store holds, rather than in panel state: the panel
    * publishes the refitted rect, so a snapshot taken in the panel goes stale the moment the user
@@ -27,6 +28,8 @@ export type CropToolArgs = {
    */
   preRatioRect?: RectXYSorted | null;
   aspectRatio?: number | null;
+  /** Use the current document frame's ratio, recalculated after each applied crop. */
+  useOriginalAspectRatio?: boolean;
   /** Rotation of the pending crop box in degrees, around its centre. */
   angle?: number;
   overlayType?: CropOverlayType;

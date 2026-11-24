@@ -82,6 +82,7 @@ const toolArgsState = vi.hoisted(
       rect: { x1: number; y1: number; x2: number; y2: number } | null;
       preRatioRect: { x1: number; y1: number; x2: number; y2: number } | null;
       aspectRatio: number | null;
+      useOriginalAspectRatio?: boolean;
       angle?: number;
     };
   } => ({
@@ -178,6 +179,20 @@ describe('CropToolArea', () => {
   });
 
   describe('rendering', () => {
+    it('tracks the current document ratio while Original Ratio remains selected after a crop', () => {
+      toolArgsState.toolArgs.useOriginalAspectRatio = true;
+      toolArgsState.toolArgs.aspectRatio = 4 / 3;
+      const { rerender } = render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      expect(useRectProps.current?.aspectRatio).toBeCloseTo(4 / 3);
+
+      storeState.documentFrame = { x: 0, y: 0, width: 900, height: 600 };
+      storeState.totalSize = { width: 900, height: 600 };
+      rerender(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      expect(useRectProps.current?.aspectRatio).toBeCloseTo(1.5);
+    });
+
     it('redraws the rotated crop overlay after the shared canvas backing store changes DPR', async () => {
       toolArgsState.toolArgs.angle = 24;
       const { rerender } = render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);

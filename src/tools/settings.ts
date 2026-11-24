@@ -106,6 +106,7 @@ export const defaultSettings = {
   } satisfies TransformToolArgs,
   crop: {
     aspectRatio: null,
+    useOriginalAspectRatio: false,
     rect: null,
     overlayType: 'ruleOfThirds',
     overlayOrientation: 0,
