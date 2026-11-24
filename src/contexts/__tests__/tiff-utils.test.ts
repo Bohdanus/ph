@@ -249,6 +249,17 @@ describe('TIFF error paths', () => {
     expect(decodeImage).not.toHaveBeenCalled();
   });
 
+  it('rejects files whose first decoded page lacks IFD dimension tags (t256/t257)', async () => {
+    // UTIF.decode may return a page object without t256/t257 if the IFD is malformed
+    decode.mockReturnValue([{ t258: [8, 8, 8, 8], t277: [4] }]);
+
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+      'TIFF image has invalid dimensions'
+    );
+    expect(decodeImage).toHaveBeenCalled();
+    expect(toRGBA8).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['an empty page', {}],
     ['a zero width', { width: 0, height: 1 }],

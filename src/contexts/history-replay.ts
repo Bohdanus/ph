@@ -117,6 +117,12 @@ function cloneLayers(layers: LayersRecord): LayersRecord {
   return Object.fromEntries(Object.values(layers).map((layer) => [layer.id, cloneLayer(layer)]));
 }
 
+function unpromotedBlankRaster(layer: Layer): Layer['tmpCanvas'] {
+  return layer.source?.kind === 'blank' && layer.bitmap === null && layer.presentationBounds === null
+    ? layer.tmpCanvas
+    : null;
+}
+
 export function replayHistory(
   history: readonly HistoryItem[],
   targetIndex: number,
@@ -190,7 +196,10 @@ export function replayHistory(
               return {
                 ...layer,
                 operations: [...layer.operations, createAffineLayerOperation(localTransform, `${item.id}:${layer.id}`)],
-                tmpCanvas: null,
+                // Blank layers have no bitmap fallback until their raster is promoted. Keep this
+                // source raster as the base for the retained crop transform; dropping it makes
+                // legacy replay unable to publish the layer after undo/redo.
+                tmpCanvas: unpromotedBlankRaster(layer),
                 presentationBounds: null,
               };
             });
@@ -442,7 +451,12 @@ export function replayHistory(
       if (patch)
         layers = {
           ...layers,
-          [layerId]: { ...layer, pos: { ...layer.pos, ...patch }, tmpCanvas: null, presentationBounds: null },
+          [layerId]: {
+            ...layer,
+            pos: { ...layer.pos, ...patch },
+            tmpCanvas: unpromotedBlankRaster(layer),
+            presentationBounds: null,
+          },
         };
       continue;
     }

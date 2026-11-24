@@ -156,7 +156,7 @@ function removePreMergeGuard() {
   activeTestHooksPath = undefined;
 }
 
-function withExpectedLanding({ main, incoming, tree, branch = 'feat', chat = 'test-session' }, run) {
+function withExpectedLanding({ main, incoming, tree, branch = 'feat', chat = 'ses_0123456789ABCDEF0123456789' }, run) {
   const previousMain = process.env.KILO_EXPECTED_MAIN_SHA;
   const previousIncoming = process.env.KILO_EXPECTED_INCOMING_SHA;
   const previousTree = process.env.KILO_EXPECTED_TREE_SHA;
@@ -2038,7 +2038,7 @@ describe('pinned main landing', () => {
     });
 
     expect(git(['show', '-s', '--format=%B', 'HEAD']).trim()).toBe(
-      'Merge feat into main\n\nBranch: feat\nChat: test-session\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'
+      'Merge feat into main\n\nBranch: feat\nChat: ses_0123456789ABCDEF0123456789\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'
     );
     expect(git(['status', '--porcelain'])).toBe('');
   });
@@ -2050,7 +2050,7 @@ describe('pinned main landing', () => {
     const prepareHook = join(dir, '.git', 'test-hooks', 'prepare-commit-msg');
     writeFileSync(
       prepareHook,
-      `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: test-session","Chat: altered-session"));' "$1"\n`
+      `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: ses_0123456789ABCDEF0123456789","Chat: altered-session"));' "$1"\n`
     );
     chmodSync(prepareHook, 0o755);
     let failure;
@@ -2079,7 +2079,7 @@ describe('pinned main landing', () => {
     const prepareHook = join(dir, '.git', 'test-hooks', 'prepare-commit-msg');
     writeFileSync(
       prepareHook,
-      `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: test-session","Chat: altered-session"));' "$1"\nrm -f "$(git rev-parse --git-path MERGE_HEAD)"\n`
+      `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: ses_0123456789ABCDEF0123456789","Chat: altered-session"));' "$1"\nrm -f "$(git rev-parse --git-path MERGE_HEAD)"\n`
     );
     chmodSync(prepareHook, 0o755);
     let failure;
@@ -2111,7 +2111,7 @@ describe('pinned main landing', () => {
     const prepareHook = join(dir, '.git', 'test-hooks', 'prepare-commit-msg');
     writeFileSync(
       prepareHook,
-      `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: test-session","Chat: altered-session"));' "$1"\ngit symbolic-ref HEAD refs/heads/attacker\n`
+      `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: ses_0123456789ABCDEF0123456789","Chat: altered-session"));' "$1"\ngit symbolic-ref HEAD refs/heads/attacker\n`
     );
     chmodSync(prepareHook, 0o755);
     let failure;

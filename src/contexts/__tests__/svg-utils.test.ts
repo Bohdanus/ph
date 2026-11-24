@@ -97,7 +97,50 @@ describe('SVG encoding', () => {
     const svg = await encodeSvg(canvas).text();
 
     expect(svg).toContain(`href="${dataUrl}"`);
+    // The base64 data URL is embedded verbatim, without XML entity escaping.
     expect(svg).not.toContain('&amp;');
     expect(svg).not.toContain('&quot;');
+  });
+
+  it('accepts SVG source exactly at the byte limit', () => {
+    // MAX_SVG_SOURCE_BYTES is the limit for the entire SVG document
+    // The SVG template adds: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1"><image href="' + dataUrl + '" width="1" height="1" /></svg>'
+    // Which is about 150 bytes of overhead. So the data URL must leave room for that.
+    const svgOverhead =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1"><image href="" width="1" height="1" /></svg>'
+        .length;
+    const dataUrlLimit = MAX_SVG_SOURCE_BYTES - svgOverhead - 'data:image/png;base64,'.length;
+    const exactlyAtLimit = `data:image/png;base64,${'A'.repeat(Math.max(0, dataUrlLimit))}`;
+    const { canvas } = canvasOf(1, 1, exactlyAtLimit);
+
+    const blob = encodeSvg(canvas);
+
+    expect(blob.type).toBe('image/svg+xml');
+    expect(blob.size).toBe(MAX_SVG_SOURCE_BYTES);
+  });
+
+  it('rejects a non-square canvas whose total area exceeds the pixel ceiling', () => {
+    const height = Math.max(1, Math.floor(Math.sqrt(MAX_CREATABLE_DOCUMENT_PIXELS)));
+    const width = Math.floor(MAX_CREATABLE_DOCUMENT_PIXELS / height) + 1;
+    const { canvas, toDataURL } = canvasOf(width, height);
+
+    expect(() => encodeSvg(canvas)).toThrow(
+      `SVG image is too large to save (${width}×${height}). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
+    );
+    expect(toDataURL).not.toHaveBeenCalled();
+  });
+
+  it('verifies blob content is well-formed SVG with correct MIME type', async () => {
+    const { canvas } = canvasOf(16, 16);
+
+    const blob = encodeSvg(canvas);
+
+    expect(blob.type).toBe('image/svg+xml');
+    const text = await blob.text();
+    expect(text).toContain('xmlns="http://www.w3.org/2000/svg"');
+    expect(text).toContain('width="16"');
+    expect(text).toContain('height="16"');
+    expect(text).toContain('viewBox="0 0 16 16"');
+    expect(text).toContain('<image href="data:image/png;base64,pixels" width="16" height="16" />');
   });
 });
