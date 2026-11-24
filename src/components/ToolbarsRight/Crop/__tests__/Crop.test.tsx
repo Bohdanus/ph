@@ -31,9 +31,13 @@ const toolArgs = vi.hoisted(() => ({
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const applyDocumentCropResult = vi.hoisted(() => ({ value: true }));
 const mockApplyDocumentCrop = vi.hoisted(() => vi.fn());
+const storeState = vi.hoisted(() => ({
+  totalSize: { width: 800, height: 600 },
+  documentFrame: { x: 0, y: 0, width: 800, height: 600 },
+}));
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [{}],
+  useStore: () => [storeState],
 }));
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
@@ -65,6 +69,9 @@ function openSettings() {
 
 describe('Crop toolbar', () => {
   beforeEach(() => {
+    storeState.totalSize = { width: 800, height: 600 };
+    storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
+    delete (toolArgs as typeof toolArgs & { useOriginalAspectRatio?: boolean }).useOriginalAspectRatio;
     Object.assign(toolArgs, {
       aspectRatio: null,
       rect: { ...RECT },
@@ -88,6 +95,7 @@ describe('Crop toolbar', () => {
     const select = screen.getByLabelText('Aspect Ratio') as HTMLSelectElement;
     expect(Array.from(select.options, (option) => option.textContent)).toEqual([
       'Free',
+      'Original Ratio',
       'Square (1:1)',
       '3:4',
       '4:3',
@@ -96,6 +104,45 @@ describe('Crop toolbar', () => {
     ]);
     // aspectRatio null maps to the empty option (Free).
     expect(select).toHaveValue('');
+  });
+
+  it('uses the live document ratio for Original Ratio and restores the prior rect with Free', async () => {
+    storeState.totalSize = { width: 1600, height: 900 };
+    storeState.documentFrame = { x: 0, y: 0, width: 1600, height: 900 };
+    const { rerender } = render(<Crop />);
+    const user = userEvent.setup();
+    const select = screen.getByLabelText('Aspect Ratio') as HTMLSelectElement;
+
+    await user.selectOptions(select, 'original');
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: 16 / 9,
+      useOriginalAspectRatio: true,
+      rect: refit(RECT, 16 / 9),
+      preRatioRect: RECT,
+      toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
+
+    Object.assign(toolArgs, lastToolArgs());
+    rerender(<Crop />);
+    expect(select).toHaveValue('original');
+
+    await user.selectOptions(select, '');
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: null,
+      rect: RECT,
+      preRatioRect: null,
+      toolName: 'crop',
+      angle: 0,
+      overlayType: 'ruleOfThirds',
+      overlayOrientation: 0,
+      overlayVisibility: 'always',
+      gridDivisions: GRID_DIVISIONS_DEFAULT,
+    });
   });
 
   it('maps each preset to its numeric ratio in the tool args', async () => {

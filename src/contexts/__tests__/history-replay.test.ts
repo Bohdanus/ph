@@ -10,6 +10,7 @@ import {
   HIDE_LAYER_ACTION,
   LOCK_LAYER_ACTION,
   NEW_LAYER_ACTION,
+  OPEN_DOCUMENT_ACTION,
   RENAME_LAYER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
@@ -100,6 +101,77 @@ describe('replayHistory', () => {
 
     expect(result.layers[layerId]).toEqual({ ...createTestLayer(layerId), pos: resize });
     expect(dependencies.applyRasterTool).not.toHaveBeenCalled();
+  });
+
+  it('keeps the unpromoted blank raster through reposition and successive rotated crop replay', () => {
+    const raster = {} as NonNullable<Layer['tmpCanvas']>;
+    const baselineLayer: Layer = { ...createTestLayer(layerId), source: layerSource, tmpCanvas: raster };
+    const previousFrame = { x: 0, y: 0, ...initialSize };
+    const nextFrame = { x: 40, y: 30, width: 160, height: 120 };
+    const transform = rotationAffineAroundPoint(-Math.PI / 6, {
+      x: nextFrame.x + nextFrame.width / 2,
+      y: nextFrame.y + nextFrame.height / 2,
+    });
+    const nextFrameAfterCrop = { x: 30, y: 25, width: 140, height: 105 };
+    const followUpTransform = rotationAffineAroundPoint(Math.PI / 12, {
+      x: nextFrameAfterCrop.x + nextFrameAfterCrop.width / 2,
+      y: nextFrameAfterCrop.y + nextFrameAfterCrop.height / 2,
+    });
+    const baseline: HistoryItem = {
+      id: 'baseline',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId,
+      documentSource: { layers: { [layerId]: baselineLayer }, size: initialSize, frame: previousFrame },
+    };
+    const history: HistoryItem[] = [
+      baseline,
+      { id: 'move', actionName: TOOL_ACTION, layerId, args: { toolName: 'reposition', move: { x: 20, y: 30 } } },
+      {
+        id: 'rotated-crop',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        layerId: 'document',
+        args: { previousFrame, nextFrame, transform },
+      },
+      {
+        id: 'rotated-crop-follow-up',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        layerId: 'document',
+        args: { previousFrame: nextFrame, nextFrame: nextFrameAfterCrop, transform: followUpTransform },
+      },
+    ];
+
+    const moved = replayHistory(history, 1, initialSize, createDependencies()).layers[layerId]!;
+    expect(moved.tmpCanvas).toBe(raster);
+    expect(moved.bitmap).toBeNull();
+    expect(moved.presentationBounds).toBeNull();
+
+    const cropped = replayHistory(history, 2, initialSize, createDependencies()).layers[layerId]!;
+    expect(cropped.tmpCanvas).toBe(raster);
+    expect(cropped.bitmap).toBeNull();
+    expect(cropped.presentationBounds).toBeNull();
+    expect(cropped.operations).toHaveLength(1);
+
+    const croppedTwice = replayHistory(history, 3, initialSize, createDependencies()).layers[layerId]!;
+    expect(croppedTwice.tmpCanvas).toBe(raster);
+    expect(croppedTwice.bitmap).toBeNull();
+    expect(croppedTwice.presentationBounds).toBeNull();
+    expect(croppedTwice.operations).toHaveLength(2);
+
+    for (const invalidatedLayer of [
+      { ...baselineLayer, bitmap: {} as NonNullable<Layer['bitmap']> },
+      { ...baselineLayer, presentationBounds: { x: 0, y: 0, width: 100, height: 80 } },
+    ]) {
+      const invalidated = replayHistory(
+        [
+          { ...baseline, documentSource: { ...baseline.documentSource!, layers: { [layerId]: invalidatedLayer } } },
+          history[1]!,
+        ],
+        1,
+        initialSize,
+        createDependencies()
+      ).layers[layerId]!;
+      expect(invalidated.tmpCanvas).toBeNull();
+    }
   });
 
   it('rotates every current layer and updates the crop frame in one history entry', () => {

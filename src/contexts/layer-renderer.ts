@@ -3,6 +3,7 @@ import type { Layer, LayerOperation, ToolLayerSource } from './layer-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import { findToolProcessor, type CreatorToolParams } from '../tools/toolProcessors.ts';
 import { documentFrameSize, type DocumentFrame } from './document-frame.ts';
+import { recordLayerRenderTelemetry, type LayerRenderOutcome } from './render-telemetry.ts';
 import {
   CanvasFilterUnsupportedError,
   FilterArgumentUnrenderableError,
@@ -492,49 +493,175 @@ function snapshotVisibleCanvas(canvas: HTMLCanvasElement, backingSize: Size): Sn
   }
 }
 
+type MutableLayerRenderTelemetry = {
+  documentWidth: number;
+  documentHeight: number;
+  visibleLayerCount: number;
+  skippedLayerCount: number;
+  failedLayerId: string | null;
+  outcome: LayerRenderOutcome;
+};
+
+function monotonicNow(): number {
+  const now = typeof performance !== 'undefined' ? performance.now : undefined;
+  return typeof now === 'function' ? now.call(performance) : Date.now();
+}
+
 /**
  * Puts the previous presentation back after a publish may have partially changed the target.
  *
- * The resize alone is not the restore: assigning `width` or `height` RESETS a canvas to fully
- * transparent, and the `clearRect` the publish issues empties one whatever its dimensions were.
- * So this runs as soon as a target write is attempted, and blits the snapshot back even when the
- * dimensions already matched — the wipe it reverses then is the clear, not a resize.
+ * Resizing resets the canvas to transparent, and the clear issued during publish empties it
+ * even when dimensions already match. Restore therefore blits the snapshot back after either
+ * kind of partial write.
  */
 function restoreVisibleCanvas(
   canvas: HTMLCanvasElement,
   backingSize: Size,
   backingScale: number,
   snapshot: SnapshotSurface | null
-): void {
+): boolean {
   try {
-    // The saved dimensions came from canvas.width/height, which are backing pixels already.
-    // Applying resizeCanvas's logical DPR scale here would scale the previous dimensions twice.
+    if (!snapshot) return false;
+    const context = canvas.getContext('2d');
+    if (!context) return false;
+    // Check the source and destination before resizing, which clears the visible canvas.
     canvas.width = backingSize.width;
     canvas.height = backingSize.height;
     if (backingScale !== 1) {
-      canvas.getContext('2d')?.setTransform(backingScale, 0, 0, backingScale, 0, 0);
       canvas.setAttribute('data-hidpi-ratio', String(backingScale));
     } else {
       canvas.removeAttribute('data-hidpi-ratio');
     }
-    if (!snapshot) return;
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    // Both surfaces have the same raw backing dimensions. Reset the destination transform for a
-    // 1:1 restore, then restore the target's normal logical-to-backing transform.
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.drawImage(snapshot, 0, 0);
     context.setTransform(backingScale, 0, 0, backingScale, 0, 0);
+    return true;
   } catch (error) {
     console.error('Unable to restore runtime layer presentation', error);
+    return false;
+  }
+}
+
+function drawLayersToCanvasAttempt(
+  canvas: HTMLCanvasElement,
+  layers: readonly Layer[],
+  documentFrame: DocumentFrame,
+  previewLayerIds: ReadonlySet<string> | undefined,
+  backingScale: number,
+  requireVisibleLayerBitmaps: boolean,
+  telemetry: MutableLayerRenderTelemetry | null
+): boolean {
+  const size = documentFrameSize(documentFrame);
+  if (telemetry) {
+    telemetry.documentWidth = size.width;
+    telemetry.documentHeight = size.height;
+  }
+  const stagingCanvas = document.createElement('canvas');
+  resizeCanvas(stagingCanvas, size.width, size.height, backingScale);
+  const stagingContext = stagingCanvas.getContext('2d');
+  if (!stagingContext) {
+    if (telemetry) telemetry.outcome = 'staging-context-missing';
+    return false;
+  }
+
+  try {
+    for (const layer of layers) {
+      if (!layer.visible) continue;
+      if (telemetry) telemetry.visibleLayerCount += 1;
+      // A filter unsupported by this browser, or arguments that cannot be rendered, only skips
+      // this layer. The staging canvas is discarded on failure, preserving the current display.
+      try {
+        const isPreview = previewLayerIds?.has(layer.id) ?? false;
+        if (isPreview && layer.tmpCanvas) rasterPreviewCanvases.add(layer.tmpCanvas as object);
+        const hasRasterPreview = layer.tmpCanvas !== null && rasterPreviewCanvases.has(layer.tmpCanvas as object);
+        if (!drawLayer(stagingContext, layer, documentFrame, isPreview || hasRasterPreview, backingScale)) {
+          if (requireVisibleLayerBitmaps) {
+            if (telemetry) {
+              telemetry.failedLayerId = layer.id;
+              telemetry.outcome = 'required-layer-bitmap-missing';
+            }
+            return false;
+          }
+          if (telemetry) telemetry.skippedLayerCount += 1;
+          if (!isPreview) {
+            console.error('skipped layer without bitmap', layer.id);
+          }
+        }
+      } catch (error) {
+        if (error instanceof FilterArgumentUnrenderableError) {
+          if (telemetry) telemetry.skippedLayerCount += 1;
+          console.error('skipped layer whose filter arguments cannot be rendered', layer.id, error);
+          continue;
+        }
+        if (!(error instanceof CanvasFilterUnsupportedError)) {
+          if (telemetry) telemetry.failedLayerId = layer.id;
+          throw error;
+        }
+        if (telemetry) telemetry.skippedLayerCount += 1;
+        console.error('skipped layer whose filter this browser cannot apply', layer.id, error);
+      }
+    }
+  } catch (error) {
+    if (telemetry) telemetry.outcome = 'composition-failed';
+    console.error('Unable to compose runtime layer presentation', error);
+    return false;
+  }
+
+  const previousSize = { width: canvas.width, height: canvas.height };
+  const previousBackingScale = Number(canvas.getAttribute('data-hidpi-ratio')) || 1;
+  // Publish resizes and clears the target before blitting. Keep the old pixels aside in every
+  // case so a failure midway through the write can restore the last complete presentation.
+  // The canvas publication sequence is covered by the publish and restore expectations in
+  // useHistory.test.tsx; changing it belongs with that owning contract.
+  let snapshot: SnapshotSurface | null = null;
+  let needsRestore = false;
+  let targetPhase: 'validate' | 'snapshot' = 'validate';
+  try {
+    // Validate the target before any work so a missing context fails without resizing it.
+    const validationContext = canvas.getContext('2d');
+    if (!validationContext) {
+      if (telemetry) telemetry.outcome = 'target-context-missing';
+      return false;
+    }
+    targetPhase = 'snapshot';
+    snapshot = snapshotVisibleCanvas(canvas, previousSize);
+    if (!snapshot) {
+      if (telemetry) telemetry.outcome = 'snapshot-failed';
+      return false;
+    }
+    needsRestore = true;
+    resizeCanvas(canvas, size.width, size.height, backingScale);
+    const context = canvas.getContext('2d');
+    if (!context) {
+      // Resizing reset the old pixels, so attempt to restore them even though publish cannot proceed.
+      const restored = restoreVisibleCanvas(canvas, previousSize, previousBackingScale, snapshot);
+      if (telemetry) telemetry.outcome = restored ? 'target-context-missing-restored' : 'restore-failed';
+      return false;
+    }
+    clearCanvasBackingStore(context);
+    // Staging already contains device pixels. Reset the target transform so the blit copies them
+    // 1:1 instead of applying backingScale a second time.
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.drawImage(stagingCanvas, 0, 0);
+    if (telemetry) {
+      telemetry.outcome = telemetry.skippedLayerCount > 0 ? 'published-with-skips' : 'published';
+    }
+    return true;
+  } catch (error) {
+    if (needsRestore) {
+      const restored = restoreVisibleCanvas(canvas, previousSize, previousBackingScale, snapshot);
+      if (telemetry) telemetry.outcome = restored ? 'publish-failed-restored' : 'restore-failed';
+    } else if (telemetry) {
+      telemetry.outcome = targetPhase === 'snapshot' ? 'snapshot-failed' : 'target-context-missing';
+    }
+    console.error('Unable to publish runtime layer presentation', error);
+    return false;
   }
 }
 
 /**
- * Keeps the last visible canvas intact when a source or processor fails while
- * composing a new runtime presentation. The target changes only after every
- * layer has drawn successfully to an isolated staging canvas, and the pixels it
- * held are restored when that change fails partway through.
+ * Composes an isolated runtime presentation and only publishes it after the visible layers draw.
+ * Development telemetry records outcomes outside editor state and does not affect rendering.
  */
 export function drawLayersToCanvas(
   canvas: HTMLCanvasElement,
@@ -544,78 +671,59 @@ export function drawLayersToCanvas(
   backingScale = 1,
   requireVisibleLayerBitmaps = false
 ): boolean {
+  // Server-side rendering has no canvas attempt to measure; preserve the existing no-op result.
   if (typeof document === 'undefined') return true;
-  const size = documentFrameSize(documentFrame);
-  const stagingCanvas = document.createElement('canvas');
-  resizeCanvas(stagingCanvas, size.width, size.height, backingScale);
-  const stagingContext = stagingCanvas.getContext('2d');
-  if (!stagingContext) return false;
 
-  try {
-    for (const layer of layers) {
-      if (!layer.visible) continue;
-      // Per layer, not per composition: one layer carrying a filter this browser refuses, or
-      // carrying a filter argument that cannot be rendered at all, must not cost the document
-      // the other layers. The staging canvas is discarded by the return below, so the visible
-      // canvas keeps the presentation it already had.
-      try {
-        const isPreview = previewLayerIds?.has(layer.id) ?? false;
-        if (isPreview && layer.tmpCanvas) rasterPreviewCanvases.add(layer.tmpCanvas as object);
-        const hasRasterPreview = layer.tmpCanvas !== null && rasterPreviewCanvases.has(layer.tmpCanvas as object);
-        if (!drawLayer(stagingContext, layer, documentFrame, isPreview || hasRasterPreview, backingScale)) {
-          if (requireVisibleLayerBitmaps) return false;
-          if (!isPreview) {
-            console.error('skipped layer without bitmap', layer.id);
-          }
-        }
-      } catch (error) {
-        if (error instanceof FilterArgumentUnrenderableError) {
-          console.error('skipped layer whose filter arguments cannot be rendered', layer.id, error);
-          continue;
-        }
-        if (!(error instanceof CanvasFilterUnsupportedError)) throw error;
-        console.error('skipped layer whose filter this browser cannot apply', layer.id, error);
-      }
+  let startedAt = 0;
+  let telemetry: MutableLayerRenderTelemetry | null = null;
+  if (import.meta.env.DEV) {
+    try {
+      const start = monotonicNow();
+      telemetry = {
+        documentWidth: 0,
+        documentHeight: 0,
+        visibleLayerCount: 0,
+        skippedLayerCount: 0,
+        failedLayerId: null,
+        outcome: 'uncaught-error',
+      };
+      startedAt = start;
+    } catch {
+      // Diagnostics setup must not prevent the renderer from running.
     }
-  } catch (error) {
-    console.error('Unable to compose runtime layer presentation', error);
-    return false;
   }
 
-  const previousSize = { width: canvas.width, height: canvas.height };
-  const previousBackingScale = Number(canvas.getAttribute('data-hidpi-ratio')) || 1;
-  // The publish WRITES the target, and it writes it in two steps: `resizeCanvas` resets a
-  // resized canvas to transparent, and the `clearRect` empties one whose dimensions already
-  // matched. A `drawImage` that threw between them left the document blank with nothing to put
-  // back, and the caller flattened whatever was left. So the previous pixels are held aside in
-  // EVERY case, not only when a resize has to be reversed — the snapshot is what makes the
-  // clear-then-blit sequence recoverable, and the alternative (a single `copy` composite, which
-  // is atomic and allocates nothing) is pinned to a different observable sequence by
-  // `useHistory.test.tsx:455` and belongs to whoever owns that file.
-  let snapshot: SnapshotSurface | null = null;
-  let needsRestore = false;
   try {
-    // Validate that the target canvas has a 2d context before doing any work.
-    // This preserves the behavior that a missing context fails early without
-    // resizing the canvas.
-    const validationContext = canvas.getContext('2d');
-    if (!validationContext) return false;
-    snapshot = snapshotVisibleCanvas(canvas, previousSize);
-    if (!snapshot) return false;
-    needsRestore = true;
-    resizeCanvas(canvas, size.width, size.height, backingScale);
-    const context = canvas.getContext('2d');
-    if (!context) return false;
-    clearCanvasBackingStore(context);
-    // The staging canvas was rendered with a context scaled by backingScale, so its backing store
-    // already holds device pixels. The target context is also scaled by backingScale, so a direct
-    // drawImage would double-scale. Reset to identity for the blit, then the staging pixels copy 1:1.
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.drawImage(stagingCanvas, 0, 0);
-    return true;
+    return drawLayersToCanvasAttempt(
+      canvas,
+      layers,
+      documentFrame,
+      previewLayerIds,
+      backingScale,
+      requireVisibleLayerBitmaps,
+      telemetry
+    );
   } catch (error) {
-    if (needsRestore) restoreVisibleCanvas(canvas, previousSize, previousBackingScale, snapshot);
-    console.error('Unable to publish runtime layer presentation', error);
-    return false;
+    if (telemetry) telemetry.outcome = 'uncaught-error';
+    throw error;
+  } finally {
+    if (telemetry) {
+      try {
+        const completedAt = monotonicNow();
+        recordLayerRenderTelemetry({
+          recordedAtEpochMs: Date.now(),
+          durationMs: Math.max(0, completedAt - startedAt),
+          documentWidth: telemetry.documentWidth,
+          documentHeight: telemetry.documentHeight,
+          backingScale,
+          visibleLayerCount: telemetry.visibleLayerCount,
+          skippedLayerCount: telemetry.skippedLayerCount,
+          failedLayerId: telemetry.failedLayerId,
+          outcome: telemetry.outcome,
+        });
+      } catch {
+        // Diagnostic collection must never change rendering or document behavior.
+      }
+    }
   }
 }
