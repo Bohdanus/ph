@@ -80,14 +80,6 @@ function isPixelWithinTolerance(
   return dr * dr + dg * dg + db * db + da * da <= tolerance * tolerance;
 }
 
-function enqueuePixel(index: number, visited: Uint8Array, queue: Int32Array, queueEnd: number): number {
-  if (visited[index]) return queueEnd;
-
-  visited[index] = 1;
-  queue[queueEnd] = index;
-  return queueEnd + 1;
-}
-
 function createAllMatchingScan(imageData: ImageData, sampleColor: RgbaColor, tolerance: number): MaskScan {
   const { data, width, height } = imageData;
   const mask = new Uint8Array(width * height);
@@ -125,36 +117,81 @@ function createContiguousScan(
   const pixelCount = width * height;
   const mask = new Uint8Array(pixelCount);
   const visited = new Uint8Array(pixelCount);
-  const queue = new Int32Array(pixelCount);
-  let queueStart = 0;
-  let queueEnd = 0;
+  // Grow with the pending worklist instead of reserving one slot per image pixel.
+  let stack = new Int32Array(Math.min(pixelCount, 1_024));
+  let stackLength = 0;
   let selectedPixelCount = 0;
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
   const seedIndex = getIndex(seedX, seedY, width);
+  const toleranceSquared = tolerance * tolerance;
 
-  queue[queueEnd++] = seedIndex;
+  const growStack = () => {
+    if (stack.length >= pixelCount) {
+      throw new RangeError('Flood-fill worklist exceeded the raster pixel budget');
+    }
+
+    const nextStack = new Int32Array(Math.min(pixelCount, stack.length * 2));
+    nextStack.set(stack);
+    stack = nextStack;
+  };
+
+  stack[stackLength++] = seedIndex;
   visited[seedIndex] = 1;
 
-  while (queueStart < queueEnd) {
-    const index = queue[queueStart++];
-    if (!isPixelWithinTolerance(data, index, sampleColor, tolerance)) continue;
+  while (stackLength > 0) {
+    const index = stack[--stackLength];
+    const dataIndex = index * 4;
+    const dr = data[dataIndex] - sampleColor.r;
+    const dg = data[dataIndex + 1] - sampleColor.g;
+    const db = data[dataIndex + 2] - sampleColor.b;
+    const da = data[dataIndex + 3] - sampleColor.a;
+    if (!(dr * dr + dg * dg + db * db + da * da <= toleranceSquared)) continue;
 
-    const x = index % width;
-    const y = Math.floor(index / width);
+    const y = (index / width) | 0;
+    const x = index - y * width;
     mask[index] = 1;
     selectedPixelCount += 1;
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
 
-    if (x > 0) queueEnd = enqueuePixel(index - 1, visited, queue, queueEnd);
-    if (x < width - 1) queueEnd = enqueuePixel(index + 1, visited, queue, queueEnd);
-    if (y > 0) queueEnd = enqueuePixel(index - width, visited, queue, queueEnd);
-    if (y < height - 1) queueEnd = enqueuePixel(index + width, visited, queue, queueEnd);
+    // Inline the four neighbor checks; a call per edge dominates large contiguous fills.
+    if (x > 0) {
+      const neighbor = index - 1;
+      if (!visited[neighbor]) {
+        visited[neighbor] = 1;
+        if (stackLength === stack.length) growStack();
+        stack[stackLength++] = neighbor;
+      }
+    }
+    if (x < width - 1) {
+      const neighbor = index + 1;
+      if (!visited[neighbor]) {
+        visited[neighbor] = 1;
+        if (stackLength === stack.length) growStack();
+        stack[stackLength++] = neighbor;
+      }
+    }
+    if (y > 0) {
+      const neighbor = index - width;
+      if (!visited[neighbor]) {
+        visited[neighbor] = 1;
+        if (stackLength === stack.length) growStack();
+        stack[stackLength++] = neighbor;
+      }
+    }
+    if (y < height - 1) {
+      const neighbor = index + width;
+      if (!visited[neighbor]) {
+        visited[neighbor] = 1;
+        if (stackLength === stack.length) growStack();
+        stack[stackLength++] = neighbor;
+      }
+    }
   }
 
   return { mask, selectedPixelCount, minX, minY, maxX, maxY };

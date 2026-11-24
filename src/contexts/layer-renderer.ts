@@ -1,6 +1,12 @@
 import type { BitmapSource, Pos, Size } from './general-types.ts';
-import type { Layer, LayerOperation, ToolLayerSource } from './layer-types.ts';
-import type { ToolArgs, ToolName } from './tool-types.ts';
+import {
+  isToolSourceRematerializedAtBounds,
+  RETAINED_VECTOR_TOOL_NAMES,
+  type Layer,
+  type LayerOperation,
+  type ToolLayerSource,
+} from './layer-types.ts';
+import type { ToolArgs } from './tool-types.ts';
 import { findToolProcessor, type CreatorToolParams } from '../tools/toolProcessors.ts';
 import { documentFrameSize, type DocumentFrame } from './document-frame.ts';
 import { recordLayerRenderTelemetry, type LayerRenderOutcome } from './render-telemetry.ts';
@@ -56,7 +62,7 @@ function requireLayerFilterSupport(operations: readonly LayerOperation[]): void 
   }
 }
 
-const vectorToolNames = new Set<ToolName>(['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line']);
+const vectorToolNames = RETAINED_VECTOR_TOOL_NAMES;
 const rasterPreviewCanvases = new WeakSet<object>();
 const sourceOnlyShapeBitmapCache = new WeakMap<object, { source: object; isSourceOnly: boolean }>();
 const SHAPE_BITMAP_COMPARE_TILE_SIZE = 256;
@@ -226,7 +232,7 @@ function getLayerBitmap(layer: Layer, position: Pos) {
   if (!source || source.kind !== 'tool') return layer.bitmap;
 
   const toolName = source.args.toolName;
-  if (toolName !== 'text' && !vectorToolNames.has(toolName)) return layer.bitmap;
+  if (!isToolSourceRematerializedAtBounds(toolName)) return layer.bitmap;
   const sourceArgs = source.args as unknown as Record<string, unknown>;
   const sourcePos = 'pos' in source ? source.pos : undefined;
   const args =

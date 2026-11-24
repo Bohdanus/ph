@@ -149,9 +149,10 @@ describe('the generated files', () => {
   // Byte equality, not "mentions every tool". The weaker assertion passes on a page that
   // dropped every control status and every source, and it is exactly those two that a hand
   // edit loses first — a generated file nobody can notice is stale is worse than no file.
+  // The generated tool catalog is CPU-heavy under parallel full-suite load; keep the check bounded at 30s.
   it('writes docs/TOOLS.md exactly as the generator produces it', async () => {
     expect(readRepoFile('docs/TOOLS.md')).toBe(await renderToolDocs());
-  }, 15_000);
+  }, 30_000);
 
   it('writes the shipped tooltip projection exactly as the generator produces it', async () => {
     // This is the file the browser imports, and it is generated from the full record precisely
