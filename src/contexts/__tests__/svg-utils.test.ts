@@ -102,7 +102,7 @@ describe('SVG encoding', () => {
     expect(svg).not.toContain('&quot;');
   });
 
-  it('accepts a canvas whose flattened PNG is exactly at the byte limit', () => {
+  it('accepts SVG source exactly at the byte limit', () => {
     // MAX_SVG_SOURCE_BYTES is the limit for the entire SVG document
     // The SVG template adds: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1"><image href="' + dataUrl + '" width="1" height="1" /></svg>'
     // Which is about 150 bytes of overhead. So the data URL must leave room for that.
@@ -113,14 +113,19 @@ describe('SVG encoding', () => {
     const exactlyAtLimit = `data:image/png;base64,${'A'.repeat(Math.max(0, dataUrlLimit))}`;
     const { canvas } = canvasOf(1, 1, exactlyAtLimit);
 
-    expect(encodeSvg(canvas).type).toBe('image/svg+xml');
+    const blob = encodeSvg(canvas);
+
+    expect(blob.type).toBe('image/svg+xml');
+    expect(blob.size).toBe(MAX_SVG_SOURCE_BYTES);
   });
 
-  it('rejects a non-square canvas at the pixel ceiling', () => {
-    const { canvas, toDataURL } = canvasOf(MAX_CREATABLE_DOCUMENT_PIXELS + 1, 2);
+  it('rejects a non-square canvas whose total area exceeds the pixel ceiling', () => {
+    const height = Math.max(1, Math.floor(Math.sqrt(MAX_CREATABLE_DOCUMENT_PIXELS)));
+    const width = Math.floor(MAX_CREATABLE_DOCUMENT_PIXELS / height) + 1;
+    const { canvas, toDataURL } = canvasOf(width, height);
 
     expect(() => encodeSvg(canvas)).toThrow(
-      `SVG image is too large to save (${MAX_CREATABLE_DOCUMENT_PIXELS + 1}×2). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
+      `SVG image is too large to save (${width}×${height}). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
     );
     expect(toDataURL).not.toHaveBeenCalled();
   });
