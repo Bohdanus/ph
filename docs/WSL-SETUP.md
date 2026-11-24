@@ -86,16 +86,41 @@ Binding to `0.0.0.0` listens on all WSL interfaces; depending on WSL networking
 and firewall settings, the server may be reachable from other devices on your
 local network. Use it only on a trusted network, and stop the server when done.
 
+## Kilo Code CLI with Windows-saved credentials
+
+Run Kilo from a Linux worktree with Linux Node/npm. In non-interactive WSL shells, load the Linux Node installation explicitly:
+
+```bash
+source "$HOME/.nvm/nvm.sh"
+nvm use default
+```
+
+When Kilo authentication is stored in Windows at `%USERPROFILE%\.local\share\kilo\auth.json`, keep Kilo's database and session data on the Linux filesystem. For raw Kilo CLI runs, create Linux-local XDG directories and link only the Windows `auth.json`:
+
+```bash
+RUN_DIR="$(mktemp -d /tmp/ph-kilo.XXXXXX)"
+mkdir -p "$RUN_DIR/home/.config" "$RUN_DIR/home/.local/share/kilo" "$RUN_DIR/home/.cache"
+WINDOWS_PROFILE="$(powershell.exe -NoLogo -NoProfile -NonInteractive -Command '[Environment]::GetEnvironmentVariable("USERPROFILE")' | tr -d '\r')"
+WINDOWS_KILO_AUTH="$(wslpath -u "$WINDOWS_PROFILE")/.local/share/kilo/auth.json"
+test -r "$WINDOWS_KILO_AUTH"
+ln -s "$WINDOWS_KILO_AUTH" "$RUN_DIR/home/.local/share/kilo/auth.json"
+export HOME="$RUN_DIR/home"
+export XDG_CONFIG_HOME="$RUN_DIR/home/.config"
+export XDG_DATA_HOME="$RUN_DIR/home/.local/share"
+export XDG_CACHE_HOME="$RUN_DIR/home/.cache"
+```
+
+With those Linux-local XDG paths active, `kilo auth list` can confirm saved provider names without exposing credential values. Do not point raw Kilo CLI data or session storage at a Windows-mounted `kilo.db`. The free-completion adapter can use the Windows data directory as an auth source and links only `auth.json` into its isolated Linux-local XDG directory.
+
+The free-model runner also uses Linux Node/npm. Its bounded Windows User-scope OpenRouter key lookup is documented below; it is available only to that runner process and does not export the key to a separate Kilo CLI process.
+
 ## OpenRouter key for free-model tools
 
-The free-model runner reads `OPENROUTER_API_KEY` from the process environment.
-It does not read Kilo's saved OpenRouter credential. Do not assume a Windows
-environment variable is available to WSL; set the key in the environment that
-launches Node. Prefer a secret manager. Do not pass the key as a command-line
-argument, print it, save it in the repository, or add it to `.bashrc` or
-`.profile`.
+The free-model runner prefers `OPENROUTER_API_KEY` from the process environment. It never reads Kilo's saved OpenRouter credential, prints the key, or persists a refreshed value. In WSL with Windows interop (and on native Windows), if the process key is empty the runner makes one bounded lookup of the current Windows user's User-scope `OPENROUTER_API_KEY`. If a quota request returns HTTP 401, it makes one lookup and retries that request only when the Windows value is non-empty and different. An inference HTTP 401 can use the same one-time lookup; the runner requires a fresh positive quota check before retrying that same route once. It stops without retry when the key is absent or unchanged, quota is zero or unknown, the response is HTTP 402, or the refreshed key also returns HTTP 401. The process key remains preferred unless a 401 proves it was rejected. This bridge does not read Kilo's saved OpenRouter credential.
 
-For a one-time check from a WSL task worktree, explicitly load Linux Node for
+Do not pass a key as a command-line argument, print it, save it in the repository, or add it to `.bashrc` or `.profile`. The Windows-user lookup is temporary process memory only. Use a secret manager when available.
+
+For a one-time process-only key in a WSL task worktree, explicitly load Linux Node for
 non-interactive shells, then enter the key without echoing it:
 
 ```bash
