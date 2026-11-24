@@ -10495,7 +10495,7 @@ test.describe('Crop history', () => {
           expect(
             comparison.frameDifferingBytes,
             `${comparison.layerId} pixels at ${stage} differ at ${JSON.stringify(comparison.frameDifferingSamples)}`
-          ).toBeLessThanOrEqual(stage.includes('affine') ? 100 : 0);
+          ).toBe(0);
           expect(
             {
               htmlCanvas: comparison.tightBitmapPremultipliedDifferingBytes,
@@ -10510,10 +10510,7 @@ test.describe('Crop history', () => {
         expect(result.layerTransformResults, context + ' retained affine count').toHaveLength(6);
         for (const transform of result.layerTransformResults) {
           assertMixedLayerParity(transform.materializedLayerComparisons, context + ' retained affine ' + transform.id);
-          expect(
-            transform.differingBytes,
-            context + ' retained affine ' + transform.id + ' composite parity'
-          ).toBeLessThanOrEqual(transform.id.includes('affine') ? 20 : 0);
+          expect(transform.differingBytes, context + ' retained affine ' + transform.id + ' composite parity').toBe(0);
           expect(transform.legacyDiffersFromUntransformed).toBe(true);
           expect(transform.durableDiffersFromUntransformed).toBe(true);
           expect(transform.legacyDiffersFromPrevious).toBe(true);
@@ -10536,7 +10533,7 @@ test.describe('Crop history', () => {
               transition.index +
               ' must match byte-for-byte; ' +
               pixelDifferenceSummary(transition)
-          ).toBeLessThanOrEqual(transition.index === 1 ? 20 : 0);
+          ).toBe(0);
         }
         for (const [color, presence] of Object.entries(result.colorPresence)) {
           expect(presence.legacy, context + ' legacy mixed-source crop should contain ' + color).toBe(true);

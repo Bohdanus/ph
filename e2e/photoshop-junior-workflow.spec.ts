@@ -314,17 +314,16 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     // ========================================================================
     // Open layer properties and set opacity on the top layer
     const topLayerName = initialOrder[0];
-    // Sample inside the horizontal top-layer stroke and away from the diagonal base stroke.
-    // That gives visibility a distinct underlay pixel instead of relying on two strokes' exact
-    // antialiased crossing to differ after blend-mode composition.
-    const overlapX = 400;
-    const overlapY = 400;
-    const readOverlap = async () => {
+    // Opacity is sampled on the horizontal stroke over white so the half-opacity change is clear.
+    const opacityPoint = { x: 400, y: 400 };
+    // Multiply must be sampled where both strokes overlap; over white it matches Normal.
+    const blendModePoint = { x: 550, y: 400 };
+    const readAtPoint = async (point: { x: number; y: number }) => {
       const currentBox = await getWorkspaceCanvas(page).boundingBox();
-      if (!currentBox) throw new Error('Canvas not found while sampling the layer visibility result');
-      return sampleCanvasAtPoint(page, currentBox, overlapX, overlapY, documentSize);
+      if (!currentBox) throw new Error('Canvas not found while sampling the layer rendering result');
+      return sampleCanvasAtPoint(page, currentBox, point.x, point.y, documentSize);
     };
-    const fullOpacity = await readOverlap();
+    const fullOpacity = await readAtPoint(opacityPoint);
     expect(fullOpacity).not.toBeNull();
     await page.getByTestId('layer-opacity-summary').click();
     const opacitySlider = page.getByRole('slider', { name: 'Layer opacity' });
@@ -334,21 +333,33 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     await expect(opacitySlider).toHaveValue('50');
 
     // Verify opacity changes the actual pixel under the selected top-layer stroke.
-    const withOpacity = await readOverlap();
+    await expect
+      .poll(() => readAtPoint(opacityPoint), {
+        timeout: 10_000,
+        message: 'Changing layer opacity should update its rendered pixels',
+      })
+      .not.toEqual(fullOpacity);
+    const withOpacity = await readAtPoint(opacityPoint);
     expect(withOpacity).not.toBeNull();
-    expect(withOpacity).not.toEqual(fullOpacity);
 
     // ========================================================================
     // STEP 6: Apply a blend mode to the active paint layer.
     // ========================================================================
+    const opacityBeforeBlendMode = await readAtPoint(blendModePoint);
+    expect(opacityBeforeBlendMode).not.toBeNull();
     const blendModeSelect = page.getByRole('combobox', { name: new RegExp(`Blend mode for ${topLayerName}`) });
     await expect(blendModeSelect).toBeVisible();
     await blendModeSelect.selectOption('multiply');
 
-    // Verify blend mode effect
-    const withBlendMode = await readOverlap();
+    // Verify blend mode changes a pixel with a non-white underlay.
+    await expect
+      .poll(() => readAtPoint(blendModePoint), {
+        timeout: 10_000,
+        message: 'Changing blend mode should update pixels where the strokes overlap',
+      })
+      .not.toEqual(opacityBeforeBlendMode);
+    const withBlendMode = await readAtPoint(blendModePoint);
     expect(withBlendMode).not.toBeNull();
-    expect(withBlendMode).not.toEqual(withOpacity);
 
     // ========================================================================
     // STEP 7: Toggle the active paint layer visibility.

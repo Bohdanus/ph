@@ -1462,6 +1462,47 @@ process.exitCode = 1;`
     }
   });
 
+  it.each([
+    ['a generic error before a quota response', [400, 429], 429],
+    ['a generic error after a quota response', [429, 400], 429],
+    ['an authentication rejection before a generic error', [401, 400], 401],
+    ['a generic error before an authentication rejection', [400, 401], 401],
+    ['a quota response after authentication rejection', [401, 429], 401],
+    ['an authentication rejection after a quota response', [429, 401], 429],
+    ['a generic error before a payment response', [400, 402], 402],
+    ['a generic error after a payment response', [402, 400], 402],
+    ['a payment response before a rate limit', [402, 429], 402],
+    ['a rate limit before a payment response', [429, 402], 429],
+    ['an authentication rejection before a payment response', [401, 402], 401],
+    ['a payment response before an authentication rejection', [402, 401], 402],
+  ])(
+    'preserves the first source-exhausting status across error events: %s',
+    async (_label, statuses, expectedStatus) => {
+      const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+      const events = statuses.map((status) => JSON.stringify({ type: 'error', error: { status } }));
+      const command = await writeExecutable(
+        join(directory, 'fake-kilo'),
+        `process.stdout.write(${JSON.stringify(`${events.join('\n')}\n`)}); process.exitCode = 1;`
+      );
+
+      try {
+        const expectedError =
+          expectedStatus === 401
+            ? 'Kilo authentication was rejected'
+            : expectedStatus === 402
+              ? 'Kilo provider returned HTTP 402'
+              : 'Kilo provider quota or rate limit returned HTTP 429';
+        await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+          error: expectedError,
+          exhaustSource: true,
+          status: expectedStatus,
+        });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('preserves a Kilo quota response when the child closes stdin', async () => {
     const spawnImpl = () => {
       const child = new EventEmitter();

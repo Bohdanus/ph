@@ -32,6 +32,7 @@ async function withStateFiles(callback) {
 }
 
 describe('free-model pool persistent state', () => {
+  // These cases write hundreds of state snapshots; allow for parallel full-suite contention.
   it('rejects fractional and out-of-range time values before writing state', async () => {
     await withStateFiles(async ({ quarantineFile, stateFile }) => {
       const fractionalNow = Date.parse('2026-11-23T12:00:00.000Z') + 0.5;
@@ -270,7 +271,7 @@ describe('free-model pool persistent state', () => {
         (await readFreeModelPoolState(stateFile)).modelFailures['openrouter:vendor/model:free'].failures
       ).toHaveLength(249);
     });
-  });
+  }, 15_000);
 
   it('quarantines a model for seven days after 250 attributable failures in seven days', async () => {
     await withStateFiles(async ({ quarantineFile, stateFile }) => {
@@ -291,7 +292,7 @@ describe('free-model pool persistent state', () => {
         new Date(now + 249 + MODEL_FAILURE_QUARANTINE_HOURS * 60 * 60 * 1000).toISOString()
       );
     });
-  });
+  }, 15_000);
 
   it('leaves Kilo Nemotron 3 Ultra quarantine decisions to the operator', async () => {
     await withStateFiles(async ({ quarantineFile, stateFile }) => {
@@ -320,5 +321,5 @@ describe('free-model pool persistent state', () => {
         (await readQuarantineState(quarantineFile)).entries['kilo:nvidia/nemotron-3-ultra-550b-a55b:free']
       ).toBeUndefined();
     });
-  });
+  }, 15_000);
 });
