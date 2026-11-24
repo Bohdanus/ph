@@ -6270,7 +6270,7 @@ test.describe('Crop history', () => {
     const fit = await openCropTool(page);
     await expect(page.locator('.cursor-crop'), 'the crop starts unrotated').toHaveAttribute('data-rotation', '0');
     const workspace = page.getByTestId('workspace-container');
-    const expectNoHorizontalContinuation = async (stage: string) => {
+    const expectNoCropEdgeContinuation = async (stage: string) => {
       await expect(page.getByTestId('crop-selection-outline'), `${stage}: crop outline is painted`).toBeVisible();
       await expect(page.getByTestId('crop-frame-dim'), `${stage}: crop mask is painted`).toBeVisible();
       await page.evaluate(
@@ -6293,6 +6293,7 @@ test.describe('Crop history', () => {
       const frameRight = Math.min(info.width - 2, Math.ceil((frameBottomRight.x - workspaceBox!.x) * scaleX));
       const frameTop = Math.max(2, Math.floor((frameTopLeft.y - workspaceBox!.y) * scaleY));
       const frameBottom = Math.min(info.height - 2, Math.ceil((frameBottomRight.y - workspaceBox!.y) * scaleY));
+      // The outline extends 1 CSS px beyond the crop; its 12px handles extend 6px, so this 5px guard starts at their outer edge while still sampling every visible continuation.
       const cropGuardLeft = Math.max(2, Math.floor((cropBox!.x - workspaceBox!.x - 5) * scaleX));
       const cropGuardRight = Math.min(
         info.width - 2,
@@ -6357,10 +6358,10 @@ test.describe('Crop history', () => {
     };
 
     await dragOnCanvas(page, fit, { x: 100, y: 100 }, { x: 700, y: 500 });
-    await expectNoHorizontalContinuation('fresh selection');
+    await expectNoCropEdgeContinuation('fresh selection');
 
     await dragOnCanvas(page, fit, { x: 400, y: 300 }, { x: 430, y: 330 });
-    await expectNoHorizontalContinuation('moved selection');
+    await expectNoCropEdgeContinuation('moved selection');
   });
 
   test('rotating and moving a crop clears its previous cutout', async ({ page }) => {
