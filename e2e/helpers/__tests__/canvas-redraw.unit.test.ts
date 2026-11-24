@@ -214,7 +214,7 @@ describe('waitForCanvasPixels', () => {
       `Canvas did not render the expected pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms after ${READS_PER_DEFAULT_TIMEOUT} polls`
     );
 
-    expect(CANVAS_REDRAW_TIMEOUT_MS).toBe(10_000);
+    expect(CANVAS_REDRAW_TIMEOUT_MS).toBe(15_000);
     expect(CANVAS_REDRAW_POLL_INTERVAL_MS).toBe(100);
     expect(predicate).toHaveBeenCalledTimes(READS_PER_DEFAULT_TIMEOUT);
     expect(new Set(harness.waitForTimeout.mock.calls.flat())).toEqual(new Set([CANVAS_REDRAW_POLL_INTERVAL_MS]));

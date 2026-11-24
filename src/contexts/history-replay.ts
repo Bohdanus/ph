@@ -47,6 +47,7 @@ import {
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
@@ -74,6 +75,7 @@ export type ReplayDiagnostic = Readonly<{
     | 'invalid-layer-blend-mode'
     | 'invalid-document-transform'
     | 'invalid-layer-opacity'
+    | 'invalid-layer-fill-opacity'
     | 'invalid-layer-source'
     | 'invalid-selection-snapshot';
   error: unknown;
@@ -113,6 +115,12 @@ function cloneLayer(layer: Layer): Layer {
 
 function cloneLayers(layers: LayersRecord): LayersRecord {
   return Object.fromEntries(Object.values(layers).map((layer) => [layer.id, cloneLayer(layer)]));
+}
+
+function unpromotedBlankRaster(layer: Layer): Layer['tmpCanvas'] {
+  return layer.source?.kind === 'blank' && layer.bitmap === null && layer.presentationBounds === null
+    ? layer.tmpCanvas
+    : null;
 }
 
 export function replayHistory(
@@ -188,7 +196,10 @@ export function replayHistory(
               return {
                 ...layer,
                 operations: [...layer.operations, createAffineLayerOperation(localTransform, `${item.id}:${layer.id}`)],
-                tmpCanvas: null,
+                // Blank layers have no bitmap fallback until their raster is promoted. Keep this
+                // source raster as the base for the retained crop transform; dropping it makes
+                // legacy replay unable to publish the layer after undo/redo.
+                tmpCanvas: unpromotedBlankRaster(layer),
                 presentationBounds: null,
               };
             });
@@ -253,6 +264,21 @@ export function replayHistory(
       }
       const layer = layers[layerId];
       if (layer) layers = { ...layers, [layerId]: { ...layer, opacity: (args as { opacity: number }).opacity } };
+      continue;
+    }
+    if (actionName === SET_LAYER_FILL_OPACITY_ACTION) {
+      const fillOpacity = (args as { fillOpacity?: unknown } | undefined)?.fillOpacity;
+      if (typeof fillOpacity !== 'number' || !Number.isFinite(fillOpacity) || fillOpacity < 0 || fillOpacity > 1) {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-layer-fill-opacity',
+          error: new TypeError('Layer fill opacity history value must be a finite number between 0 and 1'),
+        });
+        continue;
+      }
+      const layer = layers[layerId];
+      if (layer) layers = { ...layers, [layerId]: { ...layer, fillOpacity } };
       continue;
     }
     if (actionName === SET_LAYER_BLEND_MODE_ACTION) {
@@ -422,7 +448,16 @@ export function replayHistory(
     if (processor.commit === 'geometry') {
       const { move, resize } = toolArgs as RepositionToolArgs;
       const patch = resize ?? move;
-      if (patch) layers = { ...layers, [layerId]: { ...layer, pos: { ...layer.pos, ...patch } } };
+      if (patch)
+        layers = {
+          ...layers,
+          [layerId]: {
+            ...layer,
+            pos: { ...layer.pos, ...patch },
+            tmpCanvas: unpromotedBlankRaster(layer),
+            presentationBounds: null,
+          },
+        };
       continue;
     }
     if (processor.commit === 'document-operation') continue;

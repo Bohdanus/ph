@@ -1167,6 +1167,7 @@ function createBracketedCtx() {
     lineJoin: CanvasLineJoin;
     miterLimit: number;
     dash: number[];
+    setTransform: { a: number; b: number; c: number; d: number; e: number; f: number } | null;
   };
 
   const state: State = {
@@ -1178,6 +1179,7 @@ function createBracketedCtx() {
     lineJoin: 'round',
     miterLimit: 4,
     dash: [],
+    setTransform: null,
   };
   const stack: State[] = [];
   /**
@@ -1271,13 +1273,21 @@ function createBracketedCtx() {
     fillRect: vi.fn(recordPaint),
     strokeRect: vi.fn(recordPaint),
     clearRect: vi.fn(),
-  } as unknown as Ctx2D & { globalAlpha: number; save: ReturnType<typeof vi.fn>; restore: ReturnType<typeof vi.fn> };
+    setTransform: vi.fn((a: number, b: number, c: number, d: number, e: number, f: number) => {
+      state.setTransform = { a, b, c, d, e, f };
+    }),
+  } as unknown as Ctx2D & {
+    globalAlpha: number;
+    save: ReturnType<typeof vi.fn>;
+    restore: ReturnType<typeof vi.fn>;
+    setTransform: ReturnType<typeof vi.fn>;
+  };
 
   return { ctx, state, observedAtPaint };
 }
 
 describe('shape processor', () => {
-  const creatorParams = { size: { width: 40, height: 40 } } as CreatorToolParams;
+  const creatorParams = { size: { width: 40, height: 40 }, backingScale: 1 } as CreatorToolParams;
 
   /**
    * The canvas `shape()` allocates, handing back the supplied context. The globally installed mock
@@ -1315,6 +1325,7 @@ describe('shape processor', () => {
     const ctx = getContext.mock.results[0].value as unknown as {
       save: ReturnType<typeof vi.fn>;
       restore: ReturnType<typeof vi.fn>;
+      setTransform: ReturnType<typeof vi.fn>;
     };
     expect(ctx.save).toHaveBeenCalledTimes(1);
     expect(ctx.restore).toHaveBeenCalledTimes(1);

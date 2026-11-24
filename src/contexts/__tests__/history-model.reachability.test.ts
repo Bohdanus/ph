@@ -60,6 +60,7 @@ function layer(id: string, source: DurableLayerSource): DurableLayerSnapshot {
     isBedrock: false,
     visible: true,
     opacity: 1,
+    fillOpacity: 1,
     locked: false,
     blendMode: 'source-over',
     order: 0,

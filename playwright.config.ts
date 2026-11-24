@@ -189,6 +189,15 @@ export default defineConfig({
         channel: process.env.PLAYWRIGHT_CHANNEL ?? 'chrome',
       },
     },
+    {
+      name: 'Google Chrome HiDPI',
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: process.env.PLAYWRIGHT_CHANNEL ?? 'chrome',
+        // 2x device scale factor to match Retina/high-DPI displays
+        deviceScaleFactor: 2,
+      },
+    },
   ],
 
   /* Run the dev server before starting the tests */

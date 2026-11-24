@@ -23,21 +23,15 @@ import {
   expectNoDiscardPrompt,
 } from './helpers/discard-prompt';
 /**
- * CROSS-MODULE COUPLING, and the only one of its kind in the suite: these six symbols
- * come from `e2e/export/helpers.ts`, which the `e2e/export` branch owns. This is the
- * only top-level spec that reaches across into `e2e/export/` for anything.
+ * This spec shares save-dialog and download helpers with the export tests. Other E2E
+ * specs also use those helpers, so this is not the only cross-directory import. The
+ * dependency is checked at compile time: moving or renaming an imported symbol fails
+ * before the affected test body runs.
  *
  * The six are type `ExportFormat`, `exportFormats`, `fillSaveDialog`,
  * `INTEGRATION_TEST_TIMEOUT_MS`, `openSaveDialog` and `submitSaveDialogForDownload`.
  *
- * What it costs, precisely: nothing is restructured here, and nothing in that module
- * knows this file exists — so the price lands entirely on THIS file's compile. Rename,
- * move or reshape any of the six in `e2e/export/helpers.ts` and this import stops
- * resolving, which is a TypeScript error at the import (`npm run tsc`, `tsc -b`'s
- * `tsconfig.e2e.json`) and a Playwright transform error before any test body runs. So
- * the break is loud and early rather than a silently wrong assertion — but it IS a
- * compile break in a file whose owner has no way to see it, so when `e2e/export` moves
- * these helpers, the fix belongs in this import, not in that module.
+ * The import remains explicit so ownership is easy to trace if the shared helpers move.
  */
 import {
   type ExportFormat,

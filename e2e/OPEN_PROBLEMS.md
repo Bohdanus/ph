@@ -58,14 +58,6 @@ cases on Windows. The attempt reports show all three retries failed for each rep
 These are observations from that mirror run, not a current baseline or a root-cause diagnosis;
 the source-side CI workflow was unavailable for this run.
 
-### Windows-only — `test:e2e:clean` uses a POSIX command
-
-`package.json`'s `test:e2e:clean` script invokes `rm -rf`, which is not available in
-the default Windows command shell. The Windows validation run failed at this cleanup
-step before it could clean the test output. This platform-specific issue is left
-unfixed per the current task's scope; use a Windows-compatible cleanup command or a
-cross-platform Node script when addressing it.
-
 ### Cross-platform — HiDPI Draw preview and commit pixels differ
 
 Mirror run [45028865898](https://github.com/Bohdanus/ph/actions/runs/45028865898)

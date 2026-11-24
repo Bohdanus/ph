@@ -1,0 +1,14 @@
+{
+  "test": "e2e/check-dpr.spec.ts :: committing a Draw stroke preserves the live HiDPI preview pixels",
+  "classification": "regression",
+  "evidence": [
+    "DrawToolArea.tsx (preview) draws on tool-overlay-canvas which has HiDPI backing store (canvas.width = CSS_width * DPR) and context transform (setTransform(DPR, 0, 0, DPR, 0, 0)). The stroke is rendered via ctx.stroke() at device pixel resolution.",
+    "draw.ts creator (commit) creates OffscreenCanvas(size.width, size.height) using CSS pixel dimensions only (line 107). No backingScale parameter is passed to CreatorToolParams (toolProcessors.ts:40-42). The stroke is rendered at 1x resolution via ctx.stroke().",
+    "layer-utils.ts:320 calls processor.imageProcessor({ size: pos }) with CSS-pixel pos. The creator receives no DPR information.",
+    "drawLayersToCanvas (layer-renderer.ts:537) creates staging canvas at HiDPI via resizeCanvas(..., backingScale=DPR). The layer's 1x tmpCanvas is drawn to 2x staging canvas with imageSmoothingEnabled=false (nearest-neighbor upscale) in drawEvaluatedPresentation (presentation-evaluator.ts:317).",
+    "Test captures preview as workspaceCanvas + overlayCanvas at full 2x backing store resolution (lines 136-156), then compares against workspaceCanvas after commit (lines 162-169). The preview stroke was drawn at 2x; the committed stroke was drawn at 1x then nearest-neighbor upscaled to 2x — producing different anti-aliasing and pixel values."
+  ],
+  "rootCause": "The Draw tool's creator (draw.ts) creates a 1x OffscreenCanvas in CSS pixels, ignoring the device pixel ratio. The live preview draws on a HiDPI canvas (2x backing store + 2x context transform) at device pixel resolution. On commit, the 1x stroke bitmap is nearest-neighbor upscaled to 2x for display, producing different pixels than the 2x native preview stroke.",
+  "proposal": "Add backingScale to CreatorToolParams (toolProcessors.ts), thread DPR from useLayer.ts (useDevicePixelRatio) through buildLayerFromTool -> createLayerSource -> creator, and update draw.ts creator to create HiDPI OffscreenCanvas (width*backingScale, height*backingScale) with setTransform(backingScale, 0, 0, backingScale, 0, 0) so the commit renders at the same device-pixel resolution as the preview.",
+  "confidence": "high"
+}

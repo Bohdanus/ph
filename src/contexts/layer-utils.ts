@@ -256,7 +256,8 @@ export function createLayerSource({
   layers,
   source,
   insertAfterLayerId,
-}: LayerSourceParams): Layer {
+  backingScale = 1,
+}: LayerSourceParams & { backingScale?: number }): Layer {
   const { kind, isBedrock } = source;
   const id = idFromHistory ?? uuidv4(); // when layer is re-created from history it should get the saved id
   const { name, order } = deriveLayerNameAndOrder(layers, source, insertAfterLayerId);
@@ -278,6 +279,7 @@ export function createLayerSource({
     blendMode: 'source-over',
     locked: false,
     opacity: 1,
+    fillOpacity: 1,
     order,
     pos,
     source,
@@ -317,7 +319,7 @@ export function createLayerSource({
     // (`PIXEL_FREE_TOOLS`) is never a creator. Named rather than left as a `TypeError` on
     // `undefined.imageProcessor`, so the violation says what it is.
     if (!processor) throw new Error(`Tool ${source.args.toolName} has no processor to create a layer from`);
-    const [canvas, patch] = processor.imageProcessor({ size: pos } as CreatorToolParams)(source.args);
+    const [canvas, patch] = processor.imageProcessor({ size: pos, backingScale } as CreatorToolParams)(source.args);
     if (patch) {
       layer.pos = { ...layer.pos, ...patch };
     }

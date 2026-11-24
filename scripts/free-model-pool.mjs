@@ -2588,8 +2588,32 @@ export async function main(
     }
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota.reason !== 'ok') {
+      if (quota.reason === 'no_key') {
+        stderr.write(
+          'OPENROUTER_API_KEY is missing or empty in this process; provide it through a secret manager or this shell environment. No request or inference was sent.\n'
+        );
+        return 2;
+      }
+      if (quota.reason === 'http_429') {
+        stderr.write(
+          'OpenRouter rate-limited the quota request with HTTP 429. Wait before retrying; if it continues, check OpenRouter status. No inference request was sent.\n'
+        );
+        return 2;
+      }
+      if (/^http_5\d\d$/.test(quota.reason)) {
+        stderr.write(
+          'OpenRouter returned a server error for the quota request; check OpenRouter status and try again later. No inference request was sent.\n'
+        );
+        return 2;
+      }
+      if (quota.reason === 'http_401') {
+        stderr.write(
+          'OpenRouter rejected the quota request with HTTP 401. This usually means the bearer key was missing or not accepted, though OpenRouter has documented an infrastructure incident that also returned 401 for authorization lookup failures. Check status if unexpected and confirm the key is active if the error persists. No inference request was sent.\n'
+        );
+        return 2;
+      }
       stderr.write(
-        `Unable to read OpenRouter daily quota (${sanitizeErrorMessage(quota.reason)}${quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : ''}); check the API key and network. No inference request was sent.\n`
+        `Unable to read OpenRouter daily quota (${sanitizeErrorMessage(quota.reason)}${quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : ''}); check OpenRouter status and network. No inference request was sent.\n`
       );
       return 2;
     }

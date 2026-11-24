@@ -9,7 +9,7 @@ import {
   LINE_START_X,
   LINE_END_X,
 } from './helpers/canvas-helpers';
-import { waitForCanvasPixels, type CanvasPixelPredicate } from './helpers/canvas-redraw';
+import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
 import { openToolFlyout, selectFromFlyout, expectToolSelected } from './helpers/toolbar-helpers';
 import { PAINT_TOOLS_TEST_TIMEOUT_MS } from './helpers/timeouts';
@@ -35,19 +35,6 @@ const DRAG_START_X = 220;
 const DRAG_END_X = 280;
 const UNTOUCHED_X = 170;
 
-/** Matches any red pixel: red channel must exceed both green and blue significantly. */
-const hasRedPixel: CanvasPixelPredicate = async (screenshot) => {
-  const { data } = await loadImageData(screenshot);
-  for (let index = 0; index < data.length; index += 4) {
-    if (data[index + 3] === 0) continue;
-    const r = data[index];
-    const g = data[index + 1];
-    const b = data[index + 2];
-    if (r > g + 80 && r > b + 80) return true;
-  }
-  return false;
-};
-
 async function getCanvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
   if (!box) throw new Error('workspace canvas has no bounding box');
@@ -65,20 +52,21 @@ function luma(r: number, g: number, b: number): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
+/** Reads a screenshot pixel at box-relative CSS offsets, matching drawLine and the sample click. */
 async function readPixel(
   screenshot: Buffer,
   clip: { x: number; y: number; width: number; height: number },
   box: BoundingBox,
-  docX: number,
-  docY: number
+  boxOffsetX: number,
+  boxOffsetY: number
 ): Promise<{ r: number; g: number; b: number } | null> {
   const image = await loadImageData(screenshot);
   const point = cssPointToImage(
     image,
     { x: clip.x, y: clip.y, width: clip.width, height: clip.height },
     {
-      x: box.x + docX,
-      y: box.y + docY,
+      x: box.x + boxOffsetX,
+      y: box.y + boxOffsetY,
     }
   );
   const color = await getColorAtPoint(image, Math.round(point.x), Math.round(point.y), 0);
@@ -106,10 +94,9 @@ test.describe('Color Replacement tool', () => {
   });
 
   test('samples a source with a click and replaces the dragged segment with the foreground color', async ({ page }) => {
-    const box = await getCanvasBox(page);
-
     await openToolFlyout(page, 'brush');
     await selectFromFlyout(page, { toolName: 'brush', label: 'Brush Tool' });
+    const box = await getCanvasBox(page);
     const brushSize = page.getByRole('slider', { name: /^Size/ });
     await brushSize.fill('30');
     await expect(brushSize).toHaveValue('30');
@@ -154,10 +141,9 @@ test.describe('Color Replacement tool', () => {
   });
 
   test('preserves luminance of the source pixels', async ({ page }) => {
-    const box = await getCanvasBox(page);
-
     await openToolFlyout(page, 'brush');
     await selectFromFlyout(page, { toolName: 'brush', label: 'Brush Tool' });
+    const box = await getCanvasBox(page);
     const brushSize = page.getByRole('slider', { name: /^Size/ });
     await brushSize.fill('30');
     await expect(brushSize).toHaveValue('30');
@@ -208,9 +194,9 @@ test.describe('Color Replacement tool', () => {
   });
 
   test('tolerance controls which nearby colors are replaced', async ({ page }) => {
-    const box = await getCanvasBox(page);
     await openToolFlyout(page, 'brush');
     await selectFromFlyout(page, { toolName: 'brush', label: 'Brush Tool' });
+    const box = await getCanvasBox(page);
     const brushSize = page.getByRole('slider', { name: /^Size/ });
     await brushSize.fill('30');
     await expect(brushSize).toHaveValue('30');
@@ -218,7 +204,15 @@ test.describe('Color Replacement tool', () => {
     await drawLine(page, box, LINE_START_X, STROKE_Y, LINE_END_X, STROKE_Y, { steps: 16 });
 
     const sourceClip = canvasRedrawClip(box);
-    await waitForCanvasPixels(page, sourceClip, hasRedPixel, { description: 'the red source layer is drawn' });
+    await waitForCanvasPixels(
+      page,
+      sourceClip,
+      async (screenshot) => {
+        const pixel = await readPixel(screenshot, sourceClip, box, SAMPLE_X, STROKE_Y);
+        return pixel !== null && pixel.r > 220 && pixel.g < 40 && pixel.b < 40;
+      },
+      { description: 'the red source is present at the sample point' }
+    );
 
     const replacementBox = await setupColorReplacement(page);
     const clip = canvasRedrawClip(replacementBox);

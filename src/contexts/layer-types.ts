@@ -81,6 +81,8 @@ export type Layer = {
 
   visible: boolean;
   opacity: number; // 0..1
+  // Omitted only by pre-Fill runtime records; every current layer factory writes 1.
+  fillOpacity?: number; // 0..1; independent from layer opacity, matching Photoshop's Fill
   locked: boolean;
   blendMode: GlobalCompositeOperation;
   order: number;

@@ -247,7 +247,8 @@ export function drawLayerSource(
   layer: Layer,
   position: Pos = layer.pos,
   documentFrame?: DocumentFrame,
-  preferCachedSource = false
+  preferCachedSource = false,
+  backingScale = 1
 ): boolean {
   const presentationBounds = layer.presentationBounds;
   const hasBakedPresentation =
@@ -277,14 +278,17 @@ export function drawLayerSource(
     isPositionedDrawSource(source) &&
     !source.args.blockStamp &&
     source.args.composite !== 'destination-out' &&
-    // Spray stamps overlap; reduced layer opacity must composite the cached stroke as a group.
-    (source.args.penType !== 'spray' || layer.opacity === 1) &&
+    // Spray stamps overlap; any transparency must composite the cached stroke as a group.
+    (source.args.penType !== 'spray' || (layer.opacity === 1 && (layer.fillOpacity ?? 1) === 1)) &&
     operations.length === 0 &&
     (presentationBounds === null || presentationBounds === undefined) &&
     layer.blendMode === 'source-over' &&
     source.pos.width === position.width &&
     source.pos.height === position.height &&
-    !preferCachedSource
+    !preferCachedSource &&
+    // If the layer has a tmpCanvas from a creator tool, use it instead of re-drawing.
+    // The tmpCanvas has the stroke drawn at the correct HiDPI resolution.
+    !hasUsableRaster(layer.tmpCanvas)
   ) {
     const x = position.x - (documentFrame?.x ?? 0);
     const y = position.y - (documentFrame?.y ?? 0);
@@ -407,11 +411,19 @@ export function drawLayerSource(
       : getLayerBitmap(layer, position));
   if (!hasUsableRaster(bitmap)) return false;
 
+  // Use the bitmap's actual pixel dimensions as sourceSize when drawing to a HiDPI canvas
+  // (backingScale > 1). For 1x canvases, use the effectivePosition (CSS pixels) so that
+  // HiDPI bitmaps are scaled down to CSS size.
+  const sourceSize =
+    backingScale > 1
+      ? { width: bitmap.width, height: bitmap.height }
+      : { width: effectivePosition.width, height: effectivePosition.height };
+
   const target: PresentationDrawTarget = { kind: 'document', frame: documentFrame };
   const evaluation = evaluatePresentationForDraw(
     {
       position: effectivePosition,
-      sourceSize: { width: effectivePosition.width, height: effectivePosition.height },
+      sourceSize,
       operations,
       mode: 'layer-bounds',
     },
@@ -434,13 +446,14 @@ export function drawLayer(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
   documentFrame?: DocumentFrame,
-  preferCachedSource = false
+  preferCachedSource = false,
+  backingScale = 1
 ): boolean {
   ctx.save();
   try {
-    ctx.globalAlpha = layer.opacity;
+    ctx.globalAlpha = layer.opacity * (layer.fillOpacity ?? 1);
     ctx.globalCompositeOperation = layer.blendMode;
-    return drawLayerSource(ctx, layer, layer.pos, documentFrame, preferCachedSource);
+    return drawLayerSource(ctx, layer, layer.pos, documentFrame, preferCachedSource, backingScale);
   } finally {
     ctx.restore();
   }
@@ -561,7 +574,7 @@ function drawLayersToCanvasAttempt(
         const isPreview = previewLayerIds?.has(layer.id) ?? false;
         if (isPreview && layer.tmpCanvas) rasterPreviewCanvases.add(layer.tmpCanvas as object);
         const hasRasterPreview = layer.tmpCanvas !== null && rasterPreviewCanvases.has(layer.tmpCanvas as object);
-        if (!drawLayer(stagingContext, layer, documentFrame, isPreview || hasRasterPreview)) {
+        if (!drawLayer(stagingContext, layer, documentFrame, isPreview || hasRasterPreview, backingScale)) {
           if (requireVisibleLayerBitmaps) {
             if (telemetry) {
               telemetry.failedLayerId = layer.id;

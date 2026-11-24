@@ -277,6 +277,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
   const args = toolArgs as CropToolArgs;
   const {
     aspectRatio,
+    useOriginalAspectRatio = false,
     rect,
     angle = 0,
     overlayType = 'ruleOfThirds',
@@ -291,6 +292,11 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     () => documentFrame ?? documentFrameFromSize({ width: frameWidth, height: frameHeight }),
     [documentFrame, frameHeight, frameWidth]
   );
+  const activeAspectRatio = useOriginalAspectRatio
+    ? currentFrame.width > 0 && currentFrame.height > 0
+      ? currentFrame.width / currentFrame.height
+      : null
+    : aspectRatio;
   const initialFrameRect = useMemo(
     () => ({ x1: 0, y1: 0, x2: frameWidth, y2: frameHeight }),
     [frameHeight, frameWidth]
@@ -596,7 +602,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     initialRect,
     containerRef,
     overlayRef: toolOverlayRef,
-    aspectRatio,
+    aspectRatio: activeAspectRatio,
     // Adobe's crop modifiers, and the reason `useRect` asks per consumer rather than deciding:
     // Shift holds a FRESH drag to a square whatever the bar's Ratio says, Option/Alt grows it out
     // from the press point, and the pair is a square centred on that point. The rectangular

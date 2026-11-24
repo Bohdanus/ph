@@ -1211,23 +1211,29 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
    * green. The `OPEN_PROBLEMS.md` entry tracks the decision; this test keeps the
    * current state from being silently changed.
    */
-  it('declares exactly one project with no HiDPI override (P3 characterisation)', () => {
+  it('declares two projects with one HiDPI override (P3 characterisation - HiDPI project added)', () => {
     const projects = playwrightConfig.projects ?? [];
 
-    expect(projects.length, 'a second project was added without updating this guard').toBe(1);
-    expect(projects[0]?.name).toBe('Google Chrome');
+    expect(projects.length, 'project count changed unexpectedly').toBe(2);
+    const names = projects.map((p) => p.name).sort();
+    expect(names).toEqual(['Google Chrome', 'Google Chrome HiDPI']);
 
-    // No project sets a `deviceScaleFactor` above 1. The default `devices['Desktop
-    // Chrome']` that the sole project spreads DOES include `deviceScaleFactor: 1`
-    // explicitly, so the check is `> 1` — not presence — to avoid a false positive.
+    // Exactly one project sets deviceScaleFactor > 1 (the HiDPI project)
     const withHiDpi = projects.filter((project) => {
       const dpr = (project.use as { deviceScaleFactor?: number } | undefined)?.deviceScaleFactor;
       return dpr !== undefined && dpr > 1;
     });
-    expect(
-      withHiDpi,
-      'a project with deviceScaleFactor > 1 was added; see the P3 characterisation comment for the six known failures that must be fixed first'
-    ).toEqual([]);
+    expect(withHiDpi.length, 'expected exactly one HiDPI project').toBe(1);
+    expect(withHiDpi[0]?.name).toBe('Google Chrome HiDPI');
+    expect(withHiDpi[0]?.use?.deviceScaleFactor).toBe(2);
+
+    // The base project should not have deviceScaleFactor > 1
+    const baseProjects = projects.filter((project) => {
+      const dpr = (project.use as { deviceScaleFactor?: number } | undefined)?.deviceScaleFactor;
+      return dpr === undefined || dpr <= 1;
+    });
+    expect(baseProjects.length).toBe(1);
+    expect(baseProjects[0]?.name).toBe('Google Chrome');
   });
 
   /**

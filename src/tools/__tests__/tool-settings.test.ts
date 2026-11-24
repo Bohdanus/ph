@@ -80,6 +80,7 @@ describe('defaultSettings', () => {
     expect(defaultSettings['feather-magnetic-lasso'].points).toEqual([]);
     expect(defaultSettings.crop.rect).toBeNull();
     expect(defaultSettings.crop.aspectRatio).toBeNull();
+    expect(defaultSettings.crop.useOriginalAspectRatio).toBe(false);
     expect(defaultSettings.text.rect).toBeNull();
     expect(defaultSettings.shape.backgroundColor).toBeNull();
   });
@@ -212,10 +213,11 @@ describe('saveLastSettings tool-name coverage', () => {
   });
 
   it('stores crop settings without the transient rect', () => {
-    saveLastSettings({ ...defaultSettings.crop, aspectRatio: 1.5, rect });
+    saveLastSettings({ ...defaultSettings.crop, aspectRatio: 1.5, useOriginalAspectRatio: true, rect });
 
     expect(lastSavedSettings.crop).not.toHaveProperty('rect');
     expect(lastSavedSettings.crop.aspectRatio).toBe(1.5);
+    expect(lastSavedSettings.crop.useOriginalAspectRatio).toBe(true);
   });
 
   it('drops the drag handles from shape and figure settings', () => {

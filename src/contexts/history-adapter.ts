@@ -60,6 +60,7 @@ import {
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_FILL_OPACITY_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
@@ -558,6 +559,7 @@ export function convertLayer(layer: Layer, assetOwnerId: string, registry: Asset
         isBedrock: layer.isBedrock,
         visible: layer.visible,
         opacity: layer.opacity,
+        fillOpacity: layer.fillOpacity ?? 1,
         locked: layer.locked,
         blendMode: layer.blendMode,
         order: layer.order,
@@ -573,6 +575,7 @@ export function convertLayer(layer: Layer, assetOwnerId: string, registry: Asset
       isBedrock: layer.isBedrock,
       visible: layer.visible,
       opacity: layer.opacity,
+      fillOpacity: layer.fillOpacity ?? 1,
       locked: layer.locked,
       blendMode: layer.blendMode,
       order: layer.order,
@@ -739,13 +742,14 @@ export function deriveSetSelectionEntry(
  * property without an explicit derivation and validation arm. That is also why
  * an action must not own a property without adding its explicit derivation branch.
  */
-type LayerPropertyKey = 'visible' | 'name' | 'opacity' | 'blendMode' | 'locked';
+type LayerPropertyKey = 'visible' | 'name' | 'opacity' | 'fillOpacity' | 'blendMode' | 'locked';
 
 const LAYER_PROPERTY_BY_ACTION = {
   [SHOW_LAYER_ACTION]: 'visible',
   [HIDE_LAYER_ACTION]: 'visible',
   [RENAME_LAYER_ACTION]: 'name',
   [SET_LAYER_OPACITY_ACTION]: 'opacity',
+  [SET_LAYER_FILL_OPACITY_ACTION]: 'fillOpacity',
   [SET_LAYER_BLEND_MODE_ACTION]: 'blendMode',
   [LOCK_LAYER_ACTION]: 'locked',
   [UNLOCK_LAYER_ACTION]: 'locked',
@@ -798,6 +802,11 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
     const opacity = (item.args as { opacity?: unknown } | undefined)?.opacity;
     if (typeof opacity !== 'number' || !Number.isFinite(opacity) || opacity < 0 || opacity > 1) return null;
     patch = { opacity };
+  } else if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'fillOpacity') {
+    const fillOpacity = (item.args as { fillOpacity?: unknown } | undefined)?.fillOpacity;
+    if (typeof fillOpacity !== 'number' || !Number.isFinite(fillOpacity) || fillOpacity < 0 || fillOpacity > 1)
+      return null;
+    patch = { fillOpacity };
   } else if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'blendMode') {
     const blendMode = (item.args as { blendMode?: unknown } | undefined)?.blendMode;
     if (!isLayerBlendMode(blendMode)) return null;
@@ -1724,6 +1733,7 @@ export function sourceToRuntimeLayer(
     isBedrock: !!source.isBedrock,
     visible: true,
     opacity: 1,
+    fillOpacity: 1,
     locked: false,
     blendMode: source.kind === 'tool' ? toolLayerBlendMode(source.args) : 'source-over',
     order,
