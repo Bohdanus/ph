@@ -78,11 +78,12 @@ const WORKFLOW_DOCUMENT_HEIGHT = 600;
 const WORKFLOW_TIMEOUT_MS = 120_000;
 
 /**
- * The full workflow combines several overlapping strokes and a grayscale adjustment. Its
- * JPEG comparison measured 246,904 changed RGB channels of 5,760,000 at HiDPI (4.29%),
- * above the generic 3.5% budget calibrated against a sparse-stroke fixture. A 75,000
- * logical-pixel budget is 5.21%; `verifyExportPixelsInBrowser` scales it with backing-store
- * area, while the independent ink guard still rejects blank or substantially erased output.
+ * The full workflow combines several overlapping strokes and a grayscale adjustment. At
+ * HiDPI, its JPEG and PNG comparisons measured 246,904 and 244,071 changed RGB channels of
+ * 5,760,000 (4.29% and 4.24%), above the generic 3.47% budget calibrated against a sparse-
+ * stroke fixture. A 75,000-channel budget is 5.21% at either scale; the pixel oracle scales it
+ * with backing-store area. The independent ink guard still rejects blank or substantially
+ * erased output.
  */
 const WORKFLOW_EXPORT_CHANGED_CHANNEL_THRESHOLD = Math.ceil(CHANGED_CHANNEL_THRESHOLD_GENERAL * 1.5);
 
@@ -187,11 +188,16 @@ async function readLogicalDocumentDataUrl(page: Page): Promise<string> {
     const source = element as HTMLCanvasElement;
     if (source.width === size.width && source.height === size.height) return source.toDataURL('image/png');
 
+    // The PSD composite is stored at logical document size; the visible canvas may use a
+    // device-scaled backing store. Normalize that composite before comparing the container.
     const logicalCanvas = document.createElement('canvas');
     logicalCanvas.width = size.width;
     logicalCanvas.height = size.height;
     const context = logicalCanvas.getContext('2d');
     if (!context) throw new Error('Could not create a 2D canvas for the logical document pixels');
+    // Downsampling the device-pixel backing store uses the normal Canvas filter to read
+    // the logical composite, rather than treating physical pixels as document pixels.
+    context.imageSmoothingEnabled = true;
     context.drawImage(source, 0, 0, size.width, size.height);
     return logicalCanvas.toDataURL('image/png');
   }, documentSize);

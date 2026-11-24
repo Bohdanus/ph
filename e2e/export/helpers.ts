@@ -699,11 +699,13 @@ export async function verifyExportPixelsInBrowser(
   testInfo: TestInfo
 ): Promise<void> {
   // The browser-pixel comparator reads the source canvas at its backing-store size, while
-  // exports use logical document pixels. At HiDPI, that means the same visual error is
-  // counted once per backing-store pixel (for example, four times at deviceScaleFactor 2).
-  // Keep the budget proportional to compared pixel area so the 1x and 2x projects enforce
-  // the same visual tolerance. ICO is also compared in the source canvas's backing store,
-  // so its tighter budget follows the same rule.
+  // exports use logical document pixels and are resized to that source size. Both the
+  // changed-channel count and its total possible channels therefore grow with backing
+  // pixel area. Scaling the threshold by deviceScaleFactor squared keeps the allowed
+  // fraction fixed: for logical W x H and threshold T, T / (3WH) equals
+  // 4T / (3 * (2W) * (2H)) at 2x.
+  // ICO is also compared in the source canvas's backing store, so its tighter budget
+  // follows the same rule.
   const deviceScaleFactor = Number(testInfo.project.use.deviceScaleFactor ?? 1);
   if (!Number.isFinite(deviceScaleFactor) || deviceScaleFactor <= 0) {
     throw new Error(`Invalid Playwright deviceScaleFactor: ${String(testInfo.project.use.deviceScaleFactor)}`);

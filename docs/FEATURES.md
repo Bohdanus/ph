@@ -105,8 +105,8 @@ drop, the only one a bare gesture reaches on a populated document — calls
 to discard and otherwise renders `ConfirmDialog`
 (`src/components/ConfirmDialog/ConfirmDialog.tsx`), the app's first generic two-button
 modal. Tab close, reload and navigation are the same predicate against a `beforeunload`
-handler. The app-created starter document is clean on first load, so the first File > New
-or File > Open does not ask users to discard work they have not made. A blank document
+handler. The initial starter document is clean on first load, so the first File > New
+or File > Open does not ask users to discard work they have not made. A new blank document
 created through File > New is marked unsaved immediately, even before its first edit.
 
 **Status:** `partial`
