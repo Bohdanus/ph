@@ -109,6 +109,27 @@ describe('SpotHealingToolArea pointer cancellation', () => {
     resetDocumentGestures();
   });
 
+  describe('cursor state', () => {
+    it('shows a crosshair for an editable layer', () => {
+      const { toolArea } = renderArea();
+      expect(toolArea).toHaveClass('cursor-crosshair');
+      expect(toolArea).not.toHaveClass('cursor-not-allowed');
+    });
+
+    it('shows not-allowed for the protected bedrock layer', () => {
+      state.layers = { base: { id: 'base', isBedrock: true } };
+      const { toolArea } = renderArea();
+      expect(toolArea).toHaveClass('cursor-not-allowed');
+      expect(toolArea).not.toHaveClass('cursor-crosshair');
+    });
+
+    it('shows not-allowed when there is no active layer', () => {
+      state.activeLayerId = null;
+      const { toolArea } = renderArea();
+      expect(toolArea).toHaveClass('cursor-not-allowed');
+    });
+  });
+
   it('rolls back the preview when the owning pointer is cancelled', () => {
     const { container, toolArea } = renderArea();
 
