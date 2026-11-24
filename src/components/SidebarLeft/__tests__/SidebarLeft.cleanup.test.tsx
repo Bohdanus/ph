@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi, type Mock, type MockInstance } from 'vitest';
+import { afterEach, describe, expect, it, vi, type Mock, type MockInstance } from 'vitest';
 import { toolbarButtonByName, longPress, useSidebarLeftHarness } from './harness.tsx';
 import SidebarLeft, { FLYOUT_LONG_PRESS_MS } from '../SidebarLeft.tsx';
 
@@ -7,6 +7,11 @@ const LONG_PRESS_DELAY = FLYOUT_LONG_PRESS_MS;
 
 describe('SidebarLeft cleanup', () => {
   useSidebarLeftHarness();
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllTimers();
+  });
   it('clears the long-press timeout on unmount', () => {
     vi.useFakeTimers();
     const { unmount } = render(<SidebarLeft />);

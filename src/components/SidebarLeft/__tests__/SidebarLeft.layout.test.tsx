@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { toolbarMap } from '../../../../toolbar-mapping.ts';
 import { toolbarButtonByName, longPress, useSidebarLeftHarness } from './harness.tsx';
 import SidebarLeft from '../SidebarLeft.tsx';
@@ -39,6 +39,11 @@ const glyphOf = (button: HTMLElement): string => button.textContent?.trim() ?? '
 
 describe('SidebarLeft layout toggle', () => {
   useSidebarLeftHarness();
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllTimers();
+  });
   it('starts in one column, and the toggle reaches the two-column rail', () => {
     render(<SidebarLeft />);
 

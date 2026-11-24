@@ -249,6 +249,17 @@ describe('TIFF error paths', () => {
     expect(decodeImage).not.toHaveBeenCalled();
   });
 
+  it('rejects files whose first decoded page lacks IFD dimension tags (t256/t257)', async () => {
+    // UTIF.decode may return a page object without t256/t257 if the IFD is malformed
+    decode.mockReturnValue([{ t258: [8, 8, 8, 8], t277: [4] }]);
+
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+      'TIFF image has invalid dimensions'
+    );
+    expect(decodeImage).toHaveBeenCalled();
+    expect(toRGBA8).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['an empty page', {}],
     ['a zero width', { width: 0, height: 1 }],
@@ -278,6 +289,68 @@ describe('TIFF error paths', () => {
 
     await expect(encodeTiff(canvas)).rejects.toThrow('Unable to read canvas pixels for TIFF encoding');
     expect(encodeImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects encoding when the canvas returns a WebGL context', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue(null);
+
+    await expect(encodeTiff(canvas)).rejects.toThrow('Unable to read canvas pixels for TIFF encoding');
+    expect(encodeImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects encoding when the canvas returns a WebGL2 context', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue(null);
+
+    await expect(encodeTiff(canvas)).rejects.toThrow('Unable to read canvas pixels for TIFF encoding');
+    expect(encodeImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects encoding when the canvas returns a BitmapRenderer context', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue(null);
+
+    await expect(encodeTiff(canvas)).rejects.toThrow('Unable to read canvas pixels for TIFF encoding');
+    expect(encodeImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects encoding when UTIF.encodeImage returns null', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue({
+      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4) })),
+    } as unknown as CanvasRenderingContext2D);
+    encodeImage.mockReturnValue(null);
+
+    // null is wrapped as "null" string in the blob
+    const blob = await encodeTiff(canvas);
+    expect(blob.type).toBe('image/tiff');
+    const buffer = await blob.arrayBuffer();
+    expect(new TextDecoder().decode(buffer)).toBe('null');
+  });
+
+  it('rejects encoding when UTIF.encodeImage returns undefined', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue({
+      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4) })),
+    } as unknown as CanvasRenderingContext2D);
+    encodeImage.mockReturnValue(undefined);
+
+    // undefined is wrapped as "undefined" string in the blob
+    const blob = await encodeTiff(canvas);
+    expect(blob.type).toBe('image/tiff');
+    const buffer = await blob.arrayBuffer();
+    expect(new TextDecoder().decode(buffer)).toBe('undefined');
   });
 });
 

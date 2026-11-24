@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { store } = vi.hoisted(() => ({
   store: {
@@ -157,32 +157,72 @@ describe('useWorkspaceFitScale', () => {
     expect(result.current).toBeCloseTo(0.333333, 5);
   });
 
-  it('recalculates the fit when ResizeObserver reports a changed client viewport', () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
-    const element = createViewport();
-    setClientViewport(element, {
-      clientWidth: 400,
-      clientHeight: 200,
-      offsetWidth: 415,
-      offsetHeight: 220,
-    });
-    store.containerRef.current = element;
-
-    const { result } = renderHook(() => useWorkspaceFitScale());
-    expect(result.current).toBe(2);
-
-    setClientViewport(element, {
-      clientWidth: 385,
-      clientHeight: 200,
-      offsetWidth: 415,
-      offsetHeight: 220,
-    });
-    act(() => {
-      ControllableResizeObserver.instances[0].emit(resizeEntry(415, 220));
-      vi.advanceTimersByTime(16);
+  describe('resize observer integration', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
     });
 
-    expect(result.current).toBe(1.925);
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    });
+
+    it('recalculates the fit when ResizeObserver reports a changed client viewport', () => {
+      const element = createViewport();
+      setClientViewport(element, {
+        clientWidth: 400,
+        clientHeight: 200,
+        offsetWidth: 415,
+        offsetHeight: 220,
+      });
+      store.containerRef.current = element;
+
+      const { result } = renderHook(() => useWorkspaceFitScale());
+      expect(result.current).toBe(2);
+
+      setClientViewport(element, {
+        clientWidth: 385,
+        clientHeight: 200,
+        offsetWidth: 415,
+        offsetHeight: 220,
+      });
+      act(() => {
+        ControllableResizeObserver.instances[0].emit(resizeEntry(415, 220));
+        vi.advanceTimersByTime(16);
+      });
+
+      expect(result.current).toBe(1.925);
+    });
+
+    it('throttles consecutive resize notifications to one per animation frame', () => {
+      const element = createViewport();
+      setClientViewport(element, {
+        clientWidth: 400,
+        clientHeight: 200,
+        offsetWidth: 415,
+        offsetHeight: 220,
+      });
+      store.containerRef.current = element;
+      // Use default totalSize (200x100) so initial scale is 2 (400/200 = 2, 200/100 = 2)
+
+      const { result } = renderHook(() => useWorkspaceFitScale());
+      expect(result.current).toBe(2);
+
+      setClientViewport(element, {
+        clientWidth: 385,
+        clientHeight: 200,
+        offsetWidth: 415,
+        offsetHeight: 220,
+      });
+      act(() => {
+        ControllableResizeObserver.instances[0].emit(resizeEntry(415, 220));
+        ControllableResizeObserver.instances[0].emit(resizeEntry(410, 220));
+        ControllableResizeObserver.instances[0].emit(resizeEntry(405, 220));
+        vi.advanceTimersByTime(16);
+      });
+
+      expect(result.current).toBe(1.925);
+    });
   });
 });

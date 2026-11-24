@@ -174,6 +174,8 @@ describe('SidebarLeft overflow', () => {
     // in this file believe a re-measure had fired when it had not.
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    vi.useRealTimers();
+    vi.clearAllTimers();
   });
 
   it('shows every tool when the rail is tall enough, and no three-dots tile at all', () => {
@@ -389,6 +391,7 @@ describe('SidebarLeft the three-dots tile', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    vi.clearAllTimers();
   });
 
   it('opens its flyout on the press itself, with no hold to wait out', () => {

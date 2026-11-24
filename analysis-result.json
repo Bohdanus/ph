@@ -1,0 +1,88 @@
+{
+  "file": "src/components/SidebarLeft/__tests__/SidebarLeft.rendering.test.tsx",
+  "imports": [
+    "import { render, screen } from '@testing-library/react'",
+    "import { describe, expect, it } from 'vitest'",
+    "import { storeState, toolbarButtonByName, useSidebarLeftHarness } from './harness.tsx'",
+    "import SidebarLeft from '../SidebarLeft.tsx'"
+  ],
+  "helpers": [
+    "toolbarButtonByName (from harness)",
+    "useSidebarLeftHarness (from harness)",
+    "storeState (from harness)",
+    "resetMocks (from harness, via useSidebarLeftHarness)",
+    "cleanupTimers (from harness, via useSidebarLeftHarness)"
+  ],
+  "fixtures": [
+    "storeState fixture (toolName, color, backgroundColor, hasImage, dispatch)",
+    "toolArgs fixture (toolName, figure)",
+    "goToTool mock",
+    "patchToolArgs mock",
+    "Mocked toolIcons (simplified SVG icons with data-icon attribute)"
+  ],
+  "testCounts": {
+    "pass": 5,
+    "fail": 0,
+    "skip": 0
+  },
+  "crashPoint": null,
+  "staleAssertions": [],
+  "missingCoverage": [
+    "Overflow (three-dots) tile rendering and behavior",
+    "Layout toggle (one-column vs two-column) rendering",
+    "Responsive behavior across mobile/tablet/desktop breakpoints",
+    "Rail element ref and flyout anchor management",
+    "Toolbar fit measurement integration (useToolbarOverflow)",
+    "First-use highlighting (tool-new-badge) rendering",
+    "Color picker input refs and click handling",
+    "View state reset on hand tool double-click",
+    "Custom shape tool flyout entry rendering (unimplemented)",
+    "Rotate View Tool flyout entry under Hand Tool group"
+  ],
+  "dependencies": [
+    "src/components/SidebarLeft/__tests__/harness.tsx (shared render harness)",
+    "src/components/SidebarLeft/__tests__/SidebarLeft.icon-state.test.tsx (tests unimplemented tool dimming)",
+    "src/components/SidebarLeft/__tests__/SidebarLeft.flyout.test.tsx (tests flyout open/close behavior)",
+    "src/components/SidebarLeft/__tests__/SidebarLeft.layout.test.tsx (tests one/two column layout)",
+    "src/components/SidebarLeft/__tests__/SidebarLeft.overflow.test.tsx (tests three-dots overflow tile)",
+    "src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts (validates toolbarMap contract)"
+  ],
+  "productionSymbols": [
+    "SidebarLeft component",
+    "toolbarMap (from toolbar-mapping.ts)",
+    "toolbarGroups (flattened toolbarMap)",
+    "FLYOUT_LONG_PRESS_MS constant",
+    "UNIMPLEMENTED_TOOL_NAMES derived set",
+    "isUnimplementedTool function",
+    "UNIMPLEMENTED_TOOL_CLASS constant",
+    "TOOL_BUTTON_BASE_CLASS, TOOL_BUTTON_ACTIVE_CLASS, TOOL_BUTTON_INACTIVE_CLASS",
+    "LayoutIcon component",
+    "MoreToolsIcon component",
+    "OVERFLOW_TILE_TESTID constant",
+    "OVERFLOW_GROUP_KEY constant",
+    "OVERFLOW_IDENTITY constant",
+    "groupKey function (oneColumnGroupKey / twoColumnGroupKey)",
+    "toolbarSlots memo",
+    "useToolbarOverflow hook",
+    "overflowToolsForPlan callback",
+    "openFlyout / closeFlyout functions",
+    "getToolIcon function",
+    "isToolSelected function",
+    "selectTool function",
+    "renderToolGroup function",
+    "ToolTooltip component",
+    "AnchoredOverlay component",
+    "toolIcons object",
+    "slugifyToolLabel function",
+    "descriptionKeyFor function",
+    "findToolProcessor function",
+    "useStore hook",
+    "useApp hook",
+    "useCurrentTool hook",
+    "useFirstUse hook",
+    "useFirstUseContext hook",
+    "useIsMobileViewport hook",
+    "useIsTabletViewport hook",
+    "useToolbarOverflow hook"
+  ]
+}

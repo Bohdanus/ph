@@ -79,6 +79,8 @@ describe('SidebarLeft keyboard activation', () => {
   afterEach(() => {
     // The capture stub below replaces a global, so it does not come back on its own.
     vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.clearAllTimers();
   });
 
   /**

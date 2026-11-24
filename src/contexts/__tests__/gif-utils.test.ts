@@ -532,6 +532,98 @@ describe('GIF encoding error paths', () => {
 
     await expect(encodeGif(canvas)).rejects.toThrow('Unable to read canvas pixels');
   });
+
+  it('rejects a canvas that returns a WebGL context', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue(null);
+
+    await expect(encodeGif(canvas)).rejects.toThrow('Unable to read canvas pixels');
+  });
+
+  it('rejects a canvas that returns a WebGL2 context', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue(null);
+
+    await expect(encodeGif(canvas)).rejects.toThrow('Unable to read canvas pixels');
+  });
+
+  it('rejects a canvas that returns a BitmapRenderer context', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue(null);
+
+    await expect(encodeGif(canvas)).rejects.toThrow('Unable to read canvas pixels');
+  });
+
+  it('produces valid GIF bytes when given fully opaque and partially transparent pixels', async () => {
+    const data = new Uint8ClampedArray([
+      255,
+      0,
+      0,
+      255, // opaque red
+      0,
+      255,
+      0,
+      128, // semi-transparent green
+      0,
+      0,
+      255,
+      0, // fully transparent blue
+      255,
+      255,
+      0,
+      255, // opaque yellow
+    ]);
+    const canvas = document.createElement('canvas');
+    canvas.width = 2;
+    canvas.height = 2;
+    vi.spyOn(canvas, 'getContext').mockReturnValue({
+      getImageData: vi.fn(() => ({ data, width: 2, height: 2 })),
+    } as unknown as CanvasRenderingContext2D);
+
+    const blob = await encodeGif(canvas);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+
+    expect(blob.type).toBe('image/gif');
+    expect(bytes[0]).toBe(0x47); // G
+    expect(bytes[1]).toBe(0x49); // I
+    expect(bytes[2]).toBe(0x46); // F
+    expect(bytes[3]).toBe(0x38); // 8
+    expect(bytes[4]).toBe(0x39); // 9
+    expect(bytes[5]).toBe(0x61); // a
+    expect(bytes.at(-1)).toBe(0x3b); // trailer
+  });
+
+  it('encodes a frame with all pixels at transparency threshold (alpha=127) as transparent', async () => {
+    const data = new Uint8ClampedArray([
+      255,
+      0,
+      0,
+      127, // alpha=127 -> transparent
+      0,
+      255,
+      0,
+      128, // alpha=128 -> opaque
+    ]);
+    const canvas = document.createElement('canvas');
+    canvas.width = 2;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue({
+      getImageData: vi.fn(() => ({ data, width: 2, height: 1 })),
+    } as unknown as CanvasRenderingContext2D);
+
+    const blob = await encodeGif(canvas);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+
+    // Verify it produces valid GIF
+    expect(blob.type).toBe('image/gif');
+    expect(bytes.at(-1)).toBe(0x3b);
+  });
 });
 
 afterEach(() => {

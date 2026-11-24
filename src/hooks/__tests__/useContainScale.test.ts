@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useContainScale } from '../useContainScale.ts';
 
 const IMAGE = { width: 100, height: 100 };
@@ -94,23 +94,32 @@ describe('useContainScale', () => {
     expect(result.current.current).toBe(2);
   });
 
-  it('uses the same scrollport fit as pointer coordinates when a scrollbar reduces client width', () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
-
-    const el = container(415, 220, { left: 2, top: 2, width: 400, height: 200, offsetWidth: 415, offsetHeight: 220 });
-    const ref = { current: el };
-    const { result } = renderHook(() => useContainScale(ref, { width: 200, height: 100 }));
-
-    expect(result.current.current).toBe(2);
-    setClientViewport(el, { left: 2, top: 2, width: 385, height: 200, offsetWidth: 415, offsetHeight: 220 });
-
-    act(() => {
-      ControllableResizeObserver.instances[0].emit(resizeEntry(415, 220, 385, 200));
-      vi.advanceTimersByTime(32);
+  describe('resize observer integration', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
     });
 
-    expect(result.current.current).toBe(1.925);
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    });
+
+    it('uses the same scrollport fit as pointer coordinates when a scrollbar reduces client width', () => {
+      const el = container(415, 220, { left: 2, top: 2, width: 400, height: 200, offsetWidth: 415, offsetHeight: 220 });
+      const ref = { current: el };
+      const { result } = renderHook(() => useContainScale(ref, { width: 200, height: 100 }));
+
+      expect(result.current.current).toBe(2);
+      setClientViewport(el, { left: 2, top: 2, width: 385, height: 200, offsetWidth: 415, offsetHeight: 220 });
+
+      act(() => {
+        ControllableResizeObserver.instances[0].emit(resizeEntry(415, 220, 385, 200));
+        vi.advanceTimersByTime(32);
+      });
+
+      expect(result.current.current).toBe(1.925);
+    });
   });
 
   /**

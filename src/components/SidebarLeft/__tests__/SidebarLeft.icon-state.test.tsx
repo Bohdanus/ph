@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactElement } from 'react';
 import { goToTool, storeState, toolArgs, toolbarButtonByName, useSidebarLeftHarness } from './harness.tsx';
 import SidebarLeft from '../SidebarLeft.tsx';
@@ -74,6 +74,11 @@ const expectedIconNames = shapeGroup.map((tool) => (tool.figure ? `shape-${tool.
 
 describe('SidebarLeft icon and selection state', () => {
   useSidebarLeftHarness();
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllTimers();
+  });
   it('marks the grouped button as pressed when a tool in the group is active', () => {
     Object.assign(storeState, { toolName: 'brush' });
     render(<SidebarLeft />);

@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   advanceThroughLongPress,
   goToTool,
@@ -13,6 +13,11 @@ const LONG_PRESS_DELAY = FLYOUT_LONG_PRESS_MS;
 
 describe('SidebarLeft flyout closing', () => {
   useSidebarLeftHarness();
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllTimers();
+  });
   it.each([
     ['outside click', () => act(() => fireEvent.click(document.body))],
     ['Escape', () => act(() => fireEvent.keyDown(window, { key: 'Escape' }))],

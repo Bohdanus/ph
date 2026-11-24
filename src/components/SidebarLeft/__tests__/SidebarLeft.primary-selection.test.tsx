@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   goToTool,
   patchToolArgs,
@@ -41,6 +41,12 @@ const nonPrimaryCases: ReadonlyArray<[string, string, string]> = [
 
 describe('SidebarLeft primary tool selection', () => {
   useSidebarLeftHarness();
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllTimers();
+  });
+
   it.each(groupedToolCases)(
     'uses the first submenu item "$item" as the primary for the grouped tile',
     ({ name, item }) => {

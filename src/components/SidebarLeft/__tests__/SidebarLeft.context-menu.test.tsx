@@ -1,10 +1,15 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { goToTool, toolbarButtonByName, longPress, useSidebarLeftHarness } from './harness.tsx';
 import SidebarLeft from '../SidebarLeft.tsx';
 
 describe('SidebarLeft right-click (context menu)', () => {
   useSidebarLeftHarness();
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllTimers();
+  });
   it('opens flyout on right-click for grouped tools', () => {
     render(<SidebarLeft />);
 
