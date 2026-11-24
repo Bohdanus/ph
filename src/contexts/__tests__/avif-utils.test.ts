@@ -286,6 +286,38 @@ describe('AVIF decoding', () => {
 
     await expect(pending).rejects.toThrow('Failed to decode AVIF image');
   });
+
+  it('rejects when the AVIF codec returns null/undefined for imageData', async () => {
+    decode.mockResolvedValue(null);
+    const file = new Blob([new Uint8Array([0])], { type: 'image/avif' });
+
+    await expect(loadAvifFile(file)).rejects.toThrow('Failed to decode AVIF image');
+  });
+
+  it('rejects when the AVIF codec throws during decode', async () => {
+    decode.mockRejectedValue(new Error('WASM module failed to load'));
+    const file = new Blob([new Uint8Array([0])], { type: 'image/avif' });
+
+    await expect(loadAvifFile(file)).rejects.toThrow('WASM module failed to load');
+  });
+});
+
+describe('AVIF encoding error paths', () => {
+  it('rejects when the canvas has no 2d context', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue(null);
+
+    await expect(encodeAvif(canvas)).rejects.toThrow('Unable to read canvas pixels');
+  });
+
+  it('rejects when the AVIF encoder throws', async () => {
+    const canvas = canvasOf(1, 1, new Uint8ClampedArray([0, 0, 0, 255]));
+    encode.mockRejectedValue(new Error('AVIF encoding failed'));
+
+    await expect(encodeAvif(canvas)).rejects.toThrow('AVIF encoding failed');
+  });
 });
 
 describe('AVIF round-trip through the public contract', () => {

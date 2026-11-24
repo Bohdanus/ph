@@ -8,10 +8,12 @@ const storeState = vi.hoisted(() => ({
   activeLayerId: null as string | null,
 }));
 
+const storeDispatch = vi.hoisted(() => vi.fn());
+
 const mockMergeAllLayers = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeState],
+  useStore: () => [storeState, storeDispatch],
 }));
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
