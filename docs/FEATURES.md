@@ -172,6 +172,11 @@ an `<svg><image>` element (`imageFormats.ts` — `IMAGE_FORMATS`'s SVG entry lab
 it "SVG
 (flattened)"), not vector output.
 
+Crop changes the document frame without deleting source pixels. A layered PSD
+save retains layer pixels outside that frame, so reopening the PSD and expanding
+the crop can recover them. Flattened raster exports such as PNG and JPEG contain
+only the current frame.
+
 ## Selection
 
 **Photoshop:** a selection is an 8-bit-per-pixel alpha channel. It combines (New /
