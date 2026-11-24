@@ -156,6 +156,26 @@ in [`E2E-MIRROR.md`](E2E-MIRROR.md).
 
 ## Notes
 
+- For non-interactive WSL shells, verify that Linux Node is selected before
+  running project commands. If the repository uses nvm and `node` is missing
+  while `npm` resolves under `/mnt/c/Program Files/nodejs`, initialize nvm in
+  that shell and confirm both executables and versions:
+
+  ```bash
+  source "$HOME/.nvm/nvm.sh"
+  nvm use
+  command -v node npm
+  node --version
+  npm --version
+  ```
+
+- Run Git and npm from a WSL-owned worktree under the Linux clone. A Windows
+  linked worktree opened through `/mnt/c` may have a `.git` file whose absolute
+  `gitdir` is a Windows path; WSL Git interprets that path incorrectly and can
+  report “not a git repository.” Keep the Windows and WSL repositories and
+  linked worktrees separate, and confirm `git rev-parse --show-toplevel` and
+  `git rev-parse --git-dir --git-common-dir` before proceeding.
+
 - If you also use a Windows checkout, keep its Git operations and dependencies
   with Windows. See [Windows Gotchas](WINDOWS-GOTCHAS.md) before using both
   environments against a checkout.
