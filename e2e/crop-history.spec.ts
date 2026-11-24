@@ -6,7 +6,7 @@ import { getWorkspaceCanvas, loadImageData, viewportClip } from './helpers/canva
 import type { BoundingBox } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
-import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { expectNoDiscardPrompt } from './helpers/discard-prompt';
 import { canvasBands, type CanvasBand, visibleCanvasBox, waitForBands } from './helpers/history-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { documentFrameSize as getDocumentFrameSize } from '../src/contexts/document-frame.ts';
@@ -576,7 +576,7 @@ async function openRasterFixture(page: Page, rootDir: string): Promise<void> {
   const chooser = page.waitForEvent('filechooser');
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-open-button').click();
-  await acceptDiscardPrompt(page);
+  await expectNoDiscardPrompt(page);
   await (await chooser).setFiles(path.join(rootDir, 'fixtures/split-half-red-blue.png'));
 }
 

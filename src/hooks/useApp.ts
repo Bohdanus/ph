@@ -15,7 +15,7 @@ import { appendSelectionClear } from '../contexts/useSelectionHistory.ts';
 import { isDocumentGestureOpen } from './document-gesture.ts';
 
 export interface UseAppType {
-  setBlankImage: (data: NewDocumentBlankParams) => void;
+  setBlankImage: (data: NewDocumentBlankParams, options?: { hasUnsavedChanges?: boolean }) => void;
   setImageFromUpload: (data: ImageUploadResponse) => Promise<void>;
 
   handleImageSave: (data: ImageSaveResponse) => void;
@@ -85,11 +85,15 @@ export const useApp = (): UseAppType => {
     dispatch({ type: 'SET_FILE_NAME', payload: fileName });
   }
 
-  function setBlankImage(params: NewDocumentBlankParams) {
+  function setBlankImage(params: NewDocumentBlankParams, options: { hasUnsavedChanges?: boolean } = {}) {
     assertWithinDocumentPixelBudget(params.size, 'Document');
     imageImportRevision++;
     handleImageCreate(params.size);
-    createBlankLayer({ ...params }, true);
+    if (options.hasUnsavedChanges === false) {
+      createBlankLayer({ ...params }, true, undefined, { hasUnsavedChanges: false });
+    } else {
+      createBlankLayer({ ...params }, true);
+    }
   }
 
   async function setImageFromUpload(data: ImageUploadResponse) {

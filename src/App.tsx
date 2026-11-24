@@ -57,7 +57,7 @@ function BlankImageStarter() {
     if (hasImage || startedRef.current) return;
 
     startedRef.current = true;
-    setBlankImage(DEFAULT_BLANK_IMAGE);
+    setBlankImage(DEFAULT_BLANK_IMAGE, { hasUnsavedChanges: false });
   }, [hasImage, setBlankImage]);
 
   return null;
