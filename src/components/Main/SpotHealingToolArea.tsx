@@ -52,7 +52,7 @@ export const SpotHealingToolArea = ({ className }: SpotHealingToolAreaProps) => 
 
   return (
     <div
-      className={`${className} cursor-crosshair`}
+      className={`${className} ${isEnabled ? 'cursor-crosshair' : 'cursor-not-allowed'}`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}

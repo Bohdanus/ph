@@ -58,10 +58,10 @@ tools, and scenario-level evidence for import, crop, retouch, history, and expor
 1. Keep new-user and early-intermediate journeys tied to implemented controls and executable E2E
    assertions. The title-card, layered-paint, and synthetic import/crop journeys are in
    [`ENTRY-LEVEL-WORKFLOWS.md`](ENTRY-LEVEL-WORKFLOWS.md).
-2. Before claiming photo-editing readiness, add an integrated real-photo journey that crops a
-   representative photograph, applies a supported retouch operation, uses Undo/Redo, and exports
-   PNG/JPEG. The current crop scenario proves those mechanics on a deterministic synthetic fixture,
-   not image-quality results on photographs.
+2. An integrated real-photo journey now covers crop, Spot Healing, exact Undo/Redo, and PNG export
+   with one attributed CC0 photograph in [`photoshop-photo-workflow.spec.ts`](../e2e/photoshop-photo-workflow.spec.ts).
+   Broader photo-editing claims still need quality checks across multiple image types and retouch
+   operations; the current E2E establishes interaction and history behavior, not retouch quality.
 3. Prioritize selection refinement and non-destructive layer workflows before adding advanced
    Photoshop-specific tools. Those are broader document-model changes and need scoped designs,
    Adobe-source review, and focused history/PSD tests.
