@@ -6,9 +6,9 @@
 
 **Candidate branch:** `task/unit-test-hardening-origin-sync-20261124`
 
-**Candidate HEAD:** `396310927464a8415345d87da9e841cacde8dd91`
+**Origin-sync merge commit:** `396310927464a8415345d87da9e841cacde8dd91`
 
-**Candidate tree:** `eefe1b43df8dea8143bd55d2711a3de8125317d0`
+**Origin-synced tree before this documentation-only handoff refresh:** `eefe1b43df8dea8143bd55d2711a3de8125317d0`
 
 **Fetched and merged `origin/main`:** `29bca7ca3315cda52cde050a03db8debb553e8de`
 
@@ -18,7 +18,7 @@ The source branch was reviewed against local main. The refined merge `bd083e11fb
 
 An exact-free OpenRouter Nemotron review of the integration patch found two regressions: removing the SVG structure assertion and hard-coding the pixel-ceiling dimensions. Both were corrected. The SVG structure assertion is restored, and the non-square over-limit case is derived from `MAX_CREATABLE_DOCUMENT_PIXELS`.
 
-Validation on the final candidate tree:
+Validation on the origin-synced code tree, before this documentation-only handoff refresh:
 
 - `npm test -- --reporter=json`: 2,448 suites passed; 14,254 tests passed, 20 pending, 0 failed.
 - `npm run tsc`: passed.
