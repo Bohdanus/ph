@@ -6322,6 +6322,103 @@ test.describe('Crop history', () => {
     await expectNoHorizontalContinuation('moved selection');
   });
 
+  test('rotating and moving a crop clears its previous cutout', async ({ page }) => {
+    await openDocument(page);
+    const fit = await openCropTool(page);
+    await dragOnCanvas(page, fit, { x: 150, y: 150 }, { x: 650, y: 450 });
+
+    const surface = page.locator('.cursor-crop');
+    const rotation = await cropRotationGesturePoints(page);
+    await page.mouse.move(rotation.start.x, rotation.start.y);
+    await page.mouse.down();
+    await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
+    await page.mouse.up();
+    await expect(surface, 'the crop is rotated before checking its repaint').toHaveAttribute(
+      'data-rotation',
+      /8[5-9]|9[0-5]/
+    );
+
+    const workspace = page.getByTestId('workspace-container');
+    const expectDimmedOutsideAndClearInside = async (stage: string, outside: PagePoint, inside: PagePoint) => {
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          })
+      );
+      const workspaceBox = await workspace.boundingBox();
+      expect(workspaceBox, `${stage}: workspace bounds`).not.toBeNull();
+      const screenshot = await workspace.screenshot();
+      const { data, info } = await sharp(screenshot).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      const scaleX = info.width / workspaceBox!.width;
+      const scaleY = info.height / workspaceBox!.height;
+      const samplePatch = (documentPointValue: PagePoint) => {
+        const pagePoint = documentPoint(fit, documentPointValue.x, documentPointValue.y);
+        const centerX = Math.round((pagePoint.x - workspaceBox!.x) * scaleX);
+        const centerY = Math.round((pagePoint.y - workspaceBox!.y) * scaleY);
+        const radiusX = Math.max(2, Math.ceil(4 * scaleX));
+        const radiusY = Math.max(2, Math.ceil(4 * scaleY));
+        const values: number[] = [];
+        for (let y = centerY - radiusY; y <= centerY + radiusY; y++) {
+          for (let x = centerX - radiusX; x <= centerX + radiusX; x++) {
+            if (x < 1 || y < 1 || x >= info.width - 1 || y >= info.height - 1) {
+              throw new Error(`${stage}: sample point lies outside the workspace screenshot`);
+            }
+            const offset = (y * info.width + x) * info.channels;
+            values.push(0.2126 * data[offset]! + 0.7152 * data[offset + 1]! + 0.0722 * data[offset + 2]!);
+          }
+        }
+        const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+        return { mean, spread: Math.max(...values) - Math.min(...values) };
+      };
+
+      const outsidePatch = samplePatch(outside);
+      const insidePatch = samplePatch(inside);
+      expect(outsidePatch.mean, `${stage}: pixels outside the rotated crop stay dimmed`).toBeLessThan(140);
+      expect(outsidePatch.spread, `${stage}: no stale crop edge crosses the outside patch`).toBeLessThan(45);
+      expect(insidePatch.mean, `${stage}: pixels inside the rotated crop remain clear`).toBeGreaterThan(200);
+      expect(insidePatch.mean - outsidePatch.mean, `${stage}: the crop cutout remains visible`).toBeGreaterThan(100);
+    };
+
+    await expectDimmedOutsideAndClearInside('rotation only', { x: 200, y: 300 }, { x: 400, y: 300 });
+
+    const moveStart = documentPoint(fit, 400, 300);
+    const moveEnd = documentPoint(fit, 480, 320);
+    await page.mouse.move(moveStart.x, moveStart.y);
+    await expect(surface, 'the crop interior moves as one selection').toHaveCSS('cursor', 'move');
+    await page.mouse.down();
+    await page.mouse.move(moveEnd.x, moveEnd.y, { steps: 12 });
+    await page.mouse.up();
+    await expect(surface, 'moving the crop preserves its rotation').toHaveAttribute('data-rotation', /8[5-9]|9[0-5]/);
+    await expectDimmedOutsideAndClearInside('rotated move', { x: 300, y: 300 }, { x: 480, y: 320 });
+  });
+
+  test('starting a new crop outside a rotated selection resets its angle', async ({ page }) => {
+    await openDocument(page);
+    const fit = await openCropTool(page);
+    await dragOnCanvas(page, fit, { x: 150, y: 150 }, { x: 650, y: 450 });
+
+    const surface = page.locator('.cursor-crop');
+    const rotation = await cropRotationGesturePoints(page);
+    await page.mouse.move(rotation.start.x, rotation.start.y);
+    await page.mouse.down();
+    await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
+    await page.mouse.up();
+    await expect(surface, 'the existing crop is rotated').toHaveAttribute('data-rotation', /8[5-9]|9[0-5]/);
+
+    const newCropStart = documentPoint(fit, 80, 80);
+    const newCropEnd = documentPoint(fit, 210, 190);
+    await page.mouse.move(newCropStart.x, newCropStart.y);
+    await page.mouse.down();
+    await expect(surface, 'a new crop starts with a neutral angle').toHaveAttribute('data-rotation', '0');
+    await page.mouse.move(newCropEnd.x, newCropEnd.y, { steps: 12 });
+    await page.mouse.up();
+
+    await expect(surface, 'the new selection stays unrotated').toHaveAttribute('data-rotation', '0');
+    await expect(page.getByTestId('crop-frame-dim'), 'the axis-aligned mask returns for the new crop').toBeVisible();
+    await expect(page.getByTestId('crop-selection-outline'), 'the new crop outline is painted').toBeVisible();
+  });
+
   test('the crop overlay selector exposes six guides and O cycles the active guide', async ({ page }) => {
     await openDocument(page);
     await openCropTool(page);
