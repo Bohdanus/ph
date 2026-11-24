@@ -125,7 +125,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   const activeLayerSupportsRotation = isRotatableShapeLayer(activeLayer);
   const activeLayerRect = useMemo(
     () =>
-      activeLayer && !activeLayer.isBedrock
+      activeLayer && !activeLayer.isBedrock && activeLayer.locked !== true
         ? posToSortedRect(documentToCanvasPos(getLayerRect(activeLayer), documentFrame))
         : null,
     [activeLayer, documentFrame]
@@ -358,9 +358,14 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     const layer = layers[layerUnderPointerId!] ?? null;
     const pointerId = getPointerId(event);
 
+    const isLockedLayer = layer?.locked === true;
     const dragHandleClicked = handlePointerDown_useRect(
       event,
-      layer ? { ...layer, pos: documentToCanvasPos(getLayerRect(layer), documentFrame) } : layer
+      isLockedLayer
+        ? undefined
+        : layer
+          ? { ...layer, pos: documentToCanvasPos(getLayerRect(layer), documentFrame) }
+          : layer
     );
     if (dragHandleClicked) {
       startLayerInteraction(selectedLayerIdRef.current, pointerId);
@@ -371,17 +376,12 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       return;
     }
 
-    if (layer && layer.isBedrock) {
+    if (layer && (layer.isBedrock || isLockedLayer)) {
       clearSelection();
-      selectedLayerIdRef.current = null;
-      interactionLayerIdRef.current = null;
-      interactionStartPosRef.current = null;
-      interactionStartBoundsRef.current = null;
-      interactionStartRotationRef.current = null;
-      interactionCurrentRotationRef.current = null;
-      isInteractionActiveRef.current = false;
-      interactionPointerIdRef.current = null;
-      // indicate somehow bedrock is selected
+      selectedLayerIdRef.current = isLockedLayer ? layer.id : null;
+      startLayerInteraction(null, pointerId);
+      containerRef.current?.classList.remove('cursor-grabbing');
+      event.currentTarget.style.cursor = 'not-allowed';
     } else {
       selectedLayerIdRef.current = layerUnderPointerId;
       startLayerInteraction(layerUnderPointerId, pointerId);
@@ -412,7 +412,9 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       const point = canvasToDocumentPoint(getLocalCoords(event), documentFrame);
 
       let hoveredLayerId = getLayerIdByPoint(layers, point);
-      if (hoveredLayerId && layers[hoveredLayerId].isBedrock) {
+      const hoveredLayer = hoveredLayerId ? layers[hoveredLayerId] : null;
+      event.currentTarget.style.cursor = hoveredLayer?.isBedrock || hoveredLayer?.locked === true ? 'not-allowed' : '';
+      if (hoveredLayer?.isBedrock) {
         hoveredLayerId = null;
       }
 
@@ -457,6 +459,12 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     // are one event, so a release that ends neither hands back nothing.
     if (!isOwningRelease) return;
 
+    const point = canvasToDocumentPoint(getLocalCoords(event), documentFrame);
+    const hoveredLayerId = getLayerIdByPoint(layers, point);
+    const hoveredLayer = hoveredLayerId ? layers[hoveredLayerId] : null;
+    event.currentTarget.style.cursor =
+      !interactionLayerIdRef.current && (hoveredLayer?.isBedrock || hoveredLayer?.locked === true) ? 'not-allowed' : '';
+
     releaseDocumentClaim();
 
     isInteractionActiveRef.current = false;
@@ -495,10 +503,12 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     interactionPointerIdRef.current = null;
   }
 
-  function handlePointerLeave(event: React.PointerEvent) {
+  function handlePointerLeave(event: React.PointerEvent<HTMLDivElement>) {
     if (pointerIdRef.current !== event.pointerId) return;
 
     abandonInteraction();
+    containerRef.current?.classList.remove('cursor-grabbing');
+    event.currentTarget.style.cursor = '';
 
     hoveredLayerIdRef.current = null;
     ants.clear();

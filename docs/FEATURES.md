@@ -254,7 +254,8 @@ Background` for the lone backing layer.
 **Gap:** No groups or nesting, no layer masks, no clipping masks, no adjustment
 or smart-object layers. The blend-mode menu supports a subset of Photoshop's modes, and the single
 `locked` flag implements a strict full-layer lock rather than Photoshop's four independent lock
-protections. Photoshop's separate Fill opacity and preset drop-down remain absent. See
+protections. Locked layers have no Move Tool transform box, and a hit on one is selection-only with
+a prohibited cursor. Photoshop's separate Fill opacity and preset drop-down remain absent. See
 [`LAYERS-PANEL.md`](LAYERS-PANEL.md#92-layer-editability-and-rasterization-gates).
 
 ## History
