@@ -5,14 +5,12 @@ import {
   getDarkPixelBounds,
   getWorkspaceCanvas,
   getSelectionBounds,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
   screenshotBoundsToCss,
   viewportClip,
   workspaceDocumentPixelMask,
   waitForCanvasRedraw,
+  documentToCanvasOffset,
+  DEFAULT_DOCUMENT_SIZE,
 } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { imagePointToCss } from './helpers/screenshot-scale';
@@ -21,6 +19,16 @@ import { clickToolButton } from './helpers/toolbar-helpers';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 // Resize handle center offset from selection outline edge (screenshot pixels)
 const HANDLE_OFFSET = 4;
+
+/**
+ * Document-space line endpoints for a standard test stroke.
+ * Replaces the box-relative LINE_* constants with document-space coordinates.
+ * The document size is 800x600; the line runs from (150,150) to (350,150) in document pixels.
+ */
+const DOC_LINE_START_X = 150;
+const DOC_LINE_START_Y = 150;
+const DOC_LINE_END_X = 350;
+const DOC_LINE_END_Y = 150;
 
 /**
  * How far a measured CSS delta may sit from the amount the gesture asked for.
@@ -69,7 +77,21 @@ test.describe('Select & Move', () => {
     if (!box) throw new Error('Canvas not found');
 
     await clickToolButton(page, 'draw');
-    await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+    // Convert document-space line endpoints to box-relative CSS pixels for the gesture.
+    // The document size is 800x600; the line runs from (150,150) to (350,150) in document pixels.
+    const { x: lineStartX, y: lineStartY } = documentToCanvasOffset(
+      box,
+      DOC_LINE_START_X,
+      DOC_LINE_START_Y,
+      DEFAULT_DOCUMENT_SIZE
+    );
+    const { x: lineEndX, y: lineEndY } = documentToCanvasOffset(
+      box,
+      DOC_LINE_END_X,
+      DOC_LINE_END_Y,
+      DEFAULT_DOCUMENT_SIZE
+    );
+    await drawLine(page, box, lineStartX, lineStartY, lineEndX, lineEndY);
     await waitForCanvasRedraw(page, box);
 
     const originalScreenshot = await captureCanvasScreenshot(page, box, testInfo, 'select-move-original');
@@ -139,7 +161,21 @@ test.describe('Select & Move', () => {
     if (!box) throw new Error('Canvas not found');
 
     await clickToolButton(page, 'draw');
-    await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+    // Convert document-space line endpoints to box-relative CSS pixels for the gesture.
+    // The document size is 800x600; the line runs from (150,150) to (350,150) in document pixels.
+    const { x: lineStartX, y: lineStartY } = documentToCanvasOffset(
+      box,
+      DOC_LINE_START_X,
+      DOC_LINE_START_Y,
+      DEFAULT_DOCUMENT_SIZE
+    );
+    const { x: lineEndX, y: lineEndY } = documentToCanvasOffset(
+      box,
+      DOC_LINE_END_X,
+      DOC_LINE_END_Y,
+      DEFAULT_DOCUMENT_SIZE
+    );
+    await drawLine(page, box, lineStartX, lineStartY, lineEndX, lineEndY);
     await waitForCanvasRedraw(page, box);
 
     // Select Move Tool (reposition)

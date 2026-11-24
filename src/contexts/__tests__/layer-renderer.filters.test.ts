@@ -128,7 +128,9 @@ describe('drawLayerSource vector argument scaling', () => {
   }
 
   it('passes the args through unscaled when the source has no recorded position', () => {
-    const raster = { width: 10, height: 5 } as OffscreenCanvas;
+    // The processor is called with size 40x20 (documentFrame size). A real processor
+    // would create a raster at that size. The mock returns a raster at that size.
+    const raster = { width: 40, height: 20 } as OffscreenCanvas;
     // Recording what the processor received is the assertion: the point of these
     // cases is whether the geometry was scaled or passed through untouched.
     const seen: ToolArgs[] = [];

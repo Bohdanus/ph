@@ -1,0 +1,137 @@
+[
+  {
+    "entry": "Windows-only — test:e2e:clean uses a POSIX command",
+    "classification": "fixed-on-main",
+    "evidence": [
+      "package.json line 40: test:e2e:clean now uses a Node.js script with fs.rmSync instead of rm -rf",
+      "The script is cross-platform and no longer invokes POSIX rm"
+    ],
+    "testFile": "package.json",
+    "priority": "low"
+  },
+  {
+    "entry": "Cross-platform — HiDPI Draw preview and commit pixels differ",
+    "classification": "open",
+    "evidence": [
+      "e2e/check-dpr.spec.ts lines 116-211: test 'committing a Draw stroke preserves the live HiDPI preview pixels' still asserts differingPixels: 0 and maxChannelDelta: 0",
+      "The test compares live preview pixels against committed pixels at DPR 2 and expects exact match",
+      "OPEN_PROBLEMS.md records 1,068 pixels differed with max channel delta 1 in local reproduction"
+    ],
+    "testFile": "e2e/check-dpr.spec.ts",
+    "priority": "high"
+  },
+  {
+    "entry": "macOS-only — crop-history retained-affine parity fails for the blank source",
+    "classification": "open",
+    "evidence": [
+      "e2e/crop-history.spec.ts lines 10103-10282: test 'multi-step frame transitions retain byte parity across text, vector, blank, and paint sources' includes blank-affine layer transforms (lines 10114-10127)",
+      "The fixture defines blank-affine with rotate: 13, mirrorH: false, mirrorV: true, skewX: 2, skewY: -1, resizeX: 105, resizeY: 90",
+      "OPEN_PROBLEMS.md records 88 differing frame bytes on macOS for blank-affine at integer frame fixture retained affine stage"
+    ],
+    "testFile": "e2e/crop-history.spec.ts",
+    "priority": "high"
+  },
+  {
+    "entry": "Cross-platform — PNG save and re-import do not preserve every document pixel",
+    "classification": "open",
+    "evidence": [
+      "e2e/file-roundtrip.spec.ts lines 342-430: verifyPngRoundTrip uses expectRasterPixelsEqual which compares every document pixel",
+      "Line 387-391: exact pixel comparison between savedDocument and beforeDocument with 'the saved PNG should preserve every document pixel from the canvas before save'",
+      "Line 429: expectRasterPixelsEqual(afterDocument, savedDocument, 'reopening the saved PNG should restore every document pixel')"
+    ],
+    "testFile": "e2e/file-roundtrip.spec.ts",
+    "priority": "high"
+  },
+  {
+    "entry": "Cross-platform — Move redo does not match the pre-move raster signature",
+    "classification": "open",
+    "evidence": [
+      "e2e/zoom-coordinate-tools.spec.ts lines 814-818: Move redo test polls for rasterSignature to equal movedSignature after redo click",
+      "The test uses SHA256 hash of full raster data as signature (lines 212-217)",
+      "OPEN_PROBLEMS.md records expected and received hashes differ on all three platforms in mirror CI"
+    ],
+    "testFile": "e2e/zoom-coordinate-tools.spec.ts",
+    "priority": "high"
+  },
+  {
+    "entry": "Invariant — headless is the default, and the refusal is structural",
+    "classification": "stale",
+    "evidence": [
+      "OPEN_PROBLEMS.md lines 134-171 explicitly states 'This is not a work item. The mitigation is already shipped'",
+      "playwright.config.ts line 159: headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'",
+      "e2e/global-setup.ts has refuseVisibleBrowser() that throws on --headed, --ui, --debug"
+    ],
+    "testFile": "playwright.config.ts, e2e/global-setup.ts",
+    "priority": "low"
+  },
+  {
+    "entry": "Known-skip tests — e2e/export/photopea.spec.ts",
+    "classification": "stale",
+    "evidence": [
+      "OPEN_PROBLEMS.md lines 174-178: test.skip declaration because it round-trips through external photopea.com",
+      "Cannot run offline or in sandboxed CI by design",
+      "Not a defect to fix - intentional skip"
+    ],
+    "testFile": "e2e/export/photopea.spec.ts",
+    "priority": "low"
+  },
+  {
+    "entry": "P2 — document-space gesture audits must be specific to the oracle",
+    "classification": "open",
+    "evidence": [
+      "e2e/helpers/canvas-helpers.ts lines 167-170: LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y still defined as '[BOX] — standard test-line endpoints, relative to the canvas box'",
+      "grep shows 12 specs still import these box-relative constants: adjustments, color, document-dialogs, erase-fill-eyedropper, file-roundtrip, history-panel, keyboard-shortcuts, layers-panel, levels, paint-tool-pixels, select-move, transform",
+      "Source text matches for box-relative patterns: 98 and 305 matches still exist per OPEN_PROBLEMS.md counting commands"
+    ],
+    "testFile": "e2e/helpers/canvas-helpers.ts",
+    "priority": "medium"
+  },
+  {
+    "entry": "P2 — the AVIF export waits on a wasm encoder inside a 30s download timeout, and only AVIF exceeds it",
+    "classification": "open",
+    "evidence": [
+      "e2e/export/helpers.ts line 101: DOWNLOAD_TIMEOUT_MS = 30_000 still in place",
+      "AVIF format still in exportFormats (line 132) with verification: 'browser-pixels'",
+      "AVIF uses @jsquash/avif which loads avif_enc-*.wasm asset (per OPEN_PROBLEMS.md)",
+      "WASM 403 failure mode documented as separate from encode timeout"
+    ],
+    "testFile": "e2e/export/raster-formats.spec.ts, e2e/export/visual-regression.spec.ts",
+    "priority": "high"
+  },
+  {
+    "entry": "P2 — Chrome stable remains unpinned and can drift from the visual baselines",
+    "classification": "open",
+    "evidence": [
+      "playwright.config.ts line 189: channel: process.env.PLAYWRIGHT_CHANNEL ?? 'chrome' - no version pin",
+      ".github/workflows/ci.yml lines 332, 338, 350, 356, 380, 390: install-command uses 'npx playwright install chrome' without version",
+      "visual-regression.spec.ts lines 173-184: threshold 0.01, maxDiffPixels: 100 documented as tripwire, not tolerance",
+      "Mirror run 45028865898 resolved Chrome 158.0.8127.37 and failed all seven formats on Windows"
+    ],
+    "testFile": "playwright.config.ts, .github/workflows/ci.yml, e2e/export/visual-regression.spec.ts",
+    "priority": "high"
+  },
+  {
+    "entry": "P3 — no dedicated mobile/HiDPI project; touch coverage and the full 2x suite remain partial",
+    "classification": "open",
+    "evidence": [
+      "playwright.config.ts lines 182-192: only one project declared (Google Chrome), no mobile/HiDPI project",
+      "check-dpr.spec.ts has test-scoped deviceScaleFactor: 2 but no project-level 2x",
+      "OPEN_PROBLEMS.md records diagnostic run with 76 failures across 21 spec files at 2x",
+      "Some specs opt into touch per test (layers.spec.ts, text-edit.spec.ts, canvas-growth.spec.ts) but no dedicated project"
+    ],
+    "testFile": "playwright.config.ts, e2e/check-dpr.spec.ts",
+    "priority": "medium"
+  },
+  {
+    "entry": "P3 — re-verification: the tablet band's option-row floor is no longer the panel's measured width",
+    "classification": "open",
+    "evidence": [
+      "e2e/responsive-shell.spec.ts lines 504-592: test 'makes the Shape/Horizontal Type Tool option panel horizontally scrollable rather than unreachable' uses MIN_PANEL_WIDTH = TABLET.width + 100 (1000 at 900px)",
+      "Line 549: expect(metrics.scrollWidth).toBeGreaterThanOrEqual(MIN_PANEL_WIDTH) - derived floor not fixed width",
+      "OPEN_PROBLEMS.md lines 463-468: panels still measure 1085 and 1032 against 1000px floor - 4px shortfall remains but test passes because floor was lowered",
+      "The defect (4px missing) is still present; only the assertion threshold changed"
+    ],
+    "testFile": "e2e/responsive-shell.spec.ts",
+    "priority": "medium"
+  }
+]

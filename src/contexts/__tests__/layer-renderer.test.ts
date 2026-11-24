@@ -790,7 +790,7 @@ describe('drawLayerSource', () => {
   });
 
   it('uses promoted baked bitmap bounds without reapplying operations', () => {
-    const bitmap = { width: 30, height: 40 } as ImageBitmap;
+    const bitmap = { width: 60, height: 80 } as ImageBitmap;
     const ctx = makeMockCtx();
     const filtersAtDraw: string[] = [];
     vi.mocked(ctx.drawImage).mockImplementation(() => filtersAtDraw.push(ctx.filter));
@@ -816,12 +816,12 @@ describe('drawLayerSource', () => {
   });
 
   it('uses the promoted bitmap for retained Text presentations', () => {
-    const bitmap = { width: 30, height: 40 } as ImageBitmap;
     const processor = vi.spyOn(toolProcessors.text, 'imageProcessor');
     const ctx = makeMockCtx();
     const filtersAtDraw: string[] = [];
     vi.mocked(ctx.drawImage).mockImplementation(() => filtersAtDraw.push(ctx.filter));
     const sourcePosition = { x: 2, y: 3, width: 30, height: 40 };
+    const bitmap = { width: 60, height: 80 } as ImageBitmap;
     const layer: Layer = {
       id: 'promoted-text',
       name: 'Promoted text',

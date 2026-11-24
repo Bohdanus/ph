@@ -82,6 +82,12 @@ export type DrawToolSettings = Omit<DrawToolArgs, 'color' | 'points' | 'pointTim
 export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {
   const { alpha, color, penType, lineDash, lineWidth } = args;
 
+  // Match the committed rendering path (draw function, presentation-evaluator) which uses
+  // imageSmoothingEnabled = false. Without this, the live tool overlay stroke has
+  // anti-aliasing (smoothing enabled by default) while the committed layer does not,
+  // causing a pixel mismatch in the HiDPI Draw preview/commit test.
+  ctx.imageSmoothingEnabled = false;
+
   // Assigned unconditionally rather than only when erasing: the overlay context is shared between
   // strokes and between tools, so an eraser that left `destination-out` behind would silently turn
   // the next tool's stroke into an eraser. `source-over` is the canvas default, so for every tool
@@ -103,9 +109,10 @@ export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {
 };
 
 export const draw = (params: CreatorToolParams | ProcessorToolParams) => (args: DrawToolArgs) => {
-  const { size } = params;
-  const canvas = new OffscreenCanvas(size.width, size.height);
+  const { size, backingScale = 1 } = params;
+  const canvas = new OffscreenCanvas(size.width * backingScale, size.height * backingScale);
   const ctx = canvas.getContext('2d')!;
+  ctx.setTransform(backingScale, 0, 0, backingScale, 0, 0);
   ctx.imageSmoothingEnabled = false;
 
   if ('bitmap' in params) ctx.drawImage(params.bitmap, 0, 0, size.width, size.height);

@@ -439,7 +439,11 @@ export function replayHistory(
     if (processor.commit === 'geometry') {
       const { move, resize } = toolArgs as RepositionToolArgs;
       const patch = resize ?? move;
-      if (patch) layers = { ...layers, [layerId]: { ...layer, pos: { ...layer.pos, ...patch } } };
+      if (patch)
+        layers = {
+          ...layers,
+          [layerId]: { ...layer, pos: { ...layer.pos, ...patch }, tmpCanvas: null, presentationBounds: null },
+        };
       continue;
     }
     if (processor.commit === 'document-operation') continue;
