@@ -15,6 +15,7 @@ import {
 } from './layer-utils.ts';
 import {
   isLayerBlendMode,
+  isToolSourceRematerializedAtBounds,
   type Layer,
   type LayerId,
   type LayerOperationArgs,
@@ -100,6 +101,18 @@ export type HistoryReplayDependencies = {
   }) => Layer;
   applyRasterTool: (layer: Layer, args: ToolArgs) => Layer;
 };
+
+function hasUsableBitmap(bitmap: Layer['bitmap']): boolean {
+  return Boolean(
+    bitmap && Number.isFinite(bitmap.width) && Number.isFinite(bitmap.height) && bitmap.width > 0 && bitmap.height > 0
+  );
+}
+
+function canRematerializeLayerSource(layer: Layer): boolean {
+  const source = layer.source;
+  if (source?.kind === 'image') return hasUsableBitmap(layer.bitmap);
+  return source?.kind === 'tool' && isToolSourceRematerializedAtBounds(source.args.toolName);
+}
 
 function cloneLayer(layer: Layer): Layer {
   return {
@@ -448,16 +461,26 @@ export function replayHistory(
     if (processor.commit === 'geometry') {
       const { move, resize } = toolArgs as RepositionToolArgs;
       const patch = resize ?? move;
-      if (patch)
+      if (patch) {
+        const pos = { ...layer.pos, ...patch };
+        const sizeChanged = pos.width !== layer.pos.width || pos.height !== layer.pos.height;
         layers = {
           ...layers,
           [layerId]: {
             ...layer,
-            pos: { ...layer.pos, ...patch },
-            tmpCanvas: layer.source?.kind === 'blank' ? unpromotedBlankRaster(layer) : layer.tmpCanvas,
+            pos,
+            // Only derived caches with a canonical source can be rebuilt after a resize.
+            // Blank and rasterized layers may have no other copy of their current pixels.
+            tmpCanvas:
+              layer.source?.kind === 'blank'
+                ? unpromotedBlankRaster(layer)
+                : sizeChanged && canRematerializeLayerSource(layer)
+                  ? null
+                  : layer.tmpCanvas,
             presentationBounds: null,
           },
         };
+      }
       continue;
     }
     if (processor.commit === 'document-operation') continue;
