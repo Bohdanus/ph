@@ -17,7 +17,7 @@ import {
   waitForCanvasRedraw,
 } from '../helpers/canvas-helpers';
 import { clickToolButton, toggleToolbarLayout } from '../helpers/toolbar-helpers';
-import { acceptDiscardPrompt } from '../helpers/discard-prompt';
+import { expectNoDiscardPrompt } from '../helpers/discard-prompt';
 import { DEFAULT_TEST_TIMEOUT_MS } from '../helpers/timeouts';
 
 /**
@@ -677,7 +677,13 @@ export async function compareExportToSource({
       if (Math.abs(original[index + channel] - actual[index + channel]) > tolerance) changedChannels += 1;
     }
   }
-  return changedChannels < threshold ? { ok: true } : { ok: false, reason: 'pixels-differ' };
+  return changedChannels < threshold
+    ? { ok: true }
+    : {
+        ok: false,
+        reason: 'pixels-differ',
+        detail: `${changedChannels} changed color channels against a budget of ${threshold} at ${sourceImage.width}x${sourceImage.height}`,
+      };
 }
 
 /**
@@ -692,7 +698,21 @@ export async function verifyExportPixelsInBrowser(
   threshold: number,
   testInfo: TestInfo
 ): Promise<void> {
-  const payload = exportPixelPayload(sourceDataUrl, file.toString('base64'), format.extension, threshold);
+  // The browser-pixel comparator reads the source canvas at its backing-store size, while
+  // exports use logical document pixels and are resized to that source size. Both the
+  // changed-channel count and its total possible channels therefore grow with backing
+  // pixel area. Scaling the threshold by deviceScaleFactor squared keeps the allowed
+  // fraction fixed: for logical W x H and threshold T, T / (3WH) equals
+  // 4T / (3 * (2W) * (2H)) at 2x.
+  // ICO is also compared in the source canvas's backing store, so its tighter budget
+  // follows the same rule.
+  const deviceScaleFactor = Number(testInfo.project.use.deviceScaleFactor ?? 1);
+  if (!Number.isFinite(deviceScaleFactor) || deviceScaleFactor <= 0) {
+    throw new Error(`Invalid Playwright deviceScaleFactor: ${String(testInfo.project.use.deviceScaleFactor)}`);
+  }
+  const backingStoreAreaScale = deviceScaleFactor ** 2;
+  const scaledThreshold = Math.ceil(threshold * backingStoreAreaScale);
+  const payload = exportPixelPayload(sourceDataUrl, file.toString('base64'), format.extension, scaledThreshold);
   const comparison = await page.evaluate<PixelComparisonResult, ExportPixelPayload>(compareExportToSource, payload);
   if (!comparison.ok) {
     // The bytes the comparison actually ran on, so the failure can be diagnosed from
@@ -1235,30 +1255,9 @@ const ICON_DOCUMENT_SIZE = { width: 256, height: 256 } as const;
 export async function setupIcoTest(page: Page): Promise<string> {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.getByTestId('header-file-menu-button').click();
-  // `File > New` asks before discarding a document that has unsaved changes, and
-  // `src/App.tsx` seeds a blank document on boot, so `hasUnsavedChanges` is
-  // already true on a freshly loaded page and the prompt is shown from the very
-  // first click.
-  //
-  // That prompt used to be a native `confirm()` and needed `page.once('dialog', …)`
-  // here. It is now the app's own modal (`src/components/ConfirmDialog`), so answering
-  // it is an ordinary click — and a STRONGER pin than the handler was: `acceptDiscardPrompt`
-  // waits for the prompt to appear before answering it, so this helper cannot hang on the
-  // first fill because New was declined, and it fails with a message naming the prompt
-  // when the menu item itself is broken.
-  //
-  // No native dialog handler is installed here, deliberately. The scoping in the `once`
-  // this replaced existed so that an UNEXPECTED prompt would surface rather than be
-  // swallowed, and that intent is kept by not handling dialogs at all: Playwright
-  // auto-dismisses an unhandled `confirm()`, which the app reads as "declined", so a
-  // surprise native prompt on this path cannot be accepted away by anything and stops the
-  // flow at the very next step instead. A blanket `page.on('dialog', …)` in a fixture or
-  // in `global-setup.ts` is the thing that would swallow it, and it is still not done.
-  // (One native prompt does still exist — the PSD import-limitations question at
-  // `src/hooks/useApp.ts:87` — and no export spec reaches it, because `verifyPsdInPhotopea`
-  // hands its file to Photopea rather than to this app.)
+  // The automatically created starter is clean, so New should open directly.
   await page.getByTestId('header-file-new-button').click();
-  await acceptDiscardPrompt(page);
+  await expectNoDiscardPrompt(page);
   await page.getByTestId('new-image-width-input').fill(String(ICON_DOCUMENT_SIZE.width));
   await page.getByTestId('new-image-height-input').fill(String(ICON_DOCUMENT_SIZE.height));
   await page.getByTestId('new-image-dialog-submit-button').click();

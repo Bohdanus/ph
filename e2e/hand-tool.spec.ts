@@ -1,7 +1,7 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { acceptDiscardPrompt, expectNoDiscardPrompt } from './helpers/discard-prompt';
 import { clickToolButton, expectToolSelected, hasOwnToolTile, toggleToolbarLayout } from './helpers/toolbar-helpers';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
@@ -58,11 +58,8 @@ async function openTallDocument(page: Page): Promise<void> {
   await expect(getWorkspaceCanvas(page)).toBeVisible();
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-new-button').click();
-  // The boot document already carries the bedrock background layer, so the app counts the
-  // document as having unsaved work and `File > New` goes through the discard prompt first.
-  // Without this the click lands and nothing appears to happen, which is what the first version
-  // of this helper did.
-  await acceptDiscardPrompt(page);
+  // The starter has a bedrock layer but is pristine, so File > New should open directly.
+  await expectNoDiscardPrompt(page);
 
   const dialog = page.getByTestId('new-image-dialog');
   await expect(dialog).toBeVisible();

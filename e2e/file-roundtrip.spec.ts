@@ -20,7 +20,7 @@ import {
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
-import { acceptDiscardPrompt, expectNoDiscardPrompt } from './helpers/discard-prompt';
+import { acceptDiscardPromptIfPresent, expectNoDiscardPrompt } from './helpers/discard-prompt';
 import { getRedoButton, getUndoButton } from './helpers/history-helpers';
 import {
   fillSaveDialog,
@@ -504,14 +504,10 @@ async function verifyPngRoundTrip(page: Page, testInfo: TestInfo, expectedDpr: n
  *   calls `setImageFromUpload` (src/components/DesktopHeader/DesktopHeader.tsx:250-251).
  *   Setting the input's files with nobody waiting therefore loads the file and throws
  *   the result away, so the button click is part of the mechanism, not a convenience.
- * - The menu item asks before discarding the current document, and `src/App.tsx:38`
- *   seeds a blank document on boot, so the prompt is shown on the very first click of
- *   a fresh page — and on the click after the `page.reload()` below, for the same
- *   reason. It is answered with `acceptDiscardPrompt`, which WAITS for the prompt
- *   before answering it. The `page.once('dialog')` this used to install was not
- *   equivalent: Playwright auto-dismisses a dialog nobody is listening for, so a
- *   handler that never fired and a guard that declined looked identical to the line
- *   after it, and this file's claims all sit downstream of that.
+ * - The app starts with a clean blank document. Generic setup can open a fixture directly;
+ *   the optional prompt helper is retained for flows that may reach this helper from a
+ *   user-created document, which is dirty by default. Guard-specific tests assert the
+ *   prompt explicitly before answering it.
  *
  * The answer lands BEFORE the file chooser is awaited, and that ordering is the
  * mechanism: `openLoadImageDialog` is only reached once the guard resolves
@@ -533,7 +529,7 @@ async function openDocumentViaFileMenu(page: Page, filePath: string): Promise<vo
   const chooser = page.waitForEvent('filechooser');
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-open-button').click();
-  await acceptDiscardPrompt(page);
+  await acceptDiscardPromptIfPresent(page);
   const fileChooser = await chooser;
   await fileChooser.setFiles(filePath);
 }

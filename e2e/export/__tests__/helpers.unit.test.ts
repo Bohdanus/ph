@@ -879,8 +879,12 @@ interface TestInfoSurface {
   attach: Mock<(name: string, options: { body: Buffer; contentType: string }) => Promise<void>>;
 }
 
-function createTestInfoMock(outputDir: string = OUTPUT_DIR): TestInfoSurface & TestInfo {
-  return asPlaywright<TestInfoSurface & TestInfo>({ outputDir, attach: vi.fn().mockResolvedValue(undefined) });
+function createTestInfoMock(outputDir: string = OUTPUT_DIR, deviceScaleFactor = 1): TestInfoSurface & TestInfo {
+  return asPlaywright<TestInfoSurface & TestInfo>({
+    outputDir,
+    attach: vi.fn().mockResolvedValue(undefined),
+    project: { use: { deviceScaleFactor } },
+  });
 }
 
 function createDownloadMock(suggestedFilename: string, failure: string | null = null): DownloadSurface {
@@ -1432,6 +1436,15 @@ describe('Export Helpers', () => {
       expect(payload.mime).toBe('image/png');
       expect(mocks.matchers.toBe).toHaveBeenCalledWith(true);
       expect(result).toBe(target);
+    });
+
+    it('scales the changed-channel budget to keep the same visual tolerance at HiDPI', async () => {
+      const { surface, page } = createSaveDialogPage();
+
+      await exportAndVerify(page, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, createTestInfoMock(OUTPUT_DIR, 2));
+
+      const [, payload] = surface.evaluate.mock.calls[0];
+      expect(payload.threshold).toBe(CHANGED_CHANNEL_THRESHOLD_GENERAL * 4);
     });
 
     it.each([
@@ -2041,51 +2054,26 @@ describe('Export Helpers', () => {
       }
     });
 
-    it('answers the in-app unsaved-changes prompt with Discard, between File > New and the first field', async () => {
+    it('opens File > New directly on the untouched starter without an unsaved-changes prompt', async () => {
       const box: Box = { x: 24, y: 36, width: ICON_CANVAS_SIZE, height: ICON_CANVAS_SIZE };
       const { surface, page, newImage, prompt } = createIcoPage(box);
 
       await setupIcoTest(page);
 
-      // `File > New` asks before discarding a document that has unsaved changes, and
-      // `src/App.tsx` seeds a blank image on boot, so the prompt is shown on the first
-      // click of a fresh page. It used to be a native `confirm()` answered by a
-      // `page.once('dialog', …)` handler; it is now the app's own modal
-      // (`src/components/ConfirmDialog`), so the answer is a click on `Discard`.
-      expect(mocks.mockExpect, 'the prompt is WAITED FOR, not clicked on sight').toHaveBeenCalledWith(
-        prompt.confirmDialog,
-        expect.any(String)
-      );
-      expect(prompt.discardButton.click).toHaveBeenCalledTimes(1);
-      // The decline path is a different button and it must not be the one taken — the same
-      // half of the old pin that `expect(dialog.dismiss).not.toHaveBeenCalled()` made.
-      expect(prompt.cancelButton.click, 'the prompt is answered Discard, not Cancel').not.toHaveBeenCalled();
-
-      // The ORDER is the pin, and it is two-sided. Discard cannot be clicked before the
-      // menu item has asked, and the first field cannot be filled before the New Image
-      // dialog has replaced the prompt — so neither of these two inversions can pass.
-      expect(prompt.discardButton.click.mock.invocationCallOrder[0]).toBeGreaterThan(
-        newImage.newImageButton.click.mock.invocationCallOrder[0]
-      );
-      expect(prompt.discardButton.click.mock.invocationCallOrder[0]).toBeLessThan(
-        newImage.widthInput.fill.mock.invocationCallOrder[0]
-      );
-
-      // …and the helper then waits for the prompt to LEAVE, which is the assertion the
-      // auto-dismissed native dialog could not make: a count of 0 on the prompt itself,
-      // read after the answer rather than before it.
+      // The starter is pristine, so setup asserts that the prompt is absent before filling
+      // the new document's dimensions. File > New must still precede the first field.
+      expect(mocks.mockExpect, 'the clean starter is checked for no prompt').toHaveBeenCalledWith(prompt.confirmDialog);
       expect(mocks.matchers.toHaveCount).toHaveBeenCalledWith(0);
       expect(mocks.matchers.toHaveCount.mock.invocationCallOrder[0]).toBeGreaterThan(
-        prompt.discardButton.click.mock.invocationCallOrder[0]
+        newImage.newImageButton.click.mock.invocationCallOrder[0]
       );
+      expect(mocks.matchers.toHaveCount.mock.invocationCallOrder[0]).toBeLessThan(
+        newImage.widthInput.fill.mock.invocationCallOrder[0]
+      );
+      expect(prompt.discardButton.click).not.toHaveBeenCalled();
+      expect(prompt.cancelButton.click).not.toHaveBeenCalled();
 
-      // No native dialog handler is installed any more, and that is the assertion now
-      // standing where the registration used to be asserted. `once` was scoped rather
-      // than global precisely so an UNEXPECTED `confirm`/`prompt` would surface instead of
-      // being swallowed; Playwright auto-dismisses an unhandled one, which the app reads as
-      // "declined", so a surprise prompt cannot be accepted away by anything and stops
-      // this helper at the very next step. A blanket handler is what would swallow it, and
-      // pinning its ABSENCE is what keeps that from being reintroduced.
+      // An unexpected native dialog must surface instead of being silently accepted.
       expect(surface.once, 'no native dialog handler may be installed').not.toHaveBeenCalled();
       expect(surface.on, 'no native dialog handler may be installed').not.toHaveBeenCalled();
     });
@@ -2223,7 +2211,11 @@ describe('Export Helpers', () => {
           [EXPORTED_ICO_DATA_URL]: exported,
         });
 
-        await expect(compare(payload)).resolves.toEqual(expected);
+        const result = await compare(payload);
+        expect(result).toMatchObject(expected);
+        if (expected.ok === false && expected.reason === 'pixels-differ') {
+          expect(result).toHaveProperty('detail', expect.stringMatching(/changed color channels against a budget/));
+        }
         expect(requestedSources).toEqual([SOURCE_DATA_URL, EXPORTED_ICO_DATA_URL]);
       }
     );
