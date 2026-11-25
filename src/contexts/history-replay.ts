@@ -469,8 +469,8 @@ export function replayHistory(
           [layerId]: {
             ...layer,
             pos,
-            // Only derived caches with a canonical source can be rebuilt after a resize.
-            // Blank and rasterized layers may have no other copy of their current pixels.
+            // Blank sources keep only their unpromoted raster. Other caches remain
+            // unless a canonical image, text, or vector source can rebuild them.
             tmpCanvas:
               layer.source?.kind === 'blank'
                 ? unpromotedBlankRaster(layer)
