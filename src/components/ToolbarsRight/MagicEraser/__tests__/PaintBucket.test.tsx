@@ -120,13 +120,14 @@ describe('Paint Bucket toolbar', () => {
   it('renders Photoshop Fill entries: Foreground enabled, Pattern present and disabled', () => {
     render(<PaintBucket />);
     const fill = screen.getByLabelText(/^Fill /) as HTMLSelectElement;
-    const options = within(fill).getAllByRole('option') as HTMLOptionElement[];
+    const foregroundOption = within(fill).getByRole('option', { name: 'Foreground' });
+    const patternOption = within(fill).getByRole('option', { name: 'Pattern' });
 
     // No pattern substrate exists in this repo, so `Pattern` is documented-but-unwired: rendered
     // with Photoshop's real label and `disabled`, never offered as though it worked.
-    expect(options.map((option) => option.textContent)).toEqual(['Foreground', 'Pattern']);
-    expect(options[0]).toBeEnabled();
-    expect(options[1]).toBeDisabled();
+    expect([foregroundOption.textContent, patternOption.textContent]).toEqual(['Foreground', 'Pattern']);
+    expect(foregroundOption).toBeEnabled();
+    expect(patternOption).toBeDisabled();
     expect(fill.value).toBe('foreground');
   });
 

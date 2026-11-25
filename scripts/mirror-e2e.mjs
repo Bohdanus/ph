@@ -4,6 +4,7 @@ import { mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { validateE2ESpec } from './validate-e2e-spec.mjs';
+import { isNativeChatId } from './lib/native-chat-id.mjs';
 
 export const MIRROR_REPOSITORY = 'Bohdanus/ph';
 export const LINUX_BASELINE_PATH = 'e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux';
@@ -20,10 +21,6 @@ export const LINUX_BASELINE_FILES = [
 const REPO_ROOT = realpathSync(process.cwd());
 const MAIN_REF = 'main';
 const GIT_SHA_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
-const KILO_SESSION_ID_PATTERN = /^ses_[A-Za-z0-9]{26}$/;
-const UUID_PATTERN = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}';
-const CODEX_THREAD_ID_PATTERN = new RegExp(`^${UUID_PATTERN}$`);
-const COPILOT_SESSION_URI_PATTERN = new RegExp(`^copilotcli:/${UUID_PATTERN}$`);
 const LINUX_BASELINE_COMMIT_SUBJECT = 'test: refresh Linux export baselines';
 const DISCOVERY_TIMEOUT_MS = 120_000;
 // `git push` runs the repository's full test suite through the pre-push hook.
@@ -35,19 +32,6 @@ export const RUN_WAIT_TIMEOUT_MS_BY_MODE = Object.freeze({
   baselines: 90 * 60_000,
 });
 const POLL_COMMAND_TIMEOUT_MS = 30_000;
-
-function matchesEntireString(pattern, value) {
-  return pattern.exec(value)?.[0] === value;
-}
-
-function isNativeChatId(chatId) {
-  if (typeof chatId !== 'string') return false;
-  return (
-    matchesEntireString(KILO_SESSION_ID_PATTERN, chatId) ||
-    matchesEntireString(CODEX_THREAD_ID_PATTERN, chatId) ||
-    matchesEntireString(COPILOT_SESSION_URI_PATTERN, chatId)
-  );
-}
 
 const WORKFLOW = Object.freeze({
   full: {

@@ -30,12 +30,13 @@ const mockPatchToolArgs = vi.hoisted(() => vi.fn());
  * concrete name to look one up — so the store's `toolName` is what this suite drives.
  */
 const storeState = vi.hoisted(() => ({ toolName: 'dodge' as string }));
+const storeDispatch = vi.hoisted(() => vi.fn());
 
 // `useStore` is mocked directly rather than through `StoreProvider`, which is the house
 // pattern for every `ToolbarsRight` suite: the provider pulls in the durable
 // replay/materialization path, which does not survive jsdom.
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeState],
+  useStore: () => [storeState, storeDispatch],
 }));
 
 vi.mock('../../../../contexts/useCurrentTool.tsx', async () => {

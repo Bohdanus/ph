@@ -24,6 +24,7 @@ import {
   claimAlert,
   formatOperationSummary,
   isOrphanAutoMergeState,
+  land,
   notifyIfDue,
   readFailureLogLock,
   newOwner,
@@ -92,10 +93,39 @@ afterEach(() => {
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
+describe('main landing chat attribution', () => {
+  it('rejects non-native owner IDs before inspecting or reserving main', async () => {
+    await expect(
+      land(
+        null,
+        {
+          'main-sha': 'a'.repeat(40),
+          'incoming-sha': 'b'.repeat(40),
+          'tree-sha': 'c'.repeat(40),
+          branch: 'task/example',
+          chat: '2026-11-24T04:30:00Z',
+        },
+        null
+      )
+    ).rejects.toThrow('--chat must be a native Kilo session ID, Codex UUID, or Copilot session URI');
+  });
+
+  it('refuses to construct a lease with a non-native owner ID', () => {
+    expect(() => newOwner({ branch: 'task/example', chatId: '2026-11-24T04:30:00Z' }, 'landing', '/repo/main')).toThrow(
+      'main landing owner requires a native Kilo session ID, Codex UUID, or Copilot session URI'
+    );
+  });
+});
+
 describe('main landing recorded process identity', () => {
   it('records a required owner token and starts child identity empty', () => {
     const startToken = vi.fn((pid) => `process-start-${pid}`);
-    const owner = newOwner({ branch: 'task/example', chatId: 'chat-example' }, 'landing', '/repo/main', { startToken });
+    const owner = newOwner(
+      { branch: 'task/example', chatId: 'ses_0123456789ABCDEF0123456789' },
+      'landing',
+      '/repo/main',
+      { startToken }
+    );
 
     expect(startToken).toHaveBeenCalledWith(process.pid);
     expect(owner.owner).toMatchObject({
@@ -109,7 +139,9 @@ describe('main landing recorded process identity', () => {
 
   it('refuses to create a landing lease without an owner start token', () => {
     expect(() =>
-      newOwner({ branch: 'task/example', chatId: 'chat-example' }, 'landing', '/repo/main', { startToken: () => null })
+      newOwner({ branch: 'task/example', chatId: 'ses_0123456789ABCDEF0123456789' }, 'landing', '/repo/main', {
+        startToken: () => null,
+      })
     ).toThrow(/cannot identify its owner process/);
   });
 

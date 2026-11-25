@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readMergeHeadRefs, resolveWorktree } from './main-worktree-guard.mjs';
 import { readOperations } from './lib/git-operation-state.mjs';
+import { isNativeChatId } from './lib/native-chat-id.mjs';
 import { samePath } from './lib/path-identity.mjs';
 import {
   pidExists,
@@ -1211,12 +1212,20 @@ function requireNonEmpty(options, name) {
   return value.trim();
 }
 
+function requireNativeChatId(options) {
+  const value = options.chat;
+  if (typeof value !== 'string' || !isNativeChatId(value)) {
+    throw new Error('--chat must be a native Kilo session ID, Codex UUID, or Copilot session URI');
+  }
+  return value;
+}
+
 function validateLandingOptions(options) {
   const mainSha = requireNonEmpty(options, 'main-sha');
   const incomingSha = requireNonEmpty(options, 'incoming-sha');
   const treeSha = requireNonEmpty(options, 'tree-sha');
   const branch = requireNonEmpty(options, 'branch');
-  const chatId = requireNonEmpty(options, 'chat');
+  const chatId = requireNativeChatId(options);
   for (const [name, value] of [
     ['main-sha', mainSha],
     ['incoming-sha', incomingSha],
@@ -1268,6 +1277,9 @@ function assertMainAvailable(paths) {
 
 export function newOwner(pins, mode = 'landing', mainPath = null, { startToken = processStartToken } = {}) {
   const now = new Date().toISOString();
+  if (!isNativeChatId(pins.chatId)) {
+    throw new Error('main landing owner requires a native Kilo session ID, Codex UUID, or Copilot session URI');
+  }
   const pid = mode === 'landing' ? process.pid : null;
   const pidStartToken = pid === null ? null : startToken(pid);
   const runtimeScopeToken = processRuntimeScopeToken();
@@ -1736,7 +1748,7 @@ export async function land(paths, options, cwd, { watcherStarter = startWatcher 
 function takeover(paths, options) {
   const token = requireNonEmpty(options, 'token');
   const branch = requireNonEmpty(options, 'branch');
-  const chatId = requireNonEmpty(options, 'chat');
+  const chatId = requireNativeChatId(options);
   const model = requireNonEmpty(options, 'model');
   const reasoning = requireNonEmpty(options, 'reasoning');
   if (model !== 'gpt-6-luna' || reasoning !== 'xhigh') {
