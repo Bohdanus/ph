@@ -2,6 +2,7 @@ import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMockCanvas, createMockImageBitmap } from '@/__tests__/fixtures/canvas.ts';
+import { stubPixelOffscreenCanvas } from '@/__tests__/fixtures/pixelCanvas.ts';
 import type { Selection, SelectionClipboard } from '../general-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import * as selectionUtils from '../../util/selection.ts';
@@ -106,6 +107,7 @@ describe('useSelectionClipboard copy guards', () => {
   });
 
   it('falls back to the active selection when the argument is omitted', () => {
+    stubPixelOffscreenCanvas();
     const api = renderProbe();
 
     // `copyActiveSelection` has a default parameter, so an omitted argument is
@@ -154,6 +156,7 @@ describe('useSelectionClipboard copy guards', () => {
   });
 
   it('copies an explicitly passed selection even when a different one is active', () => {
+    stubPixelOffscreenCanvas();
     storeState.selections = [
       polygonSelection(),
       polygonSelection({ id: 'selection-2', pos: { x: 0, y: 0, width: 10, height: 10 } }),
@@ -213,7 +216,8 @@ describe('useSelectionClipboard copy guards', () => {
     }
   });
 
-  it('preserves the cropped document lower-right edge in both copy paths', async () => {
+  it('clips antialiased copy bounds at the cropped document lower-right edge in both copy paths', async () => {
+    stubPixelOffscreenCanvas();
     storeState.documentFrame = { x: 10, y: 20, width: 90, height: 80 };
     storeState.totalSize = { width: 90, height: 80 };
     storeState.selections = [
@@ -234,17 +238,18 @@ describe('useSelectionClipboard copy guards', () => {
     expect(api.copyActiveSelection()).toBe(true);
     expect(dispatchMock).toHaveBeenCalledWith({
       type: 'SET_SELECTION_CLIPBOARD',
-      payload: expect.objectContaining({ pos: { x: 95, y: 95, width: 5, height: 5 } }),
+      payload: expect.objectContaining({ pos: { x: 94, y: 94, width: 6, height: 6 } }),
     });
 
     dispatchMock.mockClear();
     await expect(api.layerViaCopy()).resolves.toBe(true);
     expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ pos: { x: 95, y: 95, width: 5, height: 5 } })
+      expect.objectContaining({ pos: { x: 94, y: 94, width: 6, height: 6 } })
     );
   });
 
   it('does not truncate a canvas-space selection reaching the canvas backing store edge when document size is smaller', async () => {
+    stubPixelOffscreenCanvas();
     // Canvas backing store: 200x200, document: 100x100, frame offset: (50, 50)
     // Selection in document space at right/bottom edge: pos { x: 90, y: 90, width: 10, height: 10 }
     // In canvas space: pos { x: 40, y: 40, width: 10, height: 10 } (subtracting frame origin)
@@ -272,13 +277,13 @@ describe('useSelectionClipboard copy guards', () => {
     expect(api.copyActiveSelection()).toBe(true);
     expect(dispatchMock).toHaveBeenCalledWith({
       type: 'SET_SELECTION_CLIPBOARD',
-      payload: expect.objectContaining({ pos: { x: 90, y: 90, width: 10, height: 10 } }),
+      payload: expect.objectContaining({ pos: { x: 89, y: 89, width: 12, height: 12 } }),
     });
 
     dispatchMock.mockClear();
     await expect(api.layerViaCopy()).resolves.toBe(true);
     expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ pos: { x: 90, y: 90, width: 10, height: 10 } })
+      expect.objectContaining({ pos: { x: 89, y: 89, width: 12, height: 12 } })
     );
   });
 });
@@ -302,6 +307,7 @@ describe('useSelectionClipboard layerViaCopy', () => {
   });
 
   it('creates one new layer from an independent clone of the snapshot, without touching the clipboard', async () => {
+    stubPixelOffscreenCanvas();
     const api = renderProbe();
 
     await expect(api.layerViaCopy()).resolves.toBe(true);
@@ -312,18 +318,15 @@ describe('useSelectionClipboard layerViaCopy', () => {
     // The layer is named from the existing layer stack, and its position is the
     // snapshot bounds translated back into document space.
     expect(input.name).toBe('Layer 1');
-    expect(input.pos).toEqual({ x: 10, y: 20, width: 30, height: 40 });
+    expect(input.pos).toEqual({ x: 9, y: 19, width: 32, height: 42 });
     expect(input.bitmap).toBeInstanceOf(OffscreenCanvas);
   });
 
   it('lands the copied layer on the selection in document space, unshifted by the frame origin', async () => {
-    // `layerViaCopy` converts the selection into canvas space at
-    // `useSelectionClipboard.ts:92`, snapshots it there, and converts the snapshot's
-    // bounds back at `:100` — so the round trip is the identity on position and the
-    // layer must land exactly where the selection is, whatever the frame origin is.
-    // `createLayerFromBitmap` reads `pos` as document space: `layer-renderer.ts:115`
-    // hands `evaluation` to `drawEvaluatedPresentation` with `{ kind: 'document',
-    // frame }`, and `presentation-evaluator.ts:277` subtracts the frame there.
+    stubPixelOffscreenCanvas();
+    // The copy snapshot is taken in canvas space and its clipped bitmap bounds are
+    // converted back to document space. The frame translation cancels for the origin,
+    // while the antialias fringe stays clipped to the document frame.
     storeState.documentFrame = { x: 10, y: 20, width: 90, height: 80 };
     storeState.totalSize = { width: 90, height: 80 };
     const api = renderProbe();
@@ -331,11 +334,12 @@ describe('useSelectionClipboard layerViaCopy', () => {
     await expect(api.layerViaCopy()).resolves.toBe(true);
 
     expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ pos: { x: 10, y: 20, width: 30, height: 40 } })
+      expect.objectContaining({ pos: { x: 10, y: 20, width: 31, height: 41 } })
     );
   });
 
   it('numbers the copied layer from the existing layer names', async () => {
+    stubPixelOffscreenCanvas();
     storeState.layers = { a: { name: 'Background' }, b: { name: 'Layer 3' } };
     const api = renderProbe();
 
@@ -345,6 +349,7 @@ describe('useSelectionClipboard layerViaCopy', () => {
   });
 
   it('falls back to the first selection flagged active when no id points at one', async () => {
+    stubPixelOffscreenCanvas();
     storeState.selections = [polygonSelection({ id: 'first', isActive: false }), polygonSelection({ id: 'second' })];
     storeState.activeSelectionId = null;
     const api = renderProbe();
@@ -355,6 +360,7 @@ describe('useSelectionClipboard layerViaCopy', () => {
   });
 
   it('reports failure when layer creation refuses a copied selection', async () => {
+    stubPixelOffscreenCanvas();
     createLayerFromBitmapMock.mockResolvedValueOnce(false);
     const api = renderProbe();
 
@@ -363,9 +369,10 @@ describe('useSelectionClipboard layerViaCopy', () => {
   });
 
   it('reports failure and logs when the layer creation rejects', async () => {
+    stubPixelOffscreenCanvas();
     // The restore has to run whatever the assertions do: this file has no `afterEach` and the
     // global `clearMocks` does not restore a spy, so a red assertion above would leave
-    // `console.error` swallowed for every test below. Same shape as `FreehandLasso.test.tsx:226-239`.
+    // `console.error` swallowed for every test below. Same cleanup pattern used by the lasso tests.
     const failure = new Error('layer creation failed');
     createLayerFromBitmapMock.mockRejectedValueOnce(failure);
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);

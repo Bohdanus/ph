@@ -4,7 +4,7 @@
  * backing store exactly where they were — swept across every reachable cursor, so a
  * re-allocation that only the last replay would hide still fails here.
  *
- * Written as a reproduction first (`probe-`, logged, no assertions) and kept as a
+ * Written as a reproduction first (`probe-`, with opt-in traces) and kept as a
  * regression test once it had caught the defect it was built for. `e2e/canvas-growth.spec.ts`
  * is the same invariant measured through the real UI.
  */
@@ -24,6 +24,11 @@ import type { DocumentFrame } from '../document-frame.ts';
 import type { Layer } from '../layer-types.ts';
 
 const DOC = { width: 800, height: 600 };
+const TRACE_CANVAS_GROWTH = process.env.PH_CANVAS_GROWTH_TRACE === '1';
+
+function traceCanvasGrowth(format: () => string) {
+  if (TRACE_CANVAS_GROWTH) console.log(format());
+}
 
 function useHarness() {
   const [store, dispatch] = useStore();
@@ -73,7 +78,7 @@ function snapshot(store: ReturnType<typeof useStore>[0], canvas: HTMLCanvasEleme
     documentFrame: { ...((store.documentFrame ?? { x: 0, y: 0, width: 0, height: 0 }) as DocumentFrame) },
     canvasBackingStore: { width: canvas.width, height: canvas.height },
   };
-  console.log(`[PROBE-COMMIT] ${JSON.stringify(row)}`);
+  traceCanvasGrowth(() => `[PROBE-COMMIT] ${JSON.stringify(row)}`);
   return row;
 }
 
@@ -134,7 +139,7 @@ function sweepReplay(
       frame: { ...replay.documentFrame },
     });
   }
-  console.log(`[PROBE-REPLAY:${label}] ${JSON.stringify(rows)}`);
+  traceCanvasGrowth(() => `[PROBE-REPLAY:${label}] ${JSON.stringify(rows)}`);
   return rows;
 }
 
@@ -207,7 +212,9 @@ describe('canvas growth on ordinary tool commits', () => {
     const cropped = rows.filter(
       (row) => row.cursor >= 1 && row.totalSize.width === 400 && row.totalSize.height === 320
     );
-    console.log(`[PROBE-B] pre-crop cursors=${preCrop.length} cropped cursors=${cropped.length} of ${rows.length}`);
+    traceCanvasGrowth(
+      () => `[PROBE-B] pre-crop cursors=${preCrop.length} cropped cursors=${cropped.length} of ${rows.length}`
+    );
     expect(preCrop).toHaveLength(1);
     expect(cropped).toHaveLength(rows.length - 1);
   });
@@ -262,13 +269,13 @@ describe('canvas growth on ordinary tool commits', () => {
     });
     redraw(result);
     const afterBlank = snapshot(result.current.store, canvas, 'after-blank-layer');
-    console.log(`[PROBE-D-COMMIT-FRAME] ${JSON.stringify(afterBlank)}`);
+    traceCanvasGrowth(() => `[PROBE-D-COMMIT-FRAME] ${JSON.stringify(afterBlank)}`);
 
     commitShapes(result, 3, 'post-blank-commit', canvas);
 
     const store = result.current.store;
     const rows = sweepReplay(store.history, store.totalSize, store.documentFrame, 'D-crop-then-blank');
-    console.log(`[PROBE-D-REPLAY-SUMMARY] ${JSON.stringify(rows.map((row) => row.totalSize))}`);
+    traceCanvasGrowth(() => `[PROBE-D-REPLAY-SUMMARY] ${JSON.stringify(rows.map((row) => row.totalSize))}`);
     expect(rows.length).toBeGreaterThan(0);
   });
 
@@ -288,13 +295,13 @@ describe('canvas growth on ordinary tool commits', () => {
     });
     redraw(result);
     const afterImport = snapshot(result.current.store, canvas, 'after-import-1200x900-bedrock');
-    console.log(`[PROBE-E-COMMIT-FRAME] ${JSON.stringify(afterImport)}`);
+    traceCanvasGrowth(() => `[PROBE-E-COMMIT-FRAME] ${JSON.stringify(afterImport)}`);
 
     commitShapes(result, 3, 'post-import-commit', canvas);
 
     const store = result.current.store;
     const rows = sweepReplay(store.history, store.totalSize, store.documentFrame, 'E-import-larger');
-    console.log(`[PROBE-E-REPLAY-SUMMARY] ${JSON.stringify(rows.map((row) => row.totalSize))}`);
+    traceCanvasGrowth(() => `[PROBE-E-REPLAY-SUMMARY] ${JSON.stringify(rows.map((row) => row.totalSize))}`);
     expect(rows.length).toBeGreaterThan(0);
   });
 });
@@ -360,7 +367,9 @@ describe('crop growth and a negative document origin', () => {
     // the crop entry must be the grown 900x700, so the sweep must not oscillate back.
     const seedCursor = rows.filter((row) => row.cursor === 0);
     const grownCursors = rows.filter((row) => row.cursor >= 1);
-    console.log(`[PROBE-F] seed-cursors=${seedCursor.length} grown-cursors=${grownCursors.length} of ${rows.length}`);
+    traceCanvasGrowth(
+      () => `[PROBE-F] seed-cursors=${seedCursor.length} grown-cursors=${grownCursors.length} of ${rows.length}`
+    );
     expect(seedCursor).toHaveLength(1);
     expect(seedCursor[0]?.frame).toEqual({ x: 0, y: 0, width: 800, height: 600 });
     expect(grownCursors).toHaveLength(rows.length - 1);
@@ -411,8 +420,9 @@ describe('crop growth and a negative document origin', () => {
     const rows = sweepReplay(store.history, store.totalSize, store.documentFrame, 'G-negative-origin-then-shapes');
     const seedCursor = rows.filter((row) => row.cursor === 0);
     const negativeCursors = rows.filter((row) => row.cursor >= 1);
-    console.log(
-      `[PROBE-G] seed-cursors=${seedCursor.length} negative-origin-cursors=${negativeCursors.length} of ${rows.length}`
+    traceCanvasGrowth(
+      () =>
+        `[PROBE-G] seed-cursors=${seedCursor.length} negative-origin-cursors=${negativeCursors.length} of ${rows.length}`
     );
     expect(seedCursor).toHaveLength(1);
     expect(seedCursor[0]?.frame).toEqual({ x: 0, y: 0, width: 800, height: 600 });
