@@ -811,11 +811,33 @@ describe('readBoard: liveness of claims and locks', () => {
         'sid',
         new Date(NOW - 6 * 3600_000).toISOString()
       );
+      db.prepare('INSERT INTO agents VALUES (?,?,?,?,?,?)').run(
+        'unknown/z',
+        'kilo',
+        '/wt',
+        'unknown/z',
+        null,
+        new Date(NOW - 6 * 3600_000).toISOString()
+      );
+      db.prepare('INSERT INTO agents VALUES (?,?,?,?,?,?)').run(
+        'empty/e',
+        'kilo',
+        '/wt',
+        'empty/e',
+        '',
+        new Date(NOW - 6 * 3600_000).toISOString()
+      );
       db.close();
 
       const board = readBoard(process.cwd(), { nowMs: NOW, dbPath: join(dir, 'board.db') });
       const agents = board.agents.get('/wt');
-      expect(agents).toHaveLength(2);
+      expect(agents).toHaveLength(4);
+      expect(Object.fromEntries(agents.map((a) => [a.agentId, a.firstKiloRunId]))).toEqual({
+        'chore/x': 'sid',
+        'old/y': 'sid',
+        'unknown/z': null,
+        'empty/e': null,
+      });
       expect(agents.filter((a) => a.live).map((a) => a.agentId)).toEqual(['chore/x']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1184,21 +1206,24 @@ describe('the inventory output target', () => {
   });
 
   it('writes the default inventory beside linked main, not beside the primary checkout', () => {
-    const run = (_cwd, args) => ({
-      stdout:
-        args[0] === 'worktree'
-          ? `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`
-          : args[0] === 'symbolic-ref'
-            ? 'main\n'
-            : `${join(repo, '.git')}\n`,
-    });
+    const run = (_cwd, args) => {
+      if (args[0] === 'worktree') {
+        return {
+          stdout: `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`,
+        };
+      }
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
+      return { stdout: args[0] === 'symbolic-ref' ? 'main\n' : `${join(repo, '.git')}\n` };
+    };
     expect(inventoryTarget(repo, undefined, { run, realpath: (p) => p })).toBe(join(linkedMain, 'WORKTREES.json'));
   });
 
   it('uses the primary checkout only when a readable roster confirms no main worktree', () => {
-    const run = (_cwd, args) => ({
-      stdout: args[0] === 'worktree' ? `worktree ${repo}\nbare\n` : `${join(repo, '.git')}\n`,
-    });
+    const run = (_cwd, args) => {
+      if (args[0] === 'worktree') return { stdout: `worktree ${repo}\nbare\n` };
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
+      return { stdout: `${join(repo, '.git')}\n` };
+    };
     expect(inventoryTarget(repo, null, { run, realpath: (p) => p })).toBe(join(repo, 'WORKTREES.json'));
   });
 
@@ -2102,6 +2127,40 @@ describe('buildInventory', () => {
       inv.totals.branchOnlyUnknown;
     expect(branchOnlyCategoryTotal).toBe(inv.totals.branchOnlyRefs);
     expect(formatSummary(inv)).toContain('1 ancestor · 1 unknown');
+  });
+
+  it('serializes board run IDs under the current inventory schema', () => {
+    const worktree = wt();
+    const inv = buildInventory({
+      worktrees: [worktree],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board: {
+        ...board,
+        agents: new Map([
+          [
+            worktree.path,
+            [
+              {
+                agentId: 'feat/example',
+                branch: 'feat/example',
+                firstKiloRunId: 'run-id',
+                lastSeenMs: NOW,
+                live: true,
+              },
+            ],
+          ],
+        ]),
+      },
+      chatAudit,
+      nowMs: NOW,
+    });
+    const serialized = JSON.parse(JSON.stringify(inv));
+
+    expect(serialized.schemaVersion).toBe(8);
+    expect(serialized.worktrees[0].board.agents[0].firstKiloRunId).toBe('run-id');
+    expect(serialized.worktrees[0].board.agents[0]).not.toHaveProperty('firstSessionId');
   });
 
   it('publishes the exact-base merge proof needed by the guarded disposer', () => {
@@ -4546,6 +4605,7 @@ describe('shared inventory-path resolver', () => {
       if (args[0] === 'worktree') {
         return { stdout: 'worktree /repo\nbranch refs/heads/main\n' };
       }
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
       if (args[0] === 'rev-parse') return { stdout: '/repo/.git' };
       if (args[0] === 'symbolic-ref') return { stdout: 'main' };
       return { stdout: '' };
@@ -4553,13 +4613,144 @@ describe('shared inventory-path resolver', () => {
     expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe('/repo');
   });
 
+  it('resolveMainWorktreeRoot: selects the registered replacement when recovery preserves duplicate main worktrees', () => {
+    const oldMain = '/repo/.kilo/worktrees/landing-main-damaged';
+    const replacementMain = '/repo/.kilo/worktrees/landing-main-fresh';
+    const replacementGitDir = '/repo/.git/worktrees/landing-main-fresh';
+    const identityPath = join(replacementGitDir, 'kilo-main-worktree-identity');
+    const run = (cwd, args) => {
+      if (args[0] === 'worktree') {
+        return {
+          stdout: `worktree ${oldMain}\nbranch refs/heads/main\n\nworktree ${replacementMain}\nbranch refs/heads/main\n`,
+        };
+      }
+      if (args[0] === 'config') {
+        const values = {
+          'ph.mainWorktreeGitDir': replacementGitDir,
+          'ph.mainWorktreePath': replacementMain,
+          'ph.mainWorktreeIdentity': 'replacement-identity',
+        };
+        return { stdout: values[args[3]] ?? '' };
+      }
+      if (args[0] === 'rev-parse' && args.includes('--git-common-dir')) return { stdout: '/repo/.git' };
+      if (args[0] === 'rev-parse' && args.includes('--absolute-git-dir')) {
+        return { stdout: cwd === replacementMain ? replacementGitDir : '/repo/.git/worktrees/landing-main-damaged' };
+      }
+      if (args[0] === 'symbolic-ref') return { stdout: 'main' };
+      return { stdout: '' };
+    };
+    const options = {
+      run,
+      realpath: identityRealpath,
+      readFile: (path) => (path === identityPath ? 'replacement-identity\n' : ''),
+    };
+
+    expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', options)).toBe(replacementMain);
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', options)).toBe(join(replacementMain, 'WORKTREES.json'));
+  });
+
+  it('resolveMainWorktreeRoot: fails closed when the registered replacement identity does not match', () => {
+    const replacementMain = '/repo/.kilo/worktrees/landing-main-fresh';
+    const replacementGitDir = '/repo/.git/worktrees/landing-main-fresh';
+    const run = (cwd, args) => {
+      if (args[0] === 'worktree') {
+        return {
+          stdout: `worktree /repo/.kilo/worktrees/landing-main-damaged\nbranch refs/heads/main\n\nworktree ${replacementMain}\nbranch refs/heads/main\n`,
+        };
+      }
+      if (args[0] === 'config') {
+        const values = {
+          'ph.mainWorktreeGitDir': replacementGitDir,
+          'ph.mainWorktreePath': replacementMain,
+          'ph.mainWorktreeIdentity': 'expected-identity',
+        };
+        return { stdout: values[args[3]] ?? '' };
+      }
+      if (args[0] === 'rev-parse' && args.includes('--git-common-dir')) return { stdout: '/repo/.git' };
+      if (args[0] === 'rev-parse' && args.includes('--absolute-git-dir')) return { stdout: replacementGitDir };
+      if (args[0] === 'symbolic-ref') return { stdout: 'main' };
+      return { stdout: '' };
+    };
+    const options = { run, realpath: identityRealpath, readFile: () => 'stale-identity\n' };
+
+    expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', options)).toBeNull();
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', options)).toBeNull();
+  });
+
+  it('resolveMainWorktreeRoot: refuses to guess when a saved main identity is partial', () => {
+    const run = (_cwd, args) => {
+      if (args[0] === 'worktree') return { stdout: 'worktree /repo\nbranch refs/heads/main\n' };
+      if (args[0] === 'config' && args[3] === 'ph.mainWorktreePath') return { stdout: '/repo' };
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
+      return { stdout: '' };
+    };
+
+    expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBeNull();
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBeNull();
+  });
+
+  it('resolveMainWorktreeRoot: fails closed when main identity config cannot be read', () => {
+    const run = (_cwd, args) => {
+      if (args[0] === 'worktree') return { stdout: 'worktree /repo\nbranch refs/heads/main\n' };
+      if (args[0] === 'config') throw Object.assign(new Error('config file is unreadable'), { status: 128 });
+      return { stdout: '/repo/.git' };
+    };
+
+    expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBeNull();
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBeNull();
+  });
+
+  it('resolveMainWorktreeRoot: fails closed when saved identity keys exist but are empty', () => {
+    const run = (_cwd, args) => {
+      if (args[0] === 'worktree') return { stdout: 'worktree /repo\nbranch refs/heads/main\n' };
+      if (args[0] === 'config') return { stdout: '' };
+      return { stdout: '/repo/.git' };
+    };
+
+    expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBeNull();
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBeNull();
+  });
+
+  it('resolveMainWorktreeRoot: accepts a detached checkout with a matching registered identity', () => {
+    const detachedMain = '/repo/.kilo/worktrees/landing-main-detached';
+    const mainGitDir = '/repo/.git/worktrees/landing-main-detached';
+    const identityPath = join(mainGitDir, 'kilo-main-worktree-identity');
+    const run = (cwd, args) => {
+      if (args[0] === 'worktree') return { stdout: `worktree ${detachedMain}\nHEAD abc123\ndetached\n` };
+      if (args[0] === 'config') {
+        const values = {
+          'ph.mainWorktreeGitDir': mainGitDir,
+          'ph.mainWorktreePath': detachedMain,
+          'ph.mainWorktreeIdentity': 'detached-identity',
+        };
+        return { stdout: values[args[3]] ?? '' };
+      }
+      if (args[0] === 'rev-parse' && args.includes('--git-common-dir')) return { stdout: '/repo/.git' };
+      if (args[0] === 'rev-parse' && args.includes('--absolute-git-dir')) return { stdout: mainGitDir };
+      if (args[0] === 'symbolic-ref') throw Object.assign(new Error('detached HEAD'), { status: 1 });
+      return { stdout: '' };
+    };
+    const options = {
+      run,
+      realpath: identityRealpath,
+      readFile: (path) => (path === identityPath ? 'detached-identity\n' : ''),
+    };
+
+    expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', options)).toBe(detachedMain);
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', options)).toBe(join(detachedMain, 'WORKTREES.json'));
+  });
+
   it('resolveMainWorktreeRoot: rejects a prunable main even when its path resolves', () => {
-    const run = (_cwd, args) => ({
-      stdout:
-        args[0] === 'worktree'
-          ? 'worktree /repo/reused-main\nbranch refs/heads/main\nprunable gitdir file points to a different worktree\n'
-          : '',
-    });
+    const run = (_cwd, args) => {
+      if (args[0] === 'worktree') {
+        return {
+          stdout:
+            'worktree /repo/reused-main\nbranch refs/heads/main\nprunable gitdir file points to a different worktree\n',
+        };
+      }
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
+      return { stdout: '' };
+    };
     expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBeNull();
   });
 
@@ -4571,6 +4762,7 @@ describe('shared inventory-path resolver', () => {
           stdout: `worktree /repo\nbranch refs/heads/feature\n\nworktree ${reusedMain}\nbranch refs/heads/main\n`,
         };
       }
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
       if (args[0] === 'rev-parse') {
         return { stdout: cwd === reusedMain ? '/foreign/.git' : '/repo/.git' };
       }
@@ -4583,8 +4775,67 @@ describe('shared inventory-path resolver', () => {
     expect(resolveInventoryPath('/repo/.kilo/worktrees/task', options)).toBeNull();
   });
 
+  it.each([
+    ['a different repository common directory', { mainCommonDir: '/other/.git' }],
+    [
+      'a registered path absent from the worktree roster',
+      { roster: 'worktree /repo/.kilo/worktrees/landing-main-damaged\nbranch refs/heads/main\n' },
+    ],
+    ['a designated checkout on a different branch', { mainBranch: 'feature' }],
+    ['a relative registered path', { config: { 'ph.mainWorktreePath': 'relative/main' } }],
+    [
+      'an unavailable private identity marker',
+      { identityReadError: Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
+    ],
+    [
+      'a failed symbolic-ref command other than detached HEAD',
+      { symbolicRefError: Object.assign(new Error('corrupt repository'), { status: 128 }) },
+    ],
+  ])('resolveMainWorktreeRoot: fails closed for %s', (_label, overrides) => {
+    const mainPath = '/repo/.kilo/worktrees/landing-main-fresh';
+    const gitDir = '/repo/.git/worktrees/landing-main-fresh';
+    const values = {
+      'ph.mainWorktreeGitDir': gitDir,
+      'ph.mainWorktreePath': mainPath,
+      'ph.mainWorktreeIdentity': 'registered-identity',
+      ...overrides.config,
+    };
+    const run = (cwd, args) => {
+      if (args[0] === 'worktree') {
+        return {
+          stdout: overrides.roster ?? `worktree ${mainPath}\nbranch refs/heads/main\n`,
+        };
+      }
+      if (args[0] === 'config') return { stdout: values[args[3]] ?? '' };
+      if (args[0] === 'rev-parse' && args.includes('--git-common-dir')) {
+        return { stdout: cwd === mainPath ? (overrides.mainCommonDir ?? '/repo/.git') : '/repo/.git' };
+      }
+      if (args[0] === 'rev-parse' && args.includes('--absolute-git-dir')) return { stdout: gitDir };
+      if (args[0] === 'symbolic-ref') {
+        if (overrides.symbolicRefError) throw overrides.symbolicRefError;
+        return { stdout: overrides.mainBranch ?? 'main' };
+      }
+      return { stdout: '' };
+    };
+    const options = {
+      run,
+      realpath: identityRealpath,
+      readFile: () => {
+        if (overrides.identityReadError) throw overrides.identityReadError;
+        return 'registered-identity\n';
+      },
+    };
+
+    expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', options)).toBeNull();
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', options)).toBeNull();
+  });
+
   it('resolveMainWorktreeRoot: returns null when no main worktree exists', () => {
-    const run = (cwd, args) => ({ stdout: 'worktree /repo\nbranch refs/heads/feature\n' });
+    const run = (_cwd, args) => {
+      if (args[0] === 'worktree') return { stdout: 'worktree /repo\nbranch refs/heads/feature\n' };
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
+      return { stdout: '' };
+    };
     expect(resolveMainWorktreeRoot('/repo', { run, realpath: identityRealpath })).toBeNull();
   });
 
@@ -4595,11 +4846,12 @@ describe('shared inventory-path resolver', () => {
       'prunable',
       'worktree /repo/reused-main\nbranch refs/heads/main\nprunable gitdir file points to a different worktree\n',
     ],
-  ])('resolveInventoryPath: refuses a %s registered main rather than falling back', (label, worktreeListing) => {
+  ])('resolveInventoryPath: refuses a %s main worktree rather than falling back', (label, worktreeListing) => {
     const asked = [];
     const run = (_cwd, args) => {
       asked.push(args);
       if (args[0] === 'worktree') return { stdout: worktreeListing };
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
       if (args[0] === 'rev-parse') return { stdout: '/repo/.git\n' };
       if (args[0] === 'symbolic-ref') return { stdout: 'main\n' };
       return { stdout: '' };
@@ -4611,12 +4863,13 @@ describe('shared inventory-path resolver', () => {
     };
 
     expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath })).toBeNull();
-    expect(asked).toEqual([['worktree', 'list', '--porcelain']]);
+    expect(asked.filter((args) => args[0] === 'worktree')).toEqual([['worktree', 'list', '--porcelain']]);
   });
 
   it('resolveInventoryPath: returns the main checkout path', () => {
     const run = (_cwd, args) => {
       if (args[0] === 'worktree') return { stdout: `worktree ${repo}\nbranch refs/heads/main\n` };
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
       if (args[0] === 'rev-parse') return { stdout: join(repo, '.git') };
       if (args[0] === 'symbolic-ref') return { stdout: 'main' };
       return { stdout: '' };
@@ -4631,6 +4884,7 @@ describe('shared inventory-path resolver', () => {
           stdout: `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`,
         };
       }
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
       if (args[0] === 'rev-parse') return { stdout: join(repo, '.git') };
       if (args[0] === 'symbolic-ref') return { stdout: 'main' };
       return { stdout: '' };
@@ -4652,6 +4906,7 @@ describe('shared inventory-path resolver', () => {
               : `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`,
         };
       }
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
       if (args[0] === 'rev-parse') return { stdout: join(repo, '.git') };
       if (args[0] === 'symbolic-ref') return { stdout: 'main' };
       return { stdout: '' };

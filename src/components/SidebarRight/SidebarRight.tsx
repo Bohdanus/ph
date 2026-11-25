@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { Fragment, useCallback, useRef, useState } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
 import { DOCK_LABEL_MIN_WIDTH, usePanelLayout, type PanelId } from '../../contexts/PanelLayout.tsx';
@@ -303,16 +303,21 @@ const SidebarRight = () => {
   const handleSideClass = layout.dockSide === 'left' ? 'right-0 border-r-2' : 'left-0 border-l-2';
 
   const dockPlacement = edgePlacement(layout.dockSide, layout.dockSide === layout.toolsSide ? 'bottom' : 'full');
+  // F7 hides the Layers panel without affecting History. When only History remains it fills
+  // the dock, while the stored split ratio is kept so showing Layers restores the user's split.
+  const visiblePanelOrder = layout.layersVisible
+    ? layout.panelOrder
+    : layout.panelOrder.filter((id) => id === 'history');
 
-  const renderPanel = (id: PanelId, index: number) => {
+  const renderPanel = (id: PanelId, index: number, visibleCount: number) => {
     const isRolledUp = layout.rolledUp[id];
-    const share = index === 0 ? layout.splitRatio : 1 - layout.splitRatio;
+    const share = visibleCount === 1 ? 1 : index === 0 ? layout.splitRatio : 1 - layout.splitRatio;
     return (
       <PanelGroup
-        className={index === 0 ? 'border-b border-gray-300 dark:border-gray-600' : ''}
+        className={index === 0 && visibleCount > 1 ? 'border-b border-gray-300 dark:border-gray-600' : ''}
         id={id}
         isDragging={draggingPanel === id}
-        isDraggable
+        isDraggable={visibleCount > 1}
         isRolledUp={isRolledUp}
         key={id}
         onDrag={onPanelDrag(id)}
@@ -353,7 +358,7 @@ const SidebarRight = () => {
       data-chrome="panels"
       // Two `complementary` landmarks with no names is a screen reader announcing two
       // indistinguishable regions, so both sides name theirs. `SidebarLeft` names the rail.
-      aria-label="History and Layers panels"
+      aria-label={layout.layersVisible ? 'History and Layers panels' : 'History panel'}
       ref={dockRef}
       // The width lives on the element, not the grid track: the tablet collapse is a
       // `display: none` item, and only an `auto` track collapses to nothing for one. See the
@@ -413,6 +418,7 @@ const SidebarRight = () => {
                   key={id}
                   onClick={() => {
                     layout.setDockWidth(layout.dockWidth);
+                    if (id === 'layers') layout.setLayersVisible(true);
                     for (const other of layout.panelOrder) layout.setRolledUp(other, other !== id);
                     // One `setRolledUp` per panel, so this is two functional updates and two
                     // renders for one click. They compose because each reads the previous state
@@ -430,20 +436,22 @@ const SidebarRight = () => {
           </div>
         ) : (
           <>
-            {renderPanel(layout.panelOrder[0], 0)}
-
-            {/* The divider between the two groups. "When you drag these icons, all groups that share
-                the divider are resized" — with two groups, that is the whole column. */}
-            <div
-              {...splitterDrag.handleProps}
-              aria-hidden="true"
-              className={`h-1.5 shrink-0 cursor-row-resize touch-none border-y border-gray-300 bg-gray-200 hover:bg-blue-200 dark:border-gray-600 dark:bg-gray-700 dark:hover:bg-blue-700 ${
-                splitterDrag.isDragging ? 'bg-blue-300 dark:bg-blue-600' : ''
-              }`}
-              data-testid="dock-splitter"
-            />
-
-            {renderPanel(layout.panelOrder[1], 1)}
+            {visiblePanelOrder.map((id, index) => (
+              <Fragment key={id}>
+                {index > 0 && (
+                  /* The divider belongs only between two visible groups. */
+                  <div
+                    {...splitterDrag.handleProps}
+                    aria-hidden="true"
+                    className={`h-1.5 shrink-0 cursor-row-resize touch-none border-y border-gray-300 bg-gray-200 hover:bg-blue-200 dark:border-gray-600 dark:bg-gray-700 dark:hover:bg-blue-700 ${
+                      splitterDrag.isDragging ? 'bg-blue-300 dark:bg-blue-600' : ''
+                    }`}
+                    data-testid="dock-splitter"
+                  />
+                )}
+                {renderPanel(id, index, visiblePanelOrder.length)}
+              </Fragment>
+            ))}
           </>
         )}
 
