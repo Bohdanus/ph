@@ -212,8 +212,15 @@ and selection's multi-buffer algorithms have different memory budgets.
 tools, no Invert, no Modify (Feather / Expand / Contract), no Save or Load
 Selection, no Quick Mask, and no Channels panel (`PanelLayout.tsx` — `PanelId`
 admits only `history` and `layers`). Quick Selection alone offers Add and
-Subtract. Fill, Eraser and Clone Stamp consume derived masks; Brush, Draw and
-the other paint tools do not apply selection coverage.
+Subtract. Fill, Eraser and Clone Stamp consume derived masks. Patch uses the
+selection bounds as a rectangular repair target and does not clip non-rectangular
+contours or feathered coverage yet. Brush, Draw and the other paint tools do not
+apply selection coverage. The editor keeps an
+active selection when switching among selection tools, selection-aware
+operations, and non-destructive navigation, sampling, text and vector tools.
+Switching to a pixel-editing tool that does not clip to selection clears it as
+an undoable edit, so its visible boundary cannot imply a constraint the tool
+ignores.
 
 The stored selection is not Photoshop's general 8-bit alpha channel. The packed
 mask is binary and used only for high-complexity Magic Wand and Quick Selection

@@ -393,15 +393,15 @@ export const selectionDescriptions: Record<
       {
         control: 'Feather',
         detail:
-          'Softens the selection edge; Photoshop also allows Feather to be applied after a selection through Select > Modify > Feather. The app renders a 0–250 slider, but the freehand lasso processor does not consume its value.',
-        status: 'inert',
+          'Softens the selection edge. The app stores the 0–250 value with the committed freehand selection and applies it to copy, Fill, Eraser, Clone Stamp and Invert pixel masks; marching ants remain a hard geometric outline, and there is no post-selection Feather command.',
+        status: 'partial',
         appRef: 'src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:102',
       },
       {
         control: 'Anti-alias',
         detail:
-          'Smooths jagged selection edges. The app renders this checkbox, but the freehand lasso processor does not consume its value.',
-        status: 'inert',
+          'Smooths jagged selection edges. The app stores the checkbox state with the committed freehand selection and applies it to copy, Fill, Eraser, Clone Stamp and Invert pixel masks.',
+        status: 'partial',
         appRef: 'src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:117',
       },
       {
@@ -458,7 +458,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:52',
     ],
     appNotes:
-      "The tool traces a closed loop and commits it, and its bar renders Copy, Paste and Deselect beside a single toggle. That toggle is the app's own control and has no Photoshop counterpart: it is labelled Mode in the bar but switches between Outline and Fill, which changes how the committed border is painted rather than how a new gesture combines with the existing selection. The LassoToolArgs type carries alpha, lineWidth, color and fill, none of which Photoshop puts on this tool's bar. None of the modifiers above is read: the freehand lasso is drawn by the same PolygonClickToolArea as the polygonal one, and neither that component nor anything else on the lasso path consults a modifier key, so the Shift/Alt/Shift+Alt rows describe Photoshop only. The Return row is not bound either — the app registers Escape, Enter, Backspace and Delete on this tool's own gesture and nothing else (`src/components/Main/PolygonClickToolArea.tsx:922`) — so the focus-the-Feather-field binding above is a Photoshop binding with no counterpart here, and neither is Photoshop's mid-trace Space-to-Hand switch, which this app binds on the Shape tool alone and there to pan the shape being drawn (`src/components/Main/ShapeToolArea.tsx:52`) rather than to change tools. The Delete row is bound to the same registration that pops the last point of the trace. This tool has no selection-combination controls; Quick Selection separately offers Add and Subtract, while shared mode controls and Intersect remain absent. See `docs/TOOLS-TOO-HARD.md` §\"Selection combination modes\". Feather and Anti-alias are rendered in this app, but their args are not consumed by the freehand lasso commit/copy path, so both controls are inert; Select and Mask is absent. A drag outside canvas bounds is clamped to the document edge; Photoshop allows the lasso to extend past the edge. A zero-area click (press and release without movement) commits a 1×1 pixel selection at the click point.",
+      "The tool traces a closed loop and commits it, and its bar renders Copy, Paste and Deselect beside a single toggle. That toggle is the app's own control and has no Photoshop counterpart: it is labelled Mode in the bar but switches between Outline and Fill, which changes how the committed border is painted rather than how a new gesture combines with the existing selection. The LassoToolArgs type carries alpha, lineWidth, color and fill, none of which Photoshop puts on this tool's bar. None of the modifiers above is read: the freehand lasso is drawn by the same PolygonClickToolArea as the polygonal one, and neither that component nor anything else on the lasso path consults a modifier key, so the Shift/Alt/Shift+Alt rows describe Photoshop only. The Return row is not bound either — the app registers Escape, Enter, Backspace and Delete on this tool's own gesture and nothing else (`src/components/Main/PolygonClickToolArea.tsx:922`) — so the focus-the-Feather-field binding above is a Photoshop binding with no counterpart here, and neither is Photoshop's mid-trace Space-to-Hand switch, which this app binds on the Shape tool alone and there to pan the shape being drawn (`src/components/Main/ShapeToolArea.tsx:52`) rather than to change tools. The Delete row is bound to the same registration that pops the last point of the trace. This tool has no selection-combination controls; Quick Selection separately offers Add and Subtract, while shared mode controls and Intersect remain absent. See `docs/TOOLS-TOO-HARD.md` §\"Selection combination modes\". Feather and Anti-alias are saved with the committed freehand selection and applied to copy, Fill, Eraser, Clone Stamp and Invert pixel masks; the marching-ants outline stays geometric, and there is no post-selection Feather command. Select and Mask is absent. A drag outside canvas bounds is clamped to the document edge; Photoshop allows the lasso to extend past the edge. A zero-area click (press and release without movement) commits a 1×1 pixel selection at the click point.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html',
       'https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html',
@@ -511,15 +511,15 @@ export const selectionDescriptions: Record<
       {
         control: 'Feather',
         detail:
-          'Softens the selection edge; Photoshop also allows Feather to be applied after a selection through Select > Modify > Feather. The app renders a 0–250 slider, but the polygonal lasso processor does not consume its value.',
-        status: 'inert',
+          'Softens the selection edge. The app stores the 0–250 value with the committed polygon and applies it to copy, Fill, Eraser, Clone Stamp and Invert pixel masks; marching ants remain a hard geometric outline, and there is no post-selection Feather command.',
+        status: 'partial',
         appRef: 'src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx:71',
       },
       {
         control: 'Anti-alias',
         detail:
-          'Smooths jagged selection edges. The app renders this checkbox, but the polygonal lasso processor does not consume its value.',
-        status: 'inert',
+          'Smooths jagged selection edges. The app stores the checkbox state with the committed polygon and applies it to copy, Fill, Eraser, Clone Stamp and Invert pixel masks.',
+        status: 'partial',
         appRef: 'src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx:86',
       },
       {
@@ -586,7 +586,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:53',
     ],
     appNotes:
-      'In this app, the tool commits a closed polygon selection using click-to-add-anchor, double-click, right-click, or Enter/Return to close; Delete removes the latest anchor and Escape cancels the draft. Right-click closes with a straight segment to the start point in this app. Its options bar has an app-specific Outline/Fill toggle and no Photoshop selection controls. `PolygonClickToolArea` reads no modifier keys, so the Ctrl/Command-click closure, selection-combination modes, Shift-constrained segments, and Alt/Option-drag freehand behavior documented above are absent in the app. Adobe documents Alt/Option-double-click straight closure for the Magnetic Lasso, not the Polygonal Lasso. Feather and Anti-alias are rendered in this app, but their args are not consumed by the polygonal lasso commit/copy path, so both controls are inert; Select and Mask is absent. This tool has no selection-combination controls; Quick Selection separately offers Add and Subtract, while shared mode controls and Intersect remain absent. See `docs/TOOLS-TOO-HARD.md` §"Selection combination modes". A click outside canvas bounds is clamped to the nearest valid point; Photoshop allows the polygon to extend past the edge. A zero-area click (press and release without movement) commits a 1×1 pixel selection at the click point.',
+      'In this app, the tool commits a closed polygon selection using click-to-add-anchor, double-click, right-click, or Enter/Return to close; Delete removes the latest anchor and Escape cancels the draft. Right-click closes with a straight segment to the start point in this app. Its options bar has an app-specific Outline/Fill toggle and no Photoshop selection controls. `PolygonClickToolArea` reads no modifier keys, so the Ctrl/Command-click closure, selection-combination modes, Shift-constrained segments, and Alt/Option-drag freehand behavior documented above are absent in the app. Adobe documents Alt/Option-double-click straight closure for the Magnetic Lasso, not the Polygonal Lasso. Feather and Anti-alias are saved with the committed selection and applied to copy, Fill, Eraser, Clone Stamp and Invert pixel masks; the marching-ants outline stays geometric, and there is no post-selection Feather command. Select and Mask is absent. This tool has no selection-combination controls; Quick Selection separately offers Add and Subtract, while shared mode controls and Intersect remain absent. See `docs/TOOLS-TOO-HARD.md` §"Selection combination modes". A click outside canvas bounds is clamped to the nearest valid point; Photoshop allows the polygon to extend past the edge. A zero-area click (press and release without movement) commits a 1×1 pixel selection at the click point.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/isolate-specific-areas-in-images-with-lasso-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/freehand-selections/draw-straight-edged-segments-of-a-selection-border.html',

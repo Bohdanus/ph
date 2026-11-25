@@ -12,6 +12,7 @@ import { setRefValue } from '../util/ref.ts';
 import { createHistoryItem } from '../contexts/history-utils.ts';
 import { documentFrameFromSize } from '../contexts/document-frame.ts';
 import { appendSelectionClear } from '../contexts/useSelectionHistory.ts';
+import { preservesSelectionOnToolSwitch } from '../util/selection-tool-support.ts';
 import { isDocumentGestureOpen } from './document-gesture.ts';
 
 export interface UseAppType {
@@ -223,21 +224,15 @@ export const useApp = (): UseAppType => {
     // before the switch.
     if (!hasOpenDocumentGesture && commitDirtyTool() === null) return false;
 
-    // Clearing a selection is itself a document edit, so do not interleave it
-    // with a gesture that has not yet been cancelled by its owning tool.
-    if (!hasOpenDocumentGesture && nextToolName !== toolName && nextToolName !== 'patch' && activeSelectionId) {
-      // The same single writer the Clear/Deselect controls use, so this deselect
-      // gains the durable `set-selection` plan and the shadow-failure fallback
-      // instead of appending a hand-built entry with no `durableEntry` — which
-      // left the store reconverting the whole timeline on every tool switch.
-      // `appendSelectionClear` rather than `useSelectionHistory`'s
-      // `clearSelections`, because `goToTool` runs from a click handler and a
-      // keyboard shortcut through a plain function, and that hook's
-      // `useCallback` throws outside a component render.
-      //
-      // The predicate above is deliberately unchanged: a switch to the tool
-      // already active, or a switch with no active selection, still appends
-      // nothing and still leaves the document clean.
+    // Keep a pixel selection for operations that read its mask and for non-destructive tools. A
+    // pixel tool that does not apply selection coverage clears it before editing so its visible
+    // boundary cannot promise a constraint that the operation ignores.
+    if (
+      !hasOpenDocumentGesture &&
+      nextToolName !== toolName &&
+      !preservesSelectionOnToolSwitch(nextToolName) &&
+      activeSelectionId
+    ) {
       appendSelectionClear({
         selections,
         activeSelectionId,

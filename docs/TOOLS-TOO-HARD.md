@@ -147,23 +147,21 @@ it; and Quick Mask mode shows the selection as a red overlay that brushes can cu
 Contract are the three every selection workflow depends on. Feather and Grow in particular are
 reachable from the same Select menu Select and Mask is.
 
-**What this app does.** None of them exist, anywhere. There is no `Select` menu to host them — the five
-hosts are File, Tools, Image, Edit and Window (`DesktopHeader.tsx`) — and no selection operation
-implements them: `src/util/selection.ts`
-exports no inverse, no morphological grow or shrink, and no blur-based feather over a selection. It
-does compute a feathered alpha, but only on the clipboard copy path
-(`copyFeatheredPolygonSelectionToCanvas()` calling `createFeatheredAlphaMask()`); the outline it draws
-on the canvas is not feathered.
+**What this app does.** There is no `Select` menu to host these commands — the five hosts are File,
+Tools, Image, Edit and Window (`DesktopHeader.tsx`) — and no selection operation exports inverse,
+grow or shrink. The lasso Feather and Anti-alias options are captured before the selection is drawn
+and applied to pixel masks used by copy, Fill, Eraser, Clone Stamp and Invert. The marching-ants
+outline remains geometric, and the app has no command to change a selection's feather after it is
+committed.
 
-**Why it is too hard.** Every one of these is a whole-image operation on a selection the app stores as
-a polygon. Feathering a polygon is not feathering its outline; a correct Feather is a distance
-transform followed by a smoothstep, on a mask, and the app has no mask to run it on. This is the same
-missing substrate as Select and Mask above, and it is the reason the first entry in this section is a
-type change.
+**Why the remaining gap is substantial.** Inverse, grow, shrink, border and smooth modify an existing
+selection. They need a selection-edit command and rules for the vector and raster-backed selections;
+none of those commands exists today. The missing Select menu is a product-surface gap as well as an
+algorithm gap.
 
-**What the app does instead.** No selection can be inverted, grown, shrunk or feathered after the
-fact. A selection is what the last tool drew, and the only edits available are copy, paste and deselect
-from the marquee's bar.
+**What the app does instead.** Set Feather and Anti-alias on a lasso before drawing. A committed
+selection cannot be inverted, grown, shrunk or re-feathered after the fact. Copy, paste and deselect
+remain available from the selection bars.
 
 ### Persistent pixel-channel selection behavior
 

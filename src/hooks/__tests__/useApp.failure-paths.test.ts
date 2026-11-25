@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useApp, type UseAppType } from '../useApp.ts';
 import { createMockImageBitmap } from '@/__tests__/fixtures/canvas.ts';
 import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
-import { SELECTION_ACTION } from '../../util/constants.ts';
 import type { Selection } from '../../contexts/general-types.ts';
 import type { ImageLayerSource, Layer } from '../../contexts/layer-types.ts';
 import type { PsdDocument } from '../../contexts/psd-utils.ts';
@@ -178,28 +177,27 @@ describe('useApp failure paths', () => {
     });
   });
 
-  it('clears the active selection when a dirty tool is committed on the way to another tool', () => {
+  it('preserves the active selection when a dirty tool is committed on the way to another tool', () => {
     harness.state.toolName = 'draw';
     harness.state.activeSelectionId = 'sel-1';
-    harness.state.selections = [];
+    harness.state.selections = [
+      {
+        id: 'sel-1',
+        isActive: true,
+        lifecycle: 'committed',
+        geometry: 'rectangle',
+        sourceTool: 'rectangular-selection',
+        points: [],
+        pos: { x: 0, y: 0, width: 5, height: 5 },
+      } as Selection,
+    ];
 
-    useApp().goToTool('reposition');
+    useApp().goToTool('paint-bucket');
 
     expect(harness.layerMocks.commitDirtyTool).toHaveBeenCalledOnce();
-    expect(harness.dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'COMMIT_DOCUMENT_EDIT',
-        payload: expect.objectContaining({
-          updates: expect.objectContaining({
-            selections: [],
-            activeSelectionId: null,
-            selectionCleared: { status: 'cleared', version: 1 },
-          }),
-          historyItem: expect.objectContaining({ actionName: SELECTION_ACTION }),
-        }),
-      })
-    );
-    expect(harness.dispatch).toHaveBeenLastCalledWith({ type: 'SET_TOOL_NAME', payload: 'reposition' });
+    expect(harness.state.selections).toHaveLength(1);
+    expect(harness.state.activeSelectionId).toBe('sel-1');
+    expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SET_TOOL_NAME', payload: 'paint-bucket' });
   });
 
   it('does not clear the selection when the target tool is already active', () => {
@@ -215,21 +213,14 @@ describe('useApp failure paths', () => {
     });
   });
 
-  it('bumps the cleared version of an already-cleared selection', () => {
+  it('does not change the cleared version while switching to a selection-aware tool', () => {
     harness.state.toolName = 'draw';
     harness.state.activeSelectionId = 'sel-1';
     harness.state.selectionCleared = { status: 'cleared', version: 4 };
 
-    useApp().goToTool('reposition');
+    useApp().goToTool('paint-bucket');
 
-    expect(harness.dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'COMMIT_DOCUMENT_EDIT',
-        payload: expect.objectContaining({
-          updates: expect.objectContaining({ selectionCleared: { status: 'cleared', version: 5 } }),
-        }),
-      })
-    );
+    expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SET_TOOL_NAME', payload: 'paint-bucket' });
   });
 
   it('rejects a PSD import whose mutable raster cannot be made immutable', async () => {

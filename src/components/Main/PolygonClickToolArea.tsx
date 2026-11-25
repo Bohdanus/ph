@@ -184,6 +184,8 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
   const isFreehand = (toolArgs?.toolName ?? '') === 'freehand-lasso';
   const selectionSourceTool = isFreehand ? 'freehand-lasso' : 'polygonal-lasso';
+  const lassoArgs =
+    toolArgs?.toolName === 'polygonal-lasso' || toolArgs?.toolName === 'freehand-lasso' ? toolArgs : undefined;
 
   const pointsRef = useRef<Point[]>([]);
   const previewRef = useRef<Point | null>(null);
@@ -309,6 +311,10 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
       id: uuidv4(),
       points: oldPoints.map((point) => canvasToDocumentPoint(point, documentFrame)),
       sourceTool: selectionSourceTool,
+      metadata: {
+        featherRadius: lassoArgs?.featherRadius ?? 0,
+        antiAlias: lassoArgs?.antiAlias ?? true,
+      },
     });
     if (!selection) return;
 
