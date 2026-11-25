@@ -375,8 +375,6 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
         selectionSnapshotRef.current = activeSelection
           ? {
               ...getSelectionProcessorSnapshot(activeSelection, { x: 0, y: 0 }),
-              featherRadius: activeSelection.metadata?.featherRadius ?? 0,
-              antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
             }
           : undefined;
       },

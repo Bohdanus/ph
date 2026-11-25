@@ -359,6 +359,40 @@ describe('PolygonClickToolArea', () => {
       });
     });
 
+    it('stores the feather and anti-alias options on the committed selection', () => {
+      toolState.toolArgs = {
+        toolName: 'polygonal-lasso',
+        featherRadius: 9,
+        antiAlias: false,
+      } as typeof toolState.toolArgs;
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+      shortcutHandlers.get('Enter')?.();
+
+      expect(committedSelection().metadata).toEqual({ featherRadius: 9, antiAlias: false });
+    });
+
+    it('stores the feather and anti-alias options on a committed freehand lasso', () => {
+      toolState.toolArgs = {
+        toolName: 'freehand-lasso',
+        featherRadius: 7,
+        antiAlias: false,
+      } as typeof toolState.toolArgs;
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 100, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 100, clientY: 100 });
+      fireEvent.pointerUp(toolArea, { clientX: 10, clientY: 100 });
+
+      expect(committedSelection().metadata).toEqual({ featherRadius: 7, antiAlias: false });
+    });
+
     it('appends exactly one history entry for a multi-click polygonal gesture', () => {
       const ctx = createMockContext();
       const toolArea = renderArea({ current: ctx }).ctx;

@@ -48,6 +48,7 @@ import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 import { isDocumentGestureOpen, subscribeDocumentGesture } from '../../hooks/document-gesture.ts';
 import { setTemporaryHandActive } from '../../hooks/temporary-hand.ts';
 import { useCanvasTouchNavigation } from '../../hooks/useCanvasTouchNavigation.ts';
+import { SELECTION_PRESERVING_TOOL_NAMES } from '../../util/selection-tool-support.ts';
 
 /**
  * The interaction modes whose tool owns a selection, which is every mode that can have a
@@ -86,6 +87,7 @@ const Main = () => {
       hasImage,
       layers,
       toolName,
+      selections,
       totalSize,
       documentFrame,
       viewState,
@@ -240,10 +242,12 @@ const Main = () => {
   // Marquee tools read the same key state and reposition the live marquee while the drag is open.
   if (spacePressed && toolName !== 'text' && hasImage && !documentGestureOpen) interactionMode = 'hand';
 
-  // One read, because the canvas's `display` and the loop's `enabled` gate the same question and
-  // have to answer it identically: the canvas is the ants' only output, so a `display: none`
-  // beside a running loop would run 60 frames a second into a canvas nobody can see.
-  const selectionToolActive = SELECTION_INTERACTION_MODES.has(interactionMode);
+  // Marching ants remain visible while a committed selection is used with other tools. Selection
+  // tools also keep the overlay enabled during a new draft before a committed selection exists.
+  // Both the canvas and animation use one gate so no hidden 60fps loop is left running.
+  const showSelectionAnts =
+    SELECTION_INTERACTION_MODES.has(interactionMode) ||
+    (SELECTION_PRESERVING_TOOL_NAMES.has(toolName) && selections.some((selection) => selection.isActive));
   const dpr = useDevicePixelRatio();
 
   useEffect(() => {
@@ -471,10 +475,10 @@ const Main = () => {
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
             transform: viewTransform,
-            display: selectionToolActive ? 'block' : 'none',
+            display: showSelectionAnts ? 'block' : 'none',
           }}
         />
-        <SelectionMarchingAnts overlayRef={selectionAntsOverlayRef} enabled={selectionToolActive} />
+        <SelectionMarchingAnts overlayRef={selectionAntsOverlayRef} enabled={showSelectionAnts} />
         {(['hand', 'zoom', 'rotate-view'] as string[]).includes(interactionMode) ? (
           <ViewToolArea className="absolute inset-0 h-full w-full" mode={interactionMode as ViewToolMode} />
         ) : (
