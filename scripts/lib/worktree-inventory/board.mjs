@@ -219,6 +219,8 @@ export function readBoard(cwd, { nowMs = Date.now(), dbPath = resolveBoardDb(cwd
       list.push({
         agentId: a.agent_id,
         branch: a.branch,
+        // First Kilo run stored for this branch; history lookup hint, never a liveness signal.
+        firstSessionId: a.session_id ?? null,
         lastSeenMs: Number.isNaN(seen) ? null : seen,
         live: !Number.isNaN(seen) && seen > nowMs - LIVE_WINDOW_MS,
       });

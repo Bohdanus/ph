@@ -1540,8 +1540,13 @@ on `agent_id`, which is the **git branch** — `resolveIdentity` prefers
 that variable. Two sessions on one branch are one agent to the board and cannot
 deny each other a file.
 
-**Liveness is recency only.** `agents.last_pid` and `session_id` are written and
-never read — the one process-level signal the schema carries is consulted nowhere.
+**Liveness is recency only.** `agents.last_pid` and `session_id` do not affect the
+liveness verdict. Inventory includes `session_id` as `firstSessionId` solely as a
+history lookup clue. The board keeps only the first Kilo run per branch, so this
+optional field is not an exhaustive owner list and never proves a chat family dead.
+An absent ID means history is unknown and never justifies reclamation. The lookup
+supplements the full family walk; re-run the live-session overlay immediately before
+reclamation.
 
 **Unreadable lease deadlines fail closed.** The claim and lock checks use
 `isLiveDeadline`: a parseable future deadline is live, and an unparseable value
@@ -1636,8 +1641,10 @@ own work, not a sweep that could not have leaked.
 
 The database is global and **nothing in it is scoped to a session**: identity is
 the git branch, and the `agents` table's `session_id` column records only the
-first Kilo run to touch a branch and is never read back. So a `swarm note` from
-one worktree is in the same log every other session's `swarm watch --follow`
+first Kilo run to touch a branch. The generated inventory exposes that value as
+`firstSessionId` so it can lead to a history lookup, but it is not exhaustive and
+does not replace the full family walk or live overlay. A `swarm note` from one
+worktree is in the same log every other session's `swarm watch --follow`
 tails. That is why these are not optional politeness:
 
 - **Claim before the first edit**, not after: `npm run swarm -- claim <id> --files

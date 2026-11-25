@@ -808,14 +808,27 @@ describe('readBoard: liveness of claims and locks', () => {
         'kilo',
         '/wt',
         'old/y',
-        'sid',
+        'sid-stale',
+        new Date(NOW - 6 * 3600_000).toISOString()
+      );
+      db.prepare('INSERT INTO agents VALUES (?,?,?,?,?,?)').run(
+        'unknown/z',
+        'kilo',
+        '/wt',
+        'unknown/z',
+        null,
         new Date(NOW - 6 * 3600_000).toISOString()
       );
       db.close();
 
       const board = readBoard(process.cwd(), { nowMs: NOW, dbPath: join(dir, 'board.db') });
       const agents = board.agents.get('/wt');
-      expect(agents).toHaveLength(2);
+      expect(agents).toHaveLength(3);
+      expect(Object.fromEntries(agents.map((a) => [a.agentId, a.firstSessionId]))).toEqual({
+        'chore/x': 'sid',
+        'old/y': 'sid-stale',
+        'unknown/z': null,
+      });
       expect(agents.filter((a) => a.live).map((a) => a.agentId)).toEqual(['chore/x']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
