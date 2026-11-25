@@ -627,6 +627,64 @@ describe('codexRolloutState', () => {
     });
   });
 
+  it('fails closed when valid session metadata is followed by a truncated plain-text field', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          output: [{ type: 'input_text', text: 'Output:\n{\"session_id\": 15435} session_id: ' }],
+        },
+      },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'item_completed',
+          item: { type: 'CommandExecution', process_id: '15435', status: 'completed' },
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(text)).toMatchObject({
+      status: 'unproven',
+      reason: 'Codex command execution result could not be parsed safely',
+    });
+  });
+
+  it('ignores a session ID type declaration after valid exec metadata', () => {
+    const text = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          output: [
+            {
+              type: 'input_text',
+              text: 'Output:\n{\"session_id\": 15435}\nExec options declare session_id: number; this is documentation.',
+            },
+          ],
+        },
+      },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'item_completed',
+          item: { type: 'CommandExecution', process_id: '15435', status: 'completed' },
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n');
+
+    expect(codexRolloutState(text)).toMatchObject({ status: 'complete', reason: null });
+  });
+
   it('fails closed when session metadata is truncated before or within its identifier', () => {
     for (const output of [
       'Output:\n{"session_id": ',

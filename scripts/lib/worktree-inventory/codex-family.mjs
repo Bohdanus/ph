@@ -24,6 +24,8 @@ const FILE_SNAPSHOT_FIELDS = ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'];
 const NUMERIC_EXEC_SESSION_ID_FIELD = /\bsession_id\\?["']?\s*:\s*(?:"[+-]?\d+"|'[+-]?\d+'|[+-]?\d+)/i;
 const INCOMPLETE_EXEC_SESSION_ID_FIELD = /\bsession_id\\?["']?\s*:\s*(?:(?:["']|[+-])?\s*\d*\s*(?=$|[,}\r\n\]]))/im;
 const INCOMPLETE_EXEC_SESSION_ID_KEY = /(?:^|[,{])\s*\\?["']?session_id\\?["']?\s*(?=$|[},\]])/im;
+const INCOMPLETE_UNSTRUCTURED_EXEC_SESSION_ID_FIELD =
+  /\bsession_id\\?["']?\s*:\s*(?:(?:["'][+-]?\d*|[+-])\s*)?(?=$|[\r\n])/im;
 
 function hasMalformedExecSessionIdField(text) {
   return NUMERIC_EXEC_SESSION_ID_FIELD.test(text) || INCOMPLETE_EXEC_SESSION_ID_FIELD.test(text);
@@ -103,15 +105,18 @@ function collectExecSessionIds(value, pendingProcesses, allowUnmarked = true) {
 
 function visitJsonValues(text, visit) {
   let start = -1;
+  let segmentStart = 0;
   let depth = 0;
   let inString = false;
   let escaped = false;
   let count = 0;
   let unparsedSessionField = false;
+  const unstructuredSegments = [];
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index];
     if (start < 0) {
       if (character === '{' || character === '[') {
+        unstructuredSegments.push(text.slice(segmentStart, index));
         start = index;
         depth = 1;
         inString = false;
@@ -138,11 +143,14 @@ function visitJsonValues(text, visit) {
           hasMalformedExecSessionIdField(candidate) || INCOMPLETE_EXEC_SESSION_ID_KEY.test(candidate);
       }
       start = -1;
+      segmentStart = index + 1;
     }
   }
   const incomplete = start >= 0 ? text.slice(start) : '';
   unparsedSessionField ||=
     hasMalformedExecSessionIdField(incomplete) || INCOMPLETE_EXEC_SESSION_ID_KEY.test(incomplete);
+  if (start < 0) unstructuredSegments.push(text.slice(segmentStart));
+  unparsedSessionField ||= INCOMPLETE_UNSTRUCTURED_EXEC_SESSION_ID_FIELD.test(unstructuredSegments.join(''));
   return { count, unparsedSessionField };
 }
 
