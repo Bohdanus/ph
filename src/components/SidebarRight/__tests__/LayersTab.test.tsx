@@ -40,6 +40,7 @@ const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch }
     toggleVisibility: vi.fn(),
     removeLayer: vi.fn(),
     moveLayerAfter: vi.fn(),
+    arrangeLayer: vi.fn(),
     setActiveLayer: vi.fn(),
     beginTextLayerEdit: vi.fn(),
     commitDirtyTool: vi.fn(),
@@ -182,6 +183,12 @@ function getNameSpan(name: string): HTMLElement {
 
 function getBottomDropZone(container: HTMLElement) {
   return container.querySelector('[class~="min-h-[20px]"]') as HTMLElement;
+}
+
+function getArrangeButtons() {
+  return ['bring-to-front', 'bring-forward', 'send-backward', 'send-to-back'].map((command) =>
+    screen.getByTestId(`layers-arrange-${command}`)
+  );
 }
 
 function getRenderedNames(container: HTMLElement) {
@@ -465,6 +472,20 @@ describe('LayersTab', () => {
     expect(reordered[0]).toHaveClass('bg-white');
     expect(reordered[1]).toHaveTextContent('Layer 2');
     expect(reordered[1]).toHaveClass('bg-transparent');
+  });
+
+  it.each(['Enter', ' '])('selects a focused layer name with %s', (key) => {
+    render(<LayersTab />);
+    const name = getNameSpan('Top Layer');
+
+    expect(name).toHaveAttribute('role', 'button');
+    expect(name).toHaveAttribute('tabindex', '0');
+    expect(name).toHaveClass('focus-visible:outline-2');
+    expect(name).toHaveClass('focus-visible:outline-blue-500');
+    name.focus();
+    fireEvent.keyDown(name, { key });
+
+    expect(layerMocks.setActiveLayer).toHaveBeenCalledWith('layer-3');
   });
 
   it('hydrates a selected text layer into canvas space for re-entry', () => {
@@ -903,6 +924,118 @@ describe('LayersTab', () => {
       expect(row.querySelector('button[aria-label="Remove layer"]')).toBeNull();
     }
     expect(screen.getByTestId('layers-delete-active-button')).toBeInTheDocument();
+  });
+
+  it('dispatches an Arrange command, closes the disclosure, and restores focus', () => {
+    render(<LayersTab />);
+    const disclosure = screen.getByTestId('layers-arrange-disclosure') as HTMLDetailsElement;
+    const summary = screen.getByTestId('layers-arrange-summary');
+    const command = screen.getByTestId('layers-arrange-bring-forward');
+    fireEvent.click(summary);
+    expect(disclosure.open).toBe(true);
+    command.focus();
+
+    fireEvent.click(command);
+
+    expect(layerMocks.arrangeLayer).toHaveBeenCalledExactlyOnceWith('bring-forward');
+    expect(disclosure.open).toBe(false);
+    expect(document.activeElement).toBe(summary);
+  });
+
+  it('disables only the commands that cannot move the active layer', () => {
+    seed(mockLayers, 'layer-3');
+    render(<LayersTab />);
+
+    expect(screen.getByTestId('layers-arrange-bring-to-front')).toBeDisabled();
+    expect(screen.getByTestId('layers-arrange-bring-forward')).toBeDisabled();
+    expect(screen.getByTestId('layers-arrange-send-backward')).toBeEnabled();
+    expect(screen.getByTestId('layers-arrange-send-to-back')).toBeEnabled();
+  });
+
+  it('disables send commands for the bottom movable layer', () => {
+    seed(mockLayers, 'layer-2');
+    render(<LayersTab />);
+
+    expect(screen.getByTestId('layers-arrange-bring-to-front')).toBeEnabled();
+    expect(screen.getByTestId('layers-arrange-bring-forward')).toBeEnabled();
+    expect(screen.getByTestId('layers-arrange-send-backward')).toBeDisabled();
+    expect(screen.getByTestId('layers-arrange-send-to-back')).toBeDisabled();
+  });
+
+  it('enables all commands for a layer between movable stack boundaries', () => {
+    const layers = {
+      ...mockLayers,
+      'layer-4': createMockLayer({ id: 'layer-4', name: 'Upper Layer', order: 3 }),
+    };
+    seed(layers, 'layer-3');
+    render(<LayersTab />);
+
+    for (const button of getArrangeButtons()) expect(button).toBeEnabled();
+  });
+
+  it.each([
+    ['the bedrock layer', mockLayers, 'layer-1'],
+    [
+      'a locked layer',
+      {
+        ...mockLayers,
+        'layer-2': createMockLayer({ id: 'layer-2', name: 'Layer 2', order: 1, locked: true }),
+      },
+      'layer-2',
+    ],
+    ['a missing active layer', mockLayers, null],
+    ['an empty document', {}, null],
+  ] as const)('disables all commands for %s', (_label, layers, activeLayerId) => {
+    seed(layers, activeLayerId);
+    render(<LayersTab />);
+
+    for (const button of getArrangeButtons()) expect(button).toBeDisabled();
+    expect(layerMocks.arrangeLayer).not.toHaveBeenCalled();
+  });
+
+  it('disables Arrange while the active layer is in text editing or rename mode', () => {
+    let unmount: (() => void) | undefined;
+    try {
+      currentToolState.toolArgs = {
+        toolName: 'text',
+        editingLayerId: 'layer-2',
+        rect: { x1: 0, y1: 0, x2: 20, y2: 20 },
+      };
+      unmount = render(<LayersTab />).unmount;
+      for (const button of getArrangeButtons()) expect(button).toBeDisabled();
+      unmount();
+      unmount = undefined;
+
+      currentToolState.toolArgs = { toolName: 'move' };
+      unmount = render(<LayersTab />).unmount;
+      fireEvent.doubleClick(getNameSpan('Layer 2'));
+      for (const button of getArrangeButtons()) expect(button).toBeDisabled();
+    } finally {
+      unmount?.();
+      currentToolState.toolArgs = { toolName: 'move' };
+    }
+  });
+
+  it('closes Arrange on Escape and when focus leaves the disclosure', () => {
+    render(<LayersTab />);
+    const disclosure = screen.getByTestId('layers-arrange-disclosure') as HTMLDetailsElement;
+    const summary = screen.getByTestId('layers-arrange-summary');
+    const outside = screen.getByTestId('layers-delete-active-button');
+    fireEvent.click(summary);
+    expect(disclosure.open).toBe(true);
+
+    fireEvent.keyDown(summary, { key: 'Escape' });
+
+    expect(disclosure.open).toBe(false);
+    expect(document.activeElement).toBe(summary);
+
+    fireEvent.click(summary);
+    expect(disclosure.open).toBe(true);
+    const command = screen.getByTestId('layers-arrange-bring-forward');
+    command.focus();
+    fireEvent.blur(command, { relatedTarget: outside });
+
+    expect(disclosure.open).toBe(false);
   });
 
   it('stops propagation on eye button click', () => {
