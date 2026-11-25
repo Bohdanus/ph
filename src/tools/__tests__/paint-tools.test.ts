@@ -242,13 +242,15 @@ describe('paint tool rasterization', () => {
 
   it.each(paintToolNames)('clips %s pixels to its captured selection', (toolName) => {
     const selection = {
-      points: [[
-        { x: 4, y: 4 },
-        { x: 15, y: 4 },
-        { x: 15, y: 15 },
-        { x: 4, y: 15 },
-        { x: 4, y: 4 },
-      ]],
+      points: [
+        [
+          { x: 4, y: 4 },
+          { x: 15, y: 4 },
+          { x: 15, y: 15 },
+          { x: 4, y: 15 },
+          { x: 4, y: 4 },
+        ],
+      ],
       featherRadius: 0,
       antiAlias: false,
     };
@@ -257,7 +259,9 @@ describe('paint tool rasterization', () => {
       ...paintToolArgsWithPoints(toolName, stroke),
       selection,
     });
-    const maskCanvas = RecordingOffscreenCanvas.instances.find((instance) => instance.ctx.putImageData.mock.calls.length > 0)!;
+    const maskCanvas = RecordingOffscreenCanvas.instances.find(
+      (instance) => instance.ctx.putImageData.mock.calls.length > 0
+    )!;
     const maskImage = maskCanvas.ctx.putImageData.mock.calls[0][0] as ImageData;
 
     expect(canvas.ctx.drawImage).toHaveBeenCalledWith(maskCanvas, 0, 0, documentSize.width, documentSize.height);
@@ -268,12 +272,14 @@ describe('paint tool rasterization', () => {
   it('keeps a detached selection snapshot after the active selection changes', () => {
     const activeSelection = {
       id: 'selection-1',
-      points: [[
-        { x: 2, y: 2 },
-        { x: 10, y: 2 },
-        { x: 10, y: 10 },
-        { x: 2, y: 10 },
-      ]],
+      points: [
+        [
+          { x: 2, y: 2 },
+          { x: 10, y: 2 },
+          { x: 10, y: 10 },
+          { x: 2, y: 10 },
+        ],
+      ],
       pos: { x: 0, y: 0, width: 10, height: 10 },
       isActive: true,
       metadata: { featherRadius: 0, antiAlias: false },
@@ -289,7 +295,9 @@ describe('paint tool rasterization', () => {
       ...paintToolArgsWithPoints('brush', stroke),
       selection: snapshot,
     });
-    const maskCanvas = RecordingOffscreenCanvas.instances.find((instance) => instance.ctx.putImageData.mock.calls.length > 0)!;
+    const maskCanvas = RecordingOffscreenCanvas.instances.find(
+      (instance) => instance.ctx.putImageData.mock.calls.length > 0
+    )!;
     const maskImage = maskCanvas.ctx.putImageData.mock.calls[0][0] as ImageData;
 
     expect(canvas).toBeTruthy();
@@ -330,7 +338,9 @@ describe('paint tool rasterization', () => {
       ...paintToolArgsWithPoints('brush', stroke),
       selection: snapshot,
     });
-    const maskCanvas = RecordingOffscreenCanvas.instances.find((instance) => instance.ctx.putImageData.mock.calls.length > 0)!;
+    const maskCanvas = RecordingOffscreenCanvas.instances.find(
+      (instance) => instance.ctx.putImageData.mock.calls.length > 0
+    )!;
     const maskImage = maskCanvas.ctx.putImageData.mock.calls[0][0] as ImageData;
 
     expect(canvas).toBeTruthy();
@@ -342,12 +352,14 @@ describe('paint tool rasterization', () => {
   it('preserves feather coverage when a cropped paint raster begins outside the selection', () => {
     const selection = {
       id: 'feathered-selection',
-      points: [[
-        { x: 4, y: 3 },
-        { x: 12, y: 3 },
-        { x: 12, y: 17 },
-        { x: 4, y: 17 },
-      ]],
+      points: [
+        [
+          { x: 4, y: 3 },
+          { x: 12, y: 3 },
+          { x: 12, y: 17 },
+          { x: 4, y: 17 },
+        ],
+      ],
       pos: { x: 0, y: 0, width: 12, height: 17 },
       isActive: true,
       metadata: { featherRadius: 4, antiAlias: true },
@@ -356,7 +368,9 @@ describe('paint tool rasterization', () => {
     const cropOrigin = { x: 14, y: 5 };
     const cropped = rebasePaintSelectionSnapshot(snapshot, cropOrigin);
     createSelectionMaskCanvas(cropped, { width: 8, height: 8 });
-    const maskCanvas = RecordingOffscreenCanvas.instances.find((instance) => instance.ctx.putImageData.mock.calls.length > 0)!;
+    const maskCanvas = RecordingOffscreenCanvas.instances.find(
+      (instance) => instance.ctx.putImageData.mock.calls.length > 0
+    )!;
     const image = maskCanvas.ctx.putImageData.mock.calls[0][0] as ImageData;
     const expectedFullCoverage = createSelectionAlphaMask(snapshot, { width: 24, height: 20 }, snapshot);
     const actualAlpha = Array.from({ length: 64 }, (_, index) => image.data[index * 4 + 3]);
@@ -376,12 +390,14 @@ describe('paint tool rasterization', () => {
     expect(
       paintSelectionOverlapsRaster(
         {
-          points: [[
-            { x: 30, y: 4 },
-            { x: 40, y: 4 },
-            { x: 40, y: 16 },
-            { x: 30, y: 16 },
-          ]],
+          points: [
+            [
+              { x: 30, y: 4 },
+              { x: 40, y: 4 },
+              { x: 40, y: 16 },
+              { x: 30, y: 16 },
+            ],
+          ],
           featherRadius: 0,
           antiAlias: false,
         },
@@ -442,6 +458,75 @@ describe('paint tool rasterization', () => {
     const maskCanvas = RecordingOffscreenCanvas.instances.at(-1)!;
     const image = maskCanvas.ctx.putImageData.mock.calls[0][0] as ImageData;
     expect(image.data[3]).toBe(0);
+  });
+
+  it('skips a fractional raster feather fringe when its computed alpha is zero at the stroke boundary', () => {
+    const rasterMask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, {
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+    })!;
+    const selection = {
+      points: [],
+      rasterMask: { ...rasterMask, x: 3.9, y: 0 },
+      featherRadius: 3,
+      antiAlias: true,
+    };
+
+    expect(paintSelectionOverlapsRaster(selection, { width: 1, height: 1 })).toBe(false);
+
+    createSelectionMaskCanvas(selection, { width: 1, height: 1 });
+    const maskCanvas = RecordingOffscreenCanvas.instances.at(-1)!;
+    const image = maskCanvas.ctx.putImageData.mock.calls[0][0] as ImageData;
+    expect(image.data[3]).toBe(0);
+  });
+
+  it('keeps a fractional raster feather fringe when the generated stroke mask has alpha', () => {
+    const rasterMask = encodeRasterSelectionMask(new Uint8Array(9).fill(1), 3, 3, {
+      x: 0,
+      y: 0,
+      width: 3,
+      height: 3,
+    })!;
+    const selection = {
+      points: [],
+      rasterMask: { ...rasterMask, x: 1.3, y: 0.7 },
+      featherRadius: 3,
+      antiAlias: true,
+    };
+
+    expect(paintSelectionOverlapsRaster(selection, { width: 1, height: 1 })).toBe(true);
+
+    createSelectionMaskCanvas(selection, { width: 1, height: 1 });
+    const maskCanvas = RecordingOffscreenCanvas.instances.at(-1)!;
+    const image = maskCanvas.ctx.putImageData.mock.calls[0][0] as ImageData;
+    expect(image.data[3]).toBeGreaterThan(0);
+  });
+
+  it('keeps feather coverage from an isolated raster selection pixel beside a hole', () => {
+    const sparsePixels = new Uint8Array(11);
+    sparsePixels[0] = 1;
+    sparsePixels[10] = 1;
+    const rasterMask = encodeRasterSelectionMask(sparsePixels, 11, 1, {
+      x: 0,
+      y: 0,
+      width: 11,
+      height: 1,
+    })!;
+    const selection = {
+      points: [],
+      rasterMask: { ...rasterMask, x: 2, y: 0 },
+      featherRadius: 3,
+      antiAlias: true,
+    };
+
+    expect(paintSelectionOverlapsRaster(selection, { width: 1, height: 1 })).toBe(true);
+
+    createSelectionMaskCanvas(selection, { width: 1, height: 1 });
+    const maskCanvas = RecordingOffscreenCanvas.instances.at(-1)!;
+    const image = maskCanvas.ctx.putImageData.mock.calls[0][0] as ImageData;
+    expect(image.data[3]).toBeGreaterThan(0);
   });
 
   it('treats holes inside a sparse raster selection as paint no-ops', () => {

@@ -2,13 +2,7 @@ import type { CreatorToolParams, ProcessorToolParams, ToolResult } from './toolP
 import type { PaintBlendMode, PaintSettings, PaintToolName } from './brush.ts';
 import { drawLine } from '../util/draw.ts';
 import { decodeRasterSelectionMask, isRasterSelectionPixelSelected } from '../util/selection-mask.ts';
-import type {
-  Ctx2D,
-  Point,
-  PositionedRasterSelectionMask,
-  Selection,
-  Size,
-} from '../contexts/general-types.ts';
+import type { Ctx2D, Point, PositionedRasterSelectionMask, Selection, Size } from '../contexts/general-types.ts';
 import { createSelectionAlphaMask, getSelectionProcessorSnapshot } from '../util/selection.ts';
 
 export type PenType = 'pen' | 'pen-dashed' | 'spray';
@@ -130,17 +124,48 @@ function rasterMaskHasSelectedPixelNearRaster(
   packed: Uint8Array,
   width: number,
   height: number,
-  featherRadius: number
+  featherRadius: number,
+  antiAlias: boolean
 ): boolean {
   if (!Number.isFinite(rasterMask.x) || !Number.isFinite(rasterMask.y)) return false;
 
   // With integer-aligned raster selections, outside pixels receive feather alpha only when their
   // chamfer distance to a selected pixel is strictly less than the feather radius. Anti-aliasing
   // preserves the rasterizer's existing pixel coverage; it does not grow a binary raster mask.
-  // Fractionally moved masks keep a conservative neighborhood because several source pixels can
-  // combine into partial destination coverage.
   const integerOrigin = Number.isInteger(rasterMask.x) && Number.isInteger(rasterMask.y);
-  const padding = integerOrigin ? Math.max(0, Math.ceil(featherRadius) - 1) : Math.ceil(featherRadius);
+  if (!integerOrigin) {
+    // A moved raster mask can contribute only fractional coverage at a destination pixel. A
+    // selected source pixel inside a ceil(featherRadius) bounding box may still be exactly at the
+    // feather's zero-alpha limit, so use the same padded alpha raster as the commit path before
+    // deciding whether this stroke would create a visible layer.
+    const padding = Math.max(antiAlias ? 1 : 0, Math.ceil(featherRadius));
+    const expandedWidth = width + padding * 2;
+    const expandedHeight = height + padding * 2;
+    const expandedSelection = {
+      points: [],
+      rasterMask: {
+        ...rasterMask,
+        x: rasterMask.x + padding,
+        y: rasterMask.y + padding,
+      },
+    };
+    const expandedAlpha = createSelectionAlphaMask(
+      expandedSelection,
+      { width: expandedWidth, height: expandedHeight },
+      { featherRadius, antiAlias }
+    );
+
+    for (let y = 0; y < height; y += 1) {
+      const rowOffset = (y + padding) * expandedWidth + padding;
+      for (let x = 0; x < width; x += 1) {
+        if (expandedAlpha[rowOffset + x] > 0) return true;
+      }
+    }
+
+    return false;
+  }
+
+  const padding = Math.max(0, Math.ceil(featherRadius) - 1);
   const firstX = Math.max(0, Math.floor(-padding - rasterMask.x));
   const firstY = Math.max(0, Math.floor(-padding - rasterMask.y));
   const lastX = Math.min(rasterMask.width, Math.ceil(width + padding - rasterMask.x));
@@ -184,7 +209,8 @@ export function paintSelectionOverlapsRaster(selection: PaintSelectionSnapshot, 
         packed,
         width,
         height,
-        featherRadius
+        featherRadius,
+        selection.antiAlias
       );
     }
   }
@@ -208,12 +234,7 @@ export function paintSelectionOverlapsRaster(selection: PaintSelectionSnapshot, 
     return false;
   }
 
-  return (
-    maxX + edgePadding > 0 &&
-    maxY + edgePadding > 0 &&
-    minX - edgePadding < width &&
-    minY - edgePadding < height
-  );
+  return maxX + edgePadding > 0 && maxY + edgePadding > 0 && minX - edgePadding < width && minY - edgePadding < height;
 }
 
 export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {
