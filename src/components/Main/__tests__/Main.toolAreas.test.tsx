@@ -604,7 +604,7 @@ describe('Main tool-area routing', () => {
     expect([ants.width, ants.height]).toEqual([800, 600]);
   });
 
-  it('shows the selection ants overlay for every selection tool and hides it otherwise', () => {
+  it('shows ants for selection tools and keeps committed selections visible with other tools', () => {
     storeState.toolName = 'polygonal-lasso';
     const { container, rerender } = render(<GuardedMain />);
     const ants = () => container.querySelector('[data-testid="selection-ants-canvas"]') as HTMLCanvasElement;
@@ -638,20 +638,50 @@ describe('Main tool-area routing', () => {
       expect(ants().style.display, `${toolName} is a selection tool and must own the ants canvas`).toBe('block');
     }
 
-    // A non-selection tool must not run a 60fps loop into a canvas nobody can see. The canvas and
-    // the loop are gated on one boolean (`selectionToolActive`), so they cannot disagree; this
-    // loop is the half of that claim which is not about the list above.
+    // A committed selection remains visible after switching to supported operations or safe
+    // non-destructive tools.
+    storeState.selections = [
+      {
+        id: 'selection-1',
+        isActive: true,
+        points: [],
+        pos: { x: 0, y: 0, width: 5, height: 5 },
+      },
+    ];
     //
     // `GuardedMain`, not a bare `Main`: this branch's base predates the unsaved-changes provider,
     // and main added `useUnsavedChanges` under `Main`, so rendering the raw component here throws
     // "must be used within an UnsavedChangesProvider" before the assertion runs at all. Every other
     // rerender in this file already goes through the guard for the same reason.
-    for (const toolName of ['reposition', 'brush', 'crop', 'text', 'zoom', 'paint-bucket', 'eyedropper'] as const) {
+    for (const toolName of [
+      'paint-bucket',
+      'magic-eraser',
+      'eraser',
+      'clone-stamp',
+      'patch',
+      'text',
+      'zoom',
+      'eyedropper',
+    ] as const) {
       storeState.toolName = toolName;
       rerender(<GuardedMain />);
 
-      expect(ants().style.display).toBe('none');
+      expect(ants().style.display, `${toolName} must keep an existing selection visible`).toBe('block');
     }
+
+    for (const toolName of ['reposition', 'brush', 'crop'] as const) {
+      storeState.toolName = toolName;
+      rerender(<GuardedMain />);
+
+      expect(ants().style.display, `${toolName} does not yet preserve or consume selections`).toBe('none');
+    }
+
+    // With no committed selection and no selection tool draft, the overlay and its animation are
+    // both parked. This keeps the canvas gate from starting a hidden loop.
+    storeState.selections = [];
+    storeState.toolName = 'paint-bucket';
+    rerender(<GuardedMain />);
+    expect(ants().style.display).toBe('none');
   });
 
   it('names every selection interaction mode in the exported gate, and nothing else', () => {

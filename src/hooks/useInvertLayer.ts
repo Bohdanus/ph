@@ -45,8 +45,6 @@ export const useInvertLayer = () => {
       }
       selection = {
         ...getSelectionProcessorSnapshot(activeSelection, staged.bounds),
-        featherRadius: activeSelection.metadata?.featherRadius ?? 0,
-        antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
       };
     }
 

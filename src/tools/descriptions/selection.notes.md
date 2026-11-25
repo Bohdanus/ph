@@ -377,15 +377,16 @@ small gaps between your end point and starting point".
 
 ### Options table
 
-| Control                                       | Photoshop                     | App status | App ref                    |
-| --------------------------------------------- | ----------------------------- | ---------- | -------------------------- |
-| New / Add To / Subtract From / Intersect With | four modes                    | `missing`  | —                          |
-| Feather                                       | pixel radius, default 0       | `inert`    | rendered, but not consumed |
-| Anti-alias                                    | on by default                 | `inert`    | rendered, but not consumed |
-| Select and Mask                               | on every selection tool's bar | `missing`  | —                          |
+| Control                                       | Photoshop                     | App status | App ref                                                   |
+| --------------------------------------------- | ----------------------------- | ---------- | --------------------------------------------------------- |
+| New / Add To / Subtract From / Intersect With | four modes                    | `missing`  | —                                                         |
+| Feather                                       | pixel radius, default 0       | `partial`  | stored on selection; used by mask-aware raster operations |
+| Anti-alias                                    | on by default                 | `partial`  | stored on selection; used by mask-aware raster operations |
+| Select and Mask                               | on every selection tool's bar | `missing`  | —                                                         |
 
-**App fidelity: partial.** The bar renders `Feather` and `Anti-alias`, but the freehand lasso
-processor and copy path do not consume their args, so both controls are inert. Its `Mode` toggle
+**App fidelity: partial.** The bar stores `Feather` and `Anti-alias` on the committed freehand
+selection. Copy, Fill, Eraser, Clone Stamp and Invert consume those edge settings; the marching
+ants remain a hard geometric outline and there is no post-selection Feather command. Its `Mode` toggle
 switches between `Outline` and `Fill`; that is the app's own invention and changes how the
 committed border is painted, not how a gesture combines with an existing selection. The bar also
 has Copy, Paste and Deselect buttons, while the app has no Photoshop selection-combination modes.
@@ -427,18 +428,19 @@ Alt/Option-double-click belongs to the Magnetic Lasso and remains documented the
 
 ### Options table
 
-| Control                                       | Photoshop                                                         | App status | App ref                    |
-| --------------------------------------------- | ----------------------------------------------------------------- | ---------- | -------------------------- |
-| New / Add To / Subtract From / Intersect With | four modes                                                        | `missing`  | —                          |
-| Feather                                       | pixel radius, default 0                                           | `inert`    | rendered, but not consumed |
-| Anti-alias                                    | on by default; visible effect only on Alt-drawn freehand segments | `inert`    | rendered, but not consumed |
-| Select and Mask                               | on every selection tool's bar                                     | `missing`  | —                          |
+| Control                                       | Photoshop                                                         | App status | App ref                                                   |
+| --------------------------------------------- | ----------------------------------------------------------------- | ---------- | --------------------------------------------------------- |
+| New / Add To / Subtract From / Intersect With | four modes                                                        | `missing`  | —                                                         |
+| Feather                                       | pixel radius, default 0                                           | `partial`  | stored on selection; used by mask-aware raster operations |
+| Anti-alias                                    | on by default; visible effect only on Alt-drawn freehand segments | `partial`  | stored on selection; used by mask-aware raster operations |
+| Select and Mask                               | on every selection tool's bar                                     | `missing`  | —                                                         |
 
 **App fidelity: partial**, and this is the most _gesturally_ faithful tool in the family — the
 click-to-add-anchor, double-click close, right-click close, `Enter` close, `Delete` anchor
 removal and `Escape` abort are all registered in `PolygonClickToolArea` — against the
-least complete bar. The bar renders `Feather` and `Anti-alias`, but the polygonal lasso processor
-and copy path do not consume their args, so both controls are inert. It also has an Outline/Fill
+least complete bar. The bar's Feather and Anti-alias settings are stored on the committed selection
+and applied to copy, Fill, Eraser, Clone Stamp and Invert pixel masks; the marching-ants outline
+remains geometric, and there is no post-selection Feather command. It also has an Outline/Fill
 toggle and a hint, but no Copy, Paste or Deselect buttons; the freehand and magnetic lasso bars
 beside it render those buttons.
 
@@ -451,19 +453,12 @@ bound (the `useKeyDownShortcut` registrations keyed `'Enter'` and `'Delete'` in
 `PolygonClickToolArea`); the `Return` row's Feather-focus half is not, because the bar has no
 Feather field to focus. The rows stay and the absence is stated in `appNotes`.
 
-**The feather claim that was wrong.** The data file used to say a feather set on any selection
-tool "is only reachable by re-making the selection with the tool". Neither half of that is true.
-Re-making a selection applies no feather at all — `featherRadius` is a field of
-`FeatherMagneticLassoToolArgs` alone (`src/tools/featherMagneticLasso.ts`), and it is the only
-tool area that writes it into the selection's metadata
-(`src/components/Main/FeatherMagneticLassoToolArea.tsx` — the `metadata` literal
-`finishSelection()` commits). And the magnetic lasso's feather is not a selection feather:
-`copySelectionToCanvas` routes
-**only** the magnetic lasso through `copyFeatheredPolygonSelectionToCanvas` (the branch in
-`copySelectionToCanvas()` in `src/util/selection.ts`), so the radius softens the copied alpha mask
-and leaves the selection the marching ants are drawn from unchanged. The corrected sentence is in
-`appNotes` and
-is deliberately narrower than the one it replaces.
+**The old lasso-options gap.** Polygonal and freehand Lasso now store Feather and Anti-alias on the
+committed selection. `getSelectionProcessorSnapshot()` carries those options to Fill, Eraser,
+Clone Stamp and Invert; `copySelectionToCanvas()` routes lasso selections through the feathered
+alpha-mask copier. The selection outline is still drawn from the original contour, and the app has
+no post-selection Feather command. Magnetic Lasso retains its tool-specific settings and uses the
+same edge options.
 
 **Correction to the research corpus.** `01-photoshop-reference.md` §1.5 attributes to this tool
 a click-and-drag that produces a _smooth anchor with drag-set tangent handles_, cited to [8][9].
@@ -544,14 +539,10 @@ is precisely what the `'partial'` member of `ToolControlStatus` in
 in the options-bar control and in the tool area's path options; comma and period adjustment keys
 remain unimplemented because they are documented only by Adobe evangelists, not Adobe Help.
 
-**`Feather` and `Anti-alias` are the same divergence, and are both `partial` for it.**
-`args.featherRadius` and `args.antiAlias` are both written into the selection's metadata at commit
-(the `metadata` literal `finishSelection()` builds in
-`src/components/Main/FeatherMagneticLassoToolArea.tsx`) and both are read back in
-exactly **one** place, `copySelectionToCanvas()` → `copyFeatheredPolygonSelectionToCanvas()` in
-`src/util/selection.ts`. So both reach the **copied alpha mask** and nothing else:
-un-ticking Anti-alias changes the copy and leaves the selection the marching ants are drawn from
-untouched, which is exactly what `Feather` already said.
+**`Feather` and `Anti-alias` remain partial for lasso tools.** They affect copied and edited pixel
+masks, while marching ants continue to show the unfeathered contour. Feather can only be chosen
+before drawing; the Select > Modify > Feather command for changing an existing selection is still
+missing.
 
 **The 100-pixel cap was never a divergence.** It was carried as one because the app's slider stops
 at 100 (the `Feather` slider in `FeatherMagneticLasso.tsx`) and because "Adobe never states the
