@@ -21,6 +21,13 @@ const MAX_TAIL_BYTES = 16 * 1024 * 1024;
 const MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
 const READ_BLOCK_BYTES = 64 * 1024;
 const FILE_SNAPSHOT_FIELDS = ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'];
+const NUMERIC_EXEC_SESSION_ID_FIELD = /\bsession_id\\?["']?\s*:\s*(?:"[+-]?\d+"|'[+-]?\d+'|[+-]?\d+)/i;
+const INCOMPLETE_EXEC_SESSION_ID_FIELD = /\bsession_id\\?["']?\s*:\s*(?:(?:["']|[+-])?\s*\d*\s*(?=$|[,}\r\n\]]))/im;
+const INCOMPLETE_EXEC_SESSION_ID_KEY = /(?:^|[,{])\s*\\?["']?session_id\\?["']?\s*(?=$|[},\]])/im;
+
+function hasMalformedExecSessionIdField(text) {
+  return NUMERIC_EXEC_SESSION_ID_FIELD.test(text) || INCOMPLETE_EXEC_SESSION_ID_FIELD.test(text);
+}
 
 function sameFileSnapshot(before, after) {
   return FILE_SNAPSHOT_FIELDS.every((field) => before[field] === after[field]);
@@ -54,9 +61,10 @@ function collectExecSessionIds(value, pendingProcesses, allowUnmarked = true) {
     if (Object.hasOwn(value, 'session_id')) {
       const hasChunkId =
         (typeof value.chunk_id === 'string' && value.chunk_id.length > 0) || Number.isSafeInteger(value.chunk_id);
-      const numericSessionId =
+      const numericSessionIdValue =
         Number.isSafeInteger(value.session_id) ||
         (typeof value.session_id === 'string' && /^\d+$/.test(value.session_id));
+      const numericSessionId = numericSessionIdValue && Number(value.session_id) > 0;
       if (numericSessionId) {
         if (hasChunkId || allowUnmarked) {
           recognized = true;
@@ -64,6 +72,8 @@ function collectExecSessionIds(value, pendingProcesses, allowUnmarked = true) {
         } else {
           malformed = true;
         }
+      } else if (numericSessionIdValue) {
+        malformed = true;
       } else if (value.session_id === null && hasChunkId) {
         recognized = true;
       } else if (value.session_id !== null && value.session_id !== undefined && hasChunkId) {
@@ -82,10 +92,10 @@ function collectExecSessionIds(value, pendingProcesses, allowUnmarked = true) {
       try {
         return collectExecSessionIds(JSON.parse(candidate), pendingProcesses, allowUnmarked);
       } catch {
-        malformed = /session_id\\?["']?\s*:/i.test(candidate);
+        malformed = hasMalformedExecSessionIdField(candidate);
       }
     } else {
-      malformed = /session_id\\?["']?\s*:/i.test(candidate);
+      malformed = hasMalformedExecSessionIdField(candidate);
     }
   }
   return { recognized, malformed };
@@ -124,13 +134,15 @@ function visitJsonValues(text, visit) {
         visit(JSON.parse(candidate));
         count += 1;
       } catch {
-        unparsedSessionField ||= /session_id\\?["']?\s*:/i.test(candidate);
+        unparsedSessionField ||=
+          hasMalformedExecSessionIdField(candidate) || INCOMPLETE_EXEC_SESSION_ID_KEY.test(candidate);
       }
       start = -1;
     }
   }
   const incomplete = start >= 0 ? text.slice(start) : '';
-  unparsedSessionField ||= /session_id\\?["']?\s*:/i.test(incomplete);
+  unparsedSessionField ||=
+    hasMalformedExecSessionIdField(incomplete) || INCOMPLETE_EXEC_SESSION_ID_KEY.test(incomplete);
   return { count, unparsedSessionField };
 }
 
@@ -147,8 +159,8 @@ function trackPendingExecProcesses(payload, pendingProcesses) {
     recognized ||= result.recognized;
     malformed ||= result.malformed;
   });
-  const mentionsNumericSessionId = /session_id\\?["']?\s*:\s*(?:"\d+"|\d+)/i.test(resultText);
-  return malformed || scan.unparsedSessionField || (mentionsNumericSessionId && !recognized && scan.count === 0);
+  const mentionsMalformedSessionId = hasMalformedExecSessionIdField(resultText);
+  return malformed || scan.unparsedSessionField || (mentionsMalformedSessionId && !recognized && scan.count === 0);
 }
 
 /** Select the most recently modified indexed Codex state database without reading its contents. */
