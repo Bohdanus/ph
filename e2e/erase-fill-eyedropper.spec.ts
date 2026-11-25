@@ -19,6 +19,7 @@ import {
 import { waitForCanvasPixels, type CanvasPixelPredicate } from './helpers/canvas-redraw';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { cssPointToImage, imagePointToCss } from './helpers/screenshot-scale';
+import { waitForCommittedAnts } from './helpers/selection-ants';
 import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
@@ -757,6 +758,58 @@ test.describe('Eraser, fill tools and eyedropper', () => {
       Math.min(acrossTheCut.red, acrossTheCut.green, acrossTheCut.blue),
       'the transparent surround next to the fill must be left alone at Tolerance 0'
     ).toBeGreaterThan(240);
+  });
+
+  test('Polygonal Lasso Feather softens the paint-bucket edge', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    await openWorkspace(page);
+    await drawSlab(page, RED, SLAB, hasRedPixels);
+
+    await openToolFlyout(page, 'freehand-lasso');
+    await selectFromFlyout(page, { toolName: 'polygonal-lasso', label: 'Polygonal Lasso Tool' });
+    const feather = page.locator('#polygonal-lasso-feather');
+    await expect(feather).toBeVisible();
+    await feather.fill('8');
+    await expect(feather).toHaveValue('8');
+    await expect(page.getByRole('checkbox', { name: 'Anti-alias' })).toBeChecked();
+
+    // The lasso sits fully inside the red slab so the fill has a flat, known source colour at
+    // its edge. The edge sample is on the contour; the centre sample is well inside the feather.
+    for (const point of [
+      { x: 200, y: DOC_LINE_Y - 30 },
+      { x: 400, y: DOC_LINE_Y - 30 },
+      { x: 400, y: DOC_LINE_Y + 30 },
+      { x: 200, y: DOC_LINE_Y + 30 },
+    ]) {
+      await clickAt(page, point);
+    }
+    await page.keyboard.press('Enter');
+    await waitForCommittedAnts(page, 'the committed Polygonal Lasso selection');
+
+    await selectBrushFamilyTool(page, 'polygonal-lasso', 'paint-bucket', 'Paint Bucket Tool');
+    await waitForCommittedAnts(page, 'the Polygonal Lasso selection remains active after switching tools');
+    await setForegroundColor(page, GREEN, true);
+    const tolerance = page.getByRole('slider', { name: /^Tolerance/ });
+    await tolerance.fill('0');
+    await clickAt(page, { x: 300, y: DOC_LINE_Y });
+
+    const interior = await waitForPixel(
+      page,
+      { x: 300, y: DOC_LINE_Y },
+      (color) => color.green > 150 && color.red < 40,
+      'the bucket to fill the centre of the Polygonal Lasso selection'
+    );
+    const edgeSamples = await Promise.all(
+      Array.from({ length: 17 }, (_, index) => readPixel(page, { x: 192 + index, y: DOC_LINE_Y }))
+    );
+    const featheredEdge = edgeSamples.find(
+      (color): color is Rgb =>
+        color !== null && color.red > 20 && color.green > 20 && color.red < 220 && color.green < interior.green - 20
+    );
+    expect(
+      featheredEdge,
+      `the feathered edge should mix original red and green fill across the polygon contour; sampled ${JSON.stringify(edgeSamples)}`
+    ).toBeDefined();
   });
 
   test('the paint bucket fills inside a closed loop without changing its outline or exterior', async ({ page }) => {

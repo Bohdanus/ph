@@ -105,7 +105,9 @@ drop, the only one a bare gesture reaches on a populated document — calls
 to discard and otherwise renders `ConfirmDialog`
 (`src/components/ConfirmDialog/ConfirmDialog.tsx`), the app's first generic two-button
 modal. Tab close, reload and navigation are the same predicate against a `beforeunload`
-handler.
+handler. The initial starter document is clean on first load, so the first File > New
+or File > Open does not ask users to discard work they have not made. A new blank document
+created through File > New is marked unsaved immediately, even before its first edit.
 
 **Status:** `partial`
 
@@ -170,6 +172,11 @@ an `<svg><image>` element (`imageFormats.ts` — `IMAGE_FORMATS`'s SVG entry lab
 it "SVG
 (flattened)"), not vector output.
 
+Crop changes the document frame without deleting source pixels. A layered PSD
+save retains layer pixels outside that frame, so reopening the PSD and expanding
+the crop can recover them. Flattened raster exports such as PNG and JPEG contain
+only the current frame.
+
 ## Selection
 
 **Photoshop:** a selection is an 8-bit-per-pixel alpha channel. It combines (New /
@@ -205,8 +212,15 @@ and selection's multi-buffer algorithms have different memory budgets.
 tools, no Invert, no Modify (Feather / Expand / Contract), no Save or Load
 Selection, no Quick Mask, and no Channels panel (`PanelLayout.tsx` — `PanelId`
 admits only `history` and `layers`). Quick Selection alone offers Add and
-Subtract. Fill, Eraser and Clone Stamp consume derived masks; Brush, Draw and
-the other paint tools do not apply selection coverage.
+Subtract. Fill, Eraser and Clone Stamp consume derived masks. Patch uses the
+selection bounds as a rectangular repair target and does not clip non-rectangular
+contours or feathered coverage yet. Brush, Draw and the other paint tools do not
+apply selection coverage. The editor keeps an
+active selection when switching among selection tools, selection-aware
+operations, and non-destructive navigation, sampling, text and vector tools.
+Switching to a pixel-editing tool that does not clip to selection clears it as
+an undoable edit, so its visible boundary cannot imply a constraint the tool
+ignores.
 
 The stored selection is not Photoshop's general 8-bit alpha channel. The packed
 mask is binary and used only for high-complexity Magic Wand and Quick Selection
@@ -252,7 +266,8 @@ Background` for the lone backing layer.
 **Gap:** No groups or nesting, no layer masks, no clipping masks, no adjustment
 or smart-object layers. The blend-mode menu supports a subset of Photoshop's modes, and the single
 `locked` flag implements a strict full-layer lock rather than Photoshop's four independent lock
-protections. Photoshop's separate Fill opacity and preset drop-down remain absent. See
+protections. Locked layers have no Move Tool transform box, and a hit on one is selection-only with
+a prohibited cursor. Photoshop's separate Fill opacity and preset drop-down remain absent. See
 [`LAYERS-PANEL.md`](LAYERS-PANEL.md#92-layer-editability-and-rasterization-gates).
 
 ## History

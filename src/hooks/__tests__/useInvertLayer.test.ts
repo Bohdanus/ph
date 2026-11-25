@@ -64,7 +64,7 @@ describe('useInvertLayer', () => {
     const bounds = { x: 5, y: 7, width: 10, height: 10 };
     const points = [[{ x: 0, y: 0 }]];
     stageProcessorInput.mockReturnValue({ bounds });
-    getSelectionProcessorSnapshot.mockReturnValue({ points });
+    getSelectionProcessorSnapshot.mockReturnValue({ points, featherRadius: 3, antiAlias: false });
 
     await run();
 

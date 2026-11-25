@@ -146,6 +146,7 @@ function convert(history: readonly HistoryItem[]) {
 function snapshotFixture(id: string): Selection {
   const metadata: SelectionMetadata = {
     featherRadius: 4,
+    antiAlias: false,
     movedAtVersion: 3,
     magneticLasso: {
       width: 12,

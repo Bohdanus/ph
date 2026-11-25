@@ -1,6 +1,6 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import { drawLineFromDocument, getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { expectNoDiscardPrompt } from './helpers/discard-prompt';
 import { SEARCH_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 /**
@@ -109,15 +109,10 @@ test.describe('Mobile shell', () => {
       await expect(page.getByTestId(id)).toBeVisible();
     }
 
-    // The drawer's New is gated by the same unsaved-changes guard the header's is, and it
-    // is the app's own modal rather than a native `confirm()` now. Answering it is a click,
-    // which is what this test needed and could not have had before: Playwright
-    // auto-dismisses a native dialog nobody handles, so the `page.on('dialog', …)` that
-    // used to open this test swallowed the guard silently and made "the drawer's New
-    // reaches the same dialog" indistinguishable from "the guard declined". `acceptDiscardPrompt`
-    // waits for the prompt before answering it, so neither of those can pass as the other.
+    // The untouched starter is clean, so the drawer should open New directly without
+    // asking the user to discard work they have not made.
     await page.getByTestId('mobile-menu-new-button').click();
-    await acceptDiscardPrompt(page);
+    await expectNoDiscardPrompt(page);
     await expect(page.getByTestId('new-image-dialog'), 'New reaches the same dialog it does on desktop').toBeVisible();
   });
 

@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Locator, type Page, test, type TestInfo, useAppDefaultTheme } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { acceptDiscardPrompt, expectNoDiscardPrompt } from './helpers/discard-prompt';
 import { clickToolButton, openToolFlyoutViaKeyboard } from './helpers/toolbar-helpers';
 
 /**
@@ -342,20 +342,11 @@ test('the New Image dialog has no axe violations', async ({ page }, testInfo) =>
   await page.goto('/');
   await expect(getWorkspaceCanvas(page)).toBeVisible();
 
-  // The blank document the app creates on load (`App.tsx:28-41`, `BlankImageStarter`)
-  // carries unsaved changes, so the guard `DesktopHeader` puts on New
-  // (`UnsavedChangesContext.tsx`) IS shown on this click, and it is now the app's own
-  // modal (`src/components/ConfirmDialog`) rather than a native `confirm()`. The old
-  // `page.on('dialog', …)` was armed with `on` rather than `once` for a reason that no
-  // longer applies: `once` would consume the NEXT dialog of any kind if the guard did not
-  // fire, and a bare Playwright dialog with no handler is DISMISSED, which silently
-  // cancelled the New and left this test scanning nothing. `acceptDiscardPrompt` answers
-  // the prompt this test caused and FAILS if it was never shown, which is the same
-  // protection stated as an assertion rather than as a listener that tolerated its
-  // absence — a clean document would now fail here instead of passing with an empty scan.
+  // The automatically created starter canvas is pristine, so New should open without asking
+  // the user to discard work they have not made.
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-new-button').click();
-  await acceptDiscardPrompt(page);
+  await expectNoDiscardPrompt(page);
 
   const dialog = await resolveScope(page, '[data-testid="new-image-dialog"]', 'the New Image dialog');
   await expect(dialog).toBeVisible();
@@ -371,7 +362,7 @@ test('the dark New Image dialog has no axe violations', async ({ page }, testInf
   await expect(getWorkspaceCanvas(page)).toBeVisible();
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-new-button').click();
-  await acceptDiscardPrompt(page);
+  await expectNoDiscardPrompt(page);
 
   const dialog = await resolveScope(page, '[data-testid="new-image-dialog"]', 'the dark New Image dialog');
   await expect(dialog).toBeVisible();
@@ -403,13 +394,26 @@ test('the dark New Image dialog has no axe violations', async ({ page }, testInf
  * overlay that does not mark the page behind it `aria-hidden` or `inert` would drag the
  * whole shell into this report, and the shell is judged by its own scan.
  */
+async function commitStarterStroke(page: Page): Promise<void> {
+  await clickToolButton(page, 'draw');
+  const box = await getWorkspaceCanvas(page).boundingBox();
+  if (!box) throw new Error('Canvas not found after selecting the Draw tool');
+
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + box.width * 0.44, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.56, y, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.getByTestId('undo-button'), 'the stroke should commit before opening the prompt').toBeEnabled();
+}
+
 test('the unsaved-changes prompt has no axe violations', async ({ page }, testInfo) => {
   await page.setViewportSize(VIEWPORT);
   await page.goto('/');
   await expect(getWorkspaceCanvas(page)).toBeVisible();
 
-  // Shown by the boot document's unsaved changes, so the guard is reached on the first
-  // `File > New` with no work of this test's own required first.
+  // The default starter is clean until a user commits work.
+  await commitStarterStroke(page);
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-new-button').click();
 
@@ -430,6 +434,7 @@ test('the dark unsaved-changes prompt has no axe violations', async ({ page }, t
   await page.setViewportSize(VIEWPORT);
   await loadDarkApplication(page);
   await expect(getWorkspaceCanvas(page)).toBeVisible();
+  await commitStarterStroke(page);
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-new-button').click();
 

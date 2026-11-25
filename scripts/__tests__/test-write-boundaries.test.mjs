@@ -61,8 +61,8 @@ const REVIEWED = {
   },
   'free-model-kilo.test.mjs': {
     scope:
-      'Each fake Kilo CLI, auth-boundary, filtered PATH, caller-worktree, hard-link, protected-bin symlink-chain, descendant-symlink escape, relative command, symlinked XDG fixture, stderr quota and status-text regressions use a unique OS temp directory with finally cleanup; project-local auth sentinels remain untouched and child processes use test-owned paths.',
-    patterns: `filesystem-write:link=1 filesystem-write:mkdir=25 filesystem-write:mkdtemp=38 filesystem-write:rm=38 filesystem-write:symlink=11 filesystem-write:writeFile=12 subprocess:spawnSync=1`,
+      'Each fake Kilo CLI, auth-boundary, filtered PATH, caller-worktree, hard-link, protected-bin symlink-chain, descendant-symlink escape, relative command, symlinked XDG fixture, stderr quota, structured status-ordering, and status-text regressions use a unique OS temp directory with finally cleanup; project-local auth sentinels remain untouched and child processes use test-owned paths.',
+    patterns: `filesystem-write:link=1 filesystem-write:mkdir=25 filesystem-write:mkdtemp=39 filesystem-write:rm=39 filesystem-write:symlink=11 filesystem-write:writeFile=12 subprocess:spawnSync=1`,
   },
   'kilo-project-boundary.test.mjs': {
     scope:
@@ -77,7 +77,7 @@ const REVIEWED = {
   'free-model-pool.test.mjs': {
     scope:
       'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, its explicit incomplete-length fixture uses an isolated fake CLI, and the distinct caller/runner PATH, symlinked caller-root, and hard-link alias fixtures across node_modules/.bin and scripts remove their temporary directories in finally; timeout cleanup targets only fixture-owned process IDs; the provider-filter fixture uses an isolated temporary quarantine path, while the pinned-CLI fixture writes its prompt inside its own temporary directory; both directories are removed recursively in finally blocks.',
-    patterns: `filesystem-write:mkdtemp=47 filesystem-write:rm=47 filesystem-write:writeFile=20 filesystem-write:mkdir=18 filesystem-write:link=4 filesystem-write:symlinkSync=13 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+    patterns: `filesystem-write:mkdtemp=48 filesystem-write:rm=48 filesystem-write:writeFile=20 filesystem-write:mkdir=18 filesystem-write:link=4 filesystem-write:symlinkSync=13 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -202,6 +202,11 @@ const REVIEWED = {
   },
   'orchestration-command-references.test.mjs': {
     scope: 'Read-only document checks; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
+  'openrouter-key-refresh.test.mjs': {
+    scope:
+      'Injected interop and filesystem functions are mocked; lookup and fail-closed cases use only in-memory fakes, with no real filesystem access or subprocesses.',
     patterns: '',
   },
   'secrets.test.mjs': {

@@ -15,6 +15,7 @@ type LayerId = 'layer-1' | 'layer-2' | 'bedrock-1';
 type TestLayer = {
   id: LayerId;
   isBedrock: boolean;
+  locked?: boolean;
   pos: { x: number; y: number; width: number; height: number };
   operations?: Array<{
     id: string;
@@ -179,6 +180,7 @@ describe('MoveToolArea', () => {
     for (const layer of Object.values(layers)) {
       delete layer.source;
       delete layer.operations;
+      delete layer.locked;
     }
 
     storeState.activeLayerId = 'layer-1';
@@ -233,6 +235,14 @@ describe('MoveToolArea', () => {
 
     it('passes no initial rect when the active layer is the bedrock layer', () => {
       storeState.activeLayerId = 'bedrock-1';
+
+      renderArea();
+
+      expect(h.useRectProps.current!.initialRect).toBeNull();
+    });
+
+    it('passes no initial rect when the active layer is locked', () => {
+      layers['layer-1'].locked = true;
 
       renderArea();
 
@@ -354,6 +364,56 @@ describe('MoveToolArea', () => {
       expect(h.clearSelection).toHaveBeenCalledTimes(1);
       expect(h.setActiveLayer).toHaveBeenCalledWith('bedrock-1');
       expect(storeState.containerRef.current.classList.contains('cursor-grabbing')).toBe(false);
+    });
+
+    it('selects a locked layer without starting a move or resize gesture', () => {
+      layers['layer-2'].locked = true;
+      const toolArea = pressOn('layer-2');
+
+      expect(h.setActiveLayer).toHaveBeenCalledWith('layer-2');
+      expect(h.useRectPointerDown).toHaveBeenCalledWith(expect.anything(), undefined);
+      expect(h.clearSelection).toHaveBeenCalledTimes(1);
+      expect(storeState.containerRef.current.classList.contains('cursor-grabbing')).toBe(false);
+      expect(toolArea.style.cursor).toBe('not-allowed');
+      expect(readDocumentGesture()).toBeNull();
+
+      act(() => {
+        h.useRectProps.current!.onRepaint!({ x1: 15, y1: 25, x2: 45, y2: 65 });
+        h.useRectProps.current!.onChangeEnd({ x1: 15, y1: 25, x2: 45, y2: 65 });
+      });
+
+      expect(h.tempUpdateLayer).not.toHaveBeenCalled();
+      expect(h.updateLayerByTool).not.toHaveBeenCalled();
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1 });
+
+      expect(toolArea.style.cursor).toBe('not-allowed');
+    });
+
+    it('keeps the active unlocked layer transform handle usable over a locked hit target', () => {
+      resetDocumentGestures();
+      layers['layer-2'].locked = true;
+      h.useRectPointerDown.mockReturnValue(true);
+
+      // The point is layer-1's top-left handle. useRect checks its existing active-layer rect
+      // before the optional under-pointer layer, so a real handle press still wins this hit test.
+      const toolArea = pressOn('layer-2', { x: 10, y: 20 });
+
+      expect(h.clearSelection).not.toHaveBeenCalled();
+      expect(h.setActiveLayer).not.toHaveBeenCalled();
+      expect(readDocumentGesture()).toEqual({ kind: 'layer-transform', pointerId: 1 });
+
+      act(() => {
+        h.useRectProps.current!.onRepaint!({ x1: 15, y1: 25, x2: 45, y2: 65 });
+      });
+
+      expect(h.tempUpdateLayer).toHaveBeenCalledWith({
+        id: 'layer-1',
+        toolArgs: { move: { x: 15, y: 25 }, toolName: 'reposition' },
+      });
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1 });
+      expect(readDocumentGesture()).toBeNull();
     });
 
     it('does not arm a bedrock press for repainting', () => {
@@ -664,6 +724,19 @@ describe('MoveToolArea', () => {
       expect(h.antsClear).not.toHaveBeenCalled();
     });
 
+    it('releases the grab cursor and document claim when the owning pointer leaves', () => {
+      resetDocumentGestures();
+      const toolArea = pressOn('layer-1');
+
+      expect(storeState.containerRef.current.classList.contains('cursor-grabbing')).toBe(true);
+      expect(readDocumentGesture()).toEqual({ kind: 'layer-transform', pointerId: 1 });
+
+      fireEvent.pointerLeave(toolArea, { pointerId: 1 });
+
+      expect(storeState.containerRef.current.classList.contains('cursor-grabbing')).toBe(false);
+      expect(readDocumentGesture()).toBeNull();
+    });
+
     it('clears the hover outline when a bedrock layer is hovered', () => {
       const { container: el } = renderArea();
       const toolArea = toolAreaOf(el);
@@ -715,6 +788,22 @@ describe('MoveToolArea', () => {
 
       expect(h.antsDraw).not.toHaveBeenCalled();
       expect(h.antsClear).toHaveBeenCalled();
+    });
+
+    it('shows a prohibited cursor over a locked layer and restores the tool cursor elsewhere', () => {
+      layers['layer-2'].locked = true;
+      const { container: el } = renderArea();
+      const toolArea = toolAreaOf(el);
+      h.getLayerIdByPoint.mockReturnValue('layer-2');
+
+      fireEvent.pointerMove(toolArea, { clientX: 4, clientY: 4, pointerId: 1 });
+
+      expect(toolArea.style.cursor).toBe('not-allowed');
+
+      h.getLayerIdByPoint.mockReturnValue('layer-1');
+      fireEvent.pointerMove(toolArea, { clientX: 4, clientY: 4, pointerId: 1 });
+
+      expect(toolArea.style.cursor).toBe('');
     });
 
     it('does not track hover while the mouse is still down', () => {

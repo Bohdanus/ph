@@ -222,6 +222,10 @@ export function getSelectionAbsoluteContours(selection: Selection): Point[][] {
   );
 }
 
+function selectionAntiAlias(selection: Pick<Selection, 'metadata'>): boolean {
+  return selection.metadata?.antiAlias ?? selection.metadata?.magneticLasso?.antiAlias ?? true;
+}
+
 /** Snapshot selection geometry into a processor raster's local coordinate space. */
 export function getSelectionProcessorSnapshot(
   selection: Selection,
@@ -229,6 +233,8 @@ export function getSelectionProcessorSnapshot(
 ): {
   points: Point[][];
   rasterMask?: PositionedRasterSelectionMask;
+  featherRadius: number;
+  antiAlias: boolean;
 } {
   return {
     points: getSelectionAbsoluteContours(selection).map((contour) =>
@@ -243,6 +249,8 @@ export function getSelectionProcessorSnapshot(
           },
         }
       : {}),
+    featherRadius: selection.metadata?.featherRadius ?? 0,
+    antiAlias: selectionAntiAlias(selection),
   };
 }
 
@@ -1155,7 +1163,7 @@ export function copySelectionToCanvas(
       width,
       height,
       selection.metadata?.featherRadius ?? 0,
-      selection.metadata?.magneticLasso?.antiAlias ?? true,
+      selectionAntiAlias(selection),
       rasterized.preservesCoverage
     );
     for (let index = 0; index < alphaMask.length; index += 1) {
@@ -1167,9 +1175,14 @@ export function copySelectionToCanvas(
   }
 
   const contours = getSelectionAbsoluteContours(selection);
-  if (selection.sourceTool === 'feather-magnetic-lasso') {
+  if (
+    (selection.sourceTool === 'feather-magnetic-lasso' ||
+      selection.sourceTool === 'polygonal-lasso' ||
+      selection.sourceTool === 'freehand-lasso') &&
+    contours.length === 1
+  ) {
     return copyFeatheredPolygonSelectionToCanvas(sourceCanvas, contours[0] ?? [], {
-      antiAlias: selection.metadata?.magneticLasso?.antiAlias ?? true,
+      antiAlias: selectionAntiAlias(selection),
       featherRadius: selection.metadata?.featherRadius ?? 0,
       imageSize,
       sourceScale,
