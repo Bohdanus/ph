@@ -1006,7 +1006,7 @@ export const paintDescriptions: Record<
     summary:
       'Drags a stroke that automatically samples surrounding pixels to repair the area, with Type (Proximity Match / Content-Aware / Create Texture) and Diffusion.',
     purpose:
-      'The Spot Healing Brush is the Healing Brush without the Alt-click: it infers the source from the neighborhood of each stroke segment. Type decides the algorithm: Proximity Match samples a ring around the stroke; Content-Aware synthesizes new pixels; Create Texture makes a pattern from the area. Diffusion controls how far the sample pool extends. This app implements Proximity Match only — a deterministic outward-ring sample with luminance correction. Content-Aware and Create Texture are deferred (proprietary synthesis).',
+      'The Spot Healing Brush is the Healing Brush without the Alt-click: it infers the source from the neighborhood of each stroke segment. Type decides the algorithm: Proximity Match samples a ring around the stroke; Content-Aware synthesizes new pixels; Create Texture makes a pattern from the area. Diffusion controls how far the sample pool extends. This app implements a deterministic outward-ring sampling approximation without luminance correction. Content-Aware and Create Texture are deferred (proprietary synthesis).',
     options: [
       {
         control: 'Tool Preset Picker',
@@ -1073,7 +1073,7 @@ export const paintDescriptions: Record<
       'src/tools/settings.ts:250',
     ],
     appNotes:
-      'Spot Healing uses deterministic Proximity Match approximation sampling outward ring with luminance correction. Edits active layer only. Size, Hardness, Opacity present. Type/Mode/Sample/Diffusion missing. No Alt modifier. J shortcut selects healing tile.',
+      'Spot Healing uses a deterministic outward-ring sampling approximation without luminance correction. Edits active layer only. Size, Hardness, Opacity present. Type/Mode/Sample/Diffusion missing. No Alt modifier. J shortcut selects healing tile.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/spot-healing-brush-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/remove-unwanted-objects.html',

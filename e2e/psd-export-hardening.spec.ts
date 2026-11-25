@@ -9,7 +9,7 @@ import {
 } from './helpers/canvas-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
-import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { expectNoDiscardPrompt } from './helpers/discard-prompt';
 import {
   openSaveDialog,
   fillSaveDialog,
@@ -788,7 +788,7 @@ test.describe('PSD Export Hardening: Edge Cases', () => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.getByTestId('header-file-menu-button').click();
     await page.getByTestId('header-file-new-button').click();
-    await acceptDiscardPrompt(page);
+    await expectNoDiscardPrompt(page);
     await page.getByTestId('new-image-width-input').fill('2000');
     await page.getByTestId('new-image-height-input').fill('1500');
     await page.getByTestId('new-image-dialog-submit-button').click();

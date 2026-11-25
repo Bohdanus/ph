@@ -831,6 +831,38 @@ test.describe('Layers panel', () => {
     await expect(layerRows(page)).toHaveCount(1);
   });
 
+  test('a locked layer cannot be dragged with the Move Tool', async ({ page }, testInfo) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const { region, capture, stroke, hasRed, isBare } = await setup(page);
+    await stroke('#ff0000', RED_STROKE);
+    await waitForCanvasPixels(page, region, hasRed, { description: 'the layer pixels before locking' });
+
+    const row = layerRow(page, 'draw 2');
+    await expect(row).toBeVisible();
+    await page.getByRole('button', { name: 'Lock draw 2' }).click();
+    await clickToolButton(page, 'reposition');
+
+    const box = await canvasBox(page);
+    const surface = page.locator('.cursor-move');
+    const start = { x: box.x + RED_SAMPLE.x, y: box.y + RED_SAMPLE.y };
+    const destination = { x: RED_SAMPLE.x + 60, y: RED_SAMPLE.y + 50 };
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    const historyCountBeforeDrag = await historyRows.count();
+
+    await page.mouse.move(start.x, start.y);
+    await expect(surface).toHaveCSS('cursor', 'not-allowed');
+    await page.mouse.down();
+    await page.mouse.move(box.x + destination.x, box.y + destination.y, { steps: 10 });
+    await page.mouse.up();
+
+    await waitForCanvasPixels(page, region, hasRed, { description: 'locked artwork remains at its original position' });
+    const after = await capture('locked-layer-move-refused', testInfo);
+    expect(await hasRed(after), 'the original stroke remains visible').toBe(true);
+    expect(await isBare(after, destination), 'the attempted destination remains empty').toBe(true);
+    await expect(historyRows, 'a refused locked-layer drag adds no history entry').toHaveCount(historyCountBeforeDrag);
+  });
+
   /**
    * A rename that resolves to empty (blank, spaces, or whitespace-only) must be refused: the
    * name stays as-is and no history entry is written. `handleNameChange` in `LayersTab.tsx`

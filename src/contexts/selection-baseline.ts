@@ -67,7 +67,11 @@ const SELECTION_SOURCE_TOOLS = [
 
 function isCanonicalMetadata(value: unknown): value is SelectionMetadata {
   if (
-    !hasOwnDataKeys(value, [], ['copiedAtVersion', 'movedAtVersion', 'featherRadius', 'magneticLasso', 'magicWand'])
+    !hasOwnDataKeys(
+      value,
+      [],
+      ['copiedAtVersion', 'movedAtVersion', 'featherRadius', 'antiAlias', 'magneticLasso', 'magicWand']
+    )
   ) {
     return false;
   }
@@ -75,6 +79,7 @@ function isCanonicalMetadata(value: unknown): value is SelectionMetadata {
     const field = value[key];
     if (field !== undefined && (typeof field !== 'number' || !Number.isFinite(field))) return false;
   }
+  if (value.antiAlias !== undefined && typeof value.antiAlias !== 'boolean') return false;
 
   if (Object.hasOwn(value, 'magneticLasso') && value.magneticLasso !== undefined) {
     const settings = value.magneticLasso;

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
+import { expectNoDiscardPrompt } from './helpers/discard-prompt';
 import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
-import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 async function openFitDocument(page: Page): Promise<void> {
@@ -9,7 +9,7 @@ async function openFitDocument(page: Page): Promise<void> {
   await expect(getWorkspaceCanvas(page)).toBeVisible();
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-new-button').click();
-  await acceptDiscardPrompt(page);
+  await expectNoDiscardPrompt(page);
 
   const dialog = page.getByTestId('new-image-dialog');
   await expect(dialog).toBeVisible();
@@ -133,11 +133,8 @@ test.describe('View menu keyboard shortcuts', () => {
     await page.getByTestId('header-file-menu-button').click();
     await page.getByTestId('header-file-new-button').click();
 
-    // Handle discard prompt if it appears (boot document has unsaved bedrock layer)
-    const discardDialog = page.getByTestId('confirm-dialog');
-    if (await discardDialog.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await page.getByRole('button', { name: 'Discard' }).click();
-    }
+    // The untouched starter is clean, so New should open without a discard prompt.
+    await expectNoDiscardPrompt(page);
 
     // Wait for dialog to appear
     await expect(page.getByTestId('new-image-dialog')).toBeVisible();

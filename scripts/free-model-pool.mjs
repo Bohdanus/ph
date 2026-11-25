@@ -3,6 +3,7 @@
 import { accessSync, constants, realpathSync, readdirSync, statSync } from 'node:fs';
 import { readdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { readWindowsUserOpenRouterKey as readWindowsUserOpenRouterKeyFromHost } from './lib/openrouter-key-refresh.mjs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { join, resolve } from 'node:path';
@@ -1678,6 +1679,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
     provider,
     model,
     openRouterKey = process.env.OPENROUTER_API_KEY,
+    readWindowsUserOpenRouterKey = readWindowsUserOpenRouterKeyFromHost,
     groqApiKey = process.env.GROQ_API_KEY,
     groqApiKeys = process.env.GROQ_API_KEYS
       ? process.env.GROQ_API_KEYS.split(',')
@@ -1741,6 +1743,32 @@ export async function completeWithFreeModel(prompt, options = {}) {
   const exhaustedGroqKeys = new Set();
   const attempts = new Map();
   const errors = [];
+  let activeOpenRouterKey = openRouterKey ?? '';
+  let openRouterCredentialRefreshAttempted = false;
+  const refreshOpenRouterCredential = async () => {
+    if (openRouterCredentialRefreshAttempted) return false;
+    openRouterCredentialRefreshAttempted = true;
+    let candidateKey;
+    try {
+      candidateKey = await readWindowsUserOpenRouterKey();
+    } catch {
+      return false;
+    }
+    if (typeof candidateKey !== 'string') return false;
+    const refreshedKey = candidateKey.trim();
+    if (!refreshedKey || refreshedKey === activeOpenRouterKey) return false;
+    activeOpenRouterKey = refreshedKey;
+    return true;
+  };
+  const probeOpenRouterQuotaWithCredentialRefresh = async ({ bootstrap = false } = {}) => {
+    const originalKey = activeOpenRouterKey;
+    if (bootstrap && !activeOpenRouterKey) await refreshOpenRouterCredential();
+    let quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: activeOpenRouterKey });
+    if (quota.reason === 'http_401' && (await refreshOpenRouterCredential())) {
+      quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: activeOpenRouterKey });
+    }
+    return { quota, keyChanged: activeOpenRouterKey !== originalKey };
+  };
 
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1847,7 +1875,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
           return false;
         }
         const quotaProbeStartedAt = Date.now();
-        const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+        const { quota } = await probeOpenRouterQuotaWithCredentialRefresh({ bootstrap: true });
         if (quota.reason === 'ok') {
           onOpenRouterQuota(quota);
           if (quota.remaining <= 0 || quota.used >= quota.limit) {
@@ -1879,7 +1907,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
       openRouterQuotaCheckedAfterAttempt = openRouterAttempts;
       openRouterQuotaKnownPositive = false;
       const quotaProbeStartedAt = Date.now();
-      const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+      const { quota, keyChanged } = await probeOpenRouterQuotaWithCredentialRefresh();
       if (quota.reason === 'ok') {
         onOpenRouterQuota(quota);
         if (quota.remaining <= 0 || quota.used >= quota.limit) {
@@ -1888,6 +1916,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
           stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter routes.\n');
         } else {
           openRouterQuotaKnownPositive = true;
+          if (keyChanged) openRouterQuotaInitiallyUnknown = false;
         }
       } else if (quota.reason === 'http_401' || quota.reason === 'http_402') {
         exhausted.add('openrouter');
@@ -1900,6 +1929,38 @@ export async function completeWithFreeModel(prompt, options = {}) {
       }
       if (openRouterQuotaInitiallyUnknown || !openRouterQuotaKnownPositive) exhausted.add('openrouter');
       return openRouterQuotaKnownPositive && !exhausted.has('openrouter');
+    };
+    const refreshOpenRouterQuotaAfterUnauthorized = async (candidate) => {
+      if (candidate.authRetryAttempt === true || !(await refreshOpenRouterCredential())) return false;
+      openRouterQuotaKnownPositive = false;
+      const quotaProbeStartedAt = Date.now();
+      const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: activeOpenRouterKey });
+      if (quota.reason === 'ok') {
+        onOpenRouterQuota(quota);
+        if (quota.remaining <= 0 || quota.used >= quota.limit) {
+          await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: quotaProbeStartedAt });
+          exhausted.add('openrouter');
+          stderr.write(
+            'OpenRouter daily free-model quota is exhausted after refreshing credentials; skipping this run.\n'
+          );
+          return false;
+        }
+        openRouterQuotaKnownPositive = true;
+        openRouterQuotaInitiallyUnknown = false;
+        return true;
+      }
+      exhausted.add('openrouter');
+      if (quota.reason === 'http_401' || quota.reason === 'http_402') {
+        stderr.write(
+          `OpenRouter quota endpoint returned ${quota.reason} with the refreshed credential; skipping this run.\n`
+        );
+      } else {
+        const detail = quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : '';
+        stderr.write(
+          `OpenRouter quota unknown after credential refresh (${quota.reason}${detail}); skipping this run.\n`
+        );
+      }
+      return false;
     };
     const handleOpenRouterFailure = async ({
       candidate,
@@ -1917,7 +1978,14 @@ export async function completeWithFreeModel(prompt, options = {}) {
       if (limitSources.includes('openrouter_free_tier_daily')) {
         await markOpenRouterQuotaExhausted({ stateFile: poolStateFile, quarantineFile, now: requestStartedAt });
       }
-      if (status === 401 || status === 402) {
+      if (status === 401) {
+        if (await refreshOpenRouterQuotaAfterUnauthorized(candidate)) {
+          return { retry: true, delayMs: 0, authRefresh: true };
+        }
+        exhausted.add('openrouter');
+        return { retry: false };
+      }
+      if (status === 402) {
         exhausted.add('openrouter');
         return { retry: false };
       }
@@ -2010,7 +2078,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
       if (candidate.source === 'openrouter' && !(await ensureOpenRouterAvailable())) continue;
       const sourceAttempts = attempts.get(candidate.source) ?? 0;
       if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
-      if (candidate.source === 'openrouter' && !openRouterKey) continue;
+      if (candidate.source === 'openrouter' && !activeOpenRouterKey) continue;
       if (candidate.source === 'groq' && (!groqKeys.length || !groqFreePlan)) continue;
       if (candidate.source === 'opencode' && !opencodeCommand) continue;
       attempts.set(candidate.source, sourceAttempts + 1);
@@ -2330,7 +2398,7 @@ export async function completeWithFreeModel(prompt, options = {}) {
       }
       const url = OPENROUTER_CHAT;
       const headers = { 'Content-Type': 'application/json' };
-      if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
+      if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${activeOpenRouterKey}`;
       const quotaWasPositive = candidate.source === 'openrouter' && openRouterQuotaKnownPositive;
       const effectiveMaxTokens = candidate.maxTokensOverride ?? routeMaxTokens;
       let response;
@@ -2376,9 +2444,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
           requestStartedAt,
         });
         if (retryDecision.retry) {
-          openRouterRetryCount += 1;
+          if (!retryDecision.authRefresh) openRouterRetryCount += 1;
           if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
-          available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+          available.splice(candidateIndex + 1, 0, {
+            ...candidate,
+            ...(retryDecision.authRefresh ? { authRetryAttempt: true } : { retryAttempt: true }),
+          });
           continue;
         }
         const attemptNumber = attempts.get(candidate.source) ?? 0;
@@ -2418,9 +2489,12 @@ export async function completeWithFreeModel(prompt, options = {}) {
           requestStartedAt,
         });
         if (retryDecision.retry) {
-          openRouterRetryCount += 1;
+          if (!retryDecision.authRefresh) openRouterRetryCount += 1;
           if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
-          available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+          available.splice(candidateIndex + 1, 0, {
+            ...candidate,
+            ...(retryDecision.authRefresh ? { authRetryAttempt: true } : { retryAttempt: true }),
+          });
         }
         continue;
       }
@@ -2493,14 +2567,17 @@ export async function completeWithFreeModel(prompt, options = {}) {
         requestStartedAt,
       });
       if (
-        response.status === 401 ||
+        (response.status === 401 && !retryDecision.authRefresh) ||
         (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
       )
         exhausted.add(candidate.source);
       if (retryDecision.retry) {
-        openRouterRetryCount += 1;
+        if (!retryDecision.authRefresh) openRouterRetryCount += 1;
         if (retryDecision.delayMs > 0) await waitForRetryAfter(retryDecision.delayMs);
-        available.splice(candidateIndex + 1, 0, { ...candidate, retryAttempt: true });
+        available.splice(candidateIndex + 1, 0, {
+          ...candidate,
+          ...(retryDecision.authRefresh ? { authRetryAttempt: true } : { retryAttempt: true }),
+        });
         continue;
       }
       const attemptNumber = attempts.get(candidate.source) ?? 0;
@@ -2546,6 +2623,7 @@ export async function main(
   {
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
+    readWindowsUserOpenRouterKey = readWindowsUserOpenRouterKeyFromHost,
     groqApiKey = process.env.GROQ_API_KEY,
     groqApiKeys = process.env.GROQ_API_KEYS
       ? process.env.GROQ_API_KEYS.split(',')
@@ -2586,7 +2664,28 @@ export async function main(
       stderr.write(`${usage()}\n`);
       return 2;
     }
-    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+    let activeOpenRouterKey = openRouterKey ?? '';
+    let keyRefreshAttempted = false;
+    const readChangedWindowsKey = async () => {
+      if (keyRefreshAttempted) return false;
+      keyRefreshAttempted = true;
+      let candidateKey;
+      try {
+        candidateKey = await readWindowsUserOpenRouterKey();
+      } catch {
+        return false;
+      }
+      if (typeof candidateKey !== 'string') return false;
+      const refreshedKey = candidateKey.trim();
+      if (!refreshedKey || refreshedKey === activeOpenRouterKey) return false;
+      activeOpenRouterKey = refreshedKey;
+      return true;
+    };
+    if (!activeOpenRouterKey) await readChangedWindowsKey();
+    let quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: activeOpenRouterKey });
+    if (quota.reason === 'http_401' && (await readChangedWindowsKey())) {
+      quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: activeOpenRouterKey });
+    }
     if (quota.reason !== 'ok') {
       if (quota.reason === 'no_key') {
         stderr.write(

@@ -234,8 +234,6 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
 
     return {
       ...getSelectionProcessorSnapshot(activeSelection, presentationBounds),
-      featherRadius: activeSelection.metadata?.featherRadius ?? 0,
-      antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
     };
   };
 
