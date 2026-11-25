@@ -164,7 +164,7 @@ const REVIEWED = {
   'repo-state-gate.test.mjs': {
     scope:
       'Git and filesystem fixtures use temporary repositories; child cwd and environment are reviewed, and fixture repo/worktree paths are removed only within scratch roots cleaned by afterEach.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=10 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=23 filesystem-write:rmSync=9 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=13 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=26 filesystem-write:rmSync=10 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
   },
   'session-db-snapshot.test.mjs': {
     scope: 'Snapshot fixtures use temporary databases; copies are explicitly opened read-only.',
