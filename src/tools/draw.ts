@@ -130,13 +130,17 @@ function rasterMaskHasSelectedPixelNearRaster(
   packed: Uint8Array,
   width: number,
   height: number,
-  padding: number
+  featherRadius: number
 ): boolean {
   if (!Number.isFinite(rasterMask.x) || !Number.isFinite(rasterMask.y)) return false;
 
-  // Only inspect mask pixels close enough to affect this raster after feathering. This keeps a
-  // sparse Magic Wand or Quick Selection mask from treating every hole in its bounding rectangle
-  // as paintable, without scanning bits that cannot contribute to the stroke.
+  // With integer-aligned raster selections, outside pixels receive feather alpha only when their
+  // chamfer distance to a selected pixel is strictly less than the feather radius. Anti-aliasing
+  // preserves the rasterizer's existing pixel coverage; it does not grow a binary raster mask.
+  // Fractionally moved masks keep a conservative neighborhood because several source pixels can
+  // combine into partial destination coverage.
+  const integerOrigin = Number.isInteger(rasterMask.x) && Number.isInteger(rasterMask.y);
+  const padding = integerOrigin ? Math.max(0, Math.ceil(featherRadius) - 1) : Math.ceil(featherRadius);
   const firstX = Math.max(0, Math.floor(-padding - rasterMask.x));
   const firstY = Math.max(0, Math.floor(-padding - rasterMask.y));
   const lastX = Math.min(rasterMask.width, Math.ceil(width + padding - rasterMask.x));
@@ -145,7 +149,17 @@ function rasterMaskHasSelectedPixelNearRaster(
 
   for (let y = firstY; y < lastY; y += 1) {
     for (let x = firstX; x < lastX; x += 1) {
-      if (isRasterSelectionPixelSelected(rasterMask, packed, x, y)) return true;
+      if (!isRasterSelectionPixelSelected(rasterMask, packed, x, y)) continue;
+      if (!integerOrigin) return true;
+
+      const pixelX = rasterMask.x + x;
+      const pixelY = rasterMask.y + y;
+      const distanceX = pixelX < 0 ? -pixelX : pixelX >= width ? pixelX - (width - 1) : 0;
+      const distanceY = pixelY < 0 ? -pixelY : pixelY >= height ? pixelY - (height - 1) : 0;
+      if (distanceX === 0 && distanceY === 0) return true;
+
+      const nearest = Math.max(distanceX, distanceY) + (Math.SQRT2 - 1) * Math.min(distanceX, distanceY);
+      if (nearest < featherRadius) return true;
     }
   }
 
@@ -170,7 +184,7 @@ export function paintSelectionOverlapsRaster(selection: PaintSelectionSnapshot, 
         packed,
         width,
         height,
-        edgePadding
+        featherRadius
       );
     }
   }
