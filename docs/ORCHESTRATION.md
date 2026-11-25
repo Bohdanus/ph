@@ -288,6 +288,12 @@ the common Git directory and remains when a failed wrapper leaves Git state behi
 refreshes shared hook dispatchers before it commits. A pinned landing commit without a current
 lease is refused by the commit helper and message guard.
 
+Pass the exact host-native chat ID described by [`CHAT-ID.md`](CHAT-ID.md) to both `land` and
+`takeover`. The wrapper validates the Kilo, Codex, and Copilot ID shapes before acquiring or
+transferring a lease, so timestamps and descriptive labels cannot be recorded as owners. Shape
+validation does not identify the session; resolve the current chat through its host before running
+the command.
+
 A detached watcher posts a shared swarm note when the lease reaches 15 minutes and four hours.
 At 15 minutes, every other agent should mention the blocker in its own current chat and continue
 unrelated work. It must not wait for the landing owner or modify the occupied worktree.
@@ -876,8 +882,13 @@ its remedy is nothing rather than a plausible-looking command that fatals.
 **An orphan `AUTO_MERGE` has guarded recovery paths, not a guessed abort.** When it is
 the only operation marker, the worktree is clean, the index has no unresolved paths,
 and the marker names exactly `HEAD^{tree}`, the remaining file can be a stale artifact from a completed
-rebase. First identify the current designated main checkout from `git worktree list
---porcelain`; select the unique worktree block whose `branch` is `refs/heads/main`.
+rebase. First identify the current designated main checkout with
+`npm run main:landing -- status --json`. Verify its reported `mainPath` is present in
+`git worktree list --porcelain`, then verify the checkout's shared Git directory and
+designated-main identity. Recovery can intentionally leave a damaged `refs/heads/main`
+worktree beside its registered replacement, so selecting the unique branch entry is
+not safe. If status cannot name and verify one designated checkout, stop and follow
+the Git metadata recovery procedure; do not guess.
 Invoke that checkout's `scripts/recover-stale-auto-merge.mjs` by
 absolute path, while keeping the process working directory at the target task
 worktree root:

@@ -19,11 +19,3 @@ A separate pointer test from the old branch combined nonzero client borders, scr
 ## Rejected changes from the old branch
 
 The other old branch changes are already superseded or are unsafe to transplant. Current main contains the cross-platform E2E matrix, focused runs, richer crop/history diagnostics, and the robust pointer-capture cleanup. The old branch's pointer implementation is weaker. Its changes to screenshot thresholds and color filters loosen assertions without reproducing the old CI failures. Its coverage-floor reduction and smaller flood-fill sample count weaken unrelated gates. The mirror run `40140807034` failed on Linux/Windows E2E and audit; it does not establish that the later branch tip was green.
-
-## Worktree disposition
-
-The original `task/linux-snapshot-ci-20261024` ref has no registered worktree and remains historical evidence. The separate review worktree `linux-snapshot-salvage-review-20261114` is clean and already merged into current main. A fresh inventory marks it `action=dispose`, `prunable=true`, and `mergedIntoMain=true`; it has no Kilo write history, claims, locks, or live board agents.
-
-Disposal remains blocked by the fail-closed Codex ownership check. The current-tip Chat trailer resolves to an 18-session family: 17 rollouts are complete, while the root is unproven because an `item_completed` `CommandExecution` event follows its `task_complete` marker in the same turn. The command is marked completed, but the Codex family parser does not treat this event as terminal bookkeeping. Manual checks found no family activity for more than a day and no matching live process or open file; they do not change the parser's unproven result. A fresh `npm run dispose -- --dry-run --codex-owner-audit-complete linux-snapshot-salvage-review-20261114` refused for that exact reason and changed nothing.
-
-Do not bypass the ownership refusal or delete the checkout. Preserve `.serena/`, `.kilo/plans/`, and the original worktree contents until the Codex completion evidence is resolved and a fresh disposal dry-run passes. Before retrying, regenerate inventory and repeat the repository-state, board, session-family, process, and open-file checks. `repo:state` currently also reports six unrelated `AUTO_MERGE` markers; do not repair another worktree's operation.
