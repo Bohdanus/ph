@@ -97,6 +97,27 @@ for (let i = 0; i < FIXTURE.length; i += 4) {
   FIXTURE[i + 3] = 255;
 }
 
+const gradientFixture = (): Uint8ClampedArray => {
+  const data = new Uint8ClampedArray(size.width * size.height * 4);
+  for (let y = 0; y < size.height; y++) {
+    for (let x = 0; x < size.width; x++) {
+      const offset = (y * size.width + x) * 4;
+      data[offset] = x * 20;
+      data[offset + 1] = 100;
+      data[offset + 2] = y === 1 && x === 1 ? 160 : 100;
+      data[offset + 3] = 255;
+    }
+  }
+  return data;
+};
+
+const gradientPixel = (x: number, y: number): [number, number, number, number] => [
+  x * 20,
+  100,
+  y === 1 && x === 1 ? 160 : 100,
+  255,
+];
+
 beforeEach(() => {
   RecordingOffscreenCanvas.instances = [];
   vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas as unknown as typeof OffscreenCanvas);
@@ -178,6 +199,127 @@ describe('healingBrush luminance correction', () => {
 
     const canvas = run(data, args({ opacity: 0 }));
     expect(canvas.pixels).toEqual(data);
+  });
+});
+
+describe('healingBrush exact pixel coverage', () => {
+  it('applies the exact luminance correction from an offset source pixel', () => {
+    const canvas = run(
+      gradientFixture(),
+      args({
+        size: 3,
+        hardness: 100,
+        opacity: 1,
+        source: { x: 1, y: 1 },
+        points: [{ x: 4, y: 4 }],
+        aligned: true,
+      })
+    );
+
+    expect(at(canvas.pixels, 4, 4)).toEqual([31, 111, 171, 255]);
+    expect(at(canvas.pixels, 2, 4)).toEqual(gradientPixel(2, 4));
+  });
+
+  it('uses cosine falloff for a soft tip and leaves the half-open rim untouched', () => {
+    const canvas = run(
+      gradientFixture(),
+      args({
+        size: 4,
+        hardness: 0,
+        opacity: 1,
+        source: { x: 1, y: 1 },
+        points: [{ x: 4, y: 4 }],
+        aligned: true,
+      })
+    );
+
+    expect(at(canvas.pixels, 3, 4)).toEqual([39, 109, 109, 255]);
+    expect(at(canvas.pixels, 3, 3)).toEqual([52, 104, 104, 255]);
+    expect(at(canvas.pixels, 2, 4)).toEqual(gradientPixel(2, 4));
+  });
+
+  it('scales the corrected color by partial opacity', () => {
+    const canvas = run(
+      gradientFixture(),
+      args({
+        size: 3,
+        hardness: 100,
+        opacity: 0.5,
+        source: { x: 1, y: 1 },
+        points: [{ x: 4, y: 4 }],
+        aligned: true,
+      })
+    );
+
+    expect(at(canvas.pixels, 4, 4)).toEqual([56, 106, 136, 255]);
+  });
+
+  it('uses different source offsets for aligned and free strokes', () => {
+    const points = [
+      { x: 4, y: 4 },
+      { x: 6, y: 4 },
+    ];
+    const aligned = run(
+      gradientFixture(),
+      args({ size: 3, hardness: 100, opacity: 1, source: { x: 1, y: 1 }, points, aligned: true })
+    );
+    const free = run(
+      gradientFixture(),
+      args({ size: 3, hardness: 100, opacity: 1, source: { x: 1, y: 1 }, points, aligned: false })
+    );
+
+    expect(at(aligned.pixels, 6, 4)).toEqual([78, 118, 118, 255]);
+    expect(at(free.pixels, 6, 4)).toEqual([43, 123, 183, 255]);
+  });
+
+  it('reads the original source pixels across overlapping dabs', () => {
+    const canvas = run(
+      gradientFixture(),
+      args({
+        size: 8,
+        hardness: 100,
+        opacity: 1,
+        source: { x: 1, y: 1 },
+        aligned: true,
+        points: [
+          { x: 4, y: 4 },
+          { x: 6, y: 4 },
+        ],
+      })
+    );
+
+    // The first dab changes (3,1), which the second dab uses as its source for (6,4).
+    // Reading the live output there would compound the correction at the final center.
+    expect(at(canvas.pixels, 3, 1)).toEqual([18, 118, 118, 255]);
+    expect(at(canvas.pixels, 6, 4)).toEqual([78, 118, 118, 255]);
+  });
+
+  it('clamps source reads at both document edges', () => {
+    const topLeft = run(
+      gradientFixture(),
+      args({
+        size: 3,
+        hardness: 100,
+        opacity: 1,
+        source: { x: 0, y: 0 },
+        points: [{ x: 4, y: 4 }],
+        aligned: true,
+      })
+    );
+    const bottomRight = run(
+      gradientFixture(),
+      args({
+        size: 3,
+        hardness: 100,
+        opacity: 1,
+        source: { x: 8, y: 8 },
+        points: [{ x: 4, y: 4 }],
+        aligned: true,
+      })
+    );
+
+    expect(at(topLeft.pixels, 3, 3)).toEqual([18, 118, 118, 255]);
+    expect(at(bottomRight.pixels, 5, 5)).toEqual([142, 82, 82, 255]);
   });
 });
 
