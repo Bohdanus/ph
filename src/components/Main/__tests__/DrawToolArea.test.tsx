@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 import { DrawToolArea } from '../DrawToolArea.tsx';
 import { drawLine } from '../../../util/draw.ts';
+import { encodeRasterSelectionMask } from '../../../util/selection-mask.ts';
+import type { Selection } from '../../../contexts/general-types.ts';
 
 const createLayerFromToolMock = vi.hoisted(() => vi.fn());
 const pointerState = vi.hoisted(() => ({
@@ -11,8 +13,14 @@ const pointerState = vi.hoisted(() => ({
   activePointer: null as number | null | undefined,
 }));
 const storeState = vi.hoisted(
-  (): { documentFrame: { x: number; y: number; width: number; height: number } | null } => ({
+  (): {
+    documentFrame: { x: number; y: number; width: number; height: number } | null;
+    selections: Selection[];
+    activeSelectionId: string | null;
+  } => ({
     documentFrame: null,
+    selections: [],
+    activeSelectionId: null,
   })
 );
 const toolArgsState = vi.hoisted(() => ({
@@ -33,6 +41,12 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       totalSize: { width: 300, height: 200 },
       get documentFrame() {
         return storeState.documentFrame;
+      },
+      get selections() {
+        return storeState.selections;
+      },
+      get activeSelectionId() {
+        return storeState.activeSelectionId;
       },
     },
     vi.fn(),
@@ -114,10 +128,17 @@ const makeMockContext = () => ({
   save: vi.fn(),
   restore: vi.fn(),
   closePath: vi.fn(),
+  rect: vi.fn(),
   clip: vi.fn(),
   drawImage: vi.fn(),
   setTransform: vi.fn(),
   resetTransform: vi.fn(),
+  getTransform: vi.fn(() => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })),
+  getImageData: vi.fn((_x: number, _y: number, width: number, height: number) => {
+    const data = new Uint8ClampedArray(width * height * 4);
+    data[3] = 255;
+    return { data };
+  }),
   // The overlay backing store, and deliberately NOT the store's `totalSize` (300x200) below. A
   // teardown that read a render-scope size would clear 300x200 and leave the right-hand and
   // bottom strips of the real backing store painted, so the two have to be distinguishable.
@@ -139,6 +160,8 @@ describe('DrawToolArea', () => {
     pointerState.isMouseDown.current = false;
     pointerState.activePointer = null;
     storeState.documentFrame = null;
+    storeState.selections = [];
+    storeState.activeSelectionId = null;
     toolArgsState.current = {
       toolName: 'draw',
       alpha: 1,
@@ -172,6 +195,90 @@ describe('DrawToolArea', () => {
         }),
       })
     );
+  });
+
+  it('does not create a layer when a paint stroke falls inside a sparse selection hole', () => {
+    const pixels = new Uint8Array(100 * 100);
+    pixels[0] = 1;
+    pixels[pixels.length - 1] = 1;
+    const rasterMask = encodeRasterSelectionMask(pixels, 100, 100, {
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+    })!;
+    storeState.selections = [
+      {
+        id: 'sparse-selection',
+        points: [],
+        rasterMask,
+        isActive: true,
+        pos: { x: 0, y: 0, width: 100, height: 100 },
+        metadata: { antiAlias: false, featherRadius: 0 },
+      },
+    ];
+    storeState.activeSelectionId = 'sparse-selection';
+    toolArgsState.current = {
+      toolName: 'brush',
+      alpha: 1,
+      color: '#000000',
+      penType: 'pen',
+      lineWidth: 4,
+      points: [],
+    };
+
+    const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+    const { container } = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+    const toolArea = container.firstElementChild as HTMLDivElement;
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 50, clientY: 50 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 50 });
+
+    expect(createLayerFromToolMock).not.toHaveBeenCalled();
+  });
+
+  it('does not create a layer when a diagonal stroke misses a selection inside its bounds', () => {
+    storeState.selections = [
+      {
+        id: 'off-path-selection',
+        points: [
+          [
+            { x: 0, y: 0 },
+            { x: 20, y: 0 },
+            { x: 20, y: 20 },
+            { x: 0, y: 20 },
+          ],
+        ],
+        isActive: true,
+        pos: { x: 70, y: 140, width: 20, height: 20 },
+        metadata: { antiAlias: false, featherRadius: 0 },
+      },
+    ];
+    storeState.activeSelectionId = 'off-path-selection';
+    toolArgsState.current = {
+      toolName: 'brush',
+      alpha: 1,
+      color: '#000000',
+      penType: 'pen',
+      lineWidth: 4,
+      points: [],
+    };
+
+    const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+    vi.mocked(overlayCtx.getImageData).mockImplementation(
+      (_x, _y, width, height) =>
+        ({
+          data: new Uint8ClampedArray(width * height * 4),
+        }) as ImageData
+    );
+    const { container } = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 50, clientY: 30 });
+    fireEvent.pointerMove(toolArea, { button: 0, clientX: 250, clientY: 170 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 250, clientY: 170 });
+
+    expect(overlayCtx.getImageData).toHaveBeenCalled();
+    expect(createLayerFromToolMock).not.toHaveBeenCalled();
   });
 
   it('draws the preview while the pointer is dragging', () => {
@@ -718,15 +825,29 @@ describe('DrawToolArea', () => {
       // A frame is queued and NOT fired, so the preview is still pending.
       vi.mocked(drawLine).mockClear();
       vi.mocked(overlayCtx.clearRect).mockClear();
-
-      unmount();
-      act(() => {
-        vi.advanceTimersByTime(32);
+      const teardownOrder: string[] = [];
+      const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+      const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation((handle) => {
+        teardownOrder.push('cancel-frame');
+        return originalCancelAnimationFrame(handle);
+      });
+      vi.mocked(overlayCtx.clearRect).mockImplementation(() => {
+        teardownOrder.push('clear-overlay');
       });
 
-      // Cancel FIRST, then clear: a frame that survived would have repainted after the clear.
-      expect(drawLine).not.toHaveBeenCalled();
-      expect(overlayCtx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+      try {
+        unmount();
+        act(() => {
+          vi.advanceTimersByTime(32);
+        });
+
+        // Cancel FIRST, then clear: a frame that survived would have repainted after the clear.
+        expect(drawLine).not.toHaveBeenCalled();
+        expect(overlayCtx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+        expect(teardownOrder).toEqual(['cancel-frame', 'clear-overlay']);
+      } finally {
+        cancelSpy.mockRestore();
+      }
     });
 
     it('clears nothing on mount, so the clear is unambiguously a teardown', () => {

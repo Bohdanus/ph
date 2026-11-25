@@ -669,11 +669,18 @@ describe('Main tool-area routing', () => {
       expect(ants().style.display, `${toolName} must keep an existing selection visible`).toBe('block');
     }
 
-    for (const toolName of ['reposition', 'brush', 'crop'] as const) {
+    for (const toolName of ['reposition', 'crop'] as const) {
       storeState.toolName = toolName;
       rerender(<GuardedMain />);
 
       expect(ants().style.display, `${toolName} does not yet preserve or consume selections`).toBe('none');
+    }
+
+    for (const toolName of ['brush', 'pencil'] as const) {
+      storeState.toolName = toolName;
+      rerender(<GuardedMain />);
+
+      expect(ants().style.display, `${toolName} keeps the active paint selection visible`).toBe('block');
     }
 
     // With no committed selection and no selection tool draft, the overlay and its animation are

@@ -967,6 +967,20 @@ describe('drawLayer', () => {
     expect(ctx.globalCompositeOperation).toBe('screen');
   });
 
+  it('draws a HiDPI raster at its document-space size when the target context is scaled', () => {
+    const ctx = makeMockCtx();
+    const raster = { width: 128, height: 128 } as OffscreenCanvas;
+    const position = { x: 10, y: 12, width: 64, height: 64 };
+    const layer = makeImageLayer({
+      bitmap: null,
+      tmpCanvas: raster,
+      pos: position,
+    });
+
+    expect(drawLayer(ctx, layer, documentFrame, false, 2)).toBe(true);
+    expect(ctx.drawImage).toHaveBeenCalledExactlyOnceWith(raster, 10, 12, 64, 64);
+  });
+
   it('composites overlapping fill and stroke once like the cached source under opacity and blend mode', () => {
     vi.stubGlobal('OffscreenCanvas', PixelSurface);
 
