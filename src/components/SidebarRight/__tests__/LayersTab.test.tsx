@@ -1256,7 +1256,7 @@ describe('LayersTab drag and drop guards', () => {
   it('starts touch reorder only after a thumbnail hold and the movement threshold', () => {
     render(<LayersTab />);
     const source = getLayerDivs()[0]!;
-    const target = screen.getAllByRole('listitem')[2]!;
+    const target = getListItemFor('Background');
     const thumbnail = screen.getAllByTestId('layer-thumbnail')[0]!;
     const capture = mockPointerCapture(source);
     const elementFromPoint = vi.fn(() => target);

@@ -2,6 +2,8 @@
 
 Every commit has a `Chat` trailer identifying the session that produced it. Use the ID from the
 agent host running this conversation; IDs from different hosts are not interchangeable.
+Protected landing uses this same host-native ID for its lease owner; `main:landing land` and
+recovery takeover reject timestamps, display labels, and other values that cannot identify a host session.
 
 ## Copilot SDK in VS Code
 

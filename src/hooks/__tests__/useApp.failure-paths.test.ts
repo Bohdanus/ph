@@ -223,25 +223,33 @@ describe('useApp failure paths', () => {
     expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SET_TOOL_NAME', payload: 'paint-bucket' });
   });
 
-  it('rejects a PSD import whose mutable raster cannot be made immutable', async () => {
-    vi.stubGlobal('createImageBitmap', undefined);
+  describe('createImageBitmap global stub', () => {
+    beforeEach(() => {
+      vi.stubGlobal('createImageBitmap', undefined);
+    });
 
-    await expect(useUploadPsd()).rejects.toThrow('createImageBitmap is required to import a mutable raster source');
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
 
-    expect(harness.dispatch).not.toHaveBeenCalled();
-    expect(harness.state.currentArgs.current).toEqual({});
-  });
+    it('rejects a PSD import whose mutable raster cannot be made immutable', async () => {
+      await expect(useUploadPsd()).rejects.toThrow('createImageBitmap is required to import a mutable raster source');
 
-  it('rejects a PSD import when rasterising a mutable source fails, without replacing the document', async () => {
-    const failure = new Error('decode failed');
-    vi.stubGlobal(
-      'createImageBitmap',
-      vi.fn(() => Promise.reject(failure))
-    );
+      expect(harness.dispatch).not.toHaveBeenCalled();
+      expect(harness.state.currentArgs.current).toEqual({});
+    });
 
-    await expect(useUploadPsd()).rejects.toBe(failure);
+    it('rejects a PSD import when rasterising a mutable source fails, without replacing the document', async () => {
+      const failure = new Error('decode failed');
+      vi.stubGlobal(
+        'createImageBitmap',
+        vi.fn(() => Promise.reject(failure))
+      );
 
-    expect(harness.dispatch).not.toHaveBeenCalled();
+      await expect(useUploadPsd()).rejects.toBe(failure);
+
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    });
   });
 
   it('rejects a failed layer upload without renaming the document', async () => {
