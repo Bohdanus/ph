@@ -26,6 +26,13 @@ import LayerThumbnail from './LayerThumbnail.tsx';
 
 type UpdateLayer = ReturnType<typeof useLayers>['updateLayer'];
 
+const ARRANGE_LAYER_COMMANDS = [
+  ['bring-to-front', 'Bring to Front'],
+  ['bring-forward', 'Bring Forward'],
+  ['send-backward', 'Send Backward'],
+  ['send-to-back', 'Send to Back'],
+] as const;
+
 export const LAYER_REORDER_LONG_PRESS_MS = 250;
 
 function releaseCapturedPointer(pointerDrag: { captureTarget: HTMLDivElement; pointerId: number }) {
@@ -416,6 +423,7 @@ export default function LayersTab() {
     removeLayer,
     createBlankLayer,
     moveLayerAfter,
+    arrangeLayer,
     setActiveLayer,
     updateLayer,
     convertBedrockLayer,
@@ -603,6 +611,11 @@ export default function LayersTab() {
 
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
   const activeLayer = activeLayerId ? layers[activeLayerId] : null;
+  const activeLayerIndex = sortedLayers.findIndex((layer) => layer.id === activeLayerId);
+  const bedrockIndex = sortedLayers.findIndex((layer) => layer.isBedrock);
+  const bottomMovableIndex = bedrockIndex >= 0 ? bedrockIndex - 1 : sortedLayers.length - 1;
+  const atTop = activeLayerIndex === 0;
+  const atBottom = activeLayerIndex === bottomMovableIndex;
   const layerFrame = documentFrame ?? documentFrameFromSize(totalSize);
   const canCreateLayer = hasImage && layerFrame.width > 0 && layerFrame.height > 0;
   // The same two conditions `convertBedrockLayer()` refuses on, kept in step so the
@@ -1078,6 +1091,70 @@ export default function LayersTab() {
         data-testid="layers-action-bar"
         className="flex shrink-0 items-center justify-center gap-2 border-t border-gray-200 pt-1 dark:border-gray-700"
       >
+        <details
+          data-testid="layers-arrange-disclosure"
+          className="relative"
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.currentTarget.open = false;
+            event.currentTarget.querySelector('summary')?.focus();
+          }}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              event.currentTarget.open = false;
+            }
+          }}
+        >
+          <summary
+            data-testid="layers-arrange-summary"
+            aria-label="Arrange layer"
+            className="grid min-h-11 min-w-11 cursor-pointer list-none place-items-center rounded text-gray-600 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-gray-300 dark:hover:bg-gray-700 [&::-webkit-details-marker]:hidden"
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+              <path
+                d="M4 6h16M7 12h13m-10 6h10M4 4v4m3 2v4m3 2v4"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              />
+            </svg>
+          </summary>
+          <div
+            role="group"
+            aria-label="Arrange layer commands"
+            className="absolute bottom-full left-0 z-20 mb-1 flex min-w-44 flex-col rounded border border-gray-300 bg-white p-1 shadow-lg dark:border-gray-600 dark:bg-gray-800"
+          >
+            {ARRANGE_LAYER_COMMANDS.map(([command, label]) => {
+              const disabled =
+                !canReorderLayer(activeLayerId) ||
+                textEditingLayerId === activeLayerId ||
+                (command === 'bring-to-front' && atTop) ||
+                (command === 'bring-forward' && atTop) ||
+                ((command === 'send-backward' || command === 'send-to-back') && atBottom);
+
+              return (
+                <button
+                  key={command}
+                  data-testid={`layers-arrange-${command}`}
+                  type="button"
+                  disabled={disabled}
+                  onClick={(event) => {
+                    arrangeLayer(command);
+                    const details = event.currentTarget.closest('details');
+                    if (details) {
+                      details.open = false;
+                      details.querySelector('summary')?.focus();
+                    }
+                  }}
+                  className="rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-100 dark:hover:bg-gray-700"
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </details>
         <button
           type="button"
           data-testid="layers-new-layer-button"

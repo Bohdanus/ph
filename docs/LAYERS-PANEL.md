@@ -487,8 +487,10 @@ Photoshop's model, in Adobe's words:
   the `isOverBottom` drop zone). Pinned by the `describe('LayersTab drag and drop guards')` block in
   `LayersTab.test.tsx` and by the `test('layers change order and are deleted sequentially')` case in
   `e2e/layers.spec.ts`.
-- `GAP` — the four arrange commands and their shortcuts. `docs/TOOLS.md` §Rectangle Tool and six
-  sibling shape-tool sections (Ellipse, Line, Triangle, Polygon, Custom Shape and the Shape group)
+- `HAVE` — the four arrange commands and shortcuts. They are exposed from the Layers action bar's
+  `Arrange layer` disclosure and are bound through `AppKeyboardShortcuts.tsx`.
+  `docs/TOOLS.md` §Rectangle Tool and six sibling shape-tool sections (Ellipse, Line, Triangle,
+  Polygon, Custom Shape and the Shape group)
   already record `Path Arrangement` (bring to front / forward / send backward / back) as `missing` on
   every shape tool's bar. Those rows are correct and stay as they are: the command belongs to the
   panel, and this is the panel's requirement to satisfy.
