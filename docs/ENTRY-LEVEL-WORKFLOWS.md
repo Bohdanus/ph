@@ -98,6 +98,30 @@ paint layers.
 `Workflow combines layer opacity and blend mode controls` in
 [`photoshop-junior-workflow.spec.ts`](../e2e/photoshop-junior-workflow.spec.ts).
 
+## 5. Paint inside a selection
+
+**User goal:** Add color to one part of an image while protecting the surrounding pixels.
+
+**Starting point:** Open a document with the Brush or Pencil tool available.
+
+**Steps:** Use the Rectangular Marquee tool to select an area. Switch to Brush or Pencil and drag
+a stroke across the selection boundary. Undo the stroke to compare with the original, then redo it.
+
+**Acceptance:** The active selection remains visible after switching tools. The stroke preview and
+committed pixels use matching selection coverage, including feathered edges. A stroke fully outside
+the selection leaves pixels and history unchanged. Undo removes the stroke without removing the
+selection; Redo restores the same selected pixels after deselection is undone.
+
+**E2E:** `brush paints only inside the active selection and remains undoable` and
+`pencil paints only inside the active selection and remains undoable`, both
+`does not add history for a stroke outside the selection` cases, and
+`feathered selection edges keep matching preview and committed paint coverage` in
+[`selection-paint.spec.ts`](../e2e/selection-paint.spec.ts).
+
+Adobe's guides provide broader context: the [Selection tools overview](https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html)
+and [Brush or Pencil painting guide](https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/brushes-presets/paint-with-brush-or-pencil-tool.html).
+This workflow and its tests cover Brush/Pencil painting through an existing selection.
+
 ## Deliberate scope boundary
 
 Do not direct beginners into a workflow that depends on layer masks, non-destructive adjustment

@@ -9,10 +9,21 @@ import { drawLine, drawPen, drawSpray } from '../../util/draw.ts';
 import { hexToRgb } from '../../util/rect.ts';
 import { toolbarMap } from '../../../toolbar-mapping.ts';
 import type { ToolbarTool } from '../../../toolbar-mapping.ts';
-import { setupDrawCtx, type DrawToolArgs, type PaintToolArgs, type PaintToolName } from '../draw.ts';
+import {
+  capturePaintSelectionSnapshot,
+  createSelectionMaskCanvas,
+  paintSelectionOverlapsRaster,
+  rebasePaintSelectionSnapshot,
+  setupDrawCtx,
+  type DrawToolArgs,
+  type PaintToolArgs,
+  type PaintToolName,
+} from '../draw.ts';
 import type { FigureType } from '../shape.ts';
 import type { Ctx2D, Point } from '../../contexts/general-types.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
+import { createSelectionAlphaMask } from '../../util/selection.ts';
+import { encodeRasterSelectionMask } from '../../util/selection-mask.ts';
 
 /**
  * The two tools that stamp the foreground colour. `color-replacement` is NOT in this family and
@@ -227,6 +238,183 @@ describe('paint tool rasterization', () => {
     expect(canvas.ctx.lineCap).toBe('round');
     expect(canvas.ctx.beginPath).toHaveBeenCalledTimes(1);
     expect(canvas.ctx.moveTo).toHaveBeenCalledWith(stroke[0].x, stroke[0].y);
+  });
+
+  it.each(paintToolNames)('clips %s pixels to its captured selection', (toolName) => {
+    const selection = {
+      points: [[
+        { x: 4, y: 4 },
+        { x: 15, y: 4 },
+        { x: 15, y: 15 },
+        { x: 4, y: 15 },
+        { x: 4, y: 4 },
+      ]],
+      featherRadius: 0,
+      antiAlias: false,
+    };
+
+    const canvas = runProcessor(toolName, {
+      ...paintToolArgsWithPoints(toolName, stroke),
+      selection,
+    });
+    const maskCanvas = RecordingOffscreenCanvas.instances.find((instance) => instance.ctx.putImageData.mock.calls.length > 0)!;
+    const maskImage = maskCanvas.ctx.putImageData.mock.calls[0][0] as ImageData;
+
+    expect(canvas.ctx.drawImage).toHaveBeenCalledWith(maskCanvas, 0, 0, documentSize.width, documentSize.height);
+    expect(maskImage.data[(8 * documentSize.width + 8) * 4 + 3]).toBeGreaterThan(0);
+    expect(maskImage.data[(1 * documentSize.width + 1) * 4 + 3]).toBe(0);
+  });
+
+  it('keeps a detached selection snapshot after the active selection changes', () => {
+    const activeSelection = {
+      id: 'selection-1',
+      points: [[
+        { x: 2, y: 2 },
+        { x: 10, y: 2 },
+        { x: 10, y: 10 },
+        { x: 2, y: 10 },
+      ]],
+      pos: { x: 0, y: 0, width: 10, height: 10 },
+      isActive: true,
+      metadata: { featherRadius: 0, antiAlias: false },
+    };
+    const snapshot = capturePaintSelectionSnapshot(activeSelection);
+
+    activeSelection.points[0][0].x = 14;
+    activeSelection.points[0][1].x = 19;
+    activeSelection.points[0][2].x = 19;
+    activeSelection.points[0][3].x = 14;
+
+    const canvas = runProcessor('brush', {
+      ...paintToolArgsWithPoints('brush', stroke),
+      selection: snapshot,
+    });
+    const maskCanvas = RecordingOffscreenCanvas.instances.find((instance) => instance.ctx.putImageData.mock.calls.length > 0)!;
+    const maskImage = maskCanvas.ctx.putImageData.mock.calls[0][0] as ImageData;
+
+    expect(canvas).toBeTruthy();
+    expect(maskImage.data[(5 * documentSize.width + 5) * 4 + 3]).toBe(255);
+    expect(maskImage.data[(5 * documentSize.width + 16) * 4 + 3]).toBe(0);
+  });
+
+  it('preserves feather coverage when a cropped paint raster begins outside the selection', () => {
+    const selection = {
+      id: 'feathered-selection',
+      points: [[
+        { x: 4, y: 3 },
+        { x: 12, y: 3 },
+        { x: 12, y: 17 },
+        { x: 4, y: 17 },
+      ]],
+      pos: { x: 0, y: 0, width: 12, height: 17 },
+      isActive: true,
+      metadata: { featherRadius: 4, antiAlias: true },
+    };
+    const snapshot = capturePaintSelectionSnapshot(selection);
+    const cropOrigin = { x: 14, y: 5 };
+    const cropped = rebasePaintSelectionSnapshot(snapshot, cropOrigin);
+    createSelectionMaskCanvas(cropped, { width: 8, height: 8 });
+    const maskCanvas = RecordingOffscreenCanvas.instances.find((instance) => instance.ctx.putImageData.mock.calls.length > 0)!;
+    const image = maskCanvas.ctx.putImageData.mock.calls[0][0] as ImageData;
+    const expectedFullCoverage = createSelectionAlphaMask(snapshot, { width: 24, height: 20 }, snapshot);
+    const actualAlpha = Array.from({ length: 64 }, (_, index) => image.data[index * 4 + 3]);
+    const expectedAlpha = Array.from({ length: 8 }, (_, y) =>
+      Array.from({ length: 8 }, (_, x) => expectedFullCoverage[(y + cropOrigin.y) * 24 + x + cropOrigin.x])
+    ).flat();
+
+    expect(actualAlpha).toEqual(expectedAlpha);
+    expect(actualAlpha[0]).toBeGreaterThan(0);
+    expect(actualAlpha[0]).toBeLessThan(255);
+  });
+
+  it('recognizes empty and disjoint selections as paint no-ops', () => {
+    expect(
+      paintSelectionOverlapsRaster({ points: [], featherRadius: 0, antiAlias: false }, { width: 20, height: 20 })
+    ).toBe(false);
+    expect(
+      paintSelectionOverlapsRaster(
+        {
+          points: [[
+            { x: 30, y: 4 },
+            { x: 40, y: 4 },
+            { x: 40, y: 16 },
+            { x: 30, y: 16 },
+          ]],
+          featherRadius: 0,
+          antiAlias: false,
+        },
+        { width: 20, height: 20 }
+      )
+    ).toBe(false);
+  });
+
+  it('keeps a stroke that overlaps only a raster selection feather fringe', () => {
+    const rasterMask = encodeRasterSelectionMask(new Uint8Array(16).fill(1), 4, 4, {
+      x: 0,
+      y: 0,
+      width: 4,
+      height: 4,
+    })!;
+    expect(
+      paintSelectionOverlapsRaster(
+        {
+          points: [],
+          rasterMask: { ...rasterMask, x: 11, y: 2 },
+          featherRadius: 2,
+          antiAlias: true,
+        },
+        { width: 10, height: 10 }
+      )
+    ).toBe(true);
+
+    expect(
+      paintSelectionOverlapsRaster(
+        {
+          points: [],
+          rasterMask: { ...rasterMask, x: 13, y: 2 },
+          featherRadius: 2,
+          antiAlias: true,
+        },
+        { width: 10, height: 10 }
+      )
+    ).toBe(false);
+  });
+
+  it('treats holes inside a sparse raster selection as paint no-ops', () => {
+    const sparsePixels = new Uint8Array(25);
+    sparsePixels[0] = 1;
+    sparsePixels[24] = 1;
+    const sparseMask = encodeRasterSelectionMask(sparsePixels, 5, 5, {
+      x: 0,
+      y: 0,
+      width: 5,
+      height: 5,
+    })!;
+    const snapshot = {
+      points: [],
+      rasterMask: { ...sparseMask, x: -2, y: -2 },
+      featherRadius: 0,
+      antiAlias: false,
+    };
+
+    // The mask bounds cross the raster, but the only selected pixels sit outside it and the
+    // raster covers a hole in the center. Such a stroke must not create an invisible history step.
+    expect(paintSelectionOverlapsRaster(snapshot, { width: 1, height: 1 })).toBe(false);
+
+    const selectedPixels = new Uint8Array(25);
+    selectedPixels[12] = 1;
+    const selectedMask = encodeRasterSelectionMask(selectedPixels, 5, 5, {
+      x: 0,
+      y: 0,
+      width: 5,
+      height: 5,
+    })!;
+    expect(
+      paintSelectionOverlapsRaster(
+        { ...snapshot, rasterMask: { ...selectedMask, x: -2, y: -2 } },
+        { width: 1, height: 1 }
+      )
+    ).toBe(true);
   });
 
   it('applies the default alpha and line width of each paint tool to its context', () => {

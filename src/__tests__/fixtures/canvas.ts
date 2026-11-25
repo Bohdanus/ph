@@ -27,6 +27,12 @@ export const createMockCanvasContext = (overrides: Record<string, unknown> = {})
   setLineDash: vi.fn(),
   getLineDash: vi.fn(() => [] as number[]),
   drawImage: vi.fn(),
+  putImageData: vi.fn(),
+  createImageData: vi.fn((width: number, height: number) => ({
+    data: new Uint8ClampedArray(Math.max(0, width) * Math.max(0, height) * 4),
+    width,
+    height,
+  })),
   clip: vi.fn(),
   isPointInPath: vi.fn(() => false),
   isPointInStroke: vi.fn(() => false),

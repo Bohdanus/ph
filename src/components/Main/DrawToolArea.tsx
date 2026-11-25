@@ -1,5 +1,13 @@
 import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
-import { type DrawToolArgs, setupDrawCtx } from '../../tools/draw.ts';
+import {
+  capturePaintSelectionSnapshot,
+  createSelectionMaskCanvas,
+  paintSelectionOverlapsRaster,
+  rebasePaintSelectionSnapshot,
+  type DrawToolArgs,
+  type PaintSelectionSnapshot,
+  setupDrawCtx,
+} from '../../tools/draw.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -10,6 +18,9 @@ import type { Point } from '../../contexts/general-types.ts';
 import type { FullArgs } from '../../contexts/tool-types.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { clearCanvasBackingStore } from '../../util/canvas.ts';
+import { getActiveSelection } from '../../util/selection.ts';
+
+const SELECTION_MASK_TILE_SIZE = 256;
 
 type DrawHandlerProps = {
   className?: string;
@@ -17,18 +28,21 @@ type DrawHandlerProps = {
 };
 
 export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => {
-  const [{ containerRef, totalSize, documentFrame: currentFrame }] = useStore();
+  const [{ containerRef, totalSize, documentFrame: currentFrame, selections, activeSelectionId }] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { createLayerFromTool } = useLayers();
   const { toolArgs } = useCurrentTool();
 
   const args = toolArgs as DrawToolArgs;
+  const isPaintTool = toolArgs.toolName === 'brush' || toolArgs.toolName === 'pencil';
   const pointsRef = useRef<Point[]>([]);
   const pointTimesRef = useRef<number[]>([]);
   const currentPointRef = useRef<Point | null>(null);
   const sprayStartedAtRef = useRef<number | null>(null);
   const sprayStrokeActiveRef = useRef(false);
   const frameRequested = useRef<number | null>(null);
+  const strokeSelectionRef = useRef<PaintSelectionSnapshot | null>(null);
+  const selectionMaskTilesRef = useRef<Map<string, OffscreenCanvas>>(new Map());
   /**
    * The pointer id this component's own claim was taken with. The cancel handler and the unmount
    * cleanup never see a pointer event, so the id is kept here for every release route to name the
@@ -59,6 +73,62 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
       pointTimesRef.current.push(elapsed);
     } else if (points.length > 1) {
       pointTimesRef.current[pointTimesRef.current.length - 1] = elapsed;
+    }
+  };
+
+  const getSelectionMaskTile = (
+    selection: PaintSelectionSnapshot,
+    tileX: number,
+    tileY: number
+  ): OffscreenCanvas => {
+    const key = `${tileX}:${tileY}`;
+    const cached = selectionMaskTilesRef.current.get(key);
+    if (cached) return cached;
+
+    const tileSize = {
+      width: Math.min(SELECTION_MASK_TILE_SIZE, totalSize.width - tileX),
+      height: Math.min(SELECTION_MASK_TILE_SIZE, totalSize.height - tileY),
+    };
+    const documentOrigin = canvasToDocumentPoint({ x: tileX, y: tileY }, documentFrame);
+    const snapshot = rebasePaintSelectionSnapshot(selection, documentOrigin);
+    const canvas = createSelectionMaskCanvas(snapshot, tileSize);
+    selectionMaskTilesRef.current.set(key, canvas);
+    return canvas;
+  };
+
+  const clipPreviewToSelection = (ctx: CanvasRenderingContext2D) => {
+    const selection = strokeSelectionRef.current;
+    if (!isPaintTool || !selection || pointsRef.current.length === 0) return;
+
+    const bounds = pointsBoundingPosOutward({ points: pointsRef.current, lineWidth: args.lineWidth });
+    const left = Math.max(0, Math.floor(bounds.x));
+    const top = Math.max(0, Math.floor(bounds.y));
+    const right = Math.min(totalSize.width, Math.ceil(bounds.x + bounds.width));
+    const bottom = Math.min(totalSize.height, Math.ceil(bounds.y + bounds.height));
+    if (right <= left || bottom <= top) {
+      clearCanvasBackingStore(ctx);
+      return;
+    }
+
+    const firstTileX = Math.floor(left / SELECTION_MASK_TILE_SIZE) * SELECTION_MASK_TILE_SIZE;
+    const firstTileY = Math.floor(top / SELECTION_MASK_TILE_SIZE) * SELECTION_MASK_TILE_SIZE;
+    for (let tileY = firstTileY; tileY < bottom; tileY += SELECTION_MASK_TILE_SIZE) {
+      for (let tileX = firstTileX; tileX < right; tileX += SELECTION_MASK_TILE_SIZE) {
+        const tile = getSelectionMaskTile(selection, tileX, tileY);
+        ctx.save();
+        try {
+          // Porter-Duff destination-in is unbounded: without this clip each tile draw would
+          // clear destination pixels outside its own rectangle and erase prior tiles.
+          ctx.beginPath();
+          ctx.rect(tileX, tileY, tile.width, tile.height);
+          ctx.clip();
+          ctx.globalCompositeOperation = 'destination-in';
+          ctx.globalAlpha = 1;
+          ctx.drawImage(tile, tileX, tileY);
+        } finally {
+          ctx.restore();
+        }
+      }
     }
   };
 
@@ -102,6 +172,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     } finally {
       ctx.restore();
     }
+    clipPreviewToSelection(ctx);
 
     if (sprayStrokeActiveRef.current) {
       frameRequested.current = requestAnimationFrame(flushDrawingFrame);
@@ -128,6 +199,12 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
       return;
     }
     claimedPointerIdRef.current = event.pointerId;
+
+    const activeSelection = isPaintTool
+      ? getActiveSelection(selections ?? [], activeSelectionId ?? null)
+      : null;
+    strokeSelectionRef.current = activeSelection ? capturePaintSelectionSnapshot(activeSelection) : null;
+    selectionMaskTilesRef.current.clear();
 
     const point = getLocalCoords(event);
     pointsRef.current = [point];
@@ -188,12 +265,28 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     const oldPoints = pointsRef.current.map((point) => canvasToDocumentPoint(point, documentFrame));
     const pos = pointsBoundingPosOutward({ points: oldPoints, lineWidth: args.lineWidth });
     const newPoints = oldPoints.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }));
+    const capturedSelection = isPaintTool ? strokeSelectionRef.current : null;
+    const selection = capturedSelection
+      ? rebasePaintSelectionSnapshot(capturedSelection, pos)
+      : undefined;
+
+    if (selection && !paintSelectionOverlapsRaster(selection, { width: pos.width, height: pos.height })) {
+      pointsRef.current = [];
+      pointTimesRef.current = [];
+      currentPointRef.current = null;
+      sprayStartedAtRef.current = null;
+      strokeSelectionRef.current = null;
+      selectionMaskTilesRef.current.clear();
+      if (overlayCtxRef.current) clearCanvasBackingStore(overlayCtxRef.current);
+      return;
+    }
 
     const finalArgs = {
-      ...args,
+      ...toolArgs,
       points: newPoints,
       ...(wasSpray ? { pointTimes: [...pointTimesRef.current] } : {}),
-    };
+      ...(selection ? { selection } : {}),
+    } as FullArgs['args'];
     const fullArgs: FullArgs = {
       args: finalArgs,
       pos,
@@ -205,6 +298,8 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     pointTimesRef.current = [];
     currentPointRef.current = null;
     sprayStartedAtRef.current = null;
+    strokeSelectionRef.current = null;
+    selectionMaskTilesRef.current.clear();
     if (overlayCtxRef.current) clearCanvasBackingStore(overlayCtxRef.current);
   };
 
@@ -224,6 +319,8 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     pointTimesRef.current = [];
     currentPointRef.current = null;
     sprayStartedAtRef.current = null;
+    strokeSelectionRef.current = null;
+    selectionMaskTilesRef.current.clear();
     if (overlayCtxRef.current) clearCanvasBackingStore(overlayCtxRef.current);
   };
 
@@ -234,18 +331,20 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     const ctx = overlayCtxRef.current;
 
     return () => {
-      // An unmount between claim and commit is an abort like any other. Paired with the provider-level
-      // `resetDocumentGestures`, this is what bounds a leaked claim to the mount that leaked it.
-      releaseDocumentClaim();
-      sprayStrokeActiveRef.current = false;
-
-      // Cancel FIRST, then clear: a frame still queued for `flushDrawingFrame` would otherwise
-      // repaint the stroke AFTER the clear and resurrect it. Cancel AND null, as the pointer-up
-      // route does, so nothing is left believing a frame is pending.
+      // Cancel FIRST, then clear the captured stroke state: a frame still queued for
+      // `flushDrawingFrame` would otherwise repaint the stroke AFTER the clear and resurrect it.
+      // Cancel AND null, as the pointer-up route does, so nothing is left believing a frame is pending.
       if (frameRequested.current !== null) {
         cancelAnimationFrame(frameRequested.current);
         frameRequested.current = null;
       }
+
+      // An unmount between claim and commit is an abort like any other. Paired with the provider-level
+      // `resetDocumentGestures`, this is what bounds a leaked claim to the mount that leaked it.
+      releaseDocumentClaim();
+      sprayStrokeActiveRef.current = false;
+      strokeSelectionRef.current = null;
+      selectionMaskTilesRef.current.clear();
 
       // The overlay canvas is shared, long-lived and only ever `display`-toggled
       // (`Main.tsx:239-284`), which never touches a backing store, and the pointer-up clear at :146

@@ -1,7 +1,15 @@
-import type { CreatorToolParams, ProcessorToolParams } from './toolProcessors.ts';
+import type { CreatorToolParams, ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 import type { PaintBlendMode, PaintSettings, PaintToolName } from './brush.ts';
 import { drawLine } from '../util/draw.ts';
-import type { Ctx2D, Point } from '../contexts/general-types.ts';
+import { decodeRasterSelectionMask, isRasterSelectionPixelSelected } from '../util/selection-mask.ts';
+import type {
+  Ctx2D,
+  Point,
+  PositionedRasterSelectionMask,
+  Selection,
+  Size,
+} from '../contexts/general-types.ts';
+import { createSelectionAlphaMask, getSelectionProcessorSnapshot } from '../util/selection.ts';
 
 export type PenType = 'pen' | 'pen-dashed' | 'spray';
 
@@ -67,6 +75,14 @@ export type DrawToolArgs = {
  */
 export type { PaintToolName };
 
+/** Active selection coverage captured in the local coordinates of a paint raster. */
+export type PaintSelectionSnapshot = {
+  points: Point[][];
+  rasterMask?: PositionedRasterSelectionMask;
+  featherRadius: number;
+  antiAlias: boolean;
+};
+
 /**
  * A paint tool carries the Photoshop options-bar settings as required, so the bar
  * can read them without a guard and a `draw`-era args object can never satisfy the
@@ -75,9 +91,116 @@ export type { PaintToolName };
 export type PaintToolArgs = Omit<DrawToolArgs, 'toolName' | 'smoothing' | 'blendMode'> &
   PaintSettings & {
     toolName: PaintToolName;
+    /** History snapshot used to constrain this stroke and deterministic replay. */
+    selection?: PaintSelectionSnapshot;
   };
 
 export type DrawToolSettings = Omit<DrawToolArgs, 'color' | 'points' | 'pointTimes'>;
+
+/** Capture selection geometry and options so later store changes cannot alter this stroke. */
+export function capturePaintSelectionSnapshot(selection: Selection): PaintSelectionSnapshot {
+  return getSelectionProcessorSnapshot(selection, { x: 0, y: 0 });
+}
+
+/** Rebase a captured document-space selection snapshot into a raster-local coordinate space. */
+export function rebasePaintSelectionSnapshot(
+  selection: PaintSelectionSnapshot,
+  rasterOrigin: Point
+): PaintSelectionSnapshot {
+  return {
+    points: selection.points.map((contour) =>
+      contour.map((point) => ({ x: point.x - rasterOrigin.x, y: point.y - rasterOrigin.y }))
+    ),
+    ...(selection.rasterMask
+      ? {
+          rasterMask: {
+            ...selection.rasterMask,
+            x: selection.rasterMask.x - rasterOrigin.x,
+            y: selection.rasterMask.y - rasterOrigin.y,
+          },
+        }
+      : {}),
+    featherRadius: selection.featherRadius,
+    antiAlias: selection.antiAlias,
+  };
+}
+
+function rasterMaskHasSelectedPixelNearRaster(
+  rasterMask: PositionedRasterSelectionMask,
+  packed: Uint8Array,
+  width: number,
+  height: number,
+  padding: number
+): boolean {
+  if (!Number.isFinite(rasterMask.x) || !Number.isFinite(rasterMask.y)) return false;
+
+  // Only inspect mask pixels close enough to affect this raster after feathering. This keeps a
+  // sparse Magic Wand or Quick Selection mask from treating every hole in its bounding rectangle
+  // as paintable, without scanning bits that cannot contribute to the stroke.
+  const firstX = Math.max(0, Math.floor(-padding - rasterMask.x));
+  const firstY = Math.max(0, Math.floor(-padding - rasterMask.y));
+  const lastX = Math.min(rasterMask.width, Math.ceil(width + padding - rasterMask.x));
+  const lastY = Math.min(rasterMask.height, Math.ceil(height + padding - rasterMask.y));
+  if (firstX >= lastX || firstY >= lastY) return false;
+
+  for (let y = firstY; y < lastY; y += 1) {
+    for (let x = firstX; x < lastX; x += 1) {
+      if (isRasterSelectionPixelSelected(rasterMask, packed, x, y)) return true;
+    }
+  }
+
+  return false;
+}
+
+/** Whether the captured selection can affect any pixel in a raster-sized paint stroke. */
+export function paintSelectionOverlapsRaster(selection: PaintSelectionSnapshot, size: Size): boolean {
+  const width = Math.max(0, Math.floor(size.width));
+  const height = Math.max(0, Math.floor(size.height));
+  if (width === 0 || height === 0) return false;
+
+  const featherRadius = Number.isFinite(selection.featherRadius) ? Math.max(0, selection.featherRadius) : 0;
+  const edgePadding = Math.max(selection.antiAlias ? 1 : 0, Math.ceil(featherRadius));
+
+  if (selection.rasterMask) {
+    const { width: maskWidth, height: maskHeight, data } = selection.rasterMask;
+    const packed = decodeRasterSelectionMask({ width: maskWidth, height: maskHeight, data });
+    if (packed) {
+      return rasterMaskHasSelectedPixelNearRaster(
+        selection.rasterMask,
+        packed,
+        width,
+        height,
+        edgePadding
+      );
+    }
+  }
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  for (const contour of selection.points) {
+    if (contour.length < 3) continue;
+    for (const point of contour) {
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+    }
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+    return false;
+  }
+
+  return (
+    maxX + edgePadding > 0 &&
+    maxY + edgePadding > 0 &&
+    minX - edgePadding < width &&
+    minY - edgePadding < height
+  );
+}
 
 export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {
   const { alpha, color, penType, lineDash, lineWidth } = args;
@@ -107,6 +230,39 @@ export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {
   if (penType === 'pen-dashed' && lineDash) ctx.setLineDash(lineDash);
   else ctx.setLineDash([]);
 };
+
+/** Build a raster-sized alpha canvas from a stored selection snapshot. */
+export function createSelectionMaskCanvas(selection: PaintSelectionSnapshot, size: Size): OffscreenCanvas {
+  const width = Math.max(0, Math.floor(size.width));
+  const height = Math.max(0, Math.floor(size.height));
+  const canvas = new OffscreenCanvas(width, height);
+  if (width === 0 || height === 0) return canvas;
+
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Paint selection mask could not create a 2D canvas context');
+
+  // Feathering needs the selection neighborhood outside a stroke tile or cropped raster.
+  // Rasterize a padded snapshot, then crop it back so tiled preview and committed output use
+  // the same global edge coverage without introducing seams at tile/raster boundaries.
+  const featherRadius = Number.isFinite(selection.featherRadius) ? Math.max(0, selection.featherRadius) : 0;
+  const padding = Math.max(selection.antiAlias ? 1 : 0, Math.ceil(featherRadius));
+  const expandedSize = { width: width + padding * 2, height: height + padding * 2 };
+  const expandedSelection = rebasePaintSelectionSnapshot(selection, { x: -padding, y: -padding });
+  const expandedCoverage = createSelectionAlphaMask(expandedSelection, expandedSize, expandedSelection);
+  const image = context.createImageData(width, height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const sourceIndex = (y + padding) * expandedSize.width + x + padding;
+      const targetIndex = (y * width + x) * 4;
+      image.data[targetIndex] = 255;
+      image.data[targetIndex + 1] = 255;
+      image.data[targetIndex + 2] = 255;
+      image.data[targetIndex + 3] = expandedCoverage[sourceIndex];
+    }
+  }
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
 
 export const draw = (params: CreatorToolParams | ProcessorToolParams) => (args: DrawToolArgs) => {
   const { size, backingScale = 1 } = params;
@@ -149,3 +305,41 @@ export const draw = (params: CreatorToolParams | ProcessorToolParams) => (args: 
 
   return [canvas];
 };
+
+/** Render a paint stroke and constrain only the stroke pixels to its captured selection. */
+export function drawPaintWithSelection(
+  params: CreatorToolParams | ProcessorToolParams,
+  args: DrawToolArgs,
+  selection?: PaintSelectionSnapshot
+): ToolResult {
+  if (!selection) return [draw(params)(args)[0]];
+
+  const { size, backingScale = 1 } = params;
+  const stroke = draw({ size, backingScale })(args)[0] as OffscreenCanvas;
+  const selectionMask = createSelectionMaskCanvas(selection, size);
+  const strokeContext = stroke.getContext('2d');
+  if (!strokeContext) throw new Error('Paint selection could not access the stroke canvas context');
+
+  strokeContext.save();
+  try {
+    strokeContext.setTransform(backingScale, 0, 0, backingScale, 0, 0);
+    strokeContext.globalAlpha = 1;
+    strokeContext.globalCompositeOperation = 'destination-in';
+    strokeContext.drawImage(selectionMask, 0, 0, size.width, size.height);
+  } finally {
+    strokeContext.restore();
+  }
+
+  if (!('bitmap' in params)) return [stroke];
+
+  // A processor can be replayed over an existing raster. Keep that source untouched outside
+  // the selection by masking an isolated stroke first, then compositing it over the source.
+  const canvas = new OffscreenCanvas(size.width * backingScale, size.height * backingScale);
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Paint selection could not create the destination canvas context');
+  context.setTransform(backingScale, 0, 0, backingScale, 0, 0);
+  context.imageSmoothingEnabled = false;
+  context.drawImage(params.bitmap, 0, 0, size.width, size.height);
+  context.drawImage(stroke, 0, 0, size.width, size.height);
+  return [canvas];
+}
