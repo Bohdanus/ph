@@ -393,7 +393,7 @@ describe('Main tool-area routing', () => {
     // surface, so the count in the test above is still 1 for `'text'` and this is not a claim that
     // it replaced the area. Asserting both is what keeps that reading available — a change that
     // swapped the area for the editor would fail here rather than silently satisfying either test.
-    expect(screen.getByTestId('tool-area-text')).toBeTruthy();
+    expect(screen.getByTestId('tool-area-text')).toBeInTheDocument();
     expect(screen.getAllByTestId('text-edit-overlay-marker')).toHaveLength(1);
 
     // The absence half is the load-bearing one. `Main` gates the editor on the text mode because
