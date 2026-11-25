@@ -688,7 +688,12 @@ describe('MobileLayersDrawer', () => {
 
     // The eye toggle is the control a `role="button"` row hid, and the title is the
     // keyboard-reachable rewind that replaced the row's own `role="button"` + `tabIndex`.
-    expect(fakeButtonAncestors(screen.getAllByRole('button', { name: /history step/i })[0])).toEqual([]);
+    // Use specific aria-label to avoid indexed access on getAllByRole - get the first history step button
+    const historyStepButtons = screen.getAllByRole('button', {
+      name: /Enable history step|Disable history step|Untitled history step/,
+    });
+    expect(historyStepButtons.length).toBeGreaterThan(0);
+    expect(fakeButtonAncestors(historyStepButtons[0])).toEqual([]);
     const rewind = screen.getByRole('button', { name: 'new document' });
     expect(rewind.tagName).toBe('BUTTON');
     expect(rewind).not.toHaveAttribute('tabindex', '-1');
