@@ -808,7 +808,7 @@ describe('readBoard: liveness of claims and locks', () => {
         'kilo',
         '/wt',
         'old/y',
-        'sid-stale',
+        'sid',
         new Date(NOW - 6 * 3600_000).toISOString()
       );
       db.prepare('INSERT INTO agents VALUES (?,?,?,?,?,?)').run(
@@ -819,15 +819,24 @@ describe('readBoard: liveness of claims and locks', () => {
         null,
         new Date(NOW - 6 * 3600_000).toISOString()
       );
+      db.prepare('INSERT INTO agents VALUES (?,?,?,?,?,?)').run(
+        'empty/e',
+        'kilo',
+        '/wt',
+        'empty/e',
+        '',
+        new Date(NOW - 6 * 3600_000).toISOString()
+      );
       db.close();
 
       const board = readBoard(process.cwd(), { nowMs: NOW, dbPath: join(dir, 'board.db') });
       const agents = board.agents.get('/wt');
-      expect(agents).toHaveLength(3);
-      expect(Object.fromEntries(agents.map((a) => [a.agentId, a.firstSessionId]))).toEqual({
+      expect(agents).toHaveLength(4);
+      expect(Object.fromEntries(agents.map((a) => [a.agentId, a.firstKiloRunId]))).toEqual({
         'chore/x': 'sid',
-        'old/y': 'sid-stale',
+        'old/y': 'sid',
         'unknown/z': null,
+        'empty/e': null,
       });
       expect(agents.filter((a) => a.live).map((a) => a.agentId)).toEqual(['chore/x']);
     } finally {
@@ -2118,6 +2127,40 @@ describe('buildInventory', () => {
       inv.totals.branchOnlyUnknown;
     expect(branchOnlyCategoryTotal).toBe(inv.totals.branchOnlyRefs);
     expect(formatSummary(inv)).toContain('1 ancestor · 1 unknown');
+  });
+
+  it('serializes board run IDs under the current inventory schema', () => {
+    const worktree = wt();
+    const inv = buildInventory({
+      worktrees: [worktree],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board: {
+        ...board,
+        agents: new Map([
+          [
+            worktree.path,
+            [
+              {
+                agentId: 'feat/example',
+                branch: 'feat/example',
+                firstKiloRunId: 'run-id',
+                lastSeenMs: NOW,
+                live: true,
+              },
+            ],
+          ],
+        ]),
+      },
+      chatAudit,
+      nowMs: NOW,
+    });
+    const serialized = JSON.parse(JSON.stringify(inv));
+
+    expect(serialized.schemaVersion).toBe(8);
+    expect(serialized.worktrees[0].board.agents[0].firstKiloRunId).toBe('run-id');
+    expect(serialized.worktrees[0].board.agents[0]).not.toHaveProperty('firstSessionId');
   });
 
   it('publishes the exact-base merge proof needed by the guarded disposer', () => {
