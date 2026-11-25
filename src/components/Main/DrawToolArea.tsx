@@ -21,6 +21,54 @@ import { clearCanvasBackingStore } from '../../util/canvas.ts';
 import { getActiveSelection } from '../../util/selection.ts';
 
 const SELECTION_MASK_TILE_SIZE = 256;
+const PREVIEW_ALPHA_READBACK_TILE_SIZE = 256;
+
+/**
+ * Read the already-clipped live preview to decide whether this stroke can create visible paint.
+ * The conservative raster-bounds check alone can find a selection elsewhere inside a diagonal
+ * stroke's rectangular bounds, even when the actual path misses it and commit would be transparent.
+ */
+function hasVisibleSelectionPreview(ctx: CanvasRenderingContext2D, points: Point[], lineWidth: number): boolean | null {
+  if (points.length === 0) return false;
+
+  const bounds = pointsBoundingPosOutward({ points, lineWidth });
+  const matrix = ctx.getTransform();
+  const corners = [
+    { x: bounds.x, y: bounds.y },
+    { x: bounds.x + bounds.width, y: bounds.y },
+    { x: bounds.x, y: bounds.y + bounds.height },
+    { x: bounds.x + bounds.width, y: bounds.y + bounds.height },
+  ].map(({ x, y }) => ({
+    x: matrix.a * x + matrix.c * y + matrix.e,
+    y: matrix.b * x + matrix.d * y + matrix.f,
+  }));
+  if (corners.some(({ x, y }) => !Number.isFinite(x) || !Number.isFinite(y))) return null;
+
+  const left = Math.max(0, Math.floor(Math.min(...corners.map(({ x }) => x))));
+  const top = Math.max(0, Math.floor(Math.min(...corners.map(({ y }) => y))));
+  const right = Math.min(ctx.canvas.width, Math.ceil(Math.max(...corners.map(({ x }) => x))));
+  const bottom = Math.min(ctx.canvas.height, Math.ceil(Math.max(...corners.map(({ y }) => y))));
+  if (left >= right || top >= bottom) return false;
+
+  // Tool previews are rendered locally, so this readback cannot be tainted by user-supplied image
+  // data. If a browser loses the context or refuses readback, preserve the stroke instead of
+  // discarding a potentially visible edit.
+  try {
+    for (let y = top; y < bottom; y += PREVIEW_ALPHA_READBACK_TILE_SIZE) {
+      const height = Math.min(PREVIEW_ALPHA_READBACK_TILE_SIZE, bottom - y);
+      for (let x = left; x < right; x += PREVIEW_ALPHA_READBACK_TILE_SIZE) {
+        const width = Math.min(PREVIEW_ALPHA_READBACK_TILE_SIZE, right - x);
+        const pixels = ctx.getImageData(x, y, width, height).data;
+        for (let alphaIndex = 3; alphaIndex < pixels.length; alphaIndex += 4) {
+          if (pixels[alphaIndex] > 0) return true;
+        }
+      }
+    }
+    return false;
+  } catch {
+    return null;
+  }
+}
 
 type DrawHandlerProps = {
   className?: string;
@@ -76,11 +124,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     }
   };
 
-  const getSelectionMaskTile = (
-    selection: PaintSelectionSnapshot,
-    tileX: number,
-    tileY: number
-  ): OffscreenCanvas => {
+  const getSelectionMaskTile = (selection: PaintSelectionSnapshot, tileX: number, tileY: number): OffscreenCanvas => {
     const key = `${tileX}:${tileY}`;
     const cached = selectionMaskTilesRef.current.get(key);
     if (cached) return cached;
@@ -200,9 +244,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     }
     claimedPointerIdRef.current = event.pointerId;
 
-    const activeSelection = isPaintTool
-      ? getActiveSelection(selections ?? [], activeSelectionId ?? null)
-      : null;
+    const activeSelection = isPaintTool ? getActiveSelection(selections ?? [], activeSelectionId ?? null) : null;
     strokeSelectionRef.current = activeSelection ? capturePaintSelectionSnapshot(activeSelection) : null;
     selectionMaskTilesRef.current.clear();
 
@@ -250,7 +292,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     // being cancelled.
     if (frameRequested.current !== null) {
       cancelAnimationFrame(frameRequested.current);
-      flushDrawingFrame();
+      frameRequested.current = null;
     }
 
     const coords = getLocalCoords(event);
@@ -262,13 +304,16 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
       pointsRef.current.push(coords);
     }
 
+    // Always flush the final pointer-up coordinate before commit so ordinary strokes do not lose
+    // their tail. A selected stroke also needs that final clipped preview before checking whether
+    // any visible pixels were painted; its rectangular bounds alone can overlap a distant selection.
+    flushDrawingFrame();
+
     const oldPoints = pointsRef.current.map((point) => canvasToDocumentPoint(point, documentFrame));
     const pos = pointsBoundingPosOutward({ points: oldPoints, lineWidth: args.lineWidth });
     const newPoints = oldPoints.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }));
     const capturedSelection = isPaintTool ? strokeSelectionRef.current : null;
-    const selection = capturedSelection
-      ? rebasePaintSelectionSnapshot(capturedSelection, pos)
-      : undefined;
+    const selection = capturedSelection ? rebasePaintSelectionSnapshot(capturedSelection, pos) : undefined;
 
     if (selection && !paintSelectionOverlapsRaster(selection, { width: pos.width, height: pos.height })) {
       pointsRef.current = [];
@@ -278,6 +323,22 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
       strokeSelectionRef.current = null;
       selectionMaskTilesRef.current.clear();
       if (overlayCtxRef.current) clearCanvasBackingStore(overlayCtxRef.current);
+      return;
+    }
+
+    const overlayContext = overlayCtxRef.current;
+    if (
+      selection &&
+      overlayContext &&
+      hasVisibleSelectionPreview(overlayContext, pointsRef.current, args.lineWidth) === false
+    ) {
+      pointsRef.current = [];
+      pointTimesRef.current = [];
+      currentPointRef.current = null;
+      sprayStartedAtRef.current = null;
+      strokeSelectionRef.current = null;
+      selectionMaskTilesRef.current.clear();
+      clearCanvasBackingStore(overlayContext);
       return;
     }
 

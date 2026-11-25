@@ -200,6 +200,40 @@ for (const toolName of ['brush', 'pencil'] as const) {
     await page.getByTestId('undo-button').click();
     await expect.poll(() => hasNoCommittedAnts(page)).toBe(true);
   });
+
+  test(`${toolName} skips a diagonal stroke that misses a selection inside its bounds`, async ({ page }) => {
+    await page.goto('/');
+    const canvas = getWorkspaceCanvas(page);
+    await expect(canvas).toBeVisible();
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('The workspace canvas has no visible bounds');
+
+    await clickToolButton(page, 'rectangular-selection');
+    const selectionStart = pointOnCanvas(box, 0.2, 0.65);
+    const selectionEnd = pointOnCanvas(box, 0.3, 0.75);
+    await page.mouse.move(selectionStart.x, selectionStart.y);
+    await page.mouse.down();
+    await page.mouse.move(selectionEnd.x, selectionEnd.y, { steps: 8 });
+    await page.mouse.up();
+    await waitForCommittedAnts(page, 'the off-path selection');
+
+    await selectBrushOrPencil(page, toolName);
+    await setForegroundColor(page, '#cc0000');
+    const baseline = await readWorkspacePixel(canvas, 0.25, 0.7);
+    const strokeStart = pointOnCanvas(box, 0.15, 0.15);
+    const strokeEnd = pointOnCanvas(box, 0.85, 0.85);
+    await page.mouse.move(strokeStart.x, strokeStart.y);
+    await page.mouse.down();
+    await page.mouse.move(strokeEnd.x, strokeEnd.y, { steps: 18 });
+    await page.mouse.up();
+
+    await expect.poll(() => readWorkspacePixel(canvas, 0.25, 0.7)).toEqual(baseline);
+    await expect(page.getByTestId('selection-ants-canvas')).toBeVisible();
+    // If pointer-up recorded a transparent paint layer, this Undo would remove that layer and
+    // leave the selection active. The intended no-op leaves selection as the next undo entry.
+    await page.getByTestId('undo-button').click();
+    await expect.poll(() => hasNoCommittedAnts(page)).toBe(true);
+  });
 }
 
 test('selection paint preview and commit stay clipped while zoomed in', async ({ page }) => {

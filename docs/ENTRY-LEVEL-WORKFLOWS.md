@@ -102,19 +102,35 @@ paint layers.
 
 **User goal:** Add color to one part of an image while protecting the surrounding pixels.
 
-**Starting point:** Open a document with the Brush or Pencil tool available.
+**Starting point:** Open a document with the Brush or Pencil tool available and an unlocked paint
+layer selected. If the only layer is a locked Background, choose **New Layer** in Layers before
+painting.
 
-**Steps:** Use the Rectangular Marquee tool to select an area. Switch to Brush or Pencil and drag
-a stroke across the selection boundary. Undo the stroke to compare with the original, then redo it.
+**Steps:** On the left tool rail, select **Rectangular Marquee Tool** (named **Rectangular
+Selection** in the Tools menu) and keep **Style** set to **Normal**. Select an area, then choose
+**Brush Tool** or **Pencil Tool** on the same rail and drag a stroke across the selection boundary.
+Use the **Undo** and **Redo** buttons in the top toolbar to remove and restore the stroke. For a
+soft-edge variation, choose **Polygonal Lasso**, leave its **Mode** at **Outline**, set **Feather**
+above **0 px** in the right tool-options panel, click to add the polygon corners, and press Enter to
+finish the selection. To check history after deselection, select **Rectangular Marquee Tool** and
+click **Deselect** in its right panel for a rectangle; for a polygon, select **Lasso Tool** (named
+**Freehand Lasso** in the Tools menu) and click **Deselect** in that tool's right panel. Then click
+**Undo** once to restore the selection, **Undo** again to remove the paint, **Redo** to restore the
+clipped paint, and **Redo** again to deselect.
 
 **Acceptance:** The active selection remains visible after switching tools. The stroke preview and
 committed pixels use matching selection coverage, including feathered edges. A stroke fully outside
-the selection leaves pixels and history unchanged. Undo removes the stroke without removing the
-selection; Redo restores the same selected pixels after deselection is undone.
+the selection leaves pixels and history unchanged. With the selection active, Undo removes the
+stroke without removing the selection and Redo restores the stroke. If the selection is cleared
+first, Undo restores it before the stroke is undone; Redo reapplies the same clipped pixels before
+the selection is cleared again.
 
 **E2E:** `brush paints only inside the active selection and remains undoable` and
 `pencil paints only inside the active selection and remains undoable`, both
 `does not add history for a stroke outside the selection` cases, and
+both `skips a diagonal stroke that misses a selection inside its bounds` cases,
+`selection paint preview and commit stay clipped while zoomed in`,
+`the selection rasterizer keeps selected pixels at the active backing scale`, and
 `feathered selection edges keep matching preview and committed paint coverage` in
 [`selection-paint.spec.ts`](../e2e/selection-paint.spec.ts).
 

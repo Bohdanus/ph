@@ -133,6 +133,12 @@ const makeMockContext = () => ({
   drawImage: vi.fn(),
   setTransform: vi.fn(),
   resetTransform: vi.fn(),
+  getTransform: vi.fn(() => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })),
+  getImageData: vi.fn((_x: number, _y: number, width: number, height: number) => {
+    const data = new Uint8ClampedArray(width * height * 4);
+    data[3] = 255;
+    return { data };
+  }),
   // The overlay backing store, and deliberately NOT the store's `totalSize` (300x200) below. A
   // teardown that read a render-scope size would clear 300x200 and leave the right-hand and
   // bottom strips of the real backing store painted, so the two have to be distinguishable.
@@ -227,6 +233,51 @@ describe('DrawToolArea', () => {
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 50, clientY: 50 });
     fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 50 });
 
+    expect(createLayerFromToolMock).not.toHaveBeenCalled();
+  });
+
+  it('does not create a layer when a diagonal stroke misses a selection inside its bounds', () => {
+    storeState.selections = [
+      {
+        id: 'off-path-selection',
+        points: [
+          [
+            { x: 0, y: 0 },
+            { x: 20, y: 0 },
+            { x: 20, y: 20 },
+            { x: 0, y: 20 },
+          ],
+        ],
+        isActive: true,
+        pos: { x: 70, y: 140, width: 20, height: 20 },
+        metadata: { antiAlias: false, featherRadius: 0 },
+      },
+    ];
+    storeState.activeSelectionId = 'off-path-selection';
+    toolArgsState.current = {
+      toolName: 'brush',
+      alpha: 1,
+      color: '#000000',
+      penType: 'pen',
+      lineWidth: 4,
+      points: [],
+    };
+
+    const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+    vi.mocked(overlayCtx.getImageData).mockImplementation(
+      (_x, _y, width, height) =>
+        ({
+          data: new Uint8ClampedArray(width * height * 4),
+        }) as ImageData
+    );
+    const { container } = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 50, clientY: 30 });
+    fireEvent.pointerMove(toolArea, { button: 0, clientX: 250, clientY: 170 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 250, clientY: 170 });
+
+    expect(overlayCtx.getImageData).toHaveBeenCalled();
     expect(createLayerFromToolMock).not.toHaveBeenCalled();
   });
 
