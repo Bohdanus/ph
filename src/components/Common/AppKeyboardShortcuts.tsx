@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { useHistory } from '../../contexts/useHistory.ts';
 import { useApp } from '../../hooks/useApp.ts';
@@ -15,6 +16,7 @@ import type { ToolName, ToolPatch } from '../../contexts/tool-types.ts';
 import { absoluteViewZoom, DEFAULT_VIEW_STATE, relativeViewZoomForMagnification } from '../../contexts/view-state.ts';
 import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 import { useWorkspaceFitScale } from '../../hooks/useWorkspaceFitScale.ts';
+import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 
 /**
  * Flyout groups, each cycled by Shift+<key>, exactly as `toolbar-mapping.ts` groups the
@@ -138,6 +140,7 @@ export const AppKeyboardShortcuts = () => {
     useSelectionClipboard();
   const { openSaveImageDialog } = useFile();
   const { arrangeLayer, commitDirtyTool, updateLayerByTool } = useLayers();
+  const { layersVisible, toggleLayersVisibility } = usePanelLayout();
   const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
   const canNudgeActiveLayer =
     hasImage &&
@@ -146,6 +149,28 @@ export const AppKeyboardShortcuts = () => {
     !!activeLayer &&
     !activeLayer.isBedrock &&
     !activeLayer.locked;
+
+  const toggleLayersPanel = useCallback(() => {
+    if (layersVisible && typeof document !== 'undefined') {
+      const activeElement = document.activeElement;
+      const layersPanel = document.getElementById('panel-group-layers');
+      if (activeElement instanceof Element && layersPanel?.contains(activeElement)) {
+        document.getElementById('panel-header-history')?.focus();
+      }
+    }
+    toggleLayersVisibility();
+  }, [layersVisible, toggleLayersVisibility]);
+
+  useKeyDownShortcut({
+    key: 'F7',
+    ctrl: false,
+    shift: false,
+    alt: false,
+    meta: false,
+    preventDefault: true,
+    mutatesDocument: false,
+    onKeyDown: toggleLayersPanel,
+  });
   // Shortcut closures share this pending position until React renders the committed layer.
   // A render seeds a fresh value from the store, including external layer moves or a new active layer.
   const nudgeState = {

@@ -76,8 +76,8 @@ const REVIEWED = {
   },
   'free-model-pool.test.mjs': {
     scope:
-      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, its explicit incomplete-length fixture uses an isolated fake CLI, and the distinct caller/runner PATH, symlinked caller-root, and hard-link alias fixtures across node_modules/.bin and scripts remove their temporary directories in finally; timeout cleanup targets only fixture-owned process IDs; the provider-filter fixture uses an isolated temporary quarantine path, while the pinned-CLI fixture writes its prompt inside its own temporary directory; both directories are removed recursively in finally blocks.',
-    patterns: `filesystem-write:mkdtemp=48 filesystem-write:rm=48 filesystem-write:writeFile=20 filesystem-write:mkdir=18 filesystem-write:link=4 filesystem-write:symlinkSync=13 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, its explicit incomplete-length fixture uses an isolated fake CLI, and the distinct caller/runner PATH, symlinked caller-root, and hard-link alias fixtures across node_modules/.bin and scripts remove their temporary directories in finally; timeout cleanup targets only fixture-owned process IDs; the provider-filter fixture uses an isolated temporary quarantine path, while the pinned-CLI fixture writes its prompt inside its own temporary directory; a non-catalog OpenCode ID containing shell metacharacters is blocked before an isolated fake CLI launches; direct CLI-entry validation spawns Node with an unsupported option.',
+    patterns: `filesystem-write:mkdtemp=49 filesystem-write:rm=49 filesystem-write:writeFile=20 filesystem-write:mkdir=18 filesystem-write:link=4 filesystem-write:symlinkSync=13 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=2`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -116,8 +116,14 @@ const REVIEWED = {
     patterns: `subprocess:spawn=1 filesystem-write:rmSync=2 filesystem-write:mkdtempSync=27 subprocess:spawnSync=17 filesystem-write:mkdirSync=6 filesystem-write:writeFileSync=23 filesystem-write:renameSync=1 filesystem-write:symlinkSync=2 filesystem-write:linkSync=1`,
   },
   'merge-release.test.mjs': {
-    scope: 'Git and filesystem fixtures use a unique temporary repository.',
-    patterns: `subprocess:execFileSync=3 filesystem-write:mkdtempSync=1 filesystem-write:mkdirSync=1 filesystem-write:writeFileSync=3 filesystem-write:rmSync=1`,
+    scope:
+      'Git and filesystem fixtures use a unique temporary repository; the same-tree provenance regression writes the shared README content before merging one sibling branch.',
+    patterns: `subprocess:execFileSync=3 filesystem-write:mkdtempSync=1 filesystem-write:mkdirSync=1 filesystem-write:writeFileSync=4 filesystem-write:rmSync=1`,
+  },
+  'wsl-setup.test.mjs': {
+    scope:
+      'The WSL setup script is copied into a disposable synthetic worktree; a fake stat reports drvfs only for the exact flags and worktree path, and a fake Git command leaves a marker if the guard reaches Git.',
+    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=1 filesystem-write:mkdirSync=2 filesystem-write:copyFileSync=1 filesystem-write:writeFileSync=2 filesystem-write:chmodSync=2 subprocess:spawnSync=1`,
   },
   'merge-takeover-guard-install.test.mjs': {
     scope: 'Subprocess invocation is part of the installer contract; review its command and cwd.',

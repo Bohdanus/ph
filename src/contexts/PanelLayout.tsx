@@ -149,6 +149,8 @@ interface LayoutState {
   splitRatio: number;
   panelOrder: PanelOrder;
   rolledUp: Record<PanelId, boolean>;
+  /** Layers-panel visibility is workspace state; History stays visible. */
+  layersVisible: boolean;
   /** Compatibility field; the shipped rail is always left-docked. */
   toolsSide: PanelSide;
   /** Compatibility field; the shipped panel dock is always right-docked. */
@@ -161,6 +163,7 @@ const DEFAULT_STATE: LayoutState = {
   splitRatio: DEFAULT_SPLIT_RATIO,
   panelOrder: ['history', 'layers'],
   rolledUp: { history: false, layers: false },
+  layersVisible: true,
   toolsSide: 'left',
   dockSide: 'right',
   isCollapsed: false,
@@ -205,6 +208,10 @@ export interface PanelLayout extends LayoutState {
   setPanelOrder: (order: PanelOrder) => void;
   /** Rolls a panel's group up to its tab bar, or back down. A double-click on the tab. */
   setRolledUp: (id: PanelId, rolledUp: boolean) => void;
+  /** Shows or hides the Layers panel without changing History or the saved split ratio. */
+  setLayersVisible: (visible: boolean) => void;
+  /** F7 toggles only the Layers panel, preserving the History panel and split ratio. */
+  toggleLayersVisibility: () => void;
   /**
    * Compatibility no-op. Rail relocation is retired.
    */
@@ -240,6 +247,8 @@ const noProviderValue: PanelLayout = {
   setSplitRatio: () => {},
   setPanelOrder: () => {},
   setRolledUp: () => {},
+  setLayersVisible: () => {},
+  toggleLayersVisibility: () => {},
   setToolsSide: () => {},
   setDockSide: () => {},
   toggleCollapsed: () => {},
@@ -317,6 +326,7 @@ const readStoredLayout = (): Partial<LayoutState> => {
     const rolled = record.rolledUp as Record<string, unknown>;
     stored.rolledUp = { history: rolled.history === true, layers: rolled.layers === true };
   }
+  if (typeof record.layersVisible === 'boolean') stored.layersVisible = record.layersVisible;
   // Assigned ONLY when the read recognised a side. An unconditional assignment would put an
   // OWN property holding `undefined` into the result, and the provider seeds state with
   // `{ ...DEFAULT_STATE, ...readStoredLayout() }` — a spread copies own enumerable properties
@@ -404,6 +414,14 @@ export function PanelLayoutProvider({ children }: { children: ReactNode }) {
     setState((current) => ({ ...current, rolledUp: { ...current.rolledUp, [id]: isRolledUp } }));
   }, []);
 
+  const setLayersVisible = useCallback((visible: boolean) => {
+    setState((current) => ({ ...current, layersVisible: visible }));
+  }, []);
+
+  const toggleLayersVisibility = useCallback(() => {
+    setState((current) => ({ ...current, layersVisible: !current.layersVisible }));
+  }, []);
+
   // Each writes ONE field and reads no other, which is the property that makes the two subjects
   // independent. They used to share a field, which is why moving one had to invert it to move the
   // other, and why the inversion was easy to get backwards: `SidebarLeft.tsx` carries the note
@@ -434,6 +452,8 @@ export function PanelLayoutProvider({ children }: { children: ReactNode }) {
       setSplitRatio,
       setPanelOrder,
       setRolledUp,
+      setLayersVisible,
+      toggleLayersVisibility,
       setToolsSide,
       setDockSide,
       toggleCollapsed,
@@ -446,6 +466,8 @@ export function PanelLayoutProvider({ children }: { children: ReactNode }) {
       setSplitRatio,
       setPanelOrder,
       setRolledUp,
+      setLayersVisible,
+      toggleLayersVisibility,
       setToolsSide,
       setDockSide,
       toggleCollapsed,
