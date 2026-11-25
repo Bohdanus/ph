@@ -51,6 +51,13 @@ its salvage has no board entry there at all — its `lastSeenMs` goes stale whil
 is minutes old. Step 4b, the live-session overlay, is therefore not a formality: it is the
 step that decides the most worktrees, and it has to be re-run immediately before you act.
 
+When a `board.agents[]` row has `firstSessionId`, use it to locate that recorded Kilo
+session and then inspect its full ancestor/descendant family. The board stores only the
+first Kilo run for a branch; this optional field is a history lookup clue, not an
+exhaustive owner list or proof of death. A missing ID is unknown; never use its
+absence to justify reclamation. This lookup supplements the full family walk and
+the Step 4b live-session overlay; re-run the overlay immediately before acting.
+
 ## 0 — The rules a landing runs inside
 
 This sweep is read-only until a case is classified. Everything below binds the moment you
