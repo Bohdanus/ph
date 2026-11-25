@@ -372,12 +372,25 @@ an unrelated process and the full landing process tree is stopped. The model and
 are assertions, not host authentication; the agent launcher must actually
 use Luna xhigh. Create and verify a dedicated recovery task worktree before launching Luna, and
 give it the absolute path, old lease token, and a recovery-only write set. Resolve the new chat ID
-with the current host's instructions in `CHAT-ID.md`.
+with the current host's instructions in `docs/CHAT-ID.md`.
 
-From Luna's recovery task worktree, claim the lease with the command below, using the token shown
-by `main:landing status` and Luna's verified branch and chat ID:
+Before takeover, run `npm run repo:state` and `npm run main:landing -- status --json`. Confirm the
+same lease and owner are still reported, main has only the exact orphan `AUTO_MERGE` marker with no
+unmerged paths, the owner chat is dead, and the full landing-holder process tree is stopped. Preserve
+unrelated repository findings; use the scoped landing report before the eventual landing.
+
+From Luna's recovery task worktree, set `OLD_LEASE` to the exact `leaseId` from status,
+`RECOVERY_BRANCH` to the branch checked out in that task worktree, and `RECOVERY_CHAT_ID` to Luna's
+verified host-native ID from `docs/CHAT-ID.md`. If a recorded owner/child PID exists but is proven to
+belong to an unrelated process, add only the matching PID-reuse confirmation flag after verifying
+the holder tree stopped. Replace the two quoted placeholders with the verified values; do not run
+them literally. Then claim the lease with:
 
 ```sh
+OLD_LEASE='<verified leaseId from status>'
+RECOVERY_BRANCH="$(git branch --show-current)"
+RECOVERY_CHAT_ID='<verified native session ID from docs/CHAT-ID.md>'
+export RECOVERY_BRANCH RECOVERY_CHAT_ID
 npm run main:landing -- takeover \
   --token "$OLD_LEASE" \
   --branch "$RECOVERY_BRANCH" \
@@ -388,32 +401,57 @@ npm run main:landing -- takeover \
   --confirm-chat-dead
 ```
 
-The takeover changes no Git files, refs, index, or operation markers. First run `repo:state`, inspect
-`main:landing status`, and preserve the old worktree and its administrative Git directory. The
+The takeover changes no Git files, refs, index, or operation markers. Verify that status now names
+Luna, its recovery branch, and the native chat ID. Preserve the old worktree and its administrative
+Git directory. Do not reuse `OLD_LEASE` as the new lease token. The
 preferred recovery is to establish a new clean main landing worktree while leaving the occupied
 worktree untouched:
 
 ```sh
-# From the verified recovery task worktree, with NEW_MAIN under .kilo/worktrees/.
+# Continue in the same shell from the verified recovery task worktree. This derives a unique absolute path.
 # If the registered main path is C:/..., use Git for Windows and Windows Node even when the task
 # worktree is opened through /mnt/c. For native Linux clones, use WSL Git and Node.
+set -e
+git worktree list --porcelain
+pwd -P
+git rev-parse --show-toplevel
+git rev-parse --git-dir --git-common-dir
+RECOVERY_TASK="$(pwd -P)"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+RECOVERY_BRANCH="$(git branch --show-current)"
+export RECOVERY_BRANCH RECOVERY_CHAT_ID
+NEW_MAIN="$REPO_ROOT/.kilo/worktrees/landing-main-recovery-$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+test ! -e "$NEW_MAIN" || { echo "choose a unique NEW_MAIN path" >&2; exit 1; }
 git worktree add --force "$NEW_MAIN" main
+test "$(git -C "$NEW_MAIN" symbolic-ref --short HEAD)" = main
 cd "$NEW_MAIN"
-node scripts/install-git-hooks.js
+export KILO_MAIN_LANDING_RECOVERY_PATH="$NEW_MAIN"
+node "$RECOVERY_TASK/scripts/install-git-hooks.js"
 git rev-parse --show-toplevel
 git rev-parse --git-dir --git-common-dir
 git status --short
+npm run main:landing -- status --json
+NEW_LEASE="$(npm run --silent main:landing -- status --json | node -e 'const s=JSON.parse(require("node:fs").readFileSync(0,"utf8")); if (!s.occupied || !s.leaseId || s.owner?.script !== "Luna recovery agent" || s.owner?.branch !== process.env.RECOVERY_BRANCH || s.owner?.chatId !== process.env.RECOVERY_CHAT_ID) process.exit(1); process.stdout.write(s.leaseId);')"
+test -n "$NEW_LEASE"
 ```
 
 `--force` deliberately allows the same `main` branch to remain checked out in the old worktree
 ([Git worktree documentation](https://git-scm.com/docs/git-worktree)).
 Use it only after confirming the old holder is stopped and preserving its dirty files, index, and
-Git admin directory; keep that old worktree untouched as the recovery source. Installing hooks
-from the new checkout updates the designated-main registration. The new lease invalidates the
-old token in both the commit helper and final message guard. Verify that `main:landing status`
-reports this path, `main` and a clean Git state before releasing the new lease with
-`npm run main:landing -- release --token "$NEW_LEASE"`. Do not remove or prune the old worktree as
-part of this takeover. If a clean replacement is not viable, copy every dirty and untracked file
+Git admin directory; keep that old worktree untouched as the recovery source. Run the recovery task
+worktree's hook installer with `KILO_MAIN_LANDING_RECOVERY_PATH` set to the replacement path.
+Without this explicit selection, hook installation preserves the saved designation when duplicate
+`main` worktrees exist. Verify that `main:landing status` reports the replacement path, `main`, and
+a clean Git state before releasing the new lease with
+`npm run main:landing -- release --token "$NEW_LEASE"`. If a command fails before release succeeds,
+leave the recovery lease and both worktrees intact; rerun status and continue from its recorded state.
+Do not reset, dispose, or release before the replacement is verified clean. The new lease invalidates
+the old token in both the commit helper and final message guard. Releasing the recovery lease does not approve the
+old candidate pins: if `main` or the candidate moved, fetch current `origin/main`, sync it into the
+candidate worktree, review and rerun the required gates against the new base, then begin a new pinned
+landing with the refreshed main SHA, candidate SHA, and merge-tree SHA. Do not retry stale pins. Do
+not remove or prune the old worktree as part of this takeover. If a clean replacement is not viable,
+copy every dirty and untracked file
 plus the exact operation metadata into a dedicated recovery worktree before any cleaning or
 resolution, then resume through the normal reviewed landing flow. Never use `git stash` or
 reset/abort an operation whose owner or state is unclear.

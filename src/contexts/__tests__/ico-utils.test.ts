@@ -824,3 +824,44 @@ describe('ICO malformed DIB entries', () => {
     await expect(loadIcoFile(new Blob([icon(dib, 16, 16)]))).rejects.toThrow('Invalid ICO file');
   });
 });
+
+describe('ICO palette edge cases', () => {
+  it('decodes a 16-bit BI_RGB icon', async () => {
+    installImageHarness();
+    const dib = buildDib({
+      width: 2,
+      height: 1,
+      bitsPerPixel: 16,
+      rows: [{ rgba: [255, 0, 0, 255, 0, 255, 0, 255] }],
+    });
+
+    expect(Array.from((await decodeIco(icon(dib, 2, 1))).data)).toEqual([255, 0, 0, 255, 0, 255, 0, 255]);
+  });
+
+  it('decodes a 32-bit BI_RGB icon', async () => {
+    installImageHarness();
+    const dib = buildDib({
+      width: 2,
+      height: 1,
+      bitsPerPixel: 32,
+      rows: [{ rgba: [10, 20, 30, 255, 200, 100, 50, 255] }],
+    });
+
+    expect(Array.from((await decodeIco(icon(dib, 2, 1))).data)).toEqual([10, 20, 30, 255, 200, 100, 50, 255]);
+  });
+
+  it('decodes a DIB with dibSize > 40 and palette', async () => {
+    installImageHarness();
+    const dib = buildDib({
+      width: 2,
+      height: 1,
+      bitsPerPixel: 8,
+      dibSize: 108,
+      colorsUsed: 256,
+      palette: Array.from({ length: 256 }, (_, index) => [index, 0, 0]),
+      rows: [{ rgba: new Array(8).fill(0), indices: [0, 1] }],
+    });
+
+    expect(Array.from((await decodeIco(icon(dib, 2, 1))).data)).toEqual([0, 0, 0, 255, 1, 0, 0, 255]);
+  });
+});

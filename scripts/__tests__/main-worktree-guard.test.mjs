@@ -363,7 +363,7 @@ describe('the guard tells a main worktree from a linked one on a real repository
         'incoming-sha': incomingSha,
         'tree-sha': treeSha,
         branch: 'feature-lane',
-        chat: 'test-chat',
+        chat: 'ses_0123456789ABCDEF0123456789',
       };
       expect(await land(paths, landingOptions, originalMainPath, { watcherStarter: async () => {} })).toBe(75);
       const owner = JSON.parse(readFileSync(join(paths.lockDir, 'owner.json'), 'utf8'));
@@ -463,7 +463,7 @@ describe('the guard tells a main worktree from a linked one on a real repository
         'incoming-sha': incomingSha,
         'tree-sha': treeSha,
         branch: 'feature-lane',
-        chat: 'test-chat',
+        chat: 'ses_0123456789ABCDEF0123456789',
       };
       expect(await land(paths, landingOptions, originalMainPath, { watcherStarter: async () => {} })).toBe(75);
 
@@ -539,7 +539,13 @@ describe('the guard tells a main worktree from a linked one on a real repository
       expect(attemptedRecoveryPaths[0]).not.toBe(attemptedRecoveryPaths[1]);
       expect(existsSync(attemptedRecoveryPaths[0])).toBe(false);
       expect(existsSync(attemptedRecoveryPaths[1])).toBe(true);
-      expect(landedPins).toEqual({ mainSha, incomingSha, treeSha, branch: 'feature-lane', chatId: 'test-chat' });
+      expect(landedPins).toEqual({
+        mainSha,
+        incomingSha,
+        treeSha,
+        branch: 'feature-lane',
+        chatId: 'ses_0123456789ABCDEF0123456789',
+      });
       expect(git(originalMainPath, ['branch', '--show-current'])).toBe('main');
       expect(git(originalMainPath, ['status', '--porcelain'])).toBe(originalStatus);
       expect(readFileSync(autoMergePath, 'utf8')).toBe(mainTree + '\n');

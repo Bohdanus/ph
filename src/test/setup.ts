@@ -5,15 +5,13 @@ import '@testing-library/jest-dom/vitest';
 
 afterEach(async () => {
   cleanup();
-  vi.useRealTimers();
-  // vmThreads isolation: drain microtasks, clear timers, flush pending macrotasks
-  // isolate: true resets per test file, not per test. Async operations (createImageBitmap,
-  // timers, mocked rAF) leak across tests within the same VM thread.
-  // Only run timer flush if fake timers were used.
   if (vi.isFakeTimers()) {
     await vi.runOnlyPendingTimersAsync();
     vi.clearAllTimers();
   }
+  vi.useRealTimers();
+  // vmThreads isolate files, not individual tests. Let already queued microtasks
+  // and one real timer turn settle after unmount before the next test starts.
   vi.clearAllMocks();
   await new Promise<void>((resolve) => {
     setTimeout(resolve, 0);
