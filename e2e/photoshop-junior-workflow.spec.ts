@@ -11,7 +11,7 @@ import {
 } from './helpers/canvas-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
-import { expectNoDiscardPrompt } from './helpers/discard-prompt';
+import { acceptDiscardPromptIfPresent, expectNoDiscardPrompt } from './helpers/discard-prompt';
 import {
   CHANGED_CHANNEL_THRESHOLD_GENERAL,
   INTEGRATION_TEST_TIMEOUT_MS,
@@ -681,6 +681,79 @@ test.describe('Photoshop Junior/Intermediate Photo Editing Workflow', () => {
     };
     expect(pixelAt(12, 24), 'the crop should retain the red side of the image').toEqual([255, 0, 0, 255]);
     expect(pixelAt(36, 24), 'the crop should retain the blue side of the image').toEqual([0, 0, 255, 255]);
+  });
+
+  test('Beginner PSD crop: reopen and expand the crop to recover the original margins', async ({ page }, testInfo) => {
+    test.setTimeout(WORKFLOW_TIMEOUT_MS);
+    const downloadDirectory = await prepareExportDownloadDirectory(testInfo);
+    const fixturePath = path.join(testInfo.config.rootDir, 'fixtures/split-half-red-blue.png');
+    const fixture = await readFile(fixturePath);
+    const original = await sharp(fixture).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    expect({ width: original.info.width, height: original.info.height }).toEqual({ width: 64, height: 64 });
+
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+    const initialFileChooser = page.waitForEvent('filechooser');
+    await page.getByTestId('header-file-menu-button').click();
+    await page.getByTestId('header-file-open-button').click();
+    await expectNoDiscardPrompt(page);
+    await (await initialFileChooser).setFiles(fixturePath);
+    const originalSize = { width: 64, height: 64 };
+    await expect.poll(() => readWorkspaceDocumentSize(page, 'beginner PSD crop fixture')).toEqual(originalSize);
+
+    await clickToolButton(page, 'crop');
+    await expect(page.locator('.cursor-crop')).toBeVisible();
+    const initialBox = await getWorkspaceCanvas(page).boundingBox();
+    if (!initialBox) throw new Error('Canvas not found after selecting the Crop tool');
+    await drawLineFromDocument(page, initialBox, 8, 8, 56, 56, { steps: 12 }, originalSize);
+    await page.getByRole('button', { name: 'Apply', exact: true }).click();
+    const croppedSize = { width: 48, height: 48 };
+    await expect.poll(() => readWorkspaceDocumentSize(page, 'beginner PSD crop commit')).toEqual(croppedSize);
+
+    const psdFormat = exportFormats.find((format) => format.extension === '.psd')!;
+    await openSaveDialog(page);
+    await fillSaveDialog(page, 'beginner-cropped-working-copy', psdFormat.label);
+    const psdDownload = await submitSaveDialogForDownload(page, psdFormat);
+    const psdPath = path.join(downloadDirectory, path.basename(psdDownload.suggestedFilename()));
+    await psdDownload.saveAs(psdPath);
+    await expect(page.getByTestId('save-dialog')).toHaveCount(0);
+
+    initializePsdCanvas();
+    const savedPsd = readPsd(new Uint8Array(await readFile(psdPath)), { useImageData: true });
+    expect({ width: savedPsd.width, height: savedPsd.height }).toEqual(croppedSize);
+    expect(savedPsd.children).toHaveLength(1);
+    expect(savedPsd.children![0]).toMatchObject({ left: -8, top: -8, right: 56, bottom: 56 });
+    expect(savedPsd.children![0].imageData).toMatchObject({ width: 64, height: 64 });
+    expect(Array.from(savedPsd.children![0].imageData!.data)).toEqual(Array.from(original.data));
+
+    const reopenedFileChooser = page.waitForEvent('filechooser');
+    await page.getByTestId('header-file-menu-button').click();
+    await page.getByTestId('header-file-open-button').click();
+    await acceptDiscardPromptIfPresent(page);
+    await (await reopenedFileChooser).setFiles(psdPath);
+    await expect.poll(() => readWorkspaceDocumentSize(page, 'reopened beginner PSD crop')).toEqual(croppedSize);
+
+    await clickToolButton(page, 'crop');
+    await expect(page.locator('.cursor-crop')).toBeVisible();
+    const reopenedBox = await getWorkspaceCanvas(page).boundingBox();
+    if (!reopenedBox) throw new Error('Canvas not found after reopening the cropped PSD');
+    await drawLineFromDocument(page, reopenedBox, 1, 1, 47, 47, { steps: 12 }, croppedSize);
+    await expect(page.getByRole('button', { name: 'Apply', exact: true })).toBeEnabled();
+    await drawLineFromDocument(page, reopenedBox, 1, 24, -8, 24, { steps: 8 }, croppedSize);
+    await drawLineFromDocument(page, reopenedBox, 47, 24, 56, 24, { steps: 8 }, croppedSize);
+    await drawLineFromDocument(page, reopenedBox, 24, 1, 24, -8, { steps: 8 }, croppedSize);
+    await drawLineFromDocument(page, reopenedBox, 24, 47, 24, 56, { steps: 8 }, croppedSize);
+    await expect(page.getByRole('button', { name: 'Apply', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: 'Apply', exact: true }).click();
+    await expect.poll(() => readWorkspaceDocumentSize(page, 'expanded beginner PSD crop')).toEqual(originalSize);
+    const restoredDataUrl = await readLogicalDocumentDataUrl(page);
+    const restored = await sharp(Buffer.from(restoredDataUrl.split(',')[1], 'base64'))
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    expect({ width: restored.info.width, height: restored.info.height }).toEqual(originalSize);
+    expect(Array.from(restored.data)).toEqual(Array.from(original.data));
   });
 
   test('Workflow isolates content by toggling layer visibility', async ({ page }, testInfo) => {

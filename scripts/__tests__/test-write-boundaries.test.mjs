@@ -77,7 +77,7 @@ const REVIEWED = {
   'free-model-pool.test.mjs': {
     scope:
       'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, its explicit incomplete-length fixture uses an isolated fake CLI, and the distinct caller/runner PATH, symlinked caller-root, and hard-link alias fixtures across node_modules/.bin and scripts remove their temporary directories in finally; timeout cleanup targets only fixture-owned process IDs; the provider-filter fixture uses an isolated temporary quarantine path, while the pinned-CLI fixture writes its prompt inside its own temporary directory; both directories are removed recursively in finally blocks.',
-    patterns: `filesystem-write:mkdtemp=47 filesystem-write:rm=47 filesystem-write:writeFile=20 filesystem-write:mkdir=18 filesystem-write:link=4 filesystem-write:symlinkSync=13 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+    patterns: `filesystem-write:mkdtemp=48 filesystem-write:rm=48 filesystem-write:writeFile=20 filesystem-write:mkdir=18 filesystem-write:link=4 filesystem-write:symlinkSync=13 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -198,6 +198,11 @@ const REVIEWED = {
   },
   'orchestration-command-references.test.mjs': {
     scope: 'Read-only document checks; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
+  'openrouter-key-refresh.test.mjs': {
+    scope:
+      'Injected interop and filesystem functions are mocked; lookup and fail-closed cases use only in-memory fakes, with no real filesystem access or subprocesses.',
     patterns: '',
   },
   'secrets.test.mjs': {

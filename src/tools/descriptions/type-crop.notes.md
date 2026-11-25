@@ -1656,13 +1656,13 @@ appears as a Photoshop behavior or app capability assertion in `type-crop.ts`.
     Hyphenation remains `missing` as a control — the app cannot
     switch hyphenation on, which is the actual gap, and it is unaffected by the breaker.
     Closest: https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/paragraphstyle
-23. **UNVERIFIED — hidden crop pixels across save/reopen/export.** `applyDocumentCrop()` preserves
-    layer sources in memory, and the crop-history E2E tests prove re-cropping before export. No test
-    yet proves every native serializer preserves off-frame source pixels across save/reopen, or
-    defines behavior after flattening to PNG/JPEG. The re-crop guarantee is therefore limited to
-    source data still present in the live document model.
-    Closest: `src/contexts/useLayer.ts` — `applyDocumentCrop()`; serializer round-trip coverage is
-    not yet present.
+23. **VERIFIED — PSD hidden crop pixels across save/reopen.** `applyDocumentCrop()` preserves layer
+    sources in memory, and both the PSD codec round-trip test and the beginner PSD crop E2E prove
+    that an off-frame raster survives PSD save/reopen and can be recovered by expanding the crop.
+    Flattened raster exports such as PNG contain only the current frame, so their removed margins
+    cannot be recovered. This evidence covers the layered PSD path, not every serializer or format.
+    Closest: `src/contexts/useLayer.ts` — `applyDocumentCrop()`; `src/contexts/psd-utils.ts` —
+    `savePsd()` and `loadPsd()`.
 24. **UNVERIFIED — automatic Crop Shield opacity adjustment.** Adobe's Crop Tool options page
     documents a customizable shield color and opacity but does not describe automatic lightening
     while the crop is dragged or promise that the shield never obscures the subject. The data row
