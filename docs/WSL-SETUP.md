@@ -229,6 +229,25 @@ case "$WSL_KILO_DATA_HOME" in
     exit 1
     ;;
 esac
+if ! WSL_KILO_DATA_HOME="$(realpath -m -- "$WSL_KILO_DATA_HOME")"; then
+  echo "ERROR: Could not resolve the WSL XDG data directory." >&2
+  exit 1
+fi
+# Check the nearest existing parent so a missing XDG directory on /mnt is still rejected.
+WSL_KILO_DATA_PROBE="$WSL_KILO_DATA_HOME"
+while [[ ! -e "$WSL_KILO_DATA_PROBE" ]]; do
+  WSL_KILO_DATA_PROBE="$(dirname "$WSL_KILO_DATA_PROBE")"
+done
+if ! WSL_KILO_FS_TYPE="$(stat -f -c '%T' "$WSL_KILO_DATA_PROBE")"; then
+  echo "ERROR: Could not inspect the XDG data filesystem: $WSL_KILO_DATA_PROBE" >&2
+  exit 1
+fi
+case "$WSL_KILO_FS_TYPE" in
+  v9fs|9p|drvfs)
+    echo "ERROR: XDG_DATA_HOME must be on the Linux filesystem, not a Windows mount: $WSL_KILO_DATA_HOME" >&2
+    exit 1
+    ;;
+esac
 WSL_KILO_DATA_DIR="$WSL_KILO_DATA_HOME/kilo"
 WSL_KILO_AUTH="$WSL_KILO_DATA_DIR/auth.json"
 umask 077
@@ -263,6 +282,16 @@ RUN_DIR="$(mktemp -d /tmp/ph-kilo.XXXXXX)"
 trap 'rm -rf "$RUN_DIR"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+if ! RUN_DIR_FS_TYPE="$(stat -f -c '%T' "$RUN_DIR")"; then
+  echo "ERROR: Could not inspect the temporary Kilo data filesystem: $RUN_DIR" >&2
+  exit 1
+fi
+case "$RUN_DIR_FS_TYPE" in
+  v9fs|9p|drvfs)
+    echo "ERROR: Temporary Kilo data must be on the Linux filesystem: $RUN_DIR" >&2
+    exit 1
+    ;;
+esac
 WSL_KILO_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 case "$WSL_KILO_DATA_HOME" in
   /*) ;;
@@ -271,8 +300,30 @@ case "$WSL_KILO_DATA_HOME" in
     exit 1
     ;;
 esac
+if ! WSL_KILO_DATA_HOME="$(realpath -m -- "$WSL_KILO_DATA_HOME")"; then
+  echo "ERROR: Could not resolve the WSL XDG data directory." >&2
+  exit 1
+fi
+WSL_KILO_DATA_PROBE="$WSL_KILO_DATA_HOME"
+while [[ ! -e "$WSL_KILO_DATA_PROBE" ]]; do
+  WSL_KILO_DATA_PROBE="$(dirname "$WSL_KILO_DATA_PROBE")"
+done
+if ! WSL_KILO_FS_TYPE="$(stat -f -c '%T' "$WSL_KILO_DATA_PROBE")"; then
+  echo "ERROR: Could not inspect the XDG data filesystem: $WSL_KILO_DATA_PROBE" >&2
+  exit 1
+fi
+case "$WSL_KILO_FS_TYPE" in
+  v9fs|9p|drvfs)
+    echo "ERROR: XDG_DATA_HOME must be on the Linux filesystem, not a Windows mount: $WSL_KILO_DATA_HOME" >&2
+    exit 1
+    ;;
+esac
 WSL_KILO_DATA_DIR="$WSL_KILO_DATA_HOME/kilo"
 WSL_KILO_AUTH="$WSL_KILO_DATA_DIR/auth.json"
+if [[ -L "$WSL_KILO_DATA_DIR" ]]; then
+  echo "ERROR: WSL Kilo data directory must not be a symlink." >&2
+  exit 1
+fi
 if [[ ! -f "$WSL_KILO_AUTH" || -L "$WSL_KILO_AUTH" || ! -r "$WSL_KILO_AUTH" ]]; then
   echo "ERROR: WSL Kilo auth path must be a readable regular file: $WSL_KILO_AUTH" >&2
   exit 1

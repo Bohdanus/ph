@@ -118,7 +118,12 @@ const PanelGroup = ({
   });
 
   return (
-    <div className={`flex flex-col overflow-hidden ${className}`} style={style} data-testid={`panel-group-${id}`}>
+    <div
+      id={`panel-group-${id}`}
+      className={`flex flex-col overflow-hidden ${className}`}
+      style={style}
+      data-testid={`panel-group-${id}`}
+    >
       {/* The header is a ROW, not a single control, because `headerAction` is a real button.
           A button nested inside an element carrying `role="button"` is invalid ARIA, and it
           was not only invalid: the tab's own `onKeyDown` handled Enter and Space, `preventDefault`
@@ -133,6 +138,7 @@ const PanelGroup = ({
         data-dragging={isDragging || undefined}
       >
         <div
+          id={`panel-header-${id}`}
           {...(isDraggable ? handleProps : {})}
           aria-controls={isRolledUp ? undefined : `panel-body-${id}`}
           aria-expanded={!isRolledUp}

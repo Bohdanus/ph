@@ -31,6 +31,7 @@ const openSaveImageDialog = vi.hoisted(() =>
 );
 const handleImageSave = vi.hoisted(() => vi.fn());
 const commitDirtyTool = vi.hoisted(() => vi.fn(() => ({ committed: 'layer' })));
+const toggleLayersVisibility = vi.hoisted(() => vi.fn());
 
 const storeState = vi.hoisted(
   () =>
@@ -119,6 +120,10 @@ vi.mock('../../../contexts/useSelectionClipboard.ts', () => ({
   }),
 }));
 
+vi.mock('../../../contexts/PanelLayout.tsx', () => ({
+  usePanelLayout: () => ({ layersVisible: true, toggleLayersVisibility }),
+}));
+
 function press(key: string, init: Partial<KeyboardEventInit> = {}, target: Element | Document = document) {
   const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
   const prevented = !fireEvent(target, event);
@@ -149,6 +154,7 @@ function renderShortcuts() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  toggleLayersVisibility.mockReset();
   canUndo.mockReturnValue(false);
   canRedo.mockReturnValue(false);
   // The real hook returns `true` on success (`useSelectionClipboard.ts:61`) and Meta+C now READS
@@ -388,6 +394,60 @@ describe('Move tool layer nudge shortcuts', () => {
 
     expect(press('ArrowLeft')).toBe(false);
     expect(updateLayerByTool).not.toHaveBeenCalled();
+  });
+});
+
+describe('Layers panel visibility shortcut', () => {
+  it('toggles only on plain F7 and ignores key repeat and modifiers', () => {
+    renderShortcuts();
+
+    expect(press('F7')).toBe(true);
+    expect(toggleLayersVisibility).toHaveBeenCalledTimes(1);
+
+    for (const modifiers of [{ shiftKey: true }, { ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
+      expect(press('F7', modifiers)).toBe(false);
+    }
+    expect(press('F7', { repeat: true })).toBe(true);
+    expect(toggleLayersVisibility).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves F7 available to editable controls', () => {
+    renderShortcuts();
+    const input = document.createElement('input');
+    document.body.append(input);
+
+    expect(press('F7', {}, input)).toBe(false);
+    expect(toggleLayersVisibility).not.toHaveBeenCalled();
+
+    input.remove();
+  });
+
+  it('moves focus to History before hiding Layers when focus is anywhere in its group', () => {
+    renderShortcuts();
+    const layersPanel = document.createElement('div');
+    layersPanel.id = 'panel-group-layers';
+    const layersHeader = document.createElement('div');
+    layersHeader.id = 'panel-header-layers';
+    layersHeader.tabIndex = 0;
+    const headerAction = document.createElement('button');
+    const layersBody = document.createElement('div');
+    layersBody.id = 'panel-body-layers';
+    const focusedControl = document.createElement('button');
+    layersBody.append(focusedControl);
+    layersPanel.append(layersHeader, headerAction, layersBody);
+    const historyTab = document.createElement('button');
+    historyTab.id = 'panel-header-history';
+    document.body.append(layersPanel, historyTab);
+
+    for (const target of [layersHeader, headerAction, focusedControl]) {
+      target.focus();
+      press('F7');
+      expect(historyTab).toHaveFocus();
+    }
+
+    expect(toggleLayersVisibility).toHaveBeenCalledTimes(3);
+    layersPanel.remove();
+    historyTab.remove();
   });
 });
 

@@ -115,11 +115,10 @@ version-sensitive if a source disagrees with it.
   change.
 - The active tab is visually distinct from the inactive ones. Corroborating source only; no Adobe
   page specifies the rendering, and this is a rendering convention rather than a requirement.
-- `HAVE` — `F7`-class show/hide is not bound, but the dock has its own collapse affordance
-  (`data-testid="dock-collapse-toggle"`, the `headerAction` in `SidebarRight.tsx` — `renderPanel()`)
-  and a tablet-width auto-hide (`src/contexts/RightPanelVisibility.tsx` —
-  `RightPanelVisibilityProvider()`). That is a different feature from the panel-tab keyboard contract
-  and is not required here.
+- `HAVE` — `F7` shows or hides the Layers panel while History remains visible. When Layers is hidden,
+  History fills the dock and the saved split ratio is retained for when Layers returns. The dock-wide
+  collapse affordance (`data-testid="dock-collapse-toggle"`) and tablet-width auto-hide
+  (`src/contexts/RightPanelVisibility.tsx` — `RightPanelVisibilityProvider()`) remain separate controls.
 
 ### 2.2 The filter row
 
