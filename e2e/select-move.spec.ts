@@ -61,6 +61,19 @@ function workspaceCaptureMask(page: Page, box: BoundingBox) {
   );
 }
 
+function documentLineOnCanvas(box: BoundingBox) {
+  return {
+    start: documentToCanvasOffset(box, DOC_LINE_START_X, DOC_LINE_START_Y, DEFAULT_DOCUMENT_SIZE),
+    end: documentToCanvasOffset(box, DOC_LINE_END_X, DOC_LINE_END_Y, DEFAULT_DOCUMENT_SIZE),
+    midpoint: documentToCanvasOffset(
+      box,
+      (DOC_LINE_START_X + DOC_LINE_END_X) / 2,
+      (DOC_LINE_START_Y + DOC_LINE_END_Y) / 2,
+      DEFAULT_DOCUMENT_SIZE
+    ),
+  };
+}
+
 test.describe('Select & Move', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -77,21 +90,8 @@ test.describe('Select & Move', () => {
     if (!box) throw new Error('Canvas not found');
 
     await clickToolButton(page, 'draw');
-    // Convert document-space line endpoints to box-relative CSS pixels for the gesture.
-    // The document size is 800x600; the line runs from (150,150) to (350,150) in document pixels.
-    const { x: lineStartX, y: lineStartY } = documentToCanvasOffset(
-      box,
-      DOC_LINE_START_X,
-      DOC_LINE_START_Y,
-      DEFAULT_DOCUMENT_SIZE
-    );
-    const { x: lineEndX, y: lineEndY } = documentToCanvasOffset(
-      box,
-      DOC_LINE_END_X,
-      DOC_LINE_END_Y,
-      DEFAULT_DOCUMENT_SIZE
-    );
-    await drawLine(page, box, lineStartX, lineStartY, lineEndX, lineEndY);
+    const line = documentLineOnCanvas(box);
+    await drawLine(page, box, line.start.x, line.start.y, line.end.x, line.end.y);
     await waitForCanvasRedraw(page, box);
 
     const originalScreenshot = await captureCanvasScreenshot(page, box, testInfo, 'select-move-original');
@@ -103,9 +103,9 @@ test.describe('Select & Move', () => {
     // Verify the reposition toolbox is visible
     await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
 
-    await page.mouse.move(box.x + 250, box.y + 150);
+    await page.mouse.move(box.x + line.midpoint.x, box.y + line.midpoint.y);
     await page.mouse.down();
-    await page.mouse.move(box.x + 400, box.y + 250, { steps: 10 });
+    await page.mouse.move(box.x + line.midpoint.x + 150, box.y + line.midpoint.y + 100, { steps: 10 });
     await page.mouse.up();
 
     const movedScreenshot = await captureCanvasScreenshot(page, box, testInfo, 'select-move-moved');
@@ -161,21 +161,8 @@ test.describe('Select & Move', () => {
     if (!box) throw new Error('Canvas not found');
 
     await clickToolButton(page, 'draw');
-    // Convert document-space line endpoints to box-relative CSS pixels for the gesture.
-    // The document size is 800x600; the line runs from (150,150) to (350,150) in document pixels.
-    const { x: lineStartX, y: lineStartY } = documentToCanvasOffset(
-      box,
-      DOC_LINE_START_X,
-      DOC_LINE_START_Y,
-      DEFAULT_DOCUMENT_SIZE
-    );
-    const { x: lineEndX, y: lineEndY } = documentToCanvasOffset(
-      box,
-      DOC_LINE_END_X,
-      DOC_LINE_END_Y,
-      DEFAULT_DOCUMENT_SIZE
-    );
-    await drawLine(page, box, lineStartX, lineStartY, lineEndX, lineEndY);
+    const line = documentLineOnCanvas(box);
+    await drawLine(page, box, line.start.x, line.start.y, line.end.x, line.end.y);
     await waitForCanvasRedraw(page, box);
 
     // Select Move Tool (reposition)
@@ -183,9 +170,9 @@ test.describe('Select & Move', () => {
     // Verify the reposition toolbox is visible
     await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
 
-    await page.mouse.move(box.x + 250, box.y + 150);
+    await page.mouse.move(box.x + line.midpoint.x, box.y + line.midpoint.y);
     await page.mouse.down();
-    await page.mouse.move(box.x + 400, box.y + 250, { steps: 10 });
+    await page.mouse.move(box.x + line.midpoint.x + 150, box.y + line.midpoint.y + 100, { steps: 10 });
     await page.mouse.up();
 
     const movedScreenshot = await captureCanvasScreenshot(page, box, testInfo, 'select-move-moved-for-resize');

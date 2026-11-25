@@ -190,16 +190,13 @@ One spec is `test.skip` by declaration:
 
 **What exists.** `documentToCanvasOffset` maps a DOCUMENT point into the canvas box by reproducing
 the app's contain fit, and the export fixture uses it, so `e2e/export/visual-regression.spec.ts` no
-longer depends on where the app put the letterbox. That is the right idea and it works.
+longer depends on where the app put the letterbox. That is the right idea and it works. Several
+other E2E specs now use the same mapping; their presence does not establish that every remaining
+box-relative gesture has a document-space oracle.
 
-**What remains.** The mapping now appears in five suite files, at eighteen call sites:
-`e2e/canvas-growth.spec.ts` (4), `e2e/filter-tools.spec.ts` (3), `e2e/shape-tools.spec.ts` (6) and
-`e2e/export/helpers.ts` (4), plus `e2e/example.spec.ts` (1), counting the calls and not the imports.
-`LINE_START_X`/`LINE_START_Y`/`LINE_END_X`/`LINE_END_Y` in `e2e/helpers/canvas-helpers.ts` are still
-"relative to the canvas box",
-and twelve specs import them: `adjustments`, `color`, `document-dialogs`,
-`erase-fill-eyedropper`, `file-roundtrip`, `history-panel`, `keyboard-shortcuts`,
-`layers-panel`, `levels`, `paint-tool-pixels`, `select-move`, `transform`. Beyond those, many
+**What remains.** `LINE_START_X`/`LINE_START_Y`/`LINE_END_X`/`LINE_END_Y` in
+`e2e/helpers/canvas-helpers.ts` are still "relative to the canvas box", and the E2E specs that
+import them are `color-replacement.spec.ts` and `reload-unsaved-changes.spec.ts`. Beyond those, many
 gestures use box-relative offsets; a raw occurrence is not by itself evidence that the test
 asserts the wrong logical document point. Counted, with the counting command, because a number
 here without one is worse than none:
@@ -210,8 +207,8 @@ here without one is worse than none:
 conversion.
 
 ```
-rg -o -e "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e --glob '*.ts' --glob '*.tsx' | wc -l # 98 source text matches
-rg -o -e "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e --glob '*.ts' --glob '*.tsx' | wc -l # 305 source text matches
+rg -o -e "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e --glob '*.ts' --glob '*.tsx' | wc -l # 158 source text matches
+rg -o -e "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e --glob '*.ts' --glob '*.tsx' | wc -l # 454 source text matches
 rg -o -e "[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]* *\*" e2e --glob '*.ts' --glob '*.tsx' | wc -l # 0 source text matches
 ```
 
