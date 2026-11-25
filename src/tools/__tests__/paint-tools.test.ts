@@ -497,6 +497,58 @@ describe('paint tool rasterization', () => {
     expect(image.data[3]).toBe(0);
   });
 
+  it.each([
+    {
+      label: 'a diagonal pixel beyond the feather limit',
+      x: 3,
+      y: 1,
+      featherRadius: 3.2,
+      antiAlias: false,
+      expectedCoverage: false,
+    },
+    {
+      label: 'a diagonal pixel within the feather limit',
+      x: 2,
+      y: 1,
+      featherRadius: 3.2,
+      antiAlias: false,
+      expectedCoverage: true,
+    },
+    {
+      label: 'an adjacent pixel outside a hard integer-aligned selection',
+      x: 1,
+      y: 0,
+      featherRadius: 0,
+      antiAlias: true,
+      expectedCoverage: false,
+    },
+  ])(
+    'matches committed alpha for $label before deciding whether a raster stroke is a no-op',
+    ({ x, y, featherRadius, antiAlias, expectedCoverage }) => {
+      const rasterMask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+      })!;
+      const selection = {
+        points: [],
+        rasterMask: { ...rasterMask, x, y },
+        featherRadius,
+        antiAlias,
+      };
+      const size = { width: 1, height: 1 };
+
+      createSelectionMaskCanvas(selection, size);
+      const committedMask = RecordingOffscreenCanvas.instances.at(-1)!;
+      const committedImage = committedMask.ctx.putImageData.mock.calls[0][0] as ImageData;
+      const hasCommittedCoverage = committedImage.data[3] > 0;
+
+      expect(hasCommittedCoverage).toBe(expectedCoverage);
+      expect(paintSelectionOverlapsRaster(selection, size)).toBe(hasCommittedCoverage);
+    }
+  );
+
   it('skips a fractional raster feather fringe when its computed alpha is zero at the stroke boundary', () => {
     const rasterMask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, {
       x: 0,

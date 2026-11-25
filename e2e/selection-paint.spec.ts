@@ -39,6 +39,21 @@ async function readWorkspacePixel(canvas: ReturnType<typeof getWorkspaceCanvas>,
   );
 }
 
+async function readToolOverlayPixel(page: Parameters<typeof getWorkspaceCanvas>[0], x: number, y: number) {
+  return page.getByTestId('tool-overlay-canvas').evaluate(
+    (element, point) => {
+      if (!(element instanceof HTMLCanvasElement)) throw new Error('The tool preview surface is not a canvas');
+      const context = element.getContext('2d');
+      if (!context) throw new Error('The tool preview surface has no 2D context');
+      const pixelX = Math.min(element.width - 1, Math.max(0, Math.floor(element.width * point.x)));
+      const pixelY = Math.min(element.height - 1, Math.max(0, Math.floor(element.height * point.y)));
+      const { data } = context.getImageData(pixelX, pixelY, 1, 1);
+      return { red: data[0], green: data[1], blue: data[2], alpha: data[3] };
+    },
+    { x, y }
+  );
+}
+
 async function selectBrushOrPencil(
   page: Parameters<typeof getWorkspaceCanvas>[0],
   toolName: 'brush' | 'pencil'
@@ -186,6 +201,69 @@ for (const toolName of ['brush', 'pencil'] as const) {
     await expect.poll(() => hasNoCommittedAnts(page)).toBe(true);
   });
 }
+
+test('selection paint preview and commit stay clipped while zoomed in', async ({ page }) => {
+  await page.goto('/');
+  const canvas = getWorkspaceCanvas(page);
+  await expect(canvas).toBeVisible();
+  const initialBox = await canvas.boundingBox();
+  if (!initialBox) throw new Error('The workspace canvas has no visible bounds');
+
+  await clickToolButton(page, 'rectangular-selection');
+  const selectionStart = pointOnCanvas(initialBox, 0.3, 0.3);
+  const selectionEnd = pointOnCanvas(initialBox, 0.7, 0.7);
+  await page.mouse.move(selectionStart.x, selectionStart.y);
+  await page.mouse.down();
+  await page.mouse.move(selectionEnd.x, selectionEnd.y, { steps: 12 });
+  await page.mouse.up();
+  await waitForCommittedAnts(page, 'the paint-constraining selection');
+
+  await page.getByTestId('header-view-menu-button').click();
+  await page.getByTestId('view-menu-zoom-in-button').click();
+  const zoomedBox = await canvas.boundingBox();
+  if (!zoomedBox) throw new Error('The zoomed workspace canvas has no visible bounds');
+
+  await clickToolButton(page, 'brush');
+  await setForegroundColor(page, '#cc0000');
+  const baselineInside = await readWorkspacePixel(canvas, 0.5, 0.5);
+  const baselineOutsideLeft = await readWorkspacePixel(canvas, 0.2, 0.5);
+  const baselineOutsideRight = await readWorkspacePixel(canvas, 0.8, 0.5);
+
+  const strokeStart = pointOnCanvas(zoomedBox, 0.2, 0.5);
+  const strokeEnd = pointOnCanvas(zoomedBox, 0.8, 0.5);
+  await page.mouse.move(strokeStart.x, strokeStart.y);
+  await page.mouse.down();
+  await page.mouse.move(strokeEnd.x, strokeEnd.y, { steps: 12 });
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      })
+  );
+
+  const previewInside = await readToolOverlayPixel(page, 0.5, 0.5);
+  const previewOutsideLeft = await readToolOverlayPixel(page, 0.2, 0.5);
+  const previewOutsideRight = await readToolOverlayPixel(page, 0.8, 0.5);
+  expect(previewInside.red).toBeGreaterThan(120);
+  expect(previewInside.green).toBeLessThan(100);
+  expect(previewInside.alpha).toBeGreaterThan(0);
+  expect(previewOutsideLeft.alpha).toBe(0);
+  expect(previewOutsideRight.alpha).toBe(0);
+
+  await page.mouse.up();
+  await expect
+    .poll(async () => {
+      const pixel = await readWorkspacePixel(canvas, 0.5, 0.5);
+      return pixel.red > 120 && pixel.green < 100;
+    }, 'the clipped paint is committed at the selection center')
+    .toBe(true);
+  const committedInside = await readWorkspacePixel(canvas, 0.5, 0.5);
+  expect(committedInside.red).toBeGreaterThan(120);
+  expect(committedInside.green).toBeLessThan(100);
+  expect(await readWorkspacePixel(canvas, 0.2, 0.5)).toEqual(baselineOutsideLeft);
+  expect(await readWorkspacePixel(canvas, 0.8, 0.5)).toEqual(baselineOutsideRight);
+  expect(committedInside).not.toEqual(baselineInside);
+});
 
 test('the selection rasterizer keeps selected pixels at the active backing scale', async ({ page }) => {
   await page.goto('/');
