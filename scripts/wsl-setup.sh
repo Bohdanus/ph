@@ -1,7 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+case "$repo_root" in
+  */.kilo/worktrees/*) ;;
+  *)
+    echo "ERROR: Run this setup from a task worktree under .kilo/worktrees/." >&2
+    exit 1
+    ;;
+esac
+
+if ! git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "ERROR: The setup directory is not inside a Git worktree." >&2
+  exit 1
+fi
+
+git_root="$(git -C "$repo_root" rev-parse --show-toplevel)"
+if [[ "$git_root" != "$repo_root" ]]; then
+  echo "ERROR: Run this setup from the Git worktree root." >&2
+  exit 1
+fi
+
+branch_ref="$(git -C "$repo_root" symbolic-ref --quiet HEAD 2>/dev/null || true)"
+case "$branch_ref" in
+  refs/heads/main)
+    echo "ERROR: Run this setup from a task branch; the main worktree is read-only." >&2
+    exit 1
+    ;;
+  refs/heads/*) ;;
+  *)
+    echo "ERROR: Run this setup from a task branch, not a detached checkout." >&2
+    exit 1
+    ;;
+esac
+
+if ! git -C "$repo_root" worktree list --porcelain | grep -Fqx -- "worktree $repo_root"; then
+  echo "ERROR: This directory is not a registered Git worktree." >&2
+  exit 1
+fi
+
 cd "$repo_root"
 
 if [[ ! -f /etc/os-release ]]; then

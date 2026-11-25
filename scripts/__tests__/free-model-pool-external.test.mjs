@@ -22,6 +22,7 @@ const completeWithFreeModel = async (prompt, options = {}) => {
     return await completeWithFreeModelImplementation(prompt, {
       kiloCommand: '',
       openRouterKey: '',
+      readWindowsUserOpenRouterKey: async () => null,
       groqApiKey: '',
       groqApiKeys: [],
       groqFreePlan: false,
@@ -385,7 +386,13 @@ describe('OpenRouter quota status command', () => {
     const fetchImpl = vi.fn();
     const stdout = { write: vi.fn() };
     const stderr = { write: vi.fn() };
-    const code = await main(['--openrouter-quota'], { fetchImpl, openRouterKey: '', stdout, stderr });
+    const code = await main(['--openrouter-quota'], {
+      fetchImpl,
+      openRouterKey: '',
+      readWindowsUserOpenRouterKey: async () => null,
+      stdout,
+      stderr,
+    });
     expect(code).toBe(2);
     expect(stdout.write).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
