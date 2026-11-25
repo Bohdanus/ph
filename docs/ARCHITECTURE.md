@@ -462,7 +462,9 @@ the replay target can make undoing a tool-switch deselect a silent no-op. The
 baseline starts from the first enabled selection action's previous snapshot,
 then rewinds only across earlier disabled selection rows whose next snapshot
 exactly matches the current baseline. If all selection rows are disabled, only
-a complete first before/after pair can seed it.
+a complete first before/after pair can seed it. Unsupported pixel-tool switches
+still append an undoable selection clear; selection-aware tools keep the active
+mask available for their operation.
 
 ## File I/O
 

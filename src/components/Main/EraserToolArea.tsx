@@ -115,8 +115,6 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
 
     return {
       ...getSelectionProcessorSnapshot(activeSelection, rasterBounds),
-      featherRadius: activeSelection.metadata?.featherRadius ?? 0,
-      antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
     };
   };
 

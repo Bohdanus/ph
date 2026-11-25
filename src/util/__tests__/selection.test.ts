@@ -22,6 +22,7 @@ import {
   getActiveSelection,
   getSelectionAbsolutePoints,
   getSelectionAbsoluteContours,
+  getSelectionProcessorSnapshot,
   getSelectionAtPoint,
   getSelectionRect,
   hasSameSelectionGeometry,
@@ -413,6 +414,66 @@ describe('compound polygon selections', () => {
     }
 
     expect(createSelectionAlphaMask(contours, { width: 9, height: 5 }, { antiAlias: false })).toEqual(expected);
+  });
+});
+
+describe('selection processor edge options', () => {
+  const size = { width: 20, height: 20 };
+  const polygonPoints: Point[][] = [
+    [
+      { x: 2.25, y: 2.25 },
+      { x: 12.25, y: 2.25 },
+      { x: 12.25, y: 12.25 },
+    ],
+  ];
+
+  it.each(['polygonal-lasso', 'freehand-lasso'] as const)(
+    'carries %s feather and anti-alias settings into processor masks',
+    (sourceTool) => {
+      const activeSelection = selection({
+        sourceTool,
+        points: polygonPoints,
+        pos: { x: 0, y: 0, width: 13, height: 13 },
+        metadata: { featherRadius: 4, antiAlias: false },
+      });
+      const snapshot = getSelectionProcessorSnapshot(activeSelection, { x: 0, y: 0 });
+      const feathered = createSelectionAlphaMask(snapshot, size, snapshot);
+      const hard = createSelectionAlphaMask(snapshot, size, { featherRadius: 0, antiAlias: false });
+
+      expect(snapshot).toMatchObject({ featherRadius: 4, antiAlias: false });
+      expect(feathered).not.toEqual(hard);
+      expect(feathered.some((alpha) => alpha > 0 && alpha < 255)).toBe(true);
+    }
+  );
+
+  it.each(['polygonal-lasso', 'freehand-lasso'] as const)(
+    'defaults %s anti-alias to true when committed metadata omits the option',
+    (sourceTool) => {
+      const activeSelection = selection({
+        sourceTool,
+        points: polygonPoints,
+        pos: { x: 0, y: 0, width: 13, height: 13 },
+        metadata: { featherRadius: 2 },
+      });
+
+      expect(getSelectionProcessorSnapshot(activeSelection, { x: 0, y: 0 })).toMatchObject({
+        featherRadius: 2,
+        antiAlias: true,
+      });
+    }
+  );
+
+  it('disables polygon edge coverage when anti-alias is off and feather is zero', () => {
+    const activeSelection = selection({
+      points: polygonPoints,
+      pos: { x: 0, y: 0, width: 13, height: 13 },
+      metadata: { featherRadius: 0, antiAlias: false },
+    });
+    const snapshot = getSelectionProcessorSnapshot(activeSelection, { x: 0, y: 0 });
+    const mask = createSelectionAlphaMask(snapshot, size, snapshot);
+
+    expect(snapshot).toMatchObject({ featherRadius: 0, antiAlias: false });
+    expect(new Set(mask)).toEqual(new Set([0, 255]));
   });
 });
 
@@ -1454,6 +1515,20 @@ describe('canvas snapshot helpers', () => {
       // antiAlias: false => no 1px pad, featherRadius 4 => 4px pad around the polygon
       expect(result!.pos).toEqual({ x: 1, y: 1, width: 18, height: 18 });
     });
+
+    it.each(['polygonal-lasso', 'freehand-lasso'] as const)(
+      'routes %s through the feathered copier with its edge settings',
+      (sourceTool) => {
+        const result = copySelectionToCanvas(
+          makeMockCanvas(100, 100),
+          selection({ sourceTool, metadata: { featherRadius: 4, antiAlias: false } }),
+          dispatchImageSize
+        );
+
+        // The lasso's stored feather radius pads its copy; disabled anti-alias adds no extra pixel.
+        expect(result!.pos).toEqual({ x: 1, y: 1, width: 18, height: 18 });
+      }
+    );
 
     it('defaults feather options when the magnetic lasso metadata is absent', () => {
       const result = copySelectionToCanvas(
