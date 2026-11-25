@@ -982,6 +982,9 @@ export default function LayersTab() {
                         layerNameRefs.current[layer.id] = el;
                       }}
                       data-testid="layer-name"
+                      role={isEditable ? undefined : 'button'}
+                      tabIndex={isEditable ? undefined : 0}
+                      aria-pressed={isEditable ? undefined : isActive}
                       contentEditable={isEditable}
                       suppressContentEditableWarning
                       onClick={(e: React.MouseEvent<HTMLSpanElement>) => {
@@ -999,6 +1002,11 @@ export default function LayersTab() {
                         handleNameChange(layer.id, e.currentTarget.textContent || '', e.currentTarget);
                       }}
                       onKeyDown={(e) => {
+                        if (!isEditable && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          selectLayer(layer.id, false);
+                          return;
+                        }
                         if (e.key === 'Enter') {
                           e.preventDefault();
                           e.currentTarget.blur();

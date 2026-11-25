@@ -474,6 +474,18 @@ describe('LayersTab', () => {
     expect(reordered[1]).toHaveClass('bg-transparent');
   });
 
+  it.each(['Enter', ' '])('selects a focused layer name with %s', (key) => {
+    render(<LayersTab />);
+    const name = getNameSpan('Top Layer');
+
+    expect(name).toHaveAttribute('role', 'button');
+    expect(name).toHaveAttribute('tabindex', '0');
+    name.focus();
+    fireEvent.keyDown(name, { key });
+
+    expect(layerMocks.setActiveLayer).toHaveBeenCalledWith('layer-3');
+  });
+
   it('hydrates a selected text layer into canvas space for re-entry', () => {
     currentToolState.toolArgs = { toolName: 'text' };
     const args: TextToolArgs = {
