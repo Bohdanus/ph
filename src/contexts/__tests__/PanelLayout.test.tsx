@@ -45,6 +45,7 @@ describe('PanelLayout', () => {
       expect(result.current.splitRatio).toBe(0.2);
       expect(result.current.panelOrder).toEqual(['history', 'layers']);
       expect(result.current.rolledUp).toEqual({ history: false, layers: false });
+      expect(result.current.layersVisible).toBe(true);
       expect(result.current.toolsSide).toBe('left');
       expect(result.current.dockSide).toBe('right');
       expect(result.current.isCollapsed).toBe(false);
@@ -134,6 +135,21 @@ describe('PanelLayout', () => {
     });
   });
 
+  describe('Layers panel visibility', () => {
+    it('toggles without changing the History panel or saved split ratio', () => {
+      const { result } = renderLayout();
+      act(() => result.current.setSplitRatio(0.35));
+
+      act(() => result.current.toggleLayersVisibility());
+      expect(result.current.layersVisible).toBe(false);
+      expect(result.current.splitRatio).toBe(0.35);
+
+      act(() => result.current.toggleLayersVisibility());
+      expect(result.current.layersVisible).toBe(true);
+      expect(result.current.splitRatio).toBe(0.35);
+    });
+  });
+
   describe('persistence', () => {
     // The whole record, asserted exactly, because this is the only place the persisted SHAPE is
     // pinned at all. A field added to `LayoutState` without a line here would persist silently
@@ -148,6 +164,7 @@ describe('PanelLayout', () => {
         result.current.setSplitRatio(0.4);
         result.current.setPanelOrder(['layers', 'history']);
         result.current.setRolledUp('layers', true);
+        result.current.setLayersVisible(false);
         result.current.setToolsSide('right');
         result.current.setDockSide('left');
       });
@@ -157,6 +174,7 @@ describe('PanelLayout', () => {
         splitRatio: 0.4,
         panelOrder: ['layers', 'history'],
         rolledUp: { history: false, layers: true },
+        layersVisible: false,
         toolsSide: 'left',
         dockSide: 'right',
         isCollapsed: false,
@@ -171,6 +189,7 @@ describe('PanelLayout', () => {
           splitRatio: 0.35,
           panelOrder: ['layers', 'history'],
           rolledUp: { history: true, layers: false },
+          layersVisible: false,
           toolsSide: 'right',
           dockSide: 'left',
           isCollapsed: false,
@@ -182,6 +201,7 @@ describe('PanelLayout', () => {
       expect(result.current.splitRatio).toBe(0.35);
       expect(result.current.panelOrder).toEqual(['layers', 'history']);
       expect(result.current.rolledUp.history).toBe(true);
+      expect(result.current.layersVisible).toBe(false);
       expect(result.current.toolsSide).toBe('left');
       expect(result.current.dockSide).toBe('right');
     });
@@ -225,6 +245,7 @@ describe('PanelLayout', () => {
 
       const { result } = renderLayout();
       expect(result.current.rolledUp).toEqual({ history: false, layers: false });
+      expect(result.current.layersVisible).toBe(true);
     });
 
     // A side is an enum with exactly two members, so `'middle'` is a record this app never
@@ -286,6 +307,7 @@ describe('PanelLayout', () => {
         result.current.setSplitRatio(0.7);
         result.current.setPanelOrder(['layers', 'history']);
         result.current.setRolledUp('history', true);
+        result.current.setLayersVisible(false);
         result.current.setToolsSide('right');
         result.current.setDockSide('left');
         result.current.toggleCollapsed();
@@ -297,6 +319,7 @@ describe('PanelLayout', () => {
       expect(result.current.splitRatio).toBe(0.2);
       expect(result.current.panelOrder).toEqual(['history', 'layers']);
       expect(result.current.rolledUp).toEqual({ history: false, layers: false });
+      expect(result.current.layersVisible).toBe(true);
       expect(result.current.toolsSide).toBe('left');
       expect(result.current.dockSide).toBe('right');
       expect(result.current.isCollapsed).toBe(false);
@@ -329,6 +352,7 @@ describe('PanelLayout', () => {
         splitRatio: 0.2,
         panelOrder: ['history', 'layers'],
         rolledUp: { history: false, layers: false },
+        layersVisible: true,
         toolsSide: 'left',
         dockSide: 'right',
         isCollapsed: false,

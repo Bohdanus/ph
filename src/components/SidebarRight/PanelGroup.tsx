@@ -133,6 +133,7 @@ const PanelGroup = ({
         data-dragging={isDragging || undefined}
       >
         <div
+          id={`panel-header-${id}`}
           {...(isDraggable ? handleProps : {})}
           aria-controls={isRolledUp ? undefined : `panel-body-${id}`}
           aria-expanded={!isRolledUp}
