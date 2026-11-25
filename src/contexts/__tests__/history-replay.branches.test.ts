@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { replayHistory, type HistoryReplayDependencies } from '../history-replay.ts';
+import { RETAINED_VECTOR_TOOL_NAMES } from '../layer-types.ts';
 import type { FilterLayerOperation, Layer, LayerOperation, LayerSource, LayersRecord } from '../layer-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import {
@@ -56,6 +57,15 @@ const blankSource: LayerSource = {
   opacity: 1,
   isBedrock: false,
   pos: { x: 5, y: 6, width: 40, height: 30 },
+};
+
+const imageResizeBitmap = { width: 40, height: 30 } as NonNullable<Layer['bitmap']>;
+const imageResizeSource: LayerSource = {
+  kind: 'image',
+  bitmap: imageResizeBitmap,
+  name: 'source.png',
+  isBedrock: false,
+  pos: { x: 0, y: 0, width: 40, height: 30 },
 };
 
 describe('replayHistory document source and frame branches', () => {
@@ -850,8 +860,16 @@ describe('replayHistory tool action branches', () => {
       args: { toolName: 'reposition', resize: { x: 1, y: 2, width: 8, height: 9 } },
       expectedPos: { x: 1, y: 2, width: 8, height: 9 },
     },
-  ])('patches only the logical position for $label', ({ args, expectedPos }) => {
+  ])('patches only the logical position for $label and preserves its raster', ({ args, expectedPos }) => {
     const dependencies = createDependencies();
+    const tmpCanvas = { width: 40, height: 30 } as NonNullable<Layer['tmpCanvas']>;
+    dependencies.createLayer.mockImplementation((input) =>
+      createTestLayer(input.layerId, {
+        pos: { x: 0, y: 0, width: 40, height: 30 },
+        source: input.source,
+        tmpCanvas,
+      })
+    );
     const history: HistoryItem[] = [
       { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
       { id: 'geometry', actionName: TOOL_ACTION, layerId: 'layer-1', args },
@@ -860,7 +878,184 @@ describe('replayHistory tool action branches', () => {
     const result = replayHistory(history, 1, initialSize, dependencies);
 
     expect(result.layers['layer-1'].pos).toEqual(expectedPos);
+    expect(result.layers['layer-1'].tmpCanvas).toBe(tmpCanvas);
     expect(dependencies.applyRasterTool).not.toHaveBeenCalled();
+  });
+
+  it('preserves the newest raster cache after a later resize', () => {
+    const dependencies = createDependencies();
+    const originalBitmap = { width: 40, height: 30 } as NonNullable<Layer['bitmap']>;
+    const initialTmpCanvas = { width: 40, height: 30 } as NonNullable<Layer['tmpCanvas']>;
+    const rasterizedTmpCanvas = { width: 42, height: 31 } as NonNullable<Layer['tmpCanvas']>;
+    const source: LayerSource = {
+      kind: 'image',
+      bitmap: originalBitmap,
+      name: 'source.png',
+      isBedrock: false,
+      pos: { x: 0, y: 0, width: 40, height: 30 },
+    };
+    dependencies.createLayer.mockReturnValue(
+      createTestLayer('layer-1', { source, bitmap: originalBitmap, tmpCanvas: initialTmpCanvas })
+    );
+    dependencies.applyRasterTool.mockImplementation((layer) => ({
+      ...layer,
+      source: undefined,
+      tmpCanvas: rasterizedTmpCanvas,
+    }));
+    const history: HistoryItem[] = [
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: source },
+      { id: 'paint', actionName: TOOL_ACTION, layerId: 'layer-1', args: { toolName: 'brush' } },
+      {
+        id: 'resize',
+        actionName: TOOL_ACTION,
+        layerId: 'layer-1',
+        args: { toolName: 'reposition', resize: { x: 12, y: 34, width: 80, height: 60 } },
+      },
+    ];
+
+    const result = replayHistory(history, 2, initialSize, dependencies);
+    const layer = result.layers['layer-1'];
+
+    expect(dependencies.applyRasterTool).toHaveBeenCalledOnce();
+    expect(layer.bitmap).toBe(originalBitmap);
+    expect(layer.tmpCanvas).toBe(rasterizedTmpCanvas);
+    expect(layer.source).toBeUndefined();
+    expect(layer.pos).toEqual({ x: 12, y: 34, width: 80, height: 60 });
+  });
+
+  it.each([
+    {
+      label: 'retained text',
+      source: {
+        kind: 'tool',
+        isBedrock: false,
+        pos: { x: 0, y: 0, width: 40, height: 30 },
+        args: {
+          toolName: 'text',
+          align: 'left',
+          bold: false,
+          color: '#000000',
+          fontFamily: 'Arial',
+          fontSize: 24,
+          italic: false,
+          lineHeight: 1.2,
+          rect: { x1: 0, y1: 0, x2: 40, y2: 30 },
+        },
+      } as LayerSource,
+      bitmap: null,
+    },
+    {
+      label: 'image',
+      source: imageResizeSource,
+      bitmap: imageResizeBitmap,
+    },
+  ])('drops a derived resize cache for $label sources', ({ source, bitmap }) => {
+    const dependencies = createDependencies();
+    const tmpCanvas = { width: 40, height: 30 } as NonNullable<Layer['tmpCanvas']>;
+    dependencies.createLayer.mockImplementation((input) =>
+      createTestLayer(input.layerId, { source, bitmap, tmpCanvas })
+    );
+    const history: HistoryItem[] = [
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: source },
+      {
+        id: 'resize',
+        actionName: TOOL_ACTION,
+        layerId: 'layer-1',
+        args: { toolName: 'reposition', resize: { x: 0, y: 0, width: 80, height: 60 } },
+      },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    expect(result.layers['layer-1'].tmpCanvas).toBeNull();
+    expect(result.layers['layer-1'].pos).toEqual({ x: 0, y: 0, width: 80, height: 60 });
+  });
+
+  it.each([...RETAINED_VECTOR_TOOL_NAMES])('drops a derived resize cache for retained %s sources', (toolName) => {
+    const dependencies = createDependencies();
+    const tmpCanvas = { width: 40, height: 30 } as NonNullable<Layer['tmpCanvas']>;
+    const source = {
+      kind: 'tool',
+      isBedrock: false,
+      pos: { x: 0, y: 0, width: 40, height: 30 },
+      args: { toolName },
+    } as unknown as LayerSource;
+    dependencies.createLayer.mockImplementation((input) => createTestLayer(input.layerId, { source, tmpCanvas }));
+    const history: HistoryItem[] = [
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: source },
+      {
+        id: 'resize',
+        actionName: TOOL_ACTION,
+        layerId: 'layer-1',
+        args: { toolName: 'reposition', resize: { x: 0, y: 0, width: 80, height: 60 } },
+      },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    expect(result.layers['layer-1'].tmpCanvas).toBeNull();
+  });
+
+  it('preserves a retained text cache for move-only geometry', () => {
+    const dependencies = createDependencies();
+    const tmpCanvas = { width: 40, height: 30 } as NonNullable<Layer['tmpCanvas']>;
+    const source: LayerSource = {
+      kind: 'tool',
+      isBedrock: false,
+      pos: { x: 0, y: 0, width: 40, height: 30 },
+      args: {
+        toolName: 'text',
+        align: 'left',
+        bold: false,
+        color: '#000000',
+        fontFamily: 'Arial',
+        fontSize: 24,
+        italic: false,
+        lineHeight: 1.2,
+        rect: { x1: 0, y1: 0, x2: 40, y2: 30 },
+      },
+    };
+    dependencies.createLayer.mockImplementation((input) => createTestLayer(input.layerId, { source, tmpCanvas }));
+    const history: HistoryItem[] = [
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: source },
+      {
+        id: 'move',
+        actionName: TOOL_ACTION,
+        layerId: 'layer-1',
+        args: { toolName: 'reposition', move: { x: 12, y: 34 } },
+      },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    expect(result.layers['layer-1'].tmpCanvas).toBe(tmpCanvas);
+    expect(result.layers['layer-1'].pos).toEqual({ x: 12, y: 34, width: 40, height: 30 });
+  });
+
+  it('preserves a retained drawing cache when resize has no source rematerializer', () => {
+    const dependencies = createDependencies();
+    const tmpCanvas = { width: 40, height: 30 } as NonNullable<Layer['tmpCanvas']>;
+    const source = {
+      kind: 'tool',
+      isBedrock: false,
+      pos: { x: 0, y: 0, width: 40, height: 30 },
+      args: { toolName: 'draw' },
+    } as LayerSource;
+    dependencies.createLayer.mockImplementation((input) => createTestLayer(input.layerId, { source, tmpCanvas }));
+    const history: HistoryItem[] = [
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: source },
+      {
+        id: 'resize',
+        actionName: TOOL_ACTION,
+        layerId: 'layer-1',
+        args: { toolName: 'reposition', resize: { x: 0, y: 0, width: 80, height: 60 } },
+      },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    expect(result.layers['layer-1'].tmpCanvas).toBe(tmpCanvas);
+    expect(result.layers['layer-1'].pos).toEqual({ x: 0, y: 0, width: 80, height: 60 });
   });
 
   it('prefers resize over move when both geometry patches are present', () => {

@@ -261,7 +261,7 @@ test.describe('History panel', () => {
       await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
     });
 
-    test('tool switch deselect creates a SELECTION_ACTION row', async ({ page }) => {
+    test('switching to an unsupported pixel tool clears the selection in history', async ({ page }) => {
       const box = await canvasBox(page);
       // Create a selection
       await openToolFlyout(page, 'rectangular-selection');
@@ -274,9 +274,9 @@ test.describe('History panel', () => {
       await expect(selectionRows(page)).toHaveCount(1);
       await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
 
-      // Switch tool (should deselect and create SELECTION_ACTION row)
+      // Draw does not yet apply selection coverage, so the switch clears it before editing.
       await clickToolButton(page, 'draw');
-      // Wait for selection clear to be committed
+      // Wait for the undoable selection clear to be committed.
       await waitForNoCommittedAnts(page, 'the selection to be cleared');
       // Verify new selection row appears (the deselect)
       await expect(selectionRows(page)).toHaveCount(2);

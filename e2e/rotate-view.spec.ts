@@ -1,7 +1,7 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { expectNoDiscardPrompt } from './helpers/discard-prompt';
 import {
   clickToolButton,
   expectToolSelected,
@@ -56,7 +56,7 @@ async function openDocument(page: Page): Promise<void> {
   await expect(getWorkspaceCanvas(page)).toBeVisible();
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-new-button').click();
-  await acceptDiscardPrompt(page);
+  await expectNoDiscardPrompt(page);
   await expect(page.getByTestId('new-image-dialog')).toBeVisible();
   await page.getByTestId('new-image-width-input').fill('800');
   await page.getByTestId('new-image-height-input').fill('600');

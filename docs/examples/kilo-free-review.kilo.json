@@ -1,0 +1,42 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+  "agent": {
+    "free-review-coordinator": {
+      "description": "Coordinates bounded free read-only reviews",
+      "mode": "primary",
+      "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "variant": "high",
+      "steps": 14,
+      "prompt": "Read only files under inputs/**. Delegate each independent review through free-readonly-reviewer. In every task call pass provider=openrouter and model=nvidia/nemotron-3-ultra-550b-a55b:free together, plus variant=high. Do not use a paid route. Wait for all results and synthesize confirmed findings only.",
+      "permission": {
+        "*": "deny",
+        "read": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "task": {
+          "*": "deny",
+          "free-readonly-reviewer": "allow"
+        },
+        "external_directory": "deny"
+      }
+    },
+    "free-readonly-reviewer": {
+      "description": "Strict read-only reviewer for copied input snapshots",
+      "mode": "subagent",
+      "hidden": true,
+      "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "variant": "high",
+      "steps": 8,
+      "prompt": "Read only inputs/** and inspect only your assigned question. Do not use shell, Git, web, write, edit, patch, MCP mutation, or task tools. Use at most three read/search calls. Return at most 250 words with evidence by file and symbol/heading; distinguish facts from inference.",
+      "permission": {
+        "*": "deny",
+        "read": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "task": "deny",
+        "external_directory": "deny"
+      }
+    }
+  }
+}

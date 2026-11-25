@@ -73,24 +73,6 @@ node scripts/free-model-pool.mjs --prompt-file /tmp/nemotron-review.txt \
 
 The live catalog verifies that the exact route is currently free. A successful completion reports its source, model, finish reason, usage, and cost when provided. A catalog listing with `configured: null` means Kilo CLI discovery succeeded but authentication was not tested. For Kilo, `--max-tokens` is a response-length instruction rather than a hard output limit.
 
-### WSL with Windows-saved Kilo credentials
-
-Run from a WSL task worktree with WSL Node/npm. If the Kilo login is stored at
-`%USERPROFILE%\.local\share\kilo\auth.json`, set the source path without printing file contents:
-
-```sh
-source "$HOME/.nvm/nvm.sh"
-nvm use default
-WINDOWS_PROFILE="$(powershell.exe -NoProfile -Command '$env:USERPROFILE' | tr -d '\r')"
-export XDG_DATA_HOME="$(wslpath -u "$WINDOWS_PROFILE")/.local/share"
-test -r "$XDG_DATA_HOME/kilo/auth.json"
-```
-
-The free completion adapter links only `auth.json` into an isolated Linux-local XDG data root, so
-SQLite state stays off the Windows mount. Do not point the raw Kilo CLI at a Windows-mounted
-`kilo.db`. Verify auth by making the exact pinned completion above. If `kilo` is missing from the WSL
-`PATH`, install `@kilocode/cli` using WSL npm from the task worktree, then check `kilo --version`.
-
 The shared completion pool selects eligible, verified-free Kilo routes in model-first provider
 order and invokes this adapter; Kilo is not a fallback-only route. `kilo run` uses the logged-in Kilo
 Gateway OAuth account used by the Kilo Code extension. The adapter discovers `kilo` on `PATH` and
@@ -141,11 +123,50 @@ The current Kilo CLI has no `--max-tokens` option. For Kilo completions, the run
 `--max-tokens` value is a response-length instruction; Kilo and the model control the actual
 generation budget. The OpenRouter and Groq routes send a provider-side token limit.
 
+### Free read-only Kilo task agents
+
+Use the repository example at
+`docs/examples/kilo-free-review.kilo.json` to configure a coordinator and
+read-only review children. The profile pins both roles to OpenRouter Nemotron
+`nvidia/nemotron-3-ultra-550b-a55b:free`. The coordinator can read/search and start
+the named child; children can only read/search supplied input snapshots. They
+have no shell, Git, edit, write, patch, external-directory, or child-task
+permission. Each `task` call must pass `provider: openrouter` and
+`model: nvidia/nemotron-3-ultra-550b-a55b:free` together. The completion runner
+does not spawn subagents.
+
+Before launching, confirm the exact route is currently free and check the
+process key's account quota:
+
+```sh
+node scripts/free-model-pool.mjs --list
+node scripts/free-model-pool.mjs --openrouter-quota
+```
+
+Prepare a separate project outside the repository, copy the example to its
+`kilo.json`, and place only secret-free review instructions and source snapshots
+in an `inputs/` directory. Set `PROJECT_DIR` to that project and use the Kilo
+CLI's existing host authentication. For Windows-saved Kilo credentials in WSL,
+see [WSL setup](WSL-SETUP.md#kilo-code-cli-with-windows-saved-credentials).
+Never include keys or credential files in the input directory.
+
+Run the coordinator with the exact free route:
+
+```sh
+kilo run --dir "$PROJECT_DIR" --agent free-review-coordinator \
+  --model openrouter/nvidia/nemotron-3-ultra-550b-a55b:free --variant high --format json \
+  "Read inputs/review-plan.md. Delegate each independent review to free-readonly-reviewer. For every child pass provider=openrouter, model=nvidia/nemotron-3-ultra-550b-a55b:free, and variant=high. Use no paid fallback. Return concise findings with file and symbol or heading evidence."
+```
+
+The coordinator and its children consume the provider's free quota. Keep
+batches bounded, verify each result resolved to the requested provider/model
+and reports zero cost, and stop if Kilo cannot confirm the free route. The first
+free option in a model catalog is not proof that the route is eligible or zero
+cost.
+
 ## OpenRouter
 
-OpenRouter inference uses `OPENROUTER_API_KEY` from the runner process. The runner neither reads
-Kilo's saved OpenRouter credential nor prints the API key. Use a secret manager or an existing
-protected environment setup to provide it. Check the account's daily counter without inference:
+OpenRouter inference uses the process `OPENROUTER_API_KEY` first. On Windows and WSL with interop, the runner can read the current Windows user's User-scope key once when the process key is empty or a quota request returns HTTP 401. After an inference HTTP 401, it adopts only a changed key, rechecks quota, and retries that route once only when the quota is positive. A missing or unchanged key, HTTP 402, zero or unknown quota, or a second 401 stops the source. The runner never reads Kilo's saved OpenRouter credential and never prints or persists a key. For WSL-specific key lookup behavior, see [WSL key setup](WSL-SETUP.md#openrouter-key-for-free-model-tools). Check the account's daily counter without inference:
 
 ```sh
 node scripts/free-model-pool.mjs --openrouter-quota
@@ -162,14 +183,13 @@ quota stop into the next day. OpenRouter is skipped while the stored date is tod
 temporarily reports positive remaining. A generic message match alone stops only the current run; a zero live counter
 still persists the date. No scheduled reset is required. If the initial probe is
 unknown, only one inference request is permitted in that run; a positive post-attempt refresh does
-not unlock another attempt. Quota-present retries require a positive initial probe. A positive quota
+not unlock another attempt. Normal transient retries require a positive initial probe; the only exception is one auth retry after a changed key passes a fresh positive quota check. A positive quota
 allows one bounded same-route retry for a transient OpenRouter response (maximum wait 60 seconds).
 For an upstream/model-attributable HTTP 429 with a longer `Retry-After`, the pool refreshes daily
 quota and skips only that model when the refreshed quota remains positive; zero or unknown quota
 stops OpenRouter. Longer waits for other failures stop the source. If a bounded retry also fails,
 the pool rotates to another eligible OpenRouter model when a fresh quota check is still positive and
-the per-source attempt ceiling permits it. HTTP 401/402 exhausts
-OpenRouter for the run. An `openrouter_*` limit source or zero `X-RateLimit-Remaining` on a 429 identifies a platform
+the per-source attempt ceiling permits it. HTTP 402 exhausts OpenRouter for the run. HTTP 401 allows one changed Windows User-scope key lookup and same-route retry after a fresh positive quota check; otherwise the runner stops OpenRouter. An `openrouter_*` limit source or zero `X-RateLimit-Remaining` on a 429 identifies a platform
 rate limit and skips the source for that run without blaming the model. A zero daily counter or exact
 `openrouter_free_tier_daily` limit source persists the UTC date when its quota probe or inference
 request started, respectively. Three confirmed upstream/model rate-limit failures (HTTP 429 or typed

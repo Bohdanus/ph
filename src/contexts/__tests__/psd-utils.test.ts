@@ -501,6 +501,39 @@ describe('PSD codec binary roundtrip', () => {
     expect({ width: result.width, height: result.height }).toEqual({ width: 640, height: 480 });
   });
 
+  it('retains off-frame layer pixels across a cropped PSD save, reopen, and expanded save', async () => {
+    const sourcePixels = new Uint8ClampedArray(
+      Array.from({ length: 16 }, (_, index) => [index + 1, index + 41, index + 81, 255]).flat()
+    );
+    const source = layer({
+      bitmap: raster({ width: 4, height: 4, data: sourcePixels }),
+      pos: { x: 0, y: 0, width: 4, height: 4 },
+    });
+    const croppedFrame = { x: 1, y: 1, width: 2, height: 2 };
+    const croppedBuffer = await savePsd({ source }, { width: 4, height: 4 }, croppedFrame);
+    const croppedPsd = readPsd(croppedBuffer, { useImageData: true });
+
+    expect({ width: croppedPsd.width, height: croppedPsd.height }).toEqual({ width: 2, height: 2 });
+    expect(croppedPsd.children?.[0]).toMatchObject({ left: -1, top: -1, right: 3, bottom: 3 });
+    expect(croppedPsd.children?.[0]?.imageData).toMatchObject({ width: 4, height: 4 });
+    expect(Array.from(croppedPsd.children![0].imageData!.data)).toEqual(Array.from(sourcePixels));
+
+    const reopened = await loadPsd(croppedBuffer);
+    const reopenedLayer = Object.values(reopened.layers)[0];
+    expect(reopened.size).toEqual({ width: 2, height: 2 });
+    expect(reopenedLayer.pos).toEqual({ x: -1, y: -1, width: 4, height: 4 });
+    expect(reopenedLayer.bitmap).not.toBeNull();
+    expect(
+      Array.from((reopenedLayer.bitmap as HTMLCanvasElement).getContext('2d')!.getImageData(0, 0, 4, 4).data)
+    ).toEqual(Array.from(sourcePixels));
+
+    const expandedPsd = readPsd(await savePsd(reopened.layers, reopened.size, { x: -1, y: -1, width: 4, height: 4 }), {
+      useImageData: true,
+    });
+    expect({ width: expandedPsd.width, height: expandedPsd.height }).toEqual({ width: 4, height: 4 });
+    expect(Array.from(expandedPsd.imageData!.data)).toEqual(Array.from(sourcePixels));
+  });
+
   it('falls back to the size-derived frame when the supplied document frame is invalid', async () => {
     const saved = await savePsd({}, { width: 320, height: 240 }, { x: 0, y: 0, width: 0, height: 240 });
     const result = readPsd(saved);
