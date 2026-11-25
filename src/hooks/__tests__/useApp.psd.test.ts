@@ -352,7 +352,7 @@ describe('useApp PSD replacement', () => {
     );
   });
 
-  it('clears the active selection and records the clear in history when switching tools', () => {
+  it('preserves the active selection when switching to a selection-aware tool', () => {
     const state = {
       ...createMockStoreData(),
       currentArgs: {
@@ -373,22 +373,8 @@ describe('useApp PSD replacement', () => {
     const dispatch = vi.fn();
     mocks.useStore.mockReturnValue([state, dispatch]);
 
-    useApp().goToTool('blur');
+    useApp().goToTool('paint-bucket');
 
-    expect(dispatch).toHaveBeenCalledWith({ type: 'SET_TOOL_NAME', payload: 'blur' });
-    expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'COMMIT_DOCUMENT_EDIT',
-        payload: expect.objectContaining({
-          historyItem: expect.objectContaining({
-            actionName: 'selection',
-            args: expect.objectContaining({
-              previousSelectionState: expect.objectContaining({ activeSelectionId: 'selection-1' }),
-              nextSelectionState: expect.objectContaining({ activeSelectionId: null }),
-            }),
-          }),
-        }),
-      })
-    );
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SET_TOOL_NAME', payload: 'paint-bucket' });
   });
 });

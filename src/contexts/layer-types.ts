@@ -50,6 +50,19 @@ export type ToolLayerSource = {
 
 export type LayerSource = BlankLayerSource | ImageLayerSource | ToolLayerSource;
 
+export const RETAINED_VECTOR_TOOL_NAMES: ReadonlySet<ToolArgs['toolName']> = new Set([
+  'shape',
+  'rectangle',
+  'ellipse',
+  'triangle',
+  'polygon',
+  'line',
+]);
+
+export function isToolSourceRematerializedAtBounds(toolName: ToolArgs['toolName']): boolean {
+  return toolName === 'text' || RETAINED_VECTOR_TOOL_NAMES.has(toolName);
+}
+
 export type LayerOperationArgs = Extract<ToolArgs, { toolName: 'blur' | 'color' | 'levels' }>;
 
 // Operations are the canonical editable form; rendered bitmaps are disposable materializations.

@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { expect, test, type Page } from './fixtures/extended-test';
-import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { expectNoDiscardPrompt } from './helpers/discard-prompt';
 import {
   bandCentreY,
   bandInkFlags,
@@ -680,7 +680,7 @@ test.describe('Undo and redo', () => {
     const chooser = page.waitForEvent('filechooser');
     await page.getByTestId('header-file-menu-button').click();
     await page.getByTestId('header-file-open-button').click();
-    await acceptDiscardPrompt(page);
+    await expectNoDiscardPrompt(page);
     await (await chooser).setFiles(path.join(testInfo.config.rootDir, 'fixtures/split-half-red-blue.png'));
     await expect(historyRows, 'the opened raster starts with one history row').toHaveCount(1);
     await expect(getWorkspaceCanvas(page)).toHaveJSProperty('width', 64);

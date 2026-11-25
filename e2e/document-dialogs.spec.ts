@@ -18,6 +18,7 @@ import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import {
   acceptDiscardPrompt,
+  acceptDiscardPromptIfPresent,
   declineDiscardPrompt,
   discardPromptMessage,
   expectNoDiscardPrompt,
@@ -250,26 +251,13 @@ function formatByLabel(label: string): ExportFormat {
 const jpegFormat = (): ExportFormat => formatByLabel('JPEG');
 
 /**
- * Opens File > New, answering the unsaved-changes prompt that click raises.
- *
- * THE PROMPT IS ANSWERED, NOT DISMISSED, and that is the whole point of the helper rather
- * than a detail of it. The app boots with a dirty document — the blank boot layer is
- * created with `hasUnsavedChanges: true` (`src/contexts/useLayer.ts:290-293`), so this
- * prompt appears on EVERY `openNewImageDialog` in this file, not only in the two tests
- * named after the guard.
- *
- * While the guard was the browser's native `confirm()`, a spec that installed no
- * `page.on('dialog')` handler got it AUTO-DISMISSED, so every one of those clicks was a
- * silent no-op and none of them could tell "the guard declined" from "the menu item is
- * broken". `acceptDiscardPrompt` waits for the prompt to be on screen before answering, so
- * a guard that stopped firing fails here at a named line instead of leaving the New Image
- * dialog unopened, which is what makes the eight tests below able to say anything about
- * the dialog at all.
+ * Opens File > New, answering the unsaved-changes prompt when a prior step has created
+ * a document. The untouched-starter contract is pinned by its dedicated test below.
  */
 async function openNewImageDialog(page: Page): Promise<void> {
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-new-button').click();
-  await acceptDiscardPrompt(page);
+  await acceptDiscardPromptIfPresent(page);
   await expect(page.getByTestId('new-image-dialog')).toBeVisible();
 }
 
@@ -577,6 +565,36 @@ function expectIdenticalPixels(actual: ImageDataResult, expected: ImageDataResul
 }
 
 test.describe('New Image dialog', () => {
+  test('opens directly from the untouched starter canvas', async ({ page }) => {
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+    await page.getByTestId('header-file-menu-button').click();
+    await page.getByTestId('header-file-new-button').click();
+    await expectNoDiscardPrompt(page);
+    await expect(page.getByTestId('new-image-dialog')).toBeVisible();
+  });
+
+  test('a new blank document is guarded before it has edits', async ({ page }) => {
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await openNewImageDialog(page);
+    await page.getByTestId('new-image-width-input').fill('640');
+    await page.getByTestId('new-image-height-input').fill('480');
+    await page.getByTestId('new-image-dialog-submit-button').click();
+
+    await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);
+    await expect(dimensionsReadout(page)).toContainText('Dimensions: 640 × 480 px');
+
+    await page.getByTestId('header-file-menu-button').click();
+    await page.getByTestId('header-file-new-button').click();
+    await expect(discardPromptMessage(page)).toHaveText('Discard unsaved changes and start a new image?');
+    await declineDiscardPrompt(page);
+    await expectNoDiscardPrompt(page);
+    await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);
+    await expect(dimensionsReadout(page)).toContainText('Dimensions: 640 × 480 px');
+  });
+
   test.use({ deviceScaleFactor: 2 });
 
   test('the background colour reaches the created document', async ({ page }, testInfo) => {
@@ -601,6 +619,7 @@ test.describe('New Image dialog', () => {
   });
 
   test('the background opacity reaches the created document', async ({ page }, testInfo) => {
+    test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
     await page.goto('/');
     await createDocumentWithBackground(page, testInfo, { color: BACKGROUND_HEX, opacity: 1 });
     const atOne = await documentColourSample(page, testInfo, 'opacity-1');
@@ -1009,10 +1028,8 @@ test.describe('unsaved-changes guard on File > New', () => {
  *   tests below are written against what is observable instead: the dialog, the page it left
  *   behind, and whether the next navigation still works.
  *
- * The bare `page.reload()` calls elsewhere in this suite (the two theme tests at the bottom
- * of the file) are on documents the app booted dirty, and they still pass for exactly the
- * reason above: the auto-accept lets the navigation complete, and silently discards the
- * drawing they were not testing. Their subject is the theme, not the unload.
+ * The theme tests at the bottom reload the untouched starter, which is clean and has no
+ * unsaved document edits. Their subject is theme persistence, not the unload guard.
  */
 test.describe('unload guard on a document with unsaved work', () => {
   test('reloading a document with unsaved work fires a beforeunload dialog, and dismissing it keeps the drawing', async ({
@@ -1021,9 +1038,8 @@ test.describe('unload guard on a document with unsaved work', () => {
     await page.goto('/');
     await expect(getWorkspaceCanvas(page)).toBeVisible();
     const box = await workspaceBox(page);
-    // Drawn first, and not incidentally: a boot document is dirty on its own, but Chromium
-    // only shows the prompt for a document the user has interacted with, so the draw is what
-    // supplies the activation as well as the work.
+    // Drawn first, and not incidentally: this gives the document unsaved work and activates
+    // Chromium's beforeunload guard for the reload check below.
     await drawAndWait(page, box, testInfo, 'unload-dirty-drawn');
     const before = await loadImageData(await captureWorkspace(page, testInfo, 'unload-dirty-before'));
 

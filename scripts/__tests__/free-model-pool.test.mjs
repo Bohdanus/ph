@@ -36,6 +36,7 @@ const completeWithFreeModel = async (prompt, options = {}) => {
     return await completeWithFreeModelImplementation(prompt, {
       kiloCommand: '',
       openRouterKey: '',
+      readWindowsUserOpenRouterKey: () => '',
       groqApiKey: '',
       groqApiKeys: [],
       groqFreePlan: false,
@@ -2425,6 +2426,382 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     expect(chat.mock.calls[0][1].headers.Authorization).toBe('Bearer expired-key');
   });
 
+  it('rechecks quota and retries the same OpenRouter route once with a changed Windows user key after HTTP 401', async () => {
+    const quotaAuthorizations = [];
+    const chatAuthorizations = [];
+    const fetchImpl = readableFetch(async (url, options = {}) => {
+      if (url.includes('openrouter') && url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [openRouterRow('o1')] }) };
+      }
+      if (url.includes('/api/v1/key')) {
+        quotaAuthorizations.push(options.headers?.Authorization);
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              free_model_daily_requests: {
+                used: quotaAuthorizations.length,
+                limit: 100,
+                remaining: 100 - quotaAuthorizations.length,
+              },
+            },
+          }),
+        };
+      }
+      chatAuthorizations.push(options.headers?.Authorization);
+      if (chatAuthorizations.length === 1) return { ok: false, status: 401, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'o1:free',
+          choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
+        }),
+      };
+    });
+    const readWindowsUserOpenRouterKey = vi.fn(() => 'rotated-key');
+
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'stale-key',
+      readWindowsUserOpenRouterKey,
+      provider: 'openrouter',
+      model: 'o1:free',
+    });
+
+    expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free', content: 'done' });
+    expect(result.requestCounts).toMatchObject({ openrouter: 2 });
+    expect(quotaAuthorizations).toEqual(['Bearer stale-key', 'Bearer rotated-key']);
+    expect(chatAuthorizations).toEqual(['Bearer stale-key', 'Bearer rotated-key']);
+    expect(readWindowsUserOpenRouterKey).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the transient retry available after a changed-key HTTP 401 retry', async () => {
+    const quotaAuthorizations = [];
+    const chatAuthorizations = [];
+    const fetchImpl = readableFetch(async (url, options = {}) => {
+      if (url.includes('openrouter') && url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [openRouterRow('o1')] }) };
+      }
+      if (url.includes('/api/v1/key')) {
+        quotaAuthorizations.push(options.headers?.Authorization);
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              free_model_daily_requests: {
+                used: quotaAuthorizations.length,
+                limit: 100,
+                remaining: 100 - quotaAuthorizations.length,
+              },
+            },
+          }),
+        };
+      }
+      chatAuthorizations.push(options.headers?.Authorization);
+      if (chatAuthorizations.length === 1) return { ok: false, status: 401, json: async () => ({}) };
+      if (chatAuthorizations.length === 2) return { ok: false, status: 500, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'o1:free',
+          choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
+        }),
+      };
+    });
+
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'stale-key',
+      readWindowsUserOpenRouterKey: vi.fn(() => 'rotated-key'),
+      provider: 'openrouter',
+      model: 'o1:free',
+    });
+
+    expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free', content: 'done' });
+    expect(result.requestCounts).toMatchObject({ openrouter: 3 });
+    expect(chatAuthorizations).toEqual(['Bearer stale-key', 'Bearer rotated-key', 'Bearer rotated-key']);
+    expect(quotaAuthorizations).toEqual(['Bearer stale-key', 'Bearer rotated-key', 'Bearer rotated-key']);
+  });
+
+  it('does not retry inference when the changed key has unknown quota after HTTP 401', async () => {
+    const quotaAuthorizations = [];
+    const chatAuthorizations = [];
+    const fetchImpl = readableFetch(async (url, options = {}) => {
+      if (url.includes('openrouter') && url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [openRouterRow('o1')] }) };
+      }
+      if (url.includes('/api/v1/key')) {
+        quotaAuthorizations.push(options.headers?.Authorization);
+        if (quotaAuthorizations.length === 1) {
+          return new Response(
+            JSON.stringify({
+              data: { free_model_daily_requests: { used: 0, limit: 100, remaining: 100 } },
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response('', { status: 503 });
+      }
+      chatAuthorizations.push(options.headers?.Authorization);
+      return { ok: false, status: 401, json: async () => ({}) };
+    });
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'stale-key',
+        readWindowsUserOpenRouterKey: vi.fn(() => 'rotated-key'),
+        provider: 'openrouter',
+        model: 'o1:free',
+      })
+    ).rejects.toThrow(/No free model completed/);
+
+    expect(chatAuthorizations).toEqual(['Bearer stale-key']);
+    expect(quotaAuthorizations).toEqual(['Bearer stale-key', 'Bearer rotated-key']);
+  });
+
+  it('does not retry inference and persists exhaustion when the changed key has zero quota after HTTP 401', async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), 'free-pool-zero-auth-quota-'));
+    const quotaAuthorizations = [];
+    const chatAuthorizations = [];
+    const fetchImpl = readableFetch(async (url, options = {}) => {
+      if (url.includes('openrouter') && url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [openRouterRow('o1')] }) };
+      }
+      if (url.includes('/api/v1/key')) {
+        quotaAuthorizations.push(options.headers?.Authorization);
+        const remaining = quotaAuthorizations.length === 1 ? 100 : 0;
+        return new Response(
+          JSON.stringify({
+            data: { free_model_daily_requests: { used: 100 - remaining, limit: 100, remaining } },
+          }),
+          { status: 200 }
+        );
+      }
+      chatAuthorizations.push(options.headers?.Authorization);
+      return { ok: false, status: 401, json: async () => ({}) };
+    });
+    const poolStateFile = join(stateDirectory, 'pool-state.json');
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', {
+          fetchImpl,
+          openRouterKey: 'stale-key',
+          readWindowsUserOpenRouterKey: vi.fn(() => 'rotated-key'),
+          provider: 'openrouter',
+          model: 'o1:free',
+          poolStateFile,
+        })
+      ).rejects.toThrow(/No free model completed/);
+
+      expect(chatAuthorizations).toEqual(['Bearer stale-key']);
+      expect(quotaAuthorizations).toEqual(['Bearer stale-key', 'Bearer rotated-key']);
+      expect(JSON.parse(await readFile(poolStateFile, 'utf8')).openRouterExhaustedUtcDate).toMatch(
+        /^\d{4}-\d{2}-\d{2}$/
+      );
+    } finally {
+      await rm(stateDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('stops when the changed key also gets HTTP 401 from the initial quota probe', async () => {
+    const quotaAuthorizations = [];
+    const chat = vi.fn();
+    const fetchImpl = readableFetch(async (url, options = {}) => {
+      if (url.includes('openrouter') && url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [openRouterRow('o1')] }) };
+      }
+      if (url.includes('/api/v1/key')) {
+        quotaAuthorizations.push(options.headers?.Authorization);
+        return new Response('', { status: 401 });
+      }
+      return chat();
+    });
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'stale-key',
+        readWindowsUserOpenRouterKey: vi.fn(() => 'rotated-key'),
+        provider: 'openrouter',
+        model: 'o1:free',
+      })
+    ).rejects.toThrow(/No free model completed/);
+
+    expect(quotaAuthorizations).toEqual(['Bearer stale-key', 'Bearer rotated-key']);
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { keyLabel: 'missing', windowsKey: '' },
+    { keyLabel: 'unchanged', windowsKey: 'stale-key' },
+  ])('does not retry inference when the Windows key is $keyLabel after HTTP 401', async ({ windowsKey }) => {
+    const quotaAuthorizations = [];
+    const chatAuthorizations = [];
+    const fetchImpl = readableFetch(async (url, options = {}) => {
+      if (url.includes('openrouter') && url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [openRouterRow('o1')] }) };
+      }
+      if (url.includes('/api/v1/key')) {
+        quotaAuthorizations.push(options.headers?.Authorization);
+        return {
+          ok: true,
+          json: async () => ({
+            data: { free_model_daily_requests: { used: 0, limit: 100, remaining: 100 } },
+          }),
+        };
+      }
+      chatAuthorizations.push(options.headers?.Authorization);
+      return { ok: false, status: 401, json: async () => ({}) };
+    });
+    const readWindowsUserOpenRouterKey = vi.fn(() => windowsKey);
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'stale-key',
+        readWindowsUserOpenRouterKey,
+        provider: 'openrouter',
+        model: 'o1:free',
+      })
+    ).rejects.toThrow(/No free model completed/);
+
+    expect(chatAuthorizations).toEqual(['Bearer stale-key']);
+    expect(quotaAuthorizations).toEqual(['Bearer stale-key']);
+    expect(readWindowsUserOpenRouterKey).toHaveBeenCalledOnce();
+  });
+
+  it('does not infer after the initial pool quota 401 when the Windows key is unchanged', async () => {
+    const quotaAuthorizations = [];
+    const chat = vi.fn();
+    const fetchImpl = readableFetch(async (url, options = {}) => {
+      if (url.includes('openrouter') && url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [openRouterRow('o1')] }) };
+      }
+      if (url.includes('/api/v1/key')) {
+        quotaAuthorizations.push(options.headers?.Authorization);
+        return { ok: false, status: 401 };
+      }
+      return chat();
+    });
+    const readWindowsUserOpenRouterKey = vi.fn(() => 'stale-key');
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'stale-key',
+        readWindowsUserOpenRouterKey,
+        provider: 'openrouter',
+        model: 'o1:free',
+      })
+    ).rejects.toThrow(/No free model completed/);
+
+    expect(quotaAuthorizations).toEqual(['Bearer stale-key']);
+    expect(chat).not.toHaveBeenCalled();
+    expect(readWindowsUserOpenRouterKey).toHaveBeenCalledOnce();
+  });
+
+  it('does not refresh or retry OpenRouter HTTP 402', async () => {
+    const chat = vi.fn().mockResolvedValue({ ok: false, status: 402, json: async () => ({}) });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('o1')], chat });
+    const readWindowsUserOpenRouterKey = vi.fn(() => 'rotated-key');
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'current-key',
+        readWindowsUserOpenRouterKey,
+        provider: 'openrouter',
+        model: 'o1:free',
+      })
+    ).rejects.toThrow(/No free model completed/);
+
+    expect(chat).toHaveBeenCalledOnce();
+    expect(readWindowsUserOpenRouterKey).not.toHaveBeenCalled();
+  });
+
+  it('does not attempt a third OpenRouter inference after the refreshed key also returns HTTP 401', async () => {
+    const chatAuthorizations = [];
+    const quotaAuthorizations = [];
+    const fetchImpl = readableFetch(async (url, options = {}) => {
+      if (url.includes('openrouter') && url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [openRouterRow('o1')] }) };
+      }
+      if (url.includes('/api/v1/key')) {
+        quotaAuthorizations.push(options.headers?.Authorization);
+        return {
+          ok: true,
+          json: async () => ({
+            data: { free_model_daily_requests: { used: 0, limit: 100, remaining: 100 } },
+          }),
+        };
+      }
+      chatAuthorizations.push(options.headers?.Authorization);
+      return { ok: false, status: 401, json: async () => ({}) };
+    });
+    const readWindowsUserOpenRouterKey = vi.fn(() => 'rotated-key');
+
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'stale-key',
+        readWindowsUserOpenRouterKey,
+        provider: 'openrouter',
+        model: 'o1:free',
+      })
+    ).rejects.toThrow(/No free model completed/);
+
+    expect(chatAuthorizations).toEqual(['Bearer stale-key', 'Bearer rotated-key']);
+    expect(quotaAuthorizations).toEqual(['Bearer stale-key', 'Bearer rotated-key']);
+    expect(readWindowsUserOpenRouterKey).toHaveBeenCalledOnce();
+  });
+
+  it('recovers a stale key rejected by the initial OpenRouter quota probe before inference', async () => {
+    const quotaAuthorizations = [];
+    const chatAuthorizations = [];
+    const fetchImpl = readableFetch(async (url, options = {}) => {
+      if (url.includes('openrouter') && url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [openRouterRow('o1')] }) };
+      }
+      if (url.includes('/api/v1/key')) {
+        quotaAuthorizations.push(options.headers?.Authorization);
+        if (quotaAuthorizations.length === 1) return { ok: false, status: 401 };
+        return {
+          ok: true,
+          json: async () => ({
+            data: { free_model_daily_requests: { used: 0, limit: 100, remaining: 100 } },
+          }),
+        };
+      }
+      chatAuthorizations.push(options.headers?.Authorization);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'o1:free',
+          choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
+        }),
+      };
+    });
+    const readWindowsUserOpenRouterKey = vi.fn(() => 'rotated-key');
+
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'stale-key',
+      readWindowsUserOpenRouterKey,
+      provider: 'openrouter',
+      model: 'o1:free',
+    });
+
+    expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free', content: 'done' });
+    expect(quotaAuthorizations).toEqual(['Bearer stale-key', 'Bearer rotated-key']);
+    expect(chatAuthorizations).toEqual(['Bearer rotated-key']);
+    expect(readWindowsUserOpenRouterKey).toHaveBeenCalledOnce();
+  });
+
   it('automatically routes the exact Nemotron route through Kilo before weaker fallback routes', async () => {
     const chat = vi.fn().mockResolvedValue({
       ok: true,
@@ -3006,6 +3383,100 @@ describe('provider content policy handling', () => {
 });
 
 describe('free model runner CLI', () => {
+  it('uses a Windows user-scope key when the quota command has no process key', async () => {
+    const authorizations = [];
+    const stdout = { write: vi.fn() };
+    const stderr = { write: vi.fn() };
+    const fetchImpl = vi.fn(async (_url, options = {}) => {
+      authorizations.push(options.headers?.Authorization);
+      return new Response(
+        JSON.stringify({ data: { free_model_daily_requests: { used: 7, limit: 100, remaining: 93 } } }),
+        { status: 200 }
+      );
+    });
+    const readWindowsUserOpenRouterKey = vi.fn(() => 'windows-user-key');
+
+    const code = await main(['--openrouter-quota'], {
+      fetchImpl,
+      openRouterKey: '',
+      readWindowsUserOpenRouterKey,
+      stdout,
+      stderr,
+    });
+
+    expect(code).toBe(0);
+    expect(authorizations).toEqual(['Bearer windows-user-key']);
+    expect(readWindowsUserOpenRouterKey).toHaveBeenCalledOnce();
+    expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('"remaining":93'));
+    expect(stdout.write).not.toHaveBeenCalledWith(expect.stringContaining('windows-user-key'));
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+
+  it('retries the quota command once with a changed Windows user key after HTTP 401', async () => {
+    const authorizations = [];
+    const stdout = { write: vi.fn() };
+    const stderr = { write: vi.fn() };
+    const fetchImpl = vi.fn(async (_url, options = {}) => {
+      authorizations.push(options.headers?.Authorization);
+      if (authorizations.length === 1) return { ok: false, status: 401 };
+      return new Response(
+        JSON.stringify({ data: { free_model_daily_requests: { used: 3, limit: 100, remaining: 97 } } }),
+        { status: 200 }
+      );
+    });
+    const readWindowsUserOpenRouterKey = vi.fn(() => 'rotated-user-key');
+
+    const code = await main(['--openrouter-quota'], {
+      fetchImpl,
+      openRouterKey: 'stale-process-key',
+      readWindowsUserOpenRouterKey,
+      stdout,
+      stderr,
+    });
+
+    expect(code).toBe(0);
+    expect(authorizations).toEqual(['Bearer stale-process-key', 'Bearer rotated-user-key']);
+    expect(readWindowsUserOpenRouterKey).toHaveBeenCalledOnce();
+    expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('"remaining":97'));
+    expect(stdout.write).not.toHaveBeenCalledWith(expect.stringContaining('rotated-user-key'));
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a quota HTTP 401 when the Windows user key is unchanged', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 401 });
+    const readWindowsUserOpenRouterKey = vi.fn(() => 'current-key');
+    const stderr = { write: vi.fn() };
+
+    const code = await main(['--openrouter-quota'], {
+      fetchImpl,
+      openRouterKey: 'current-key',
+      readWindowsUserOpenRouterKey,
+      stderr,
+    });
+
+    expect(code).toBe(2);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(readWindowsUserOpenRouterKey).toHaveBeenCalledOnce();
+    expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('HTTP 401'));
+  });
+
+  it('does not read a Windows user key or retry a quota HTTP 402', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 402 });
+    const readWindowsUserOpenRouterKey = vi.fn(() => 'rotated-key');
+    const stderr = { write: vi.fn() };
+
+    const code = await main(['--openrouter-quota'], {
+      fetchImpl,
+      openRouterKey: 'current-key',
+      readWindowsUserOpenRouterKey,
+      stderr,
+    });
+
+    expect(code).toBe(2);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(readWindowsUserOpenRouterKey).not.toHaveBeenCalled();
+  });
+
   it('prints help without making network requests', async () => {
     const fetchImpl = vi.fn();
     const stdout = { write: vi.fn() };

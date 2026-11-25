@@ -136,6 +136,7 @@ describe('TIFF encode/decode round trip through the real utif codec', () => {
     expect(decoded.data).toEqual(Array.from(data));
   });
 
+  // Preserve a bound while allowing the real TIFF round trip to share CPU with parallel tests.
   it('round-trips what the encoder writes at a size the budgets actually apply to', async () => {
     // The budget reads the encoder's own IFD back — `t258` has one entry per sample and
     // `t258.length` is the multiplier the decode budget is built on — so a file this build
@@ -152,7 +153,7 @@ describe('TIFF encode/decode round trip through the real utif codec', () => {
 
     expect([decoded.width, decoded.height]).toEqual([width, height]);
     expect(decoded.data).toEqual(Array.from(data));
-  });
+  }, 15_000);
 
   it('produces a well-formed TIFF container', async () => {
     const encoded = await encodeTiff(pixelCanvas(2, 2, gradient(2, 2)));

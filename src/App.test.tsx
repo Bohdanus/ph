@@ -114,12 +114,15 @@ describe('App', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(setBlankImage).toHaveBeenCalledWith({
-        color: '#ffffff',
-        opacity: 1,
-        size: { width: 800, height: 600 },
-        isBedrock: true,
-      });
+      expect(setBlankImage).toHaveBeenCalledWith(
+        {
+          color: '#ffffff',
+          opacity: 1,
+          size: { width: 800, height: 600 },
+          isBedrock: true,
+        },
+        { hasUnsavedChanges: false }
+      );
     });
   });
 

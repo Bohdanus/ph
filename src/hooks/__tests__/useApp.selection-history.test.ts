@@ -1,19 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useApp } from '../useApp.ts';
-import { SELECTION_ACTION } from '../../util/constants.ts';
 import type { Selection } from '../../contexts/general-types.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import { claimDocumentGesture, resetDocumentGestures } from '../document-gesture.ts';
 
 /**
- * The tool switch's deselect through the single selection writer.
- *
- * `goToTool` used to build a `SELECTION_ACTION` history item by hand and
- * dispatch it with no `durableEntry`, so every tool switch fell back to a
- * whole-timeline reconversion. These pin that it now supplies the planned
- * durable entry, and that the two early returns are unchanged: switching to the
- * tool already active, and switching with no live selection, still append
- * nothing.
+ * A committed selection is document state and remains available after switching tools. Deselect
+ * is an explicit selection command, not a side effect of choosing a raster tool.
  */
 const harness = vi.hoisted(() => ({
   state: {} as Record<string, unknown>,
@@ -65,7 +58,14 @@ function createStoreState(overrides: Record<string, unknown> = {}): Record<strin
   };
 }
 
-type CommitEdit = { type: string; payload: { historyItem: { id: string; args: unknown }; durableEntry?: unknown } };
+type CommitEdit = {
+  type: string;
+  payload: {
+    historyItem: { id: string; args: unknown };
+    durableEntry?: unknown;
+    updates?: Record<string, unknown>;
+  };
+};
 
 function commitEdits(): CommitEdit[] {
   return harness.dispatch.mock.calls
@@ -73,60 +73,52 @@ function commitEdits(): CommitEdit[] {
     .filter((action) => action.type === 'COMMIT_DOCUMENT_EDIT');
 }
 
-describe('goToTool selection history', () => {
+describe('goToTool selection persistence', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetDocumentGestures();
     harness.state = createStoreState();
   });
 
-  it('appends the tool switch deselect as one edit carrying the planned durable entry', () => {
+  it('preserves the committed selection when switching to a selection-aware raster operation', () => {
+    useApp().goToTool('paint-bucket');
+
+    expect(commitEdits()).toHaveLength(0);
+    expect(harness.state.selections).toEqual([createSelection()]);
+    expect(harness.state.activeSelectionId).toBe('sel-1');
+    expect(harness.layerMocks.commitDirtyTool).toHaveBeenCalledOnce();
+    expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SET_TOOL_NAME', payload: 'paint-bucket' });
+  });
+
+  it('records an explicit clear before switching to a pixel tool that ignores selection coverage', () => {
+    const marker = { status: 'cleared', version: 4 };
+    harness.state = createStoreState({ selectionCleared: marker });
+
     useApp().goToTool('blur');
 
     const edits = commitEdits();
     expect(edits).toHaveLength(1);
-
-    const { historyItem, durableEntry } = edits[0].payload;
-    expect(historyItem.args).toEqual(
+    expect(edits[0].payload.historyItem.args).toEqual(
       expect.objectContaining({
         previousSelectionState: expect.objectContaining({ activeSelectionId: 'sel-1' }),
         nextSelectionState: { selections: [], activeSelectionId: null },
       })
     );
-    // The whole point of the fix: the planned entry is published, so the store
-    // appends instead of reconverting the timeline.
-    expect(durableEntry).toEqual(
+    expect(edits[0].payload.durableEntry).toEqual(
       expect.objectContaining({
-        id: historyItem.id,
-        operation: {
+        operation: expect.objectContaining({
           kind: 'set-selection',
-          before: expect.objectContaining({ activeSelectionId: 'sel-1' }),
           after: { selections: [], activeSelectionId: null },
-        },
-      })
-    );
-  });
-
-  it('still clears the selection and bumps the repaint marker through the same edit', () => {
-    harness.state = createStoreState({ selectionCleared: { status: 'cleared', version: 4 } });
-
-    useApp().goToTool('blur');
-
-    expect(harness.dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'COMMIT_DOCUMENT_EDIT',
-        payload: expect.objectContaining({
-          updates: {
-            selections: [],
-            activeSelectionId: null,
-            selectionDraft: { status: 'idle' },
-            selectionCleared: { status: 'cleared', version: 5 },
-          },
-          historyItem: expect.objectContaining({ actionName: SELECTION_ACTION, layerId: 'selection' }),
         }),
       })
     );
-    expect(harness.layerMocks.commitDirtyTool).toHaveBeenCalledOnce();
+    expect(edits[0].payload.updates).toEqual(
+      expect.objectContaining({
+        selections: [],
+        activeSelectionId: null,
+        selectionCleared: { status: 'cleared', version: 5 },
+      })
+    );
     expect(harness.dispatch).toHaveBeenLastCalledWith({ type: 'SET_TOOL_NAME', payload: 'blur' });
   });
 

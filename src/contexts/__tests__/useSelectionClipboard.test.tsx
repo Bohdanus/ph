@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockCanvas, createMockImageBitmap } from '@/__tests__/fixtures/canvas.ts';
+import { stubPixelOffscreenCanvas } from '@/__tests__/fixtures/pixelCanvas.ts';
 import type { Selection, SelectionClipboard } from '../general-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import { useSelectionClipboard } from '../useSelectionClipboard.ts';
@@ -198,6 +199,7 @@ describe('useSelectionClipboard', () => {
   });
 
   it('copies the active lasso selection from the merged visible canvas into the in-app clipboard', () => {
+    stubPixelOffscreenCanvas();
     render(<ClipboardProbe />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
@@ -206,7 +208,7 @@ describe('useSelectionClipboard', () => {
       type: 'SET_SELECTION_CLIPBOARD',
       payload: expect.objectContaining({
         name: 'Selection copy',
-        pos: { x: 10, y: 20, width: 30, height: 40 },
+        pos: { x: 9, y: 19, width: 32, height: 42 },
         sourceSelectionId: 'selection-1',
         sourceTool: 'freehand-lasso',
       }),

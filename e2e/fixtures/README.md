@@ -3,8 +3,8 @@
 Two different things live here, and the split is worth keeping in mind.
 
 - **Committed binary fixtures** — files the specs open through the app's real
-  `File > Open` path. Nothing is downloaded; every file is produced locally by a
-  committed generator and the exact bytes are verified in the spec.
+  `File > Open` path. Fixtures are generated locally or committed with their
+  source and license recorded below; tests do not download them at run time.
 - **`extended-test.ts`** — the `test` object every spec imports, which carries the
   `consolePolice` and `pinnedTheme` fixtures described below.
 
@@ -79,3 +79,14 @@ sharp('e2e/fixtures/split-half-red-blue.png').ensureAlpha().raw().toBuffer({reso
 ```
 
 It must print `64x64 mismatching pixels: 0`.
+
+## `landscape-photo.jpg`
+
+960 × 640 JPEG photograph by Wendelin Jacober, sourced from [Wikimedia
+Commons](<https://commons.wikimedia.org/wiki/File:Landscape_Portrait_(Creative_Commons_).jpg>)
+and released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+It is used by `photoshop-photo-workflow.spec.ts` for import, crop, Spot Healing,
+history, and PNG export coverage. The fixture is checked into the repository so
+the E2E run is deterministic and does not depend on network access.
+
+`sha256 b22b6cdeb8425f0c2f2f19b54e521361638c6a0093c9ee7948f3cc165cae7ca4`

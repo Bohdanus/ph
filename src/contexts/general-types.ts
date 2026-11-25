@@ -51,6 +51,7 @@ export type SelectionMetadata = {
   copiedAtVersion?: number;
   movedAtVersion?: number;
   featherRadius?: number;
+  antiAlias?: boolean;
   magneticLasso?: {
     width: number;
     contrast: number;

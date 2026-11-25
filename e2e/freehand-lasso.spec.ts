@@ -37,8 +37,8 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  *   - `MoveToolArea.handlePointerDown` (`src/components/Main/MoveToolArea.tsx:168-229`) resolves a
  *     LAYER under the pointer and its only selection call is `clearSelection()` on a bedrock press
  *     (`:200`). It never reads or writes document selections.
- *   - `useApp` (`:169-192`) clears the active selection on EVERY tool switch, so by the time Move
- *     is selected the selection is already gone.
+ *   - `useApp` clears the selection before switching to pixel-editing tools that do not apply its
+ *     coverage. Move is one such unsupported target; selection-aware tools keep the selection.
  *
  * Draggable selections live in `PolygonClickToolArea.tsx:695-705`, and only while a lasso tool is
  * still active. So the claim that could be true is the one asserted here instead: the selection

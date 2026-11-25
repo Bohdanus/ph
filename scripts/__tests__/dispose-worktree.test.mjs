@@ -2388,6 +2388,7 @@ describe('locating the inventory', () => {
   const identityRealpath = (p) => p;
   const mainWorktreeRun = (cwd, args) => {
     if (args[0] === 'worktree') return { stdout: 'worktree /repo\nbranch refs/heads/main\n' };
+    if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
     if (args[0] === 'symbolic-ref') return { stdout: 'main\n' };
     return { stdout: '/repo/.git\n' };
   };
@@ -2397,6 +2398,7 @@ describe('locating the inventory', () => {
         stdout: 'worktree /repo\nbare\n\nworktree /repo/.kilo/worktrees/main\nHEAD abc123\nbranch refs/heads/main\n',
       };
     }
+    if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
     if (args[0] === 'symbolic-ref') return { stdout: 'main\n' };
     return { stdout: '/repo/.git\n' };
   };
@@ -2452,6 +2454,7 @@ describe('locating the inventory', () => {
         realpath: identityRealpath,
         run: (_cwd, args) => {
           if (args[0] === 'worktree') return { stdout: `worktree ${repositoryRoot}\nbranch refs/heads/main\n` };
+          if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
           if (args[0] === 'symbolic-ref') return { stdout: 'main\n' };
           return { stdout: `${repositoryRoot}/.git\n` };
         },
@@ -2471,19 +2474,20 @@ describe('locating the inventory', () => {
     expect(resolved).toBeNull();
   });
 
-  it('prefers registered main and reads the primary roster only for inventory fallback', () => {
+  it('uses a unique main worktree and reads the primary roster only for inventory fallback', () => {
     const asked = [];
     const resolved = locateInventory('/repo/.kilo/worktrees/task', {
       run: mainWorktreeRun,
       realpath: identityRealpath,
     });
-    // With a registered main worktree, no repository-root fallback is needed.
+    // With a unique main roster entry, no repository-root fallback is needed.
     expect(resolved).toBe(np('/repo/WORKTREES.json'));
 
     // A bare primary entry supplies the fallback when no non-bare main exists.
     asked.length = 0;
     const fallbackRun = (cwd, args) => {
       asked.push(args);
+      if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
       return { stdout: args[0] === 'worktree' ? 'worktree /repo\nbare\n' : '/repo/.git\n' };
     };
     const resolvedFallback = locateInventory('/repo/.kilo/worktrees/task', {
@@ -2491,14 +2495,16 @@ describe('locating the inventory', () => {
       realpath: identityRealpath,
     });
     expect(resolvedFallback).toBe(np('/repo/WORKTREES.json'));
-    expect(asked).toEqual([['worktree', 'list', '--porcelain']]);
+    expect(asked.filter((args) => args[0] === 'worktree')).toEqual([['worktree', 'list', '--porcelain']]);
   });
 
   it('does not fall back to the primary checkout when a registered main path is invalid', () => {
     const resolved = locateInventory('/repo/.kilo/worktrees/task', {
-      run: (_cwd, args) => ({
-        stdout: args[0] === 'worktree' ? 'worktree /missing/main\nbranch refs/heads/main\n' : '/repo/.git\n',
-      }),
+      run: (_cwd, args) => {
+        if (args[0] === 'worktree') return { stdout: 'worktree /missing/main\nbranch refs/heads/main\n' };
+        if (args[0] === 'config') throw Object.assign(new Error('config key not found'), { status: 1 });
+        return { stdout: '/repo/.git\n' };
+      },
       realpath: (p) => {
         if (p === '/repo/.git') return p;
         throw new Error('missing linked main checkout');
