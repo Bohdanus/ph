@@ -234,7 +234,35 @@ export function paintSelectionOverlapsRaster(selection: PaintSelectionSnapshot, 
     return false;
   }
 
-  return maxX + edgePadding > 0 && maxY + edgePadding > 0 && minX - edgePadding < width && minY - edgePadding < height;
+  const left = Math.max(0, Math.floor(minX - edgePadding));
+  const top = Math.max(0, Math.floor(minY - edgePadding));
+  const right = Math.min(width, Math.ceil(maxX + edgePadding));
+  const bottom = Math.min(height, Math.ceil(maxY + edgePadding));
+  if (left >= right || top >= bottom) return false;
+
+  // Bounds reject distant polygons cheaply, but a concave contour (or a thin diagonal one) can
+  // enclose empty pixels inside its bounding box. Check the exact alpha raster used by commit so
+  // a stroke in one of those holes does not create an invisible history layer.
+  const expandedWidth = right - left + edgePadding * 2;
+  const expandedHeight = bottom - top + edgePadding * 2;
+  const expandedSelection = rebasePaintSelectionSnapshot(selection, {
+    x: left - edgePadding,
+    y: top - edgePadding,
+  });
+  const expandedAlpha = createSelectionAlphaMask(
+    expandedSelection,
+    { width: expandedWidth, height: expandedHeight },
+    { featherRadius, antiAlias: selection.antiAlias }
+  );
+
+  for (let y = 0; y < bottom - top; y += 1) {
+    const rowOffset = (y + edgePadding) * expandedWidth + edgePadding;
+    for (let x = 0; x < right - left; x += 1) {
+      if (expandedAlpha[rowOffset + x] > 0) return true;
+    }
+  }
+
+  return false;
 }
 
 export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {

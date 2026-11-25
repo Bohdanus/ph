@@ -406,6 +406,43 @@ describe('paint tool rasterization', () => {
     ).toBe(false);
   });
 
+  it('treats empty pixels inside a concave polygon selection as paint no-ops', () => {
+    const selection = {
+      points: [
+        [
+          { x: -4, y: -5 },
+          { x: 6, y: -5 },
+          { x: 6, y: 5 },
+          { x: 3, y: 5 },
+          { x: 3, y: -1 },
+          { x: -1, y: -1 },
+          { x: -1, y: 5 },
+          { x: -4, y: 5 },
+        ],
+      ],
+      featherRadius: 0,
+      antiAlias: false,
+    };
+
+    // The one-pixel stroke sits in the open gap of the U-shaped selection. Its bounds intersect
+    // the polygon's bounding box, but the committed selection mask has no coverage there.
+    const emptyAlpha = createSelectionAlphaMask(selection, { width: 1, height: 1 }, selection);
+    expect(emptyAlpha[0]).toBe(0);
+    expect(paintSelectionOverlapsRaster(selection, { width: 1, height: 1 })).toBe(false);
+
+    const overlappingSelection = {
+      ...selection,
+      points: [selection.points[0].map((point) => ({ x: point.x + 4, y: point.y }))],
+    };
+    const overlappingAlpha = createSelectionAlphaMask(
+      overlappingSelection,
+      { width: 1, height: 1 },
+      overlappingSelection
+    );
+    expect(overlappingAlpha[0]).toBeGreaterThan(0);
+    expect(paintSelectionOverlapsRaster(overlappingSelection, { width: 1, height: 1 })).toBe(true);
+  });
+
   it('keeps a stroke that overlaps only a raster selection feather fringe', () => {
     const rasterMask = encodeRasterSelectionMask(new Uint8Array(16).fill(1), 4, 4, {
       x: 0,
