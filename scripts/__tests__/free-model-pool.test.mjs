@@ -2072,6 +2072,29 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     ).resolves.toMatchObject({ error: 'OpenCode model is not an eligible free catalog ID' });
   });
 
+  it('blocks CLI launch for a non-catalog OpenCode ID containing shell metacharacters', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const sentinel = join(directory, 'injected');
+    const command = await writeFakeOpenCode(
+      directory,
+      `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'launched');`
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({
+          command,
+          model: `beam-free&echo injected > "${sentinel}" & rem -free`,
+          prompt: 'prompt',
+          maxTokens: 8,
+        })
+      ).resolves.toMatchObject({ error: 'OpenCode model is not an eligible free catalog ID' });
+      expect(existsSync(sentinel)).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('requires provider ownership before starting the exact Nemotron OpenCode route', async () => {
     const model = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     await expect(runOpenCodeCompletion({ command: '/missing-opencode', model, prompt: 'prompt' })).resolves.toEqual({
@@ -3600,6 +3623,17 @@ describe('free model runner CLI', () => {
     expect(code).toBe(2);
     expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Unknown option: --unsupported-option'));
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('runs the free-model CLI entry point when invoked directly', () => {
+    const script = resolve('scripts/free-model-pool.mjs');
+    const result = spawnSync(process.execPath, [script, '--unsupported-option'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Unknown option: --unsupported-option');
   });
 
   it('rejects prompts above the bounded character budget before catalog requests', async () => {
