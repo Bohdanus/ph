@@ -214,9 +214,8 @@ export function releaseWorktree(
   // Queried even when a blocker stopped the release, because "was NOT released" is only
   // actionable when the reader can see what is still being held. Without it the skip was
   // bare, and the case that matters most was indistinguishable from the case that does
-  // not: a branch landed by SQUASH merge can never satisfy `--is-ancestor`, so it reports
-  // `not on main yet` forever while its locks go on blocking other agents — and the
-  // output said nothing at all about it.
+  // not. Tree equality cannot prove that this branch was part of the base transition, so
+  // an unmerged branch stays held and the report must show its claims and locks.
   //
   // Guarded on `branch`, not just on the blocker: `listIssues` treats a falsy `claimedBy`
   // as "no filter" (its own parameter default), so asking for a detached HEAD's holdings would name

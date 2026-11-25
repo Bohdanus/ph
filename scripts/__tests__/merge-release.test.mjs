@@ -31,6 +31,15 @@ let clock;
 const openBoards = [];
 
 const git = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+const isGitAncestor = (ancestor, descendant, cwd = repo) => {
+  try {
+    git(['merge-base', '--is-ancestor', ancestor, descendant], cwd);
+    return true;
+  } catch (error) {
+    if (error.status === 1) return false;
+    throw error;
+  }
+};
 
 const identityFor = (agentId, worktree = repo, branch = agentId) => ({
   agentId,
@@ -84,7 +93,7 @@ const makeWorktree = (name, { commit = false, dirty = false, fileName = 'file.tx
   return path;
 };
 
-describe('releaseBlocker — the three facts a release requires', () => {
+describe('releaseBlocker — the facts a release requires', () => {
   const base = { base: 'main', worktreePath: repo, branch: 'feat/x' };
 
   it('refuses a worktree whose directory is gone', () => {
@@ -152,6 +161,46 @@ describe('releaseBlocker — the three facts a release requires', () => {
     expect(
       releaseBlocker({ ...base, worktreePath: path, branch: 'feat/unknown-transition', dirtyOutput: '' })
     ).toMatchObject({ code: 'base-transition-unproven' });
+  });
+
+  it('does not release an unmerged branch just because its tree matches an unrelated base advance', () => {
+    const path = makeWorktree('identical-tree-unmerged', { commit: true, fileName: 'README.md' });
+    const previousBase = git(['rev-parse', 'main']);
+    const landedPath = makeWorktree('same-tree-landed', { fileName: 'README.md' });
+    writeFileSync(join(landedPath, 'README.md'), 'identical-tree-unmerged\n');
+    git(['add', 'README.md'], landedPath);
+    git(['-c', 'user.email=t@e.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'same tree landed'], landedPath);
+    git(['merge', '-q', '--no-ff', '-m', 'land same tree', 'feat/same-tree-landed'], repo);
+    const currentBase = git(['rev-parse', 'main']);
+
+    expect(currentBase).not.toBe(previousBase);
+    expect(git(['rev-parse', `${currentBase}^1`])).toBe(previousBase);
+    expect(git(['rev-parse', 'feat/identical-tree-unmerged^{tree}'])).toBe(git(['rev-parse', `${currentBase}^{tree}`]));
+    expect(git(['rev-parse', 'feat/same-tree-landed^{tree}'])).toBe(git(['rev-parse', `${currentBase}^{tree}`]));
+    expect(isGitAncestor('feat/identical-tree-unmerged', currentBase)).toBe(false);
+    expect(isGitAncestor('feat/same-tree-landed', currentBase)).toBe(true);
+
+    expect(
+      releaseBlocker({
+        ...base,
+        worktreePath: landedPath,
+        branch: 'feat/same-tree-landed',
+        dirtyOutput: '',
+        previousBase,
+        currentBase,
+      })
+    ).toBeNull();
+
+    const blocker = releaseBlocker({
+      ...base,
+      worktreePath: path,
+      branch: 'feat/identical-tree-unmerged',
+      dirtyOutput: '',
+      previousBase,
+      currentBase,
+    });
+    expect(blocker).toMatchObject({ code: 'not-on-base' });
+    expect(blocker.message).toMatch(/feat\/identical-tree-unmerged is not on main yet/);
   });
 
   it('distinguishes unreadable ancestry from a branch that is simply not merged', () => {
