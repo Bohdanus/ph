@@ -128,6 +128,10 @@ const REVIEWED = {
       'Temporary repositories model the owner-tracked landing wrapper; project markers, prepared-merge state, installer stubs, hook scripts, and process environment changes remain isolated to each temporary repository.',
     patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=58 filesystem-write:mkdirSync=23 filesystem-write:copyFileSync=2 filesystem-write:chmodSync=28 filesystem-write:rmSync=7 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=5 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
   },
+  'native-chat-id.test.mjs': {
+    scope: 'Native session ID validation is a pure string predicate exercised with in-memory cases.',
+    patterns: '',
+  },
   'mirror-e2e.test.mjs': {
     scope:
       'Mirror and git fixtures use temporary repositories; the workflow newline regression uses a temporary CRLF fixture.',

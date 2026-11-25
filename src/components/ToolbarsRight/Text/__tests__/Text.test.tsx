@@ -67,8 +67,10 @@ vi.mock('../../../../util/typeGuards.ts', async (importOriginal) => {
   };
 });
 
+const storeDispatch = vi.hoisted(() => vi.fn());
+
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeState],
+  useStore: () => [storeState, storeDispatch],
 }));
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
@@ -97,6 +99,7 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
     totalSize: { width: 800, height: 600 },
     ...overrides,
   });
+  storeDispatch.mockClear();
 }
 
 function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {

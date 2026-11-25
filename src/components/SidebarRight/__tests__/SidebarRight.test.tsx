@@ -427,14 +427,17 @@ describe('SidebarRight', () => {
       expect(toggle).toHaveAttribute('aria-pressed', 'false');
     });
 
-    it.fails('toggles aria-pressed when clicked', () => {
+    it('collapses the dock when clicked', () => {
       seed();
       const { container } = renderWithLayout(<SidebarRight />);
       const toggle = container.querySelector('[data-testid="dock-collapse-toggle"]') as HTMLElement;
       expect(toggle).toHaveAttribute('aria-pressed', 'false');
 
       fireEvent.click(toggle);
-      expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
+      expect(container.querySelector('aside')?.style.width).toBe('40px');
+      expect(screen.getByRole('button', { name: 'Expand panels' })).toBeInTheDocument();
+      expect(container.querySelector('[data-testid="dock-collapse-toggle"]')).toBeNull();
     });
   });
 
