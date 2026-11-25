@@ -87,11 +87,12 @@ Run the setup script from the task worktree root:
 bash scripts/wsl-setup.sh
 ```
 
-The script refuses to run from the main checkout or from outside
-`.kilo/worktrees/`. It installs locked npm dependencies, Chrome and its Linux
-dependencies, then runs the authoritative TypeScript check. Playwright may
-prompt for `sudo` while installing system packages. Run the script as your
-regular Ubuntu user, not as `root`.
+The script refuses to run from the main checkout, from outside
+`.kilo/worktrees/`, or when `stat` identifies the worktree as `v9fs`, `9p`, or
+`drvfs`. It installs locked npm dependencies, Chrome and its Linux dependencies,
+then runs the authoritative TypeScript check. Playwright may prompt for `sudo`
+while installing system packages. Run the script as your regular Ubuntu user,
+not as `root`.
 
 To perform those steps manually instead:
 

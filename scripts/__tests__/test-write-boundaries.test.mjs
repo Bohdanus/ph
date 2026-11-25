@@ -116,8 +116,14 @@ const REVIEWED = {
     patterns: `subprocess:spawn=1 filesystem-write:rmSync=2 filesystem-write:mkdtempSync=27 subprocess:spawnSync=17 filesystem-write:mkdirSync=6 filesystem-write:writeFileSync=23 filesystem-write:renameSync=1 filesystem-write:symlinkSync=2 filesystem-write:linkSync=1`,
   },
   'merge-release.test.mjs': {
-    scope: 'Git and filesystem fixtures use a unique temporary repository.',
-    patterns: `subprocess:execFileSync=3 filesystem-write:mkdtempSync=1 filesystem-write:mkdirSync=1 filesystem-write:writeFileSync=3 filesystem-write:rmSync=1`,
+    scope:
+      'Git and filesystem fixtures use a unique temporary repository; the same-tree provenance regression writes the shared README content before merging one sibling branch.',
+    patterns: `subprocess:execFileSync=3 filesystem-write:mkdtempSync=1 filesystem-write:mkdirSync=1 filesystem-write:writeFileSync=4 filesystem-write:rmSync=1`,
+  },
+  'wsl-setup.test.mjs': {
+    scope:
+      'The WSL setup script is copied into a disposable synthetic worktree; a fake stat reports drvfs only for the exact flags and worktree path, and a fake Git command leaves a marker if the guard reaches Git.',
+    patterns: `filesystem-write:mkdtempSync=1 filesystem-write:rmSync=1 filesystem-write:mkdirSync=2 filesystem-write:copyFileSync=1 filesystem-write:writeFileSync=2 filesystem-write:chmodSync=2 subprocess:spawnSync=1`,
   },
   'merge-takeover-guard-install.test.mjs': {
     scope: 'Subprocess invocation is part of the installer contract; review its command and cwd.',

@@ -11,6 +11,18 @@ case "$repo_root" in
     ;;
 esac
 
+if ! worktree_fs_type="$(stat -f -c '%T' "$repo_root")"; then
+  echo "ERROR: Could not inspect the worktree filesystem: $repo_root" >&2
+  exit 1
+fi
+
+case "$worktree_fs_type" in
+  v9fs|9p|drvfs)
+    echo "ERROR: Run this setup from a worktree on the Linux filesystem, not a Windows mount ($worktree_fs_type)." >&2
+    exit 1
+    ;;
+esac
+
 if ! git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "ERROR: The setup directory is not inside a Git worktree." >&2
   exit 1
