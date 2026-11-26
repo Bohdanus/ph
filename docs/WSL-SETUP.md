@@ -486,5 +486,7 @@ in [`E2E-MIRROR.md`](E2E-MIRROR.md).
 - Keep the WSL checkout, `node_modules`, and Git operations inside the Linux
   filesystem. A Windows checkout under `/mnt/c` is a separate working copy; do
   not share its `node_modules` with WSL.
+- Install and authenticate Kilo inside WSL when using its free-model runner; see
+  [WSL Kilo authentication](FREE-COMPUTE-OPERATIONS.md#wsl-setup-and-authentication).
 - If GitHub access needs authentication, configure an SSH key or credential
   manager for WSL rather than copying private keys into the Linux filesystem.
