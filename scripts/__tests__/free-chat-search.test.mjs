@@ -29,6 +29,22 @@ import {
 } from '../free-chat-search.mjs';
 import { sanitizeForLogging } from '../lib/secrets.mjs';
 
+// Mock statSync to simulate /mnt/c/Users not existing for Linux platform tests
+vi.mock('node:fs', () => {
+  const actualFs = vi.importActual('node:fs');
+  return {
+    ...actualFs,
+    statSync: vi.fn((path) => {
+      if (path === '/mnt/c/Users') {
+        const err = new Error('ENOENT');
+        err.code = 'ENOENT';
+        throw err;
+      }
+      return actualFs.statSync(path);
+    }),
+  };
+});
+
 function mockSpawnChild({ stdout = '', stderr = '', code = 0, signal = null, error = null, delay = 0 } = {}) {
   const child = new EventEmitter();
   child.kill = vi.fn();

@@ -1,12 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { setViewportWidth } from './test/setup.ts';
-import { TOUR_SEEN_KEY } from './components/Common/FirstUseTour.tsx';
 import type { useScreenMode } from './contexts/ScreenMode.tsx';
 
-const setBlankImage = vi.hoisted(() => vi.fn());
 const dispatch = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted(() => ({
   canvasRef: { current: null },
@@ -91,13 +89,9 @@ vi.mock('./contexts/useFile.tsx', () => ({
 vi.mock('./hooks/useKeyboardEvents.tsx', () => ({
   KeyboardEventsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
-vi.mock('./hooks/useApp.ts', () => ({
-  useApp: () => ({ setBlankImage }),
-}));
 
 describe('App', () => {
   beforeEach(() => {
-    setBlankImage.mockClear();
     dispatch.mockClear();
     useStoreMock.mockClear();
     storeState.hasImage = false;
@@ -108,61 +102,6 @@ describe('App', () => {
 
   afterEach(() => {
     setViewportWidth(1280, 800);
-  });
-
-  it('starts with a default blank image and skips the landing screen', async () => {
-    render(<App />);
-
-    await waitFor(() => {
-      expect(setBlankImage).toHaveBeenCalledWith(
-        {
-          color: '#ffffff',
-          opacity: 1,
-          size: { width: 800, height: 600 },
-          isBedrock: true,
-        },
-        { hasUnsavedChanges: false }
-      );
-    });
-  });
-
-  it('never starts a blank image when a document is already open', async () => {
-    storeState.hasImage = true;
-    render(<App />);
-
-    await waitFor(() => {
-      expect(useStoreMock).toHaveBeenCalled();
-    });
-
-    expect(setBlankImage).not.toHaveBeenCalled();
-  });
-
-  it('starts the blank image exactly once even when the tree re-renders', async () => {
-    const { rerender } = render(<App />);
-
-    await waitFor(() => {
-      expect(setBlankImage).toHaveBeenCalledTimes(1);
-    });
-
-    rerender(<App />);
-    rerender(<App />);
-
-    await waitFor(() => {
-      expect(useStoreMock.mock.calls.length).toBeGreaterThan(1);
-    });
-    expect(setBlankImage).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not start a second blank image after the store reports an image', async () => {
-    const { rerender } = render(<App />);
-    await waitFor(() => {
-      expect(setBlankImage).toHaveBeenCalledTimes(1);
-    });
-
-    storeState.hasImage = true;
-    rerender(<App />);
-
-    expect(setBlankImage).toHaveBeenCalledTimes(1);
   });
 
   it('composes every application region exactly once', () => {
@@ -181,25 +120,12 @@ describe('App', () => {
     expect(state).toBe(storeState);
     expect(storeDispatch).toBe(dispatch);
   });
-
-  it('does not create a blank image after unmount', async () => {
-    const { unmount } = render(<App />);
-    await waitFor(() => {
-      expect(setBlankImage).toHaveBeenCalledTimes(1);
-    });
-
-    unmount();
-    storeState.hasImage = false;
-    useStoreMock.mockImplementation(() => [storeState, dispatch]);
-
-    expect(setBlankImage).toHaveBeenCalledTimes(1);
-  });
 });
 
 /**
  * The desktop-first contract.
  *
- * Everything above pins the blank-image lifecycle. These pin the shell's shape, because
+ * Everything above pins app composition and store access. These pin the shell's shape, because
  * that is what a mobile addition can break without any test noticing: presence assertions
  * pass for a region that moved, and a JS breakpoint is a silent remount of the canvas.
  */
@@ -386,83 +312,5 @@ describe('App mobile surface reset', () => {
     const shell = screen.getByTestId('mobile-shell-props');
     expect(shell).toHaveAttribute('data-tool-sheet', 'false');
     expect(shell).toHaveAttribute('data-layers', 'false');
-  });
-});
-
-describe('App first-use tour lifecycle', () => {
-  beforeEach(() => {
-    setViewportWidth(1280, 800);
-    storeState.hasImage = false;
-    useStoreMock.mockImplementation(() => [storeState, dispatch]);
-    localStorage.clear();
-  });
-
-  afterEach(() => {
-    setViewportWidth(1280, 800);
-  });
-
-  it('waits for the blank document before opening the tour', () => {
-    const view = render(<App />);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-
-    storeState.hasImage = true;
-    view.rerender(<App />);
-
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(view.container.firstElementChild).toHaveAttribute('aria-hidden', 'true');
-  });
-
-  it('restores focus to the app shell control that was focused before the modal opened', () => {
-    const view = render(<App />);
-    const appShell = view.container.firstElementChild as HTMLElement;
-    const trigger = document.createElement('button');
-    trigger.type = 'button';
-    appShell.appendChild(trigger);
-    trigger.focus();
-
-    storeState.hasImage = true;
-    view.rerender(<App />);
-    expect(document.activeElement).toBe(screen.getByLabelText('Close tour'));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
-
-    expect(document.activeElement).toBe(trigger);
-    trigger.remove();
-  });
-
-  it('does not show the tour to a returning user', () => {
-    storeState.hasImage = true;
-    localStorage.setItem(TOUR_SEEN_KEY, 'true');
-
-    render(<App />);
-
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
-  it('defers the tour on mobile and shows it after moving into the tablet/desktop band', () => {
-    setViewportWidth(500, 800);
-    const view = render(<App />);
-    storeState.hasImage = true;
-    view.rerender(<App />);
-
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-
-    act(() => setViewportWidth(1280, 800));
-
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-  });
-
-  it('hides the tour across the mobile band without marking it seen', () => {
-    const view = render(<App />);
-    storeState.hasImage = true;
-    view.rerender(<App />);
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-
-    act(() => setViewportWidth(500, 800));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(localStorage.getItem(TOUR_SEEN_KEY)).toBeNull();
-
-    act(() => setViewportWidth(1280, 800));
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });

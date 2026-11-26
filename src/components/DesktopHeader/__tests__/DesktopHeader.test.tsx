@@ -1,11 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import DesktopHeader, { MENUS_EXCLUDE } from '../DesktopHeader.tsx';
+import DesktopHeader from '../DesktopHeader.tsx';
 import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
-import { availableTools } from '../../../../toolbar-mapping.ts';
 import { createMockLayers } from '../../../__tests__/fixtures/layer.ts';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
-import type { TextToolArgs } from '../../../tools/text.ts';
 import { DEFAULT_VIEW_STATE } from '../../../contexts/view-state.ts';
 
 const committedLayers = createMockLayers(1);
@@ -53,10 +51,6 @@ const layers = vi.hoisted(() => ({
   commitDirtyTool: vi.fn(),
 }));
 
-const currentTool = vi.hoisted(() => ({
-  patchToolArgs: vi.fn(),
-}));
-
 const invertActiveLayer = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 
 const themeState = vi.hoisted(() => ({ theme: 'light' as 'light' | 'dark', toggleTheme: vi.fn() }));
@@ -66,7 +60,6 @@ vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => app }));
 vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => file }));
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => history }));
 vi.mock('../../../contexts/useLayer.ts', () => ({ useLayers: () => layers }));
-vi.mock('../../../contexts/useCurrentTool.tsx', () => ({ useCurrentTool: () => currentTool }));
 vi.mock('../../../hooks/useInvertLayer.ts', () => ({ useInvertLayer: () => ({ invertActiveLayer }) }));
 vi.mock('../../../hooks/useDevicePixelRatio.ts', () => ({ useDevicePixelRatio: () => 2 }));
 vi.mock('../../../hooks/useWorkspaceFitScale.ts', () => ({ useWorkspaceFitScale: () => 0.25 }));
@@ -194,11 +187,10 @@ afterEach(() => {
 });
 
 describe('DesktopHeader', () => {
-  it('renders the File, Tools, Image, Edit and Window menu buttons', () => {
+  it('renders the File, Image, Edit, View and Window menu buttons', () => {
     renderHeader();
 
     expect(screen.getByRole('button', { name: 'File' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Tools' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Image' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'View' })).toBeInTheDocument();
@@ -257,65 +249,10 @@ describe('DesktopHeader', () => {
     expect(screen.queryByTestId('header-view-menu')).toBeNull();
   });
 
-  it('shows all available tools in the Tools menu', () => {
+  it('removes the Tools item from the horizontal menu', () => {
     renderHeader();
 
-    openMenu('Tools');
-
-    // Derived from the registry rather than written out by hand. This was a literal list of
-    // 24 names that never included the Dodge, the Burn, the Smudge, the Sharpen or the eraser
-    // family, so it could not have caught a tool missing from `TOOL_MENU_ITEMS` — which is
-    // exactly how the Sponge shipped without a menu entry. Every `availableTools` name now has
-    // to produce a row, so the next omission fails here instead of in the app.
-    const missing = availableTools
-      .filter((tool) => !MENUS_EXCLUDE.includes(tool))
-      .filter((tool) => screen.queryByTestId(`tools-menu-${tool}-button`) === null);
-    expect(missing, `tools absent from the Tools menu: ${missing.join(', ')}`).toEqual([]);
-  });
-
-  /**
-   * The registry-derived test above proves every non-excluded tool HAS a row. It cannot see
-   * the other half: a tool that is absent for no stated reason is skipped by `MENUS_EXCLUDE`
-   * just as silently as one that is absent on purpose. This is the half that names them.
-   *
-   * The Tools menu lists TOOLS. `color`, `levels`, `invert` and `transform` are `Image ▸ Adjustments`
-   * and `Edit ▸ Free Transform` commands, so a Tools-menu entry for any of them would be the
-   * same falsehood the rail carried — in the other direction, and in the surface whose own
-   * header comment calls a missing tool "a visible inconsistency". `toolbar-mapping.ts`'s
-   * `extraTools` names them as the ids with no rail entry; `MENUS_EXCLUDE` names them as the
-   * ids with no menu row. This is the pin that keeps the two in step, and it is the only
-   * thing standing between "excluded on purpose" and "excluded by accident".
-   */
-  it('keeps the four non-tool commands out of the Tools menu, and says why', () => {
-    renderHeader();
-
-    openMenu('Tools');
-
-    expect(screen.queryByTestId('tools-menu-color-button')).toBeNull();
-    expect(screen.queryByTestId('tools-menu-levels-button')).toBeNull();
-    expect(screen.queryByTestId('tools-menu-invert-button')).toBeNull();
-    expect(screen.queryByTestId('tools-menu-transform-button')).toBeNull();
-    expect(MENUS_EXCLUDE).toEqual(expect.arrayContaining(['color', 'levels', 'invert', 'transform']));
-  });
-
-  /**
-   * `MENUS_EXCLUDE` is the ONLY sanctioned way for a registered tool to have no Tools-menu
-   * row, so it is the list that decides which omissions are deliberate. Left open, it grows
-   * without anyone reading it and the registry-derived test above keeps passing — which is
-   * precisely the failure mode it was written to end. Pinned at seven, for the stated
-   * reasons in `DesktopHeader.tsx`: three pen point-tools that modify a path, and four
-   * commands that are not tools at all.
-   */
-  it('holds MENUS_EXCLUDE to exactly the seven tools with a stated reason', () => {
-    expect([...MENUS_EXCLUDE].sort()).toEqual([
-      'add-anchor-point',
-      'color',
-      'convert-point',
-      'delete-anchor-point',
-      'invert',
-      'levels',
-      'transform',
-    ]);
+    expect(screen.queryByTestId('header-tools-menu-button')).toBeNull();
   });
 
   it('toggles the file menu open and closed', () => {
@@ -513,12 +450,8 @@ describe('DesktopHeader menu lifecycle', () => {
     openMenu('File');
     expect(screen.getByTestId('header-file-new-button')).toBeInTheDocument();
 
-    openMenu('Tools');
-    expect(screen.queryByTestId('header-file-new-button')).toBeNull();
-    expect(screen.getByTestId('tools-menu-draw-button')).toBeInTheDocument();
-
     openMenu('Image');
-    expect(screen.queryByTestId('tools-menu-draw-button')).toBeNull();
+    expect(screen.queryByTestId('header-file-new-button')).toBeNull();
     expect(screen.getByTestId('image-menu-adjustments-button')).toBeInTheDocument();
 
     openMenu('Edit');
@@ -526,19 +459,8 @@ describe('DesktopHeader menu lifecycle', () => {
     expect(screen.getByTestId('edit-menu-free-transform-button')).toBeInTheDocument();
   });
 
-  it('closes the tools menu on a second click of the Tools button', () => {
-    renderHeader();
-
-    openMenu('Tools');
-    expect(screen.getByTestId('tools-menu-draw-button')).toBeInTheDocument();
-
-    openMenu('Tools');
-    expect(screen.queryByTestId('tools-menu-draw-button')).toBeNull();
-  });
-
   it.each([
     ['File', 'header-file-new-button'],
-    ['Tools', 'tools-menu-draw-button'],
     ['Image', 'image-menu-adjustments-button'],
     ['Edit', 'edit-menu-free-transform-button'],
   ] as const)('closes the open %s menu when a mousedown lands outside of it', (menu, itemTestId) => {
@@ -567,7 +489,6 @@ describe('DesktopHeader menu lifecycle', () => {
     fireEvent.mouseDown(document.body);
 
     expect(screen.queryByTestId('header-file-new-button')).toBeNull();
-    expect(screen.queryByTestId('tools-menu-draw-button')).toBeNull();
     expect(screen.queryByTestId('image-menu-adjustments-button')).toBeNull();
     expect(screen.queryByTestId('edit-menu-free-transform-button')).toBeNull();
   });
@@ -628,120 +549,6 @@ describe('DesktopHeader menu commands', () => {
     for (const toolName of ['blur', 'draw', 'text']) {
       expect(screen.queryByTestId(`edit-menu-${toolName}-button`)).toBeNull();
     }
-  });
-
-  it('opens one Tools menu entry and closes the menu', () => {
-    renderHeader();
-
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId('tools-menu-polygonal-lasso-button'));
-
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('polygonal-lasso');
-    expect(screen.queryByTestId('tools-menu-polygonal-lasso-button')).toBeNull();
-  });
-
-  it.each([
-    ['tools-menu-crop-button', 'crop'],
-    ['tools-menu-magic-wand-button', 'magic-wand'],
-    ['tools-menu-custom-shape-button', 'custom-shape'],
-    ['tools-menu-color-sampler-button', 'color-sampler'],
-  ] as const)('selects %s from the Tools menu', (testId, toolName) => {
-    renderHeader();
-
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId(testId));
-
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith(toolName);
-  });
-});
-
-describe('DesktopHeader Tools menu figure entries', () => {
-  // These five entries are the second selection surface for the figures. The sidebar
-  // already reaches them as `goToTool('shape')` plus a `figure` patch; dispatching the
-  // registered figure `ToolName`s mounted the Shape panel with a figure-specific tool name,
-  // bypassing the shared shape-family state path used by the sidebar.
-  //
-  // `ellipse` is the trap: the registered `ToolName` is `ellipse`, the stored figure is `oval`.
-  it.each([
-    ['tools-menu-rectangle-button', 'rectangle'],
-    ['tools-menu-ellipse-button', 'oval'],
-    ['tools-menu-triangle-button', 'triangle'],
-    ['tools-menu-polygon-button', 'polygon'],
-    ['tools-menu-line-button', 'line'],
-  ] as const)('selects %s as the shape tool with its figure, and closes the menu', (testId, figure) => {
-    renderHeader();
-
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId(testId));
-
-    expect(currentTool.patchToolArgs).toHaveBeenCalledExactlyOnceWith('shape', { figure });
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('shape');
-    expect(screen.queryByTestId(testId)).toBeNull();
-  });
-
-  // The order of those two calls is load-bearing, but not for the reason a
-  // call-order assertion suggests. `goToTool` runs `commitDirtyTool()` against the
-  // OUTGOING tool (`useApp.ts:157`), and `patchToolArgs` writes straight into the live
-  // `currentArgsRef` (`useCurrentTool.tsx:61`). Patch first and the text branch at
-  // `useLayer.ts:329` reads shape args — no `.text`, no `.rect` — and early-returns, so
-  // an unapplied text layer is dropped with no layer and nothing to undo.
-  //
-  // So this models the real side effects instead of only the call shape:
-  // `patchToolArgs` overwrites the live args ref exactly as `_setToolArgs` does, and
-  // `goToTool` reads it exactly as `commitDirtyTool` does. The assertion is therefore
-  // about what the outgoing commit SEES, not about which mock ran first. Both calls are
-  // batched in one click handler, so no stale-figure render can exist between them.
-  it('commits the pending text draft before the tool changes', () => {
-    const pendingText: TextToolArgs = {
-      toolName: 'text',
-      text: 'draft',
-      rect: { x1: 0, y1: 0, x2: 40, y2: 12 },
-      align: 'left',
-      bold: false,
-      italic: false,
-      color: '#000000',
-      fontFamily: 'Roboto',
-      fontSize: 12,
-      lineHeight: 1.2,
-    };
-    const shapeArgs: ToolArgs = { toolName: 'shape', figure: 'oval' } as ToolArgs;
-    storeState.toolName = 'text';
-    storeState.currentArgs = { current: pendingText };
-
-    // What `commitDirtyTool` does on the way through `goToTool`.
-    const seenByCommit: Array<{ args: ToolArgs; outcome: 'committed' | 'dropped' }> = [];
-    currentTool.patchToolArgs.mockImplementationOnce(() => {
-      storeState.currentArgs.current = shapeArgs;
-    });
-    app.goToTool.mockImplementationOnce(() => {
-      const args = storeState.currentArgs.current;
-      // `useLayer.ts:328-330`: the same cast, then the guard that drops the draft.
-      const { text, rect } = args as TextToolArgs;
-      seenByCommit.push({ args, outcome: !text || !rect ? 'dropped' : 'committed' });
-    });
-
-    renderHeader();
-
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId('tools-menu-ellipse-button'));
-
-    expect(seenByCommit).toHaveLength(1);
-    // The commit must read the outgoing tool's args...
-    expect(seenByCommit[0].args).toBe(pendingText);
-    // ...so it takes the commit branch rather than the drop branch.
-    expect(seenByCommit[0].outcome).toBe('committed');
-    // And the reorder must not cost the figure the entry exists to select.
-    expect(storeState.currentArgs.current).toBe(shapeArgs);
-  });
-
-  it('leaves a non-figure tool on its own selection path', () => {
-    renderHeader();
-
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId('tools-menu-crop-button'));
-
-    expect(currentTool.patchToolArgs).not.toHaveBeenCalled();
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('crop');
   });
 });
 
