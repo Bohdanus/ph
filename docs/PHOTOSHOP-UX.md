@@ -44,12 +44,12 @@ violations on `main`.
   `toolbar-mapping.ts`, the rail has **four** top-level bands, and `extraTools` is the list of
   registered tool ids that carry no rail entry.
   - **The destination already existed, mislabelled, and two surfaces had to change
-    together.** The app's menus were File, Tools, **Edit**, Window. `Edit` already
-    dispatched `color`, `blur`, `levels`, `transform`, `draw` and `text` through the
-    same `handleToolSelection` the rail calls, and `TOOL_MENU_ITEMS` carried all
-    three as well. A tool list is not one surface: "delete three rows from
-    `toolbarMap`" was never sufficient on its own, and a non-tool in the Tools menu
-    is the same defect one level up.
+    together.** The app's menus were File, Tools, **Edit**, Window. The top-level
+    Tools menu has since been removed; tool selection stays on the rail. At the time,
+    `Edit` dispatched `color`, `blur`, `levels`, `transform`, `draw` and `text` through
+    the same handler as the rail, and the Tools menu carried those entries as well.
+    A tool list is not one surface: "delete three rows from `toolbarMap`" was never
+    sufficient on its own, and a non-tool in a menu is the same defect one level up.
   - **`levels` is not Adobe's Levels, and moving it unchanged would have been a new
     falsehood.** `LevelsToolArgs` is `{ brightness, contrast }` and the processor
     emits one `ctx.filter` from those two, so the app's "Levels" is
