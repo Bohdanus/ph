@@ -2,6 +2,7 @@ import { fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HealingBrushToolArea } from '../HealingBrushToolArea.tsx';
 import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
+import { usePaintStroke } from '../../../hooks/usePaintStroke.ts';
 
 const state = vi.hoisted(() => ({
   activeLayerId: 'base' as string | null,
@@ -10,13 +11,15 @@ const state = vi.hoisted(() => ({
     base: { id: 'base', isBedrock: false, pos: { x: 0, y: 0, width: 300, height: 200 } },
   } as Record<
     string,
-    { id: string; isBedrock: boolean; pos?: { x: number; y: number; width: number; height: number } }
+    { id: string; isBedrock: boolean; locked?: boolean; pos?: { x: number; y: number; width: number; height: number } }
   >,
   totalSize: { width: 300, height: 200 },
   documentFrame: null as { x: number; y: number; width: number; height: number } | null,
   toolArgs: {
     toolName: 'healing-brush',
     source: { x: 50, y: 50 },
+    alignedSource: null as { x: number; y: number } | null,
+    aligned: true,
     points: [] as { x: number; y: number }[],
     size: 20,
     hardness: 0.5,
@@ -118,6 +121,12 @@ const renderArea = () => {
   return { ...view, container, toolArea: container.firstElementChild as HTMLDivElement };
 };
 
+const strokeCallbacks = () => {
+  const call = vi.mocked(usePaintStroke).mock.calls.at(-1);
+  expect(call).toBeDefined();
+  return call![1];
+};
+
 describe('HealingBrushToolArea', () => {
   beforeEach(() => {
     state.activeLayerId = 'base';
@@ -125,6 +134,8 @@ describe('HealingBrushToolArea', () => {
     state.toolArgs = {
       toolName: 'healing-brush',
       source: { x: 50, y: 50 },
+      alignedSource: null,
+      aligned: true,
       points: [] as { x: number; y: number }[],
       size: 20,
       hardness: 0.5,
@@ -139,6 +150,7 @@ describe('HealingBrushToolArea', () => {
     state.updateLayerByTool.mockClear();
     state.cancelLayerPreview.mockClear();
     state.patchToolArgs.mockClear();
+    vi.mocked(usePaintStroke).mockClear();
     paintStrokeHandlers.onPointerDown.mockClear();
     paintStrokeHandlers.onPointerMove.mockClear();
     paintStrokeHandlers.onPointerUp.mockClear();
@@ -158,6 +170,15 @@ describe('HealingBrushToolArea', () => {
 
     it('shows cursor-not-allowed when disabled (bedrock)', () => {
       state.layers = { base: { id: 'base', isBedrock: true, pos: { x: 0, y: 0, width: 300, height: 200 } } };
+      const { toolArea } = renderArea();
+      expect(toolArea).toHaveClass('cursor-not-allowed');
+      expect(toolArea).not.toHaveClass('cursor-crosshair');
+    });
+
+    it('shows cursor-not-allowed on a locked layer', () => {
+      state.layers = {
+        base: { id: 'base', isBedrock: false, locked: true, pos: { x: 0, y: 0, width: 300, height: 200 } },
+      };
       const { toolArea } = renderArea();
       expect(toolArea).toHaveClass('cursor-not-allowed');
       expect(toolArea).not.toHaveClass('cursor-crosshair');
@@ -185,7 +206,10 @@ describe('HealingBrushToolArea', () => {
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 100, altKey: true });
 
-      expect(state.patchToolArgs).toHaveBeenCalledWith('healing-brush', { source: { x: 100, y: 100 } });
+      expect(state.patchToolArgs).toHaveBeenCalledWith('healing-brush', {
+        source: { x: 100, y: 100 },
+        alignedSource: { x: 100, y: 100 },
+      });
       expect(paintStrokeHandlers.onPointerDown).not.toHaveBeenCalled();
       expect(state.tempUpdateLayer).not.toHaveBeenCalled();
     });
@@ -233,6 +257,84 @@ describe('HealingBrushToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 10, clientY: 20 });
       fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 10, clientY: 20 });
       expect(paintStrokeHandlers.onPointerUp).toHaveBeenCalled();
+    });
+
+    it('uses one aligned sampling offset for preview and commit, then advances it for the next stroke', async () => {
+      renderArea();
+      const callbacks = strokeCallbacks();
+      const firstStroke = [
+        { x: 100, y: 100 },
+        { x: 110, y: 120 },
+      ];
+
+      callbacks.onStart?.(firstStroke);
+      callbacks.onMove(firstStroke);
+      await callbacks.onCommit(firstStroke);
+
+      const previewArgs = state.tempUpdateLayer.mock.calls[0]?.[0].toolArgs;
+      const firstCommitArgs = state.updateLayerByTool.mock.calls[0]?.[0].toolArgs;
+      expect(previewArgs).toMatchObject({ samplingOffset: { x: -50, y: -50 }, aligned: true });
+      expect(firstCommitArgs).toMatchObject({ samplingOffset: { x: -50, y: -50 }, aligned: true });
+      expect(firstCommitArgs).not.toHaveProperty('alignedSource');
+      expect(state.patchToolArgs).toHaveBeenCalledWith('healing-brush', { alignedSource: { x: 60, y: 70 } });
+
+      const secondStroke = [
+        { x: 200, y: 200 },
+        { x: 210, y: 205 },
+      ];
+      callbacks.onStart?.(secondStroke);
+      callbacks.onMove(secondStroke);
+      expect(state.tempUpdateLayer.mock.calls[1]?.[0].toolArgs).toMatchObject({
+        samplingOffset: { x: -140, y: -130 },
+        aligned: true,
+      });
+    });
+
+    it('starts unaligned strokes from the original Alt-click source', () => {
+      state.toolArgs = {
+        ...state.toolArgs,
+        aligned: false,
+        alignedSource: { x: 200, y: 200 },
+      };
+      renderArea();
+      const callbacks = strokeCallbacks();
+      const points = [
+        { x: 100, y: 100 },
+        { x: 110, y: 120 },
+      ];
+
+      callbacks.onStart?.(points);
+      callbacks.onMove(points);
+
+      expect(state.tempUpdateLayer.mock.calls[0]?.[0].toolArgs).toMatchObject({
+        samplingOffset: { x: -50, y: -50 },
+        aligned: false,
+      });
+    });
+
+    it('keeps the alignment mode and source latched when settings change during a stroke', () => {
+      state.toolArgs = {
+        ...state.toolArgs,
+        aligned: false,
+        alignedSource: { x: 80, y: 80 },
+      };
+      const view = renderArea();
+      let callbacks = strokeCallbacks();
+      const points = [
+        { x: 100, y: 100 },
+        { x: 110, y: 120 },
+      ];
+
+      callbacks.onStart?.(points);
+      state.toolArgs = { ...state.toolArgs, aligned: true };
+      view.rerender(<HealingBrushToolArea className="test-healing-brush" overlayCtxRef={{ current: null }} />);
+      callbacks = strokeCallbacks();
+      callbacks.onMove(points);
+
+      expect(state.tempUpdateLayer.mock.calls[0]?.[0].toolArgs).toMatchObject({
+        samplingOffset: { x: -50, y: -50 },
+        aligned: false,
+      });
     });
   });
 

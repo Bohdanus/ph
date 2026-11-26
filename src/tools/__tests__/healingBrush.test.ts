@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { healingBrush, HEALING_BRUSH_SPACING_PERCENT, type HealingBrushToolArgs } from '../healingBrush.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
-import { BRUSH_HARDNESS_MAX, BRUSH_HARDNESS_MIN, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../util/brush-engine.ts';
+import {
+  BRUSH_HARDNESS_DEFAULT,
+  BRUSH_HARDNESS_MAX,
+  BRUSH_HARDNESS_MIN,
+  BRUSH_OPACITY_DEFAULT,
+  BRUSH_SIZE_DEFAULT,
+  BRUSH_SIZE_MAX,
+  BRUSH_SIZE_MIN,
+} from '../../util/brush-engine.ts';
 import type { Size } from '../../contexts/general-types.ts';
 
 const size: Size = { width: 9, height: 9 };
@@ -74,18 +82,18 @@ const args = (overrides: Partial<HealingBrushToolArgs> = {}): HealingBrushToolAr
   ...overrides,
 });
 
-const sourceBitmap = (pixels: Uint8ClampedArray) =>
-  ({ width: size.width, height: size.height, pixels, close: vi.fn() }) as unknown as ImageBitmap & {
+const sourceBitmap = (pixels: Uint8ClampedArray, rasterSize: Size = size) =>
+  ({ width: rasterSize.width, height: rasterSize.height, pixels, close: vi.fn() }) as unknown as ImageBitmap & {
     pixels: Uint8ClampedArray;
   };
 
-const run = (data: Uint8ClampedArray, a: HealingBrushToolArgs) => {
-  const [canvas] = healingBrush({ size, bitmap: sourceBitmap(data) })(a);
+const run = (data: Uint8ClampedArray, a: HealingBrushToolArgs, rasterSize: Size = size) => {
+  const [canvas] = healingBrush({ size: rasterSize, bitmap: sourceBitmap(data, rasterSize) })(a);
   return canvas as unknown as RecordingOffscreenCanvas;
 };
 
-const at = (buffer: Uint8ClampedArray, x: number, y: number): [number, number, number, number] => {
-  const index = (y * size.width + x) * 4;
+const at = (buffer: Uint8ClampedArray, x: number, y: number, width = size.width): [number, number, number, number] => {
+  const index = (y * width + x) * 4;
   return [buffer[index], buffer[index + 1], buffer[index + 2], buffer[index + 3]];
 };
 
@@ -97,11 +105,11 @@ for (let i = 0; i < FIXTURE.length; i += 4) {
   FIXTURE[i + 3] = 255;
 }
 
-const gradientFixture = (): Uint8ClampedArray => {
-  const data = new Uint8ClampedArray(size.width * size.height * 4);
-  for (let y = 0; y < size.height; y++) {
-    for (let x = 0; x < size.width; x++) {
-      const offset = (y * size.width + x) * 4;
+const gradientFixture = (rasterSize: Size = size): Uint8ClampedArray => {
+  const data = new Uint8ClampedArray(rasterSize.width * rasterSize.height * 4);
+  for (let y = 0; y < rasterSize.height; y++) {
+    for (let x = 0; x < rasterSize.width; x++) {
+      const offset = (y * rasterSize.width + x) * 4;
       data[offset] = x * 20;
       data[offset + 1] = 100;
       data[offset + 2] = y === 1 && x === 1 ? 160 : 100;
@@ -125,11 +133,13 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  RecordingOffscreenCanvas.instances = [];
 });
 
 describe('healingBrush structure', () => {
-  it('is a distinct export (no other tool shares its processor)', () => {
-    expect(typeof healingBrush).toBe('function');
+  it('is the registered module-level processor for Healing Brush', async () => {
+    const { toolProcessors } = await import('../toolProcessors.ts');
+    expect(toolProcessors['healing-brush'].imageProcessor).toBe(healingBrush);
   });
 
   it('is a two-stage curried processor that reads its params and its args', () => {
@@ -216,8 +226,32 @@ describe('healingBrush exact pixel coverage', () => {
       })
     );
 
-    expect(at(canvas.pixels, 4, 4)).toEqual([31, 111, 171, 255]);
-    expect(at(canvas.pixels, 2, 4)).toEqual(gradientPixel(2, 4));
+    // The offset is (-3,-3), so every point in this 3x3 block is inside radius 1.5;
+    // the next axial pixels are distance 2 and remain untouched. Eight inner pixels
+    // receive a 17.94 luminance correction; the center's (1,1) source pixel is blue,
+    // so its correction is 11.1 and it rounds to [31, 111, 171].
+    const healedPixels: Array<[number, number, [number, number, number, number]]> = [
+      [3, 3, [18, 118, 118, 255]],
+      [4, 3, [38, 118, 118, 255]],
+      [5, 3, [58, 118, 118, 255]],
+      [3, 4, [18, 118, 118, 255]],
+      [4, 4, [31, 111, 171, 255]],
+      [5, 4, [58, 118, 118, 255]],
+      [3, 5, [18, 118, 118, 255]],
+      [4, 5, [38, 118, 118, 255]],
+      [5, 5, [58, 118, 118, 255]],
+    ];
+    for (const [x, y, expected] of healedPixels) {
+      expect(at(canvas.pixels, x, y)).toEqual(expected);
+    }
+    for (const [x, y] of [
+      [2, 4],
+      [6, 4],
+      [4, 2],
+      [4, 6],
+    ]) {
+      expect(at(canvas.pixels, x, y)).toEqual(gradientPixel(x, y));
+    }
   });
 
   it('uses cosine falloff for a soft tip and leaves the half-open rim untouched', () => {
@@ -254,7 +288,7 @@ describe('healingBrush exact pixel coverage', () => {
     expect(at(canvas.pixels, 4, 4)).toEqual([56, 106, 136, 255]);
   });
 
-  it('uses different source offsets for aligned and free strokes', () => {
+  it('keeps the historical last-dab offset for unaligned records without a samplingOffset', () => {
     const points = [
       { x: 4, y: 4 },
       { x: 6, y: 4 },
@@ -270,6 +304,58 @@ describe('healingBrush exact pixel coverage', () => {
 
     expect(at(aligned.pixels, 6, 4)).toEqual([78, 118, 118, 255]);
     expect(at(free.pixels, 6, 4)).toEqual([43, 123, 183, 255]);
+  });
+
+  it('uses a persisted per-stroke offset in either alignment mode', () => {
+    const points = [
+      { x: 4, y: 4 },
+      { x: 6, y: 4 },
+    ];
+    const samplingOffset = { x: -3, y: -3 };
+    const aligned = run(
+      gradientFixture(),
+      args({
+        size: 3,
+        hardness: 100,
+        opacity: 1,
+        source: { x: 1, y: 1 },
+        points,
+        aligned: true,
+        samplingOffset,
+      })
+    );
+    const unaligned = run(
+      gradientFixture(),
+      args({
+        size: 3,
+        hardness: 100,
+        opacity: 1,
+        source: { x: 1, y: 1 },
+        points,
+        aligned: false,
+        samplingOffset,
+      })
+    );
+
+    expect(unaligned.pixels).toEqual(aligned.pixels);
+    expect(at(unaligned.pixels, 6, 4)).toEqual([78, 118, 118, 255]);
+  });
+
+  it('treats a persisted zero offset as distinct from a missing legacy offset', () => {
+    const data = gradientFixture();
+    const current = run(
+      data,
+      args({
+        source: { x: 1, y: 1 },
+        points: [{ x: 4, y: 4 }],
+        aligned: false,
+        samplingOffset: { x: 0, y: 0 },
+      })
+    );
+    const legacy = run(data, args({ source: { x: 1, y: 1 }, points: [{ x: 4, y: 4 }], aligned: false }));
+
+    expect(current.pixels).toEqual(data);
+    expect(legacy.pixels).not.toEqual(data);
   });
 
   it('reads the original source pixels across overlapping dabs', () => {
@@ -324,6 +410,27 @@ describe('healingBrush exact pixel coverage', () => {
 });
 
 describe('healingBrush source isolation (no self-read)', () => {
+  it('replays identical pixels on repeated calls without mutating the source raster', () => {
+    const data = gradientFixture();
+    const sourcePixels = new Uint8ClampedArray(data);
+    const strokeArgs = args({
+      size: 8,
+      hardness: 100,
+      opacity: 1,
+      source: { x: 1, y: 1 },
+      points: [
+        { x: 4, y: 4 },
+        { x: 6, y: 4 },
+      ],
+    });
+
+    const firstReplay = run(data, strokeArgs);
+    const secondReplay = run(data, strokeArgs);
+
+    expect(secondReplay.pixels).toEqual(firstReplay.pixels);
+    expect(data).toEqual(sourcePixels);
+  });
+
   it('reads from sourceData, not output buffer (anti-compounding invariant)', () => {
     // This is the critical test: healingBrush must read from the original source
     // and write to output, not read from its own output. If it read from output,
@@ -418,29 +525,80 @@ describe('healingBrush edge cases', () => {
 });
 
 describe('healingBrush clampBrushTipSettings interaction', () => {
-  it('clamps size to [BRUSH_SIZE_MIN, BRUSH_SIZE_MAX]', () => {
-    expect(() => run(FIXTURE, args({ size: BRUSH_SIZE_MIN - 1 }))).not.toThrow();
-    expect(() => run(FIXTURE, args({ size: BRUSH_SIZE_MAX + 100 }))).not.toThrow();
-    expect(() => run(FIXTURE, args({ size: -10 }))).not.toThrow();
-    expect(() => run(FIXTURE, args({ size: Number.NaN }))).not.toThrow();
-    expect(() => run(FIXTURE, args({ size: Number.POSITIVE_INFINITY }))).not.toThrow();
+  const clampRasterSize: Size = { width: 41, height: 41 };
+  const center = { x: Math.floor(clampRasterSize.width / 2), y: Math.floor(clampRasterSize.height / 2) };
+  const renderWith = (overrides: Partial<HealingBrushToolArgs>) =>
+    run(
+      gradientFixture(clampRasterSize),
+      args({
+        size: 3,
+        hardness: 50,
+        opacity: 0.75,
+        source: { x: 1, y: 1 },
+        points: [center],
+        ...overrides,
+      }),
+      clampRasterSize
+    );
+  const expectEquivalentTo = (overrides: Partial<HealingBrushToolArgs>, effective: Partial<HealingBrushToolArgs>) => {
+    expect(renderWith(overrides).pixels).toEqual(renderWith(effective).pixels);
+  };
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'uses the default size behavior for non-finite size %p',
+    (sizeValue) => expectEquivalentTo({ size: sizeValue }, { size: BRUSH_SIZE_DEFAULT })
+  );
+
+  it.each([0, -40])('clamps under-range size %p to minimum behavior', (sizeValue) => {
+    expectEquivalentTo({ size: sizeValue }, { size: BRUSH_SIZE_MIN });
   });
 
-  it('clamps hardness to [BRUSH_HARDNESS_MIN, BRUSH_HARDNESS_MAX]', () => {
-    expect(() => run(FIXTURE, args({ hardness: BRUSH_HARDNESS_MIN - 1 }))).not.toThrow();
-    expect(() => run(FIXTURE, args({ hardness: BRUSH_HARDNESS_MAX + 1 }))).not.toThrow();
-    expect(() => run(FIXTURE, args({ hardness: Number.NaN }))).not.toThrow();
+  it.each([Number.NaN, 250, -40])('clamps hardness %p to effective range behavior', (hardness) => {
+    const effective = Number.isFinite(hardness)
+      ? Math.min(BRUSH_HARDNESS_MAX, Math.max(BRUSH_HARDNESS_MIN, hardness))
+      : BRUSH_HARDNESS_DEFAULT;
+    expectEquivalentTo({ hardness }, { hardness: effective });
   });
 
-  it('clamps opacity to valid range', () => {
-    expect(() => run(FIXTURE, args({ opacity: -0.5 }))).not.toThrow();
-    expect(() => run(FIXTURE, args({ opacity: 2 }))).not.toThrow();
+  it.each([Number.NaN, 3, -0.25])('clamps opacity %p to effective range behavior', (opacity) => {
+    const effective = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : BRUSH_OPACITY_DEFAULT;
+    expectEquivalentTo({ opacity }, { opacity: effective });
+  });
+
+  it('clamps an over-range size to maximum behavior on a larger canvas', () => {
+    const rasterSize: Size = { width: 600, height: 10 };
+    const data = new Uint8ClampedArray(rasterSize.width * rasterSize.height * 4);
+    for (let y = 0; y < rasterSize.height; y++) {
+      for (let x = 0; x < rasterSize.width; x++) {
+        const index = (y * rasterSize.width + x) * 4;
+        data[index] = x % 256;
+        data[index + 1] = 100;
+        data[index + 2] = 100;
+        data[index + 3] = 255;
+      }
+    }
+    const strokeArgs = {
+      source: { x: 1, y: 1 },
+      points: [{ x: 300, y: 5 }],
+    };
+    const overRange = run(data, args({ ...strokeArgs, size: 5000 }), rasterSize);
+    const maximum = run(data, args({ ...strokeArgs, size: BRUSH_SIZE_MAX }), rasterSize);
+
+    expect(overRange.pixels).toEqual(maximum.pixels);
+    // This pixel is 252 px from the center: outside the 250 px capped radius,
+    // but inside an uncapped 2500 px radius.
+    expect(at(overRange.pixels, 48, 5, rasterSize.width)).toEqual([48, 100, 100, 255]);
+    expect(at(overRange.pixels, 300, 5, rasterSize.width)).not.toEqual([44, 100, 100, 255]);
   });
 
   it('settles non-finite tip settings on safe defaults', () => {
-    const canvas = run(FIXTURE, args({ size: NaN, hardness: NaN, opacity: NaN }));
-    expect(canvas.width).toBe(size.width);
-    expect(canvas.height).toBe(size.height);
+    expect(renderWith({ size: NaN, hardness: NaN, opacity: NaN }).pixels).toEqual(
+      renderWith({
+        size: BRUSH_SIZE_DEFAULT,
+        hardness: BRUSH_HARDNESS_DEFAULT,
+        opacity: BRUSH_OPACITY_DEFAULT,
+      }).pixels
+    );
   });
 });
 
@@ -467,10 +625,19 @@ describe('healingBrush point coordinate handling', () => {
     expect(canvas.pixels).toEqual(canvasSingle.pixels);
   });
 
-  it('points outside canvas bounds are clamped by clampPointToSize', () => {
-    const canvas = run(FIXTURE, args({ size: 3, points: [{ x: -10, y: -10 }] }));
-    expect(canvas.width).toBe(size.width);
-    expect(canvas.height).toBe(size.height);
+  it('leaves every pixel unchanged when the whole stroke is outside the canvas', () => {
+    const canvas = run(
+      FIXTURE,
+      args({
+        size: 8,
+        points: [
+          { x: 40, y: 40 },
+          { x: 44, y: 44 },
+        ],
+      })
+    );
+
+    expect(canvas.pixels).toEqual(FIXTURE);
   });
 });
 

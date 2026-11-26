@@ -1085,7 +1085,7 @@ export const paintDescriptions: Record<
     summary:
       'Alt/Option-click to set a source, then drag to paint the sampled texture with luminance correction, like the Patch tool but stroke-based.',
     purpose:
-      "The Healing Brush is the stroke-based Patch tool: Alt-click sets a source point, then dragging paints the sampled texture with luminance correction so the repair blends into the destination's brightness. Aligned keeps the sampled offset continuous across the stroke or resets it per stroke. Mode is the blend mode for the healed pixels. Sample chooses which layers the source is read from. Diffusion controls how far the sample pool extends. This app uses luminance correction like Patch tool. Alt/Option-click sets source point.",
+      "The Healing Brush is the stroke-based Patch tool: Alt-click sets a source point, then dragging paints the sampled texture with luminance correction so the repair blends into the destination's brightness. Aligned continues sampling from the most recent source position; with it off, each new stroke returns to the original Alt/Option-clicked source. Mode is the blend mode for the healed pixels. Sample chooses which layers the source is read from. Diffusion controls how far the sample pool extends. This app uses luminance correction like Patch tool. Alt/Option-click sets source point.",
     options: [
       {
         control: 'Tool Preset Picker',
@@ -1108,14 +1108,14 @@ export const paintDescriptions: Record<
         control: 'Source',
         detail: 'A radio group: Sampled (Alt-click sets source) or Pattern. Default Sampled. Pattern deferred.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:71',
+        appRef: 'src/components/Main/HealingBrushToolArea.tsx:115',
       },
       {
         control: 'Aligned',
         detail:
-          'A checkbox. In Photoshop, Aligned preserves the source-to-destination offset across strokes; with it off, each new stroke begins from the original Alt/Option-clicked source. THIS APP DIVERGES: its Aligned mode anchors each stroke at the first destination point but resets to the original source on the next stroke; with Aligned off, it anchors at the stroke end, so the sampled point slides along the path during that stroke.',
-        status: 'partial',
-        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:79',
+          'A checkbox. With Aligned on, the app advances the source by each completed stroke displacement; with it off, each new stroke starts from the original Alt/Option-clicked source. Both modes keep the source offset fixed during a drag. New actions save that per-stroke offset for replay; older actions without it retain their original renderer.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:88',
       },
       {
         control: 'Sample',
@@ -1161,18 +1161,18 @@ export const paintDescriptions: Record<
     ],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolsMap.ts:136',
-      'src/tools/healingBrush.ts:22',
-      'src/components/Main/HealingBrushToolArea.tsx:71',
-      'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:24',
-      'src/tools/settings.ts:239',
-      'src/components/Common/AppKeyboardShortcuts.tsx:88',
-      'src/components/Common/AppKeyboardShortcuts.tsx:101',
-      'src/components/Common/AppKeyboardShortcuts.tsx:579',
+      'src/tools/toolsMap.ts:128',
+      'src/tools/healingBrush.ts:75',
+      'src/components/Main/HealingBrushToolArea.tsx:78',
+      'src/components/Main/HealingBrushToolArea.tsx:115',
+      'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:88',
+      'src/tools/settings.ts:390',
+      'src/components/Common/AppKeyboardShortcuts.tsx:607',
     ],
     appNotes:
-      'Healing Brush uses an Alt/Option-clicked source, copies texture with luminance correction and edits the active layer. Size, Hardness, Opacity and Aligned are present; Sample and Diffusion controls are absent, and Pattern source is unavailable. Its Aligned state reanchors to the original Alt source on each stroke instead of advancing across strokes; with Aligned off the source offset is anchored to the stroke end and moves during the drag. J selects Healing Brush directly.',
+      'Healing Brush uses an Alt/Option-clicked source, copies texture with luminance correction and edits the active layer. Size, Hardness, Opacity and Aligned are present; Sample and Diffusion controls are absent, and Pattern source is unavailable. Aligned advances the source by each completed stroke displacement; with Aligned off, each stroke starts from the original Alt/Option source. Both modes use a fixed source offset within the stroke. New actions persist `samplingOffset` for deterministic history replay, while historical actions without that field keep their original renderer. J selects Healing Brush directly.',
     sources: [
+      'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/repair-a-selected-area-with-the-patch-tool.html',
       'https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=335',

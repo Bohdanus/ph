@@ -392,6 +392,7 @@ export const defaultSettings = {
     hardness: 0,
     opacity: 1,
     source: null,
+    alignedSource: null,
     aligned: true,
     points: [],
     toolName: 'healing-brush',
