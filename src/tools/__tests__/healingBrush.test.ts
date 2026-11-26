@@ -74,18 +74,18 @@ const args = (overrides: Partial<HealingBrushToolArgs> = {}): HealingBrushToolAr
   ...overrides,
 });
 
-const sourceBitmap = (pixels: Uint8ClampedArray) =>
-  ({ width: size.width, height: size.height, pixels, close: vi.fn() }) as unknown as ImageBitmap & {
+const sourceBitmap = (pixels: Uint8ClampedArray, rasterSize: Size = size) =>
+  ({ width: rasterSize.width, height: rasterSize.height, pixels, close: vi.fn() }) as unknown as ImageBitmap & {
     pixels: Uint8ClampedArray;
   };
 
-const run = (data: Uint8ClampedArray, a: HealingBrushToolArgs) => {
-  const [canvas] = healingBrush({ size, bitmap: sourceBitmap(data) })(a);
+const run = (data: Uint8ClampedArray, a: HealingBrushToolArgs, rasterSize: Size = size) => {
+  const [canvas] = healingBrush({ size: rasterSize, bitmap: sourceBitmap(data, rasterSize) })(a);
   return canvas as unknown as RecordingOffscreenCanvas;
 };
 
-const at = (buffer: Uint8ClampedArray, x: number, y: number): [number, number, number, number] => {
-  const index = (y * size.width + x) * 4;
+const at = (buffer: Uint8ClampedArray, x: number, y: number, width = size.width): [number, number, number, number] => {
+  const index = (y * width + x) * 4;
   return [buffer[index], buffer[index + 1], buffer[index + 2], buffer[index + 3]];
 };
 
@@ -513,6 +513,32 @@ describe('healingBrush clampBrushTipSettings interaction', () => {
   it('clamps opacity to valid range', () => {
     expect(() => run(FIXTURE, args({ opacity: -0.5 }))).not.toThrow();
     expect(() => run(FIXTURE, args({ opacity: 2 }))).not.toThrow();
+  });
+
+  it('clamps an over-range size to maximum behavior on a larger canvas', () => {
+    const rasterSize: Size = { width: 600, height: 10 };
+    const data = new Uint8ClampedArray(rasterSize.width * rasterSize.height * 4);
+    for (let y = 0; y < rasterSize.height; y++) {
+      for (let x = 0; x < rasterSize.width; x++) {
+        const index = (y * rasterSize.width + x) * 4;
+        data[index] = x % 256;
+        data[index + 1] = 100;
+        data[index + 2] = 100;
+        data[index + 3] = 255;
+      }
+    }
+    const strokeArgs = {
+      source: { x: 1, y: 1 },
+      points: [{ x: 300, y: 5 }],
+    };
+    const overRange = run(data, args({ ...strokeArgs, size: 5000 }), rasterSize);
+    const maximum = run(data, args({ ...strokeArgs, size: BRUSH_SIZE_MAX }), rasterSize);
+
+    expect(overRange.pixels).toEqual(maximum.pixels);
+    // This pixel is 252 px from the center: outside the 250 px capped radius,
+    // but inside an uncapped 2500 px radius.
+    expect(at(overRange.pixels, 48, 5, rasterSize.width)).toEqual([48, 100, 100, 255]);
+    expect(at(overRange.pixels, 300, 5, rasterSize.width)).not.toEqual([44, 100, 100, 255]);
   });
 
   it('settles non-finite tip settings on safe defaults', () => {
