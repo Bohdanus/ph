@@ -103,6 +103,7 @@ const BUDGETED = [
   'stale-branch-files.test.mjs',
   'tsc-guard.test.mjs',
   'worktree-inventory.test.mjs',
+  'wsl-setup.test.mjs',
 ];
 
 /**

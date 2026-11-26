@@ -330,6 +330,40 @@ describe('MobileLayersDrawer', () => {
     expect(renderedLayerNames()).toEqual(['Top', 'Lower', 'Upper', 'Bottom']);
   });
 
+  it('moves the second-to-last layer to the bottom when the stack has no bedrock', async () => {
+    const user = userEvent.setup();
+    storeStateMock.layers = {
+      top: { ...makeLayer('top', 'Top', 2), isBedrock: false },
+      middle: { ...makeLayer('middle', 'Middle', 1), isBedrock: false },
+      bottom: { ...makeLayer('bottom', 'Bottom', 0), isBedrock: false },
+    };
+    const { rerender } = render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: 'Move Middle down' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Move Bottom down' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Move Middle down' }));
+    rerender(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    expect(renderedLayerNames()).toEqual(['Top', 'Bottom', 'Middle']);
+  });
+
+  it('moves the top layer down in a two-layer stack without bedrock', async () => {
+    const user = userEvent.setup();
+    storeStateMock.layers = {
+      top: { ...makeLayer('top', 'Top', 1), isBedrock: false },
+      bottom: { ...makeLayer('bottom', 'Bottom', 0), isBedrock: false },
+    };
+    const { rerender } = render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: 'Move Top down' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Move Top down' }));
+    rerender(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    expect(renderedLayerNames()).toEqual(['Bottom', 'Top']);
+  });
+
   it('disables "move up" on the topmost row and bedrock row', async () => {
     const user = userEvent.setup();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);

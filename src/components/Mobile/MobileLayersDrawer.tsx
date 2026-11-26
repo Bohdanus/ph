@@ -93,6 +93,8 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   // Index 0 is the TOP layer: `getSortedLayersArray` is ascending, and the drawer
   // shows the stack the way Photoshop does.
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
+  const bedrockIndex = sortedLayers.findIndex((layer) => layer.isBedrock);
+  const bottomMovableIndex = bedrockIndex >= 0 ? bedrockIndex - 1 : sortedLayers.length - 1;
   const sortedHistory = useMemo(() => [...historyPanelProjection.rows].reverse(), [historyPanelProjection.rows]);
 
   if (!isOpen && pendingDeleteLayer === null) return null;
@@ -214,14 +216,14 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   };
 
   const handleMoveDown = (index: number) => {
-    // The last two rows have no row two places below them, and passing `undefined`
-    // would instead bury the layer at the bottom of the stack.
-    if (index < 0 || index >= sortedLayers.length - 2) return;
+    // A bottom bedrock blocks the bottom-most editable row. Without bedrock,
+    // moving the second-to-last row to the bottom is exactly one position down,
+    // so its missing two-rows-down anchor intentionally means the stack bottom.
+    if (index < 0 || index >= bottomMovableIndex) return;
     const layerToMove = sortedLayers[index];
     if (!layerToMove || layerToMove.isBedrock || layerToMove.locked) return;
     const targetLayer = sortedLayers[index + 2];
-    if (!targetLayer) return;
-    moveLayerAfter(layerToMove.id, targetLayer.id);
+    moveLayerAfter(layerToMove.id, targetLayer?.id);
   };
 
   // The history tab's three entry points — a tap on a step, Enter or Space on that
@@ -493,7 +495,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                             event.stopPropagation();
                             handleMoveDown(index);
                           }}
-                          disabled={index >= sortedLayers.length - 2 || !isMovable}
+                          disabled={index >= bottomMovableIndex || !isMovable}
                           aria-label={`Move ${layer.name} down`}
                           className="flex min-h-11 min-w-11 items-center justify-center text-xs rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-20 text-gray-600 dark:text-gray-400"
                         >
