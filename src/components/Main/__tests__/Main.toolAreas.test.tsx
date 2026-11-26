@@ -746,7 +746,7 @@ describe('Main tool-area routing', () => {
   });
 });
 
-describe('Main start-page actions', () => {
+describe('Main empty-document actions', () => {
   beforeEach(() => {
     storeState.hasImage = false;
   });
