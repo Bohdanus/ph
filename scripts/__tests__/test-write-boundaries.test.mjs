@@ -76,8 +76,8 @@ const REVIEWED = {
   },
   'free-model-pool.test.mjs': {
     scope:
-      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, its explicit incomplete-length fixture uses an isolated fake CLI, and the distinct caller/runner PATH, symlinked caller-root, and hard-link alias fixtures across node_modules/.bin and scripts remove their temporary directories in finally; timeout cleanup targets only fixture-owned process IDs; the provider-filter fixture uses an isolated temporary quarantine path, while the pinned-CLI fixture writes its prompt inside its own temporary directory; both directories are removed recursively in finally blocks.',
-    patterns: `filesystem-write:mkdtemp=48 filesystem-write:rm=48 filesystem-write:writeFile=20 filesystem-write:mkdir=18 filesystem-write:link=4 filesystem-write:symlinkSync=13 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=1`,
+      'Model/provider and cost-safety fixtures use unique OS temporary directories, including empty quarantine fixtures for catalog fallback and oversized-body checks; the Windows cleanup failure case uses an in-memory child and streams, while Kilo cleanup quarantine isolation uses its own temporary directory; OpenCode runtime-env isolation overrides and PATH overrides are restored in finally blocks, its explicit incomplete-length fixture uses an isolated fake CLI, and the distinct caller/runner PATH, symlinked caller-root, and hard-link alias fixtures across node_modules/.bin and scripts remove their temporary directories in finally; timeout cleanup targets only fixture-owned process IDs; the provider-filter fixture uses an isolated temporary quarantine path, while the pinned-CLI fixture writes its prompt inside its own temporary directory; a non-catalog OpenCode ID containing shell metacharacters is blocked before an isolated fake CLI launches; direct CLI-entry validation spawns Node with an unsupported option.',
+    patterns: `filesystem-write:mkdtemp=49 filesystem-write:rm=49 filesystem-write:writeFile=20 filesystem-write:mkdir=18 filesystem-write:link=4 filesystem-write:symlinkSync=13 process-env-write:assignment:<computed>=2 process-env-write:delete:<computed>=1 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1 subprocess:spawnSync=2`,
   },
   'free-model-pool-state.test.mjs': {
     scope:
@@ -164,7 +164,7 @@ const REVIEWED = {
   'repo-state-gate.test.mjs': {
     scope:
       'Git and filesystem fixtures use temporary repositories; child cwd and environment are reviewed, and fixture repo/worktree paths are removed only within scratch roots cleaned by afterEach.',
-    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=10 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=23 filesystem-write:rmSync=9 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
+    patterns: `filesystem-write:mkdtempSync=1 subprocess:execFileSync=2 subprocess:spawnSync=13 filesystem-write:mkdirSync=5 filesystem-write:writeFileSync=26 filesystem-write:rmSync=10 filesystem-write:symlinkSync=1 filesystem-write:chmodSync=4`,
   },
   'session-db-snapshot.test.mjs': {
     scope: 'Snapshot fixtures use temporary databases; copies are explicitly opened read-only.',

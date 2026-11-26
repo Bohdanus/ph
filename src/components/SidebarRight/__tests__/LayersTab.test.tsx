@@ -480,6 +480,8 @@ describe('LayersTab', () => {
 
     expect(name).toHaveAttribute('role', 'button');
     expect(name).toHaveAttribute('tabindex', '0');
+    expect(name).toHaveClass('focus-visible:outline-2');
+    expect(name).toHaveClass('focus-visible:outline-blue-500');
     name.focus();
     fireEvent.keyDown(name, { key });
 

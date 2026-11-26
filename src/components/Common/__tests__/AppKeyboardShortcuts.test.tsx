@@ -422,22 +422,31 @@ describe('Layers panel visibility shortcut', () => {
     input.remove();
   });
 
-  it('moves focus to the History tab before hiding Layers when focus is inside Layers', () => {
+  it('moves focus to History before hiding Layers when focus is anywhere in its group', () => {
     renderShortcuts();
+    const layersPanel = document.createElement('div');
+    layersPanel.id = 'panel-group-layers';
+    const layersHeader = document.createElement('div');
+    layersHeader.id = 'panel-header-layers';
+    layersHeader.tabIndex = 0;
+    const headerAction = document.createElement('button');
     const layersBody = document.createElement('div');
     layersBody.id = 'panel-body-layers';
     const focusedControl = document.createElement('button');
     layersBody.append(focusedControl);
+    layersPanel.append(layersHeader, headerAction, layersBody);
     const historyTab = document.createElement('button');
     historyTab.id = 'panel-header-history';
-    document.body.append(layersBody, historyTab);
-    focusedControl.focus();
+    document.body.append(layersPanel, historyTab);
 
-    press('F7');
+    for (const target of [layersHeader, headerAction, focusedControl]) {
+      target.focus();
+      press('F7');
+      expect(historyTab).toHaveFocus();
+    }
 
-    expect(historyTab).toHaveFocus();
-    expect(toggleLayersVisibility).toHaveBeenCalledTimes(1);
-    layersBody.remove();
+    expect(toggleLayersVisibility).toHaveBeenCalledTimes(3);
+    layersPanel.remove();
     historyTab.remove();
   });
 });

@@ -756,7 +756,8 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.code).toBe(1);
     expect(r.err).not.toContain('in progress:');
     expect(r.err).toContain('AUTO_MERGE marker has no primary operation marker');
-    expect(r.err).toContain('unique `branch refs/heads/main` entry in `git worktree list --porcelain`');
+    expect(r.err).toContain('identify the designated main path with `npm run main:landing -- status --json`');
+    expect(r.err).toContain('do not choose by branch name alone');
     expect(r.err).toContain("from that target worktree's root");
     expect(r.err).toContain('keeping the current directory at this target worktree root');
     expect(r.err).toContain(
@@ -829,6 +830,7 @@ describe('the report says which remedy applies, and warns about the destructive 
         sourceBranch: 'wt/candidate',
         mainPath: realpathSync(repo),
         mainGitDir: resolveGitDir(repo),
+        mainIdentity: 'test-main-identity',
       },
     });
 
@@ -860,6 +862,7 @@ describe('the report says which remedy applies, and warns about the destructive 
         sourceBranch: 'wt/candidate',
         mainPath: realpathSync(repo),
         mainGitDir: resolveGitDir(repo),
+        mainIdentity: 'test-main-identity',
       },
     });
 
@@ -904,6 +907,7 @@ describe('the report says which remedy applies, and warns about the destructive 
         sourceBranch: 'wt/candidate',
         mainPath: '/registered-main',
         mainGitDir: '/registered-main/.git',
+        mainIdentity: 'test-main-identity',
       },
       scan: () => ({ ok: true, reason: null, roster: records.length, worktrees: records }),
       out: { write: () => {} },
@@ -912,6 +916,55 @@ describe('the report says which remedy applies, and warns about the destructive 
 
     expect(r.code).toBe(0);
     expect(r.landing?.unrelated).toEqual([{ name: 'preserved-main', path: '/preserved-main' }]);
+  });
+
+  it('blocks a landing when multiple roster records reuse the registered main path', () => {
+    const worktrees = [
+      {
+        name: 'registered-main',
+        path: '/registered-main',
+        branch: 'main',
+        present: true,
+        gitDir: '/registered-main/.git',
+        operations: [],
+        unmerged: [],
+      },
+      {
+        name: 'reused-main-path',
+        path: '/registered-main',
+        branch: 'main',
+        present: true,
+        gitDir: '/different/.git',
+        operations: [],
+        unmerged: [],
+      },
+      {
+        name: 'candidate',
+        path: '/candidate',
+        branch: 'wt/candidate',
+        present: true,
+        gitDir: '/candidate/.git',
+        operations: [],
+        unmerged: [],
+      },
+    ];
+    const result = run({
+      landing: {
+        sourceBranch: 'wt/candidate',
+        mainPath: '/registered-main',
+        mainGitDir: '/registered-main/.git',
+        mainIdentity: 'test-main-identity',
+      },
+      scan: () => ({ ok: true, reason: null, roster: worktrees.length, worktrees }),
+      out: { write: () => {} },
+      err: { write: () => {} },
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.landing?.ready).toBe(false);
+    expect(result.landing?.errors).toContain(
+      'registered main checkout does not match one present main worktree in the repository scan'
+    );
   });
 
   it('blocks unknown or unreadable operation state in a scoped landing report', () => {
@@ -952,6 +1005,7 @@ describe('the report says which remedy applies, and warns about the destructive 
         sourceBranch: 'wt/candidate',
         mainPath: '/registered-main',
         mainGitDir: '/registered-main/.git',
+        mainIdentity: 'test-main-identity',
       },
       scan: () => ({ ok: true, reason: null, roster: worktrees.length, worktrees }),
       out: { write: (text) => out.push(text) },
@@ -977,6 +1031,7 @@ describe('the report says which remedy applies, and warns about the destructive 
         sourceBranch: 'wt/candidate',
         mainPath,
         mainGitDir: join(mainPath, '.git'),
+        mainIdentity: 'test-main-identity',
       },
       scan: () => ({
         ok: true,
@@ -1021,12 +1076,45 @@ describe('the report says which remedy applies, and warns about the destructive 
         sourceBranch: 'wt/candidate',
         mainPath: realpathSync(repo),
         mainGitDir: resolveGitDir(repo),
+        mainIdentity: 'test-main-identity',
       },
     });
 
     expect(r.code).toBe(1);
     expect(r.out).toContain('landing scope BLOCKED for wt/candidate');
     expect(r.err).toContain('BLOCKS selected landing');
+  });
+
+  it('blocks main landing recovery when its saved identity marker does not match', () => {
+    const repo = makeRepo();
+    addWorktree(repo, 'candidate');
+    const mainPath = realpathSync(repo);
+    const mainGitDir = resolveGitDir(repo);
+    const identity = 'registered-main-identity';
+    git(repo, 'config', '--local', 'ph.mainWorktreePath', mainPath);
+    git(repo, 'config', '--local', 'ph.mainWorktreeGitDir', mainGitDir);
+    git(repo, 'config', '--local', 'ph.mainWorktreeIdentity', identity);
+    writeFileSync(join(mainGitDir, 'kilo-main-worktree-identity'), 'stale-main-identity\n');
+    writeFileSync(join(mainGitDir, 'AUTO_MERGE'), `${git(repo, 'rev-parse', 'HEAD^{tree}').trim()}\n`);
+
+    const script = join(import.meta.dirname, '../repo-state-gate.mjs');
+    const args = [script, '--for-landing', 'wt/candidate'];
+    const mismatch = spawnSync(process.execPath, args, { cwd: repo, encoding: 'utf8', env: GIT_ENV });
+    expect(mismatch.status).toBe(1);
+    expect(mismatch.stdout).toContain('landing scope BLOCKED');
+    expect(mismatch.stdout).toContain('registered main identity does not match its private Git directory');
+    expect(mismatch.stdout).not.toContain('designated-main orphan AUTO_MERGE is delegated');
+
+    writeFileSync(join(mainGitDir, 'kilo-main-worktree-identity'), `${identity}\n`);
+    const matching = spawnSync(process.execPath, args, { cwd: repo, encoding: 'utf8', env: GIT_ENV });
+    expect(matching.status).toBe(0);
+    expect(matching.stdout).toContain('designated-main orphan AUTO_MERGE is delegated');
+
+    rmSync(join(mainGitDir, 'kilo-main-worktree-identity'), { force: true });
+    const missing = spawnSync(process.execPath, args, { cwd: repo, encoding: 'utf8', env: GIT_ENV });
+    expect(missing.status).toBe(1);
+    expect(missing.stdout).toContain('registered main identity marker is unavailable');
+    expect(missing.stdout).not.toContain('designated-main orphan AUTO_MERGE is delegated');
   });
 
   it('blocks designated-main operations but delegates its orphan AUTO_MERGE shape to main:landing', () => {
@@ -1039,6 +1127,7 @@ describe('the report says which remedy applies, and warns about the destructive 
         sourceBranch: 'wt/candidate',
         mainPath: realpathSync(repo),
         mainGitDir: resolveGitDir(repo),
+        mainIdentity: 'test-main-identity',
       },
     });
     expect(blocked.code).toBe(1);
@@ -1052,6 +1141,7 @@ describe('the report says which remedy applies, and warns about the destructive 
         sourceBranch: 'wt/candidate',
         mainPath: realpathSync(repo),
         mainGitDir: resolveGitDir(repo),
+        mainIdentity: 'test-main-identity',
       },
     });
     expect(recovery.code).toBe(0);
@@ -1071,6 +1161,7 @@ describe('the report says which remedy applies, and warns about the destructive 
         sourceBranch: 'wt/candidate',
         mainPath: realpathSync(repo),
         mainGitDir: resolveGitDir(repo),
+        mainIdentity: 'test-main-identity',
       },
     });
 
@@ -1091,6 +1182,7 @@ describe('the report says which remedy applies, and warns about the destructive 
         sourceBranch: 'wt/candidate',
         mainPath: realpathSync(repo),
         mainGitDir: resolveGitDir(repo),
+        mainIdentity: 'test-main-identity',
       },
     });
 

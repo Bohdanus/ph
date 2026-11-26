@@ -34,9 +34,14 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, realpathSync } from 'node:fs';
+import { isAbsolute, join, resolve } from 'node:path';
 import { samePath } from '../path-identity.mjs';
+
+const MAIN_WORKTREE_GIT_DIR_KEY = 'ph.mainWorktreeGitDir';
+const MAIN_WORKTREE_PATH_KEY = 'ph.mainWorktreePath';
+const MAIN_WORKTREE_ID_KEY = 'ph.mainWorktreeIdentity';
+const MAIN_WORKTREE_ID_FILENAME = 'kilo-main-worktree-identity';
 
 /** Default git runner: `execFileSync('git', args, { cwd })` returning `{ stdout }`. */
 export function defaultRun(cwd, args) {
@@ -88,12 +93,15 @@ export function parseWorktreeListing(porcelain) {
 }
 
 /**
- * Resolve the path of the single non-bare `refs/heads/main` worktree.
+ * Resolve the designated main checkout, including a forced recovery replacement.
  *
- * Returns the realpath of that worktree's checkout directory, or `null` when:
+ * A registered main-worktree identity selects one checkout when recovery leaves
+ * the damaged `main` checkout in place. Without registration, only one
+ * non-bare `refs/heads/main` worktree can be selected safely. Return its
+ * realpath, or `null` when:
  * - git cannot be run (not a repository, git missing),
- * - there is no `main` worktree,
- * - there is more than one `main` worktree (ambiguous),
+ * - there is no verifiable designated main checkout,
+ * - multiple main worktrees exist without a valid registered identity,
  * - the main worktree is bare,
  * - its entry is prunable, its path does not exist, or the path now belongs to a
  *   different repository or branch.
@@ -111,7 +119,94 @@ function readWorktreeRoster(cwd, { run = defaultRun, parse = parseWorktreeListin
   return { listingAvailable: true, worktrees: parse(porcelain) };
 }
 
-function resolveMainFromWorktrees(cwd, worktrees, { run = defaultRun, realpath = realpathSync } = {}) {
+function resolveRegisteredMain(
+  cwd,
+  worktrees,
+  { run = defaultRun, realpath = realpathSync, readFile = readFileSync } = {}
+) {
+  const configValue = (key) => {
+    try {
+      return { present: true, value: run(cwd, ['config', '--local', '--get', key]).stdout.trim() };
+    } catch (error) {
+      // Git config --get uses status 1 for a missing key. Other failures mean
+      // registration could not be read, not that no registration exists.
+      if (error?.status !== 1) return { present: true, value: null };
+      return { present: false, value: null };
+    }
+  };
+  const registeredGitDirConfig = configValue(MAIN_WORKTREE_GIT_DIR_KEY);
+  const registeredPathConfig = configValue(MAIN_WORKTREE_PATH_KEY);
+  const registeredIdentityConfig = configValue(MAIN_WORKTREE_ID_KEY);
+  const registeredGitDirValue = registeredGitDirConfig.value;
+  const registeredPathValue = registeredPathConfig.value;
+  const registeredIdentity = registeredIdentityConfig.value;
+  const hasRegistration =
+    registeredGitDirConfig.present || registeredPathConfig.present || registeredIdentityConfig.present;
+  if (!hasRegistration) return { registered: false, root: null };
+  // A partial saved identity can be the residue of interrupted recovery. Do not
+  // choose a different branch checkout until the designated path is repaired.
+  if (
+    !registeredGitDirConfig.present ||
+    !registeredPathConfig.present ||
+    !registeredIdentityConfig.present ||
+    !registeredGitDirValue ||
+    !registeredPathValue ||
+    !registeredIdentity
+  ) {
+    return { registered: true, root: null };
+  }
+
+  try {
+    if (!isAbsolute(registeredGitDirValue) || !isAbsolute(registeredPathValue)) {
+      return { registered: true, root: null };
+    }
+    const registeredGitDir = realpath(resolve(cwd, registeredGitDirValue));
+    const registeredPath = realpath(resolve(cwd, registeredPathValue));
+    const matching = worktrees.filter((worktree) => {
+      if (worktree.bare || worktree.prunableReason) return false;
+      try {
+        return samePath(realpath(worktree.path), registeredPath);
+      } catch {
+        return false;
+      }
+    });
+    if (matching.length !== 1) return { registered: true, root: null };
+
+    const root = realpath(matching[0].path);
+    const repositoryCommonDir = realpath(
+      run(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim()
+    );
+    const mainCommonDir = realpath(
+      run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim()
+    );
+    const mainGitDir = realpath(run(root, ['rev-parse', '--absolute-git-dir']).stdout.trim());
+    let mainBranch = null;
+    try {
+      mainBranch = run(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
+    } catch (error) {
+      // A detached designated main checkout remains identifiable by its private marker.
+      if (error?.status !== 1) return { registered: true, root: null };
+    }
+    if (
+      !samePath(mainCommonDir, repositoryCommonDir) ||
+      !samePath(mainGitDir, registeredGitDir) ||
+      !['main', null].includes(mainBranch)
+    ) {
+      return { registered: true, root: null };
+    }
+    const identity = readFile(join(mainGitDir, MAIN_WORKTREE_ID_FILENAME), 'utf8').trim();
+    if (identity !== registeredIdentity) return { registered: true, root: null };
+    return { registered: true, root };
+  } catch {
+    return { registered: true, root: null };
+  }
+}
+
+function resolveMainFromWorktrees(cwd, worktrees, options = {}) {
+  const designated = resolveRegisteredMain(cwd, worktrees, options);
+  if (designated.registered) return designated;
+
+  const { run = defaultRun, realpath = realpathSync } = options;
   const registeredMains = worktrees.filter((w) => !w.bare && w.branch === 'main');
   const mains = registeredMains.filter((w) => !w.prunableReason);
 
