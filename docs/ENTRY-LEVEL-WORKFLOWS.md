@@ -107,14 +107,14 @@ layer selected. If the only layer is a locked Background, choose **New Layer** i
 painting.
 
 **Steps:** On the left tool rail, select **Rectangular Marquee Tool** (named **Rectangular
-Selection** in the Tools menu) and keep **Style** set to **Normal**. Select an area, then choose
+Selection** in the Tools rail) and keep **Style** set to **Normal**. Select an area, then choose
 **Brush Tool** or **Pencil Tool** on the same rail and drag a stroke across the selection boundary.
 Use the **Undo** and **Redo** buttons in the top toolbar to remove and restore the stroke. For a
 soft-edge variation, choose **Polygonal Lasso**, leave its **Mode** at **Outline**, set **Feather**
 above **0 px** in the right tool-options panel, click to add the polygon corners, and press Enter to
 finish the selection. To check history after deselection, select **Rectangular Marquee Tool** and
 click **Deselect** in its right panel for a rectangle; for a polygon, select **Lasso Tool** (named
-**Freehand Lasso** in the Tools menu) and click **Deselect** in that tool's right panel. Then click
+**Freehand Lasso** in the Tools rail) and click **Deselect** in that tool's right panel. Then click
 **Undo** once to restore the selection, **Undo** again to remove the paint, **Redo** to restore the
 clipped paint, and **Redo** again to deselect.
 

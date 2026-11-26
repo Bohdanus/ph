@@ -8,13 +8,11 @@ import { MENU_ITEM_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { flushSync } from 'react-dom';
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
-import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import { extraTools, slugifyToolLabel } from '../../../toolbar-mapping.ts';
+import { slugifyToolLabel } from '../../../toolbar-mapping.ts';
 import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
 import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import { useInvertLayer } from '../../hooks/useInvertLayer.ts';
-import type { FigureType } from '../../tools/shape.ts';
 import {
   absoluteViewZoom,
   DEFAULT_VIEW_STATE,
@@ -24,132 +22,6 @@ import {
 } from '../../contexts/view-state.ts';
 import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 import { useWorkspaceFitScale } from '../../hooks/useWorkspaceFitScale.ts';
-
-/**
- * A second, non-exhaustive surface over the same tool set. `Array` rather than an
- * exhaustive type, so nothing forces it to stay in step with `toolbarMap` — which is
- * exactly why it is written out here: a tool missing from the Tools menu is a visible
- * inconsistency the user has to notice and work around.
- *
- * The eleven entries added with the tool expansion carry the same labels
- * `toolbar-mapping.ts` spells, and sit in the same relative order: selection tools after
- * the lasso and wand, then the paint family (brush … burn), then the eyedropper.
- *
- * **`MENUS_EXCLUDE` is the deliberate part of "non-exhaustive", and it is exactly seven
- * tools, for two separate reasons.**
- *
- * Add Anchor Point, Delete Anchor Point and Convert Point are absent because they are absent
- * from Photoshop's own Tools panel too — they modify a path rather than paint, and Photoshop
- * reaches them from the Pen's context menu and the path-modification commands, not from the
- * Tools panel or the Tools menu. `color`, `levels`, `invert` and `transform` are absent for the other
- * reason: they are `Image ▸ Adjustments` and `Edit ▸ Free Transform` COMMANDS, which are the
- * same defect one level up from a missing tool — a command is not a tool, and a Tools-panel
- * entry for one is a falsehood in the list whose own header calls a missing tool "a visible
- * inconsistency the user has to notice and work around." They are in `ADJUSTMENTS_ITEMS` and
- * in the `Edit` menu below instead, and `toolbar-mapping.ts`'s `extraTools` names them as the
- * registered tool ids with no rail entry. All seven are in `availableTools` because they are
- * selectable tools; none of them is a Tools-menu item.
- *
- * Every OTHER `availableTools` name must produce a row. That was not true until the test
- * below was derived from the registry: the assertion was a hand-written list of 24 names that
- * never mentioned the Dodge, the Burn, the Smudge, the Sharpen or the Magic Eraser, so the
- * Sponge shipped with no Tools-menu entry and the test stayed green.
- */
-/**
- * The registered tools this menu deliberately does not list, and the ONLY ids allowed to be
- * missing from it — every other `availableTools` name must produce a row, which is what
- * `DesktopHeader.test.tsx` enforces by walking the registry.
- *
- * Two groups, two mechanisms, and they are not interchangeable. The three pen point-tools
- * modify a path, which Photoshop reaches from the Pen's context menu rather than from a
- * Tools panel. The adjustment commands are not tools at all: they left the rail in
- * `4037463b`, which is also where they were added to this list — `MENUS_EXCLUDE` itself is
- * older, introduced by `dd234bad` with the pen tools alone — and they are hosted by
- * `Image ▸ Adjustments` and `Edit ▸ Free Transform`. See the note at the top of this file,
- * which is the authority for both.
- *
- * The second group is SPREAD from `toolbar-mapping.ts`'s `extraTools` rather than written
- * out, so the rail and this menu cannot disagree about which ids are commands: another
- * id that leaves the rail is added to that export, and `toolbar-mapping.test.ts` fails
- * until it is.
- */
-export const MENUS_EXCLUDE: readonly ToolName[] = [
-  'add-anchor-point',
-  'delete-anchor-point',
-  'convert-point',
-  ...extraTools,
-];
-
-const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
-  { toolName: 'reposition', label: 'Reposition' },
-  { toolName: 'hand', label: 'Hand Tool' },
-  { toolName: 'zoom', label: 'Zoom Tool' },
-  { toolName: 'rotate-view', label: 'Rotate View Tool' },
-  { toolName: 'blur', label: 'Blur' },
-  { toolName: 'crop', label: 'Crop' },
-  { toolName: 'draw', label: 'Draw' },
-  { toolName: 'shape', label: 'Shape' },
-  { toolName: 'text', label: 'Text' },
-  { toolName: 'polygonal-lasso', label: 'Polygonal Lasso' },
-  { toolName: 'freehand-lasso', label: 'Freehand Lasso' },
-  { toolName: 'feather-magnetic-lasso', label: 'Feather Magnetic Lasso' },
-  { toolName: 'magic-wand', label: 'Magic Wand' },
-  { toolName: 'quick-selection', label: 'Quick Selection Tool' },
-  { toolName: 'rectangular-selection', label: 'Rectangular Selection' },
-  { toolName: 'elliptical-selection', label: 'Elliptical Marquee Tool' },
-  { toolName: 'single-row-marquee', label: 'Single Row Marquee Tool' },
-  { toolName: 'single-column-marquee', label: 'Single Column Marquee Tool' },
-  { toolName: 'brush', label: 'Brush Tool' },
-  { toolName: 'pencil', label: 'Pencil Tool' },
-  { toolName: 'color-replacement', label: 'Color Replacement Tool' },
-  { toolName: 'spot-healing', label: 'Spot Healing Brush Tool' },
-  { toolName: 'healing-brush', label: 'Healing Brush Tool' },
-  { toolName: 'patch', label: 'Patch Tool' },
-  { toolName: 'red-eye', label: 'Red Eye Correction Tool' },
-  { toolName: 'eraser', label: 'Eraser Tool' },
-  { toolName: 'clone-stamp', label: 'Clone Stamp Tool' },
-  { toolName: 'ruler', label: 'Ruler Tool' },
-  { toolName: 'sharpen', label: 'Sharpen Tool' },
-  { toolName: 'smudge', label: 'Smudge Tool' },
-  { toolName: 'paint-bucket', label: 'Paint Bucket Tool' },
-  { toolName: 'magic-eraser', label: 'Magic Eraser Tool' },
-  { toolName: 'gradient', label: 'Gradient Tool' },
-  { toolName: 'dodge', label: 'Dodge Tool' },
-  { toolName: 'burn', label: 'Burn Tool' },
-  { toolName: 'sponge', label: 'Sponge Tool' },
-  { toolName: 'eyedropper', label: 'Eyedropper Tool' },
-  { toolName: 'color-sampler', label: 'Color Sampler Tool' },
-  { toolName: 'pen', label: 'Pen Tool' },
-  { toolName: 'freeform-pen', label: 'Freeform Pen Tool' },
-  { toolName: 'curvature-pen', label: 'Curvature Pen Tool' },
-  { toolName: 'rectangle', label: 'Rectangle Tool' },
-  { toolName: 'ellipse', label: 'Ellipse Tool' },
-  { toolName: 'triangle', label: 'Triangle Tool' },
-  { toolName: 'polygon', label: 'Polygon Tool' },
-  { toolName: 'line', label: 'Line Tool' },
-  { toolName: 'custom-shape', label: 'Custom Shape Tool' },
-];
-
-/**
- * The five figure entries above are the *second* selection surface for the figures
- * — the sidebar already selects them as `toolName: 'shape'` plus a `figure` patch.
- * Dispatching the registered figure `ToolName`s directly mounted the Shape panel
- * with a figure-specific tool name, bypassing the shared shape-family route and
- * leaving the panel's colour synchronization dependent on the wrong args shape.
- *
- * So route them through the same path the sidebar uses, which keeps every surface
- * on the shared shape-family state path rather than special-casing this menu.
- *
- * `ellipse` is the trap: the registered `ToolName` is `ellipse` but the stored
- * figure is `oval`, exactly as the toolbar mapping defines it.
- */
-const FIGURE_TOOLS: Partial<Record<ToolName, FigureType>> = {
-  rectangle: 'rectangle',
-  ellipse: 'oval',
-  triangle: 'triangle',
-  polygon: 'polygon',
-  line: 'line',
-};
 
 /**
  * One item of a menu host.
@@ -228,8 +100,8 @@ type MenuHostItem = {
  *   leading control actually computes, which is what `docs/TOOLS-TOO-HARD.md`'s enabled-items
  *   entry requires of an adjustment command — an item whose computation does not match its
  *   Adobe name is a falsehood and does not get enabled. Moving the row rather than dropping
- *   it is what keeps `color` reachable at all: it is in `extraTools`, so it has no rail tile
- *   and no `tools-menu-color-button`, and this submenu is the only path into the panel.
+ *   it is what keeps `color` reachable at all: it has no rail tile, so this submenu is the
+ *   only path into the panel.
  *
  * - **`Invert` → the `invert` command.** Adobe: "a pixel … with a value of 255 is changed to 0,
  *   and a pixel with a value of 5 is changed to 250", which is `invertPixels` per RGB channel
@@ -277,7 +149,6 @@ const DesktopHeader = () => {
   const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
   const { confirmDiscard } = useUnsavedChanges();
-  const { patchToolArgs } = useCurrentTool();
   const { invertActiveLayer } = useInvertLayer();
 
   const { theme, toggleTheme } = useTheme();
@@ -289,7 +160,6 @@ const DesktopHeader = () => {
   // two booleans, because a single value cannot disagree with itself.
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null);
   const fileMenuRef = useRef<HTMLLIElement>(null);
-  const toolsMenuRef = useRef<HTMLLIElement>(null);
   const imageMenuRef = useRef<HTMLLIElement>(null);
   const editMenuRef = useRef<HTMLLIElement>(null);
   const viewMenuRef = useRef<HTMLLIElement>(null);
@@ -308,7 +178,6 @@ const DesktopHeader = () => {
   // focus back on whichever button opened what it just closed.
   const menuHostRefs: Record<string, React.RefObject<HTMLLIElement | null>> = {
     file: fileMenuRef,
-    tools: toolsMenuRef,
     image: imageMenuRef,
     edit: editMenuRef,
     view: viewMenuRef,
@@ -325,24 +194,12 @@ const DesktopHeader = () => {
   };
 
   const handleToolSelection = (toolName: ToolName) => {
-    const figure = FIGURE_TOOLS[toolName];
-    // Select first, then patch — deliberately *not* the order
-    // `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
-    // OUTGOING tool through `goToTool()`, and `patchToolArgs()` writes straight into the
-    // live `currentArgsRef`. Patching first would leave the
-    // text branch in `commitDirtyTool()` reading shape args — no `.text`, no `.rect` —
-    // so it early-returns and an unapplied text layer is dropped with nothing to undo.
-    // Selecting first lets that commit read the text args it is meant to read.
-    if (figure !== undefined) {
-      if (goToTool('shape') === false) return;
-      patchToolArgs('shape', { figure });
-    } else {
-      if (goToTool(toolName) === false) return;
-    }
-    closeMenus();
+    if (goToTool(toolName) !== false) closeMenus();
   };
 
-  const handleFreeTransform = () => handleToolSelection('transform');
+  const handleFreeTransform = () => {
+    if (goToTool('transform') !== false) closeMenus();
+  };
 
   const handleFitOnScreen = () => {
     setViewState(DEFAULT_VIEW_STATE);
@@ -388,9 +245,6 @@ const DesktopHeader = () => {
   const handleClickOutside = useCallback(
     (event: MouseEvent) => {
       if (openMenu === 'file' && fileMenuRef.current && !fileMenuRef.current.contains(event.target as Node)) {
-        setOpenMenu(null);
-      }
-      if (openMenu === 'tools' && toolsMenuRef.current && !toolsMenuRef.current.contains(event.target as Node)) {
         setOpenMenu(null);
       }
       if (openMenu === 'image' && imageMenuRef.current && !imageMenuRef.current.contains(event.target as Node)) {
@@ -550,37 +404,6 @@ const DesktopHeader = () => {
             </ul>
           )}
         </li>
-        <li className="relative" ref={toolsMenuRef}>
-          <button
-            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
-            type="button"
-            onClick={() => toggleMenu('tools')}
-            aria-haspopup="true"
-            aria-expanded={openMenu === 'tools'}
-            data-testid="header-tools-menu-button"
-          >
-            Tools
-          </button>
-          {openMenu === 'tools' && (
-            <ul
-              className="absolute left-0 top-full z-10 m-0 min-w-[200px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800"
-              data-testid="header-tools-menu"
-            >
-              {TOOL_MENU_ITEMS.map(({ toolName, label }) => (
-                <li key={toolName}>
-                  <button
-                    className={MENU_ITEM_BUTTON}
-                    type="button"
-                    onClick={() => handleToolSelection(toolName)}
-                    data-testid={`tools-menu-${toolName}-button`}
-                  >
-                    {label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </li>
         <li className="relative" ref={imageMenuRef}>
           <button
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
@@ -662,8 +485,7 @@ const DesktopHeader = () => {
               page documents both (https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/transformation-options-in-adobe-photoshop.html).
               So this host is one item and not a bag of tool switches. `blur`, `draw` and
               `text` used to live here; all three are Tools-panel tools, so a menu is the
-              wrong surface for each of them and they stay in the rail and the Tools menu
-              above.
+              wrong surface for each of them and they stay in the rail.
 
               Only `Free Transform` ships. The rest of Adobe's submenu — `Scale`, `Rotate`,
               `Skew`, `Distort`, `Perspective`, `Warp`, `Rotate 180°`, `Rotate 90° Clockwise`,
