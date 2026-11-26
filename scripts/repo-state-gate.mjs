@@ -57,9 +57,9 @@
  * a person runs by hand was the one that reported health it had not established.
  */
 
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { samePath } from './lib/path-identity.mjs';
 import { abortCommand, findings, scanRepository } from './lib/git-operation-state.mjs';
@@ -114,7 +114,7 @@ function describeWorktree(finding) {
     finding.operations[0].marker === 'AUTO_MERGE'
   ) {
     lines.push(
-      '    If the owner has stopped and this is a stale marker, identify the unique `branch refs/heads/main` entry in `git worktree list --porcelain`, then run that checkout’s script by absolute path while keeping the current directory at this target worktree root:',
+      '    If the owner has stopped and this is a stale marker, identify the designated main path with `npm run main:landing -- status --json`; verify it is registered in `git worktree list --porcelain` and has the matching shared Git directory and identity marker. Recovery may leave a damaged `main` checkout beside its replacement, so do not choose by branch name alone. Then run the designated checkout’s script by absolute path while keeping the current directory at this target worktree root:',
       '      node "<absolute-main-worktree>/scripts/recover-stale-auto-merge.mjs" --expected-head "$(git rev-parse HEAD)"',
       '    Do not use an npm script from this target: its checkout may contain an older recovery implementation.',
       '    For dirty work, also try the read-only --preserve-matching-worktree preflight; it requires the index at HEAD and tracked files identical to AUTO_MERGE.',
@@ -224,16 +224,41 @@ function readGitConfig(cwd, key) {
   return realpathSync(value);
 }
 
-function registeredMain(cwd) {
-  return {
-    mainPath: readGitConfig(cwd, 'ph.mainWorktreePath'),
-    mainGitDir: readGitConfig(cwd, 'ph.mainWorktreeGitDir'),
-  };
+function readMainIdentity(cwd) {
+  const result = spawnSync('git', ['config', '--local', '--get', 'ph.mainWorktreeIdentity'], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 10_000,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error('registered main identity is unavailable');
+  const value = result.stdout.trim();
+  if (!value) throw new Error('registered main identity is empty');
+  return value;
 }
 
-function mainAutoMergeCanUseLandingRecovery(finding, mainPath) {
+function registeredMain(cwd) {
+  const mainPath = readGitConfig(cwd, 'ph.mainWorktreePath');
+  const mainGitDir = readGitConfig(cwd, 'ph.mainWorktreeGitDir');
+  const mainIdentity = readMainIdentity(cwd);
+  let identityFile;
+  try {
+    identityFile = readFileSync(join(mainGitDir, 'kilo-main-worktree-identity'), 'utf8').trim();
+  } catch {
+    throw new Error('registered main identity marker is unavailable');
+  }
+  if (!identityFile || identityFile !== mainIdentity) {
+    throw new Error('registered main identity does not match its private Git directory');
+  }
+  return { mainPath, mainGitDir, mainIdentity };
+}
+
+function mainAutoMergeCanUseLandingRecovery(finding, mainRecord) {
   return (
-    samePath(finding.path, mainPath) &&
+    finding.name === mainRecord.name &&
+    samePath(finding.path, mainRecord.path) &&
     finding.readError === null &&
     finding.unmerged.length === 0 &&
     finding.operations.length === 1 &&
@@ -242,16 +267,31 @@ function mainAutoMergeCanUseLandingRecovery(finding, mainPath) {
 }
 
 function landingScope(scanned, found, landing) {
-  const { sourceBranch, mainPath, mainGitDir } = landing;
-  const mainRecords = scanned.worktrees.filter(
-    (worktree) => samePath(worktree.path, mainPath) && samePath(worktree.gitDir, mainGitDir)
-  );
+  const { sourceBranch, mainPath, mainGitDir, mainIdentity } = landing;
+  const mainPathRecords = scanned.worktrees.filter((worktree) => samePath(worktree.path, mainPath));
+  const mainRecords = mainPathRecords.filter((worktree) => samePath(worktree.gitDir, mainGitDir));
+  const mainRecord = mainRecords.length === 1 ? mainRecords[0] : null;
+  const registeredMainIsVerified =
+    typeof mainIdentity === 'string' &&
+    mainIdentity.length > 0 &&
+    mainPathRecords.length === 1 &&
+    mainRecord?.branch === 'main' &&
+    mainRecord.present === true &&
+    !mainRecord.readError;
   const sourceRecords = scanned.worktrees.filter((worktree) => worktree.branch === sourceBranch);
   const errors = [];
+  if (typeof mainIdentity !== 'string' || mainIdentity.length === 0) {
+    errors.push('registered main identity was not verified against its private Git directory');
+  }
   if (!sourceBranch || sourceBranch === 'main') {
     errors.push('source branch must identify a non-main candidate branch');
   }
-  if (mainRecords.length !== 1 || mainRecords[0]?.branch !== 'main' || mainRecords[0]?.present !== true) {
+  if (
+    mainPathRecords.length !== 1 ||
+    mainRecords.length !== 1 ||
+    mainRecords[0]?.branch !== 'main' ||
+    mainRecords[0]?.present !== true
+  ) {
     errors.push('registered main checkout does not match one present main worktree in the repository scan');
   } else if (mainRecords[0].readError) {
     errors.push(`registered main checkout could not be read: ${mainRecords[0].readError}`);
@@ -264,7 +304,7 @@ function landingScope(scanned, found, landing) {
   let mainAutoMergeRecovery = false;
   for (const finding of found) {
     const inMain = samePath(finding.path, mainPath);
-    if (inMain && mainAutoMergeCanUseLandingRecovery(finding, mainPath)) {
+    if (inMain && registeredMainIsVerified && mainAutoMergeCanUseLandingRecovery(finding, mainRecord)) {
       mainAutoMergeRecovery = true;
       continue;
     }
