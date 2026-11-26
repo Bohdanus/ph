@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Menu from './components/Menu/Menu';
 import Footer from './components/Footer/Footer';
 import SidebarLeft from './components/SidebarLeft/SidebarLeft';
@@ -9,7 +9,7 @@ import { MobileShell } from './components/Mobile/MobileShell.tsx';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { StoreProvider, useStore } from './contexts/StoreContext.tsx';
 import { UnsavedChangesProvider } from './contexts/UnsavedChangesContext.tsx';
-import { AutoSaveProvider } from './contexts/AutoSaveContext.tsx';
+import { AutoSaveProvider, useAutoSave } from './contexts/AutoSaveContext.tsx';
 import { CurrentToolProvider } from './contexts/useCurrentTool.tsx';
 import { FileProvider } from './contexts/useFile.tsx';
 import { KeyboardEventsProvider } from './hooks/useKeyboardEvents.tsx';
@@ -23,6 +23,44 @@ import { RightPanelVisibilityProvider, useRightPanelVisibility } from './context
 import { PanelLayoutProvider, usePanelLayout } from './contexts/PanelLayout.tsx';
 import { ScreenModeProvider, useScreenMode, type ChromeRegion } from './contexts/ScreenMode.tsx';
 import { edgePlacement } from './util/edge-placement.ts';
+import { useApp } from './hooks/useApp.ts';
+import { E2E_DEFAULT_DOCUMENT_STORAGE_KEY } from './testing/e2e-startup.ts';
+
+const E2E_DEFAULT_BLANK_IMAGE = {
+  color: '#ffffff',
+  opacity: 1,
+  size: { width: 800, height: 600 },
+  isBedrock: true,
+} as const;
+
+/**
+ * Most canvas E2Es use the former clean 800x600 startup document as their baseline.
+ * The production app now starts at the home screen; this opt-in restores that baseline
+ * only in Vite development when the shared Playwright fixture marks the tab. Keeping
+ * the marker in session storage also gives reload tests the same fresh document, while
+ * Playwright's per-test browser context prevents it from leaking into another test.
+ */
+function E2EDefaultDocument() {
+  const [{ hasImage }] = useStore();
+  const { isCheckingAutosave } = useAutoSave();
+  const { setBlankImage } = useApp();
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || isCheckingAutosave || hasImage || startedRef.current) return;
+
+    try {
+      if (window.sessionStorage.getItem(E2E_DEFAULT_DOCUMENT_STORAGE_KEY) !== '1') return;
+    } catch {
+      return;
+    }
+
+    startedRef.current = true;
+    setBlankImage(E2E_DEFAULT_BLANK_IMAGE, { hasUnsavedChanges: false });
+  }, [hasImage, isCheckingAutosave, setBlankImage]);
+
+  return null;
+}
 
 /**
  * Each region hides from the grid container rather than from inside its component, so the five
@@ -91,6 +129,7 @@ function AppContainer() {
     // Re-docking swaps which component claims which area, which is a grid placement and not a
     // reorder, so the focus order the shell has always had is intact.
     <>
+      {import.meta.env.DEV && <E2EDefaultDocument />}
       <div
         className={`grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[auto_1fr_auto] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[auto_1fr_auto] max-md:[grid-template-areas:'header''main''bottom'] dark:bg-gray-900 ${hiddenChromeClasses}`}
       >

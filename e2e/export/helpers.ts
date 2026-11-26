@@ -490,7 +490,18 @@ export async function setupExportTest(
     }),
   });
 
-  const sourceDataUrl = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));
+  const sourceDataUrl = await canvas.evaluate((element, size) => {
+    const source = element as HTMLCanvasElement;
+    const documentCanvas = source.ownerDocument.createElement('canvas');
+    documentCanvas.width = size.width;
+    documentCanvas.height = size.height;
+    const context = documentCanvas.getContext('2d');
+    if (!context) throw new Error('Could not create a document-resolution export verification canvas');
+    // The workspace canvas backing store scales with devicePixelRatio, while saved files
+    // retain document pixel dimensions. Normalize the oracle to that logical document size.
+    context.drawImage(source, 0, 0, documentCanvas.width, documentCanvas.height);
+    return documentCanvas.toDataURL('image/png');
+  }, documentSize);
 
   return { box, documentSize, sourceDataUrl, downloadDirectory };
 }

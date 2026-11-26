@@ -439,7 +439,7 @@ describe('script-test resource boundary audit', () => {
     expect(() => scanTestSource('const broken = ;', 'broken.test.mjs')).toThrow('Could not parse broken.test.mjs');
   });
 
-  // These two full-tree scans can exceed Vitest's default 5s under parallel suite load.
+  // These repeated full-tree scans can exceed Vitest's default 5s under parallel suite load.
   it('derives every script test and requires exact reviewed pattern classifications', () => {
     const tests = deriveScriptTests(TEST_DIRECTORY);
     const names = new Set(tests.map(({ name }) => name));
@@ -488,7 +488,7 @@ describe('script-test resource boundary audit', () => {
       const source = readFileSync(join(TEST_DIRECTORY, file), 'utf8');
       expect(source, `${file} must retain the evidence for ${resource}`).toContain(evidence);
     }
-  });
+  }, 15_000);
 
   it('keeps process-wide environment mutation separate from filesystem writes', () => {
     const tests = new Map(deriveScriptTests(TEST_DIRECTORY).map(({ name, findings }) => [name, findings]));

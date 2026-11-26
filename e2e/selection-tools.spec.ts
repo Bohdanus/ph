@@ -783,13 +783,13 @@ test.describe('Elliptical marquee', () => {
       .toBeGreaterThan(rect.height);
   });
 
-  test('a fixed-size elliptical marquee ignores the drag and commits Width x Height centred on the press', async ({
-    page,
-  }) => {
-    for (const viewport of [
-      { width: 1280, height: 720 },
-      { width: 1024, height: 768 },
-    ]) {
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 1024, height: 768 },
+  ]) {
+    test(`a fixed-size elliptical marquee commits centered Width x Height at ${viewport.width}x${viewport.height}`, async ({
+      page,
+    }) => {
       await page.setViewportSize(viewport);
       await page.goto('/');
       await expect(page.getByTestId('footer-dimensions')).toContainText('Dimensions: 800 × 600 px');
@@ -803,9 +803,9 @@ test.describe('Elliptical marquee', () => {
       await page.getByTestId('new-image-dialog-submit-button').click();
       await expect(dialog).toHaveCount(0);
       await expect(page.getByTestId('footer-dimensions')).toContainText('Dimensions: 1600 × 1200 px');
-      await expect(getWorkspaceCanvas(page)).toHaveAttribute('width', '1600');
-      await expect(getWorkspaceCanvas(page)).toHaveAttribute('height', '1200');
-      expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1);
+      const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio);
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('width', String(1600 * devicePixelRatio));
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('height', String(1200 * devicePixelRatio));
 
       await selectEllipticalMarqueeFromSidebar(page);
       const style = marqueeBar(page);
@@ -868,8 +868,8 @@ test.describe('Elliptical marquee', () => {
       expect.soft(Math.abs(centre.y - pressPoint.y) <= tolerance, 'committed centre y').toBe(true);
       // The fixed document-pixel bounds above prove both dimensions and their ratio; a
       // second ratio computed from rounded screenshot bounds adds only pixel quantization.
-    }
-  });
+    });
+  }
 
   test('holding Shift constrains an elliptical marquee drag to a circle', async ({ page }) => {
     await selectEllipticalMarqueeFromSidebar(page);
