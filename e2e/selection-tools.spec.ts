@@ -303,11 +303,13 @@ const outlineCenter = (bounds: CommittedBounds): PagePoint => ({
   y: (bounds.top + bounds.bottom) / 2,
 });
 
-/** The contain fit on the ants canvas: CSS px per document px, and where its letterboxed content starts. */
-type AntsContentBox = { scale: number; left: number; top: number };
+/** The contain fit on the ants canvas: CSS px per document px on each axis, and its content origin. */
+type AntsContentBox = { scaleX: number; scaleY: number; left: number; top: number };
 
 /**
- * That fit, measured from the ants canvas' own bounding rect.
+ * The canvas uses `object-contain`, so the browser fits its DPR-scaled backing dimensions inside the
+ * element's CSS rect. Convert that fit back to logical document pixels; using only the logical
+ * dimensions would miss the subpixel aspect-ratio change when backing dimensions are rounded.
  *
  * `committedOutline` maps a border OUT of the backing store into page pixels, while `readAntRuns` takes
  * its window IN document pixels, so a probe placed at a page point needs this to go the other way. It is
@@ -320,12 +322,45 @@ async function antsContentBox(page: Page): Promise<AntsContentBox> {
     if (!(element instanceof window.HTMLCanvasElement)) {
       throw new Error('antsContentBox: the ants canvas is not an HTMLCanvasElement');
     }
+    const workspace = element.closest<HTMLElement>('[data-testid="workspace-container"]');
+    if (!workspace) throw new Error('antsContentBox: no workspace container contains the ants canvas');
+    const documentWidthAttribute = workspace.getAttribute('data-fit-document-width');
+    const documentHeightAttribute = workspace.getAttribute('data-fit-document-height');
+    const documentWidth = Number(documentWidthAttribute);
+    const documentHeight = Number(documentHeightAttribute);
+    if (
+      documentWidthAttribute === null ||
+      documentHeightAttribute === null ||
+      !Number.isFinite(documentWidth) ||
+      documentWidth <= 0 ||
+      !Number.isFinite(documentHeight) ||
+      documentHeight <= 0
+    ) {
+      throw new Error('antsContentBox: workspace document dimensions are missing or invalid');
+    }
     const rect = element.getBoundingClientRect();
-    const scale = Math.min(rect.width / element.width, rect.height / element.height);
+    if (!Number.isFinite(rect.width) || rect.width <= 0 || !Number.isFinite(rect.height) || rect.height <= 0) {
+      throw new Error('antsContentBox: the ants canvas has no measurable content box');
+    }
+    if (
+      !Number.isFinite(element.width) ||
+      element.width <= 0 ||
+      !Number.isFinite(element.height) ||
+      element.height <= 0
+    ) {
+      throw new Error('antsContentBox: the ants canvas has no valid backing dimensions');
+    }
+    const backingScale = Math.min(rect.width / element.width, rect.height / element.height);
+    const scaleX = (backingScale * element.width) / documentWidth;
+    const scaleY = (backingScale * element.height) / documentHeight;
+    if (!Number.isFinite(scaleX) || scaleX <= 0 || !Number.isFinite(scaleY) || scaleY <= 0) {
+      throw new Error('antsContentBox: invalid document-to-page scale');
+    }
     return {
-      scale,
-      left: rect.left + (rect.width - element.width * scale) / 2,
-      top: rect.top + (rect.height - element.height * scale) / 2,
+      scaleX,
+      scaleY,
+      left: rect.left + (rect.width - element.width * backingScale) / 2,
+      top: rect.top + (rect.height - element.height * backingScale) / 2,
     };
   });
 }
@@ -340,14 +375,15 @@ async function antsContentBox(page: Page): Promise<AntsContentBox> {
  * store distinguishes a border the app painted from a dark pixel of the picture under it.
  */
 async function hasAntsNear(page: Page, frame: AntsContentBox, point: PagePoint, radiusPx: number): Promise<boolean> {
-  const radius = radiusPx / frame.scale;
+  const radiusX = radiusPx / frame.scaleX;
+  const radiusY = radiusPx / frame.scaleY;
   const runs = await readAntRuns(
     page,
     {
-      x: (point.x - frame.left) / frame.scale,
-      y: (point.y - frame.top) / frame.scale,
-      width: radius * 2,
-      height: radius * 2,
+      x: (point.x - frame.left) / frame.scaleX,
+      y: (point.y - frame.top) / frame.scaleY,
+      width: radiusX * 2,
+      height: radiusY * 2,
     },
     'row'
   );
@@ -803,9 +839,9 @@ test.describe('Elliptical marquee', () => {
       await page.getByTestId('new-image-dialog-submit-button').click();
       await expect(dialog).toHaveCount(0);
       await expect(page.getByTestId('footer-dimensions')).toContainText('Dimensions: 1600 × 1200 px');
-      await expect(getWorkspaceCanvas(page)).toHaveAttribute('width', '1600');
-      await expect(getWorkspaceCanvas(page)).toHaveAttribute('height', '1200');
-      expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1);
+      const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio);
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('width', String(Math.round(1600 * devicePixelRatio)));
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('height', String(Math.round(1200 * devicePixelRatio)));
 
       await selectEllipticalMarqueeFromSidebar(page);
       const style = marqueeBar(page);
@@ -1121,7 +1157,7 @@ test.describe('Rectangular Marquee Tool', () => {
       .toBe(true);
   });
 
-  test('a fixed-size rectangular marquee uses the configured document-pixel dimensions', async ({ page }) => {
+  test('a fixed-size rectangular marquee keeps configured dimensions when drag ratio differs', async ({ page }) => {
     for (const viewport of [
       { width: 1280, height: 720 },
       { width: 1024, height: 768 },
@@ -1139,8 +1175,9 @@ test.describe('Rectangular Marquee Tool', () => {
       await page.getByTestId('new-image-dialog-submit-button').click();
       await expect(dialog).toHaveCount(0);
       await expect(page.getByTestId('footer-dimensions')).toContainText('Dimensions: 1600 × 1200 px');
-      await expect(getWorkspaceCanvas(page)).toHaveAttribute('width', '1600');
-      await expect(getWorkspaceCanvas(page)).toHaveAttribute('height', '1200');
+      const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio);
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('width', String(Math.round(1600 * devicePixelRatio)));
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('height', String(Math.round(1200 * devicePixelRatio)));
 
       await clickToolButton(page, 'rectangular-selection');
       const style = marqueeBar(page);
@@ -1191,7 +1228,7 @@ test.describe('Rectangular Marquee Tool', () => {
 
       expect(
         expectedHeight,
-        'the fixed-size rectangle must keep the ellipse corner outside the 3px probe'
+        'the fit-shrunk height must leave separated rectangular-contour probe windows'
       ).toBeGreaterThan(24);
       expect.soft(Math.abs(outlineWidth(outline!) - expectedWidth) <= tolerance, 'fixed document width').toBe(true);
       expect.soft(Math.abs(outlineHeight(outline!) - expectedHeight) <= tolerance, 'fixed document height').toBe(true);
