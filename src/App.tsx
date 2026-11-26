@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import Menu from './components/Menu/Menu';
 import Footer from './components/Footer/Footer';
 import SidebarLeft from './components/SidebarLeft/SidebarLeft';
@@ -18,19 +18,11 @@ import { SelectionShortcuts } from './components/Common/SelectionShortcuts.tsx';
 import { AdjustmentShortcuts } from './components/Common/AdjustmentShortcuts.tsx';
 import { ScreenModeShortcuts } from './components/Common/ScreenModeShortcuts.tsx';
 import { ErrorBoundary } from './components/Common/ErrorBoundary.tsx';
-import { useApp } from './hooks/useApp.ts';
 import { useIsMobileViewport } from './hooks/useMediaQuery.ts';
 import { RightPanelVisibilityProvider, useRightPanelVisibility } from './contexts/RightPanelVisibility.tsx';
 import { PanelLayoutProvider, usePanelLayout } from './contexts/PanelLayout.tsx';
 import { ScreenModeProvider, useScreenMode, type ChromeRegion } from './contexts/ScreenMode.tsx';
 import { edgePlacement } from './util/edge-placement.ts';
-
-const DEFAULT_BLANK_IMAGE = {
-  color: '#ffffff',
-  opacity: 1,
-  size: { width: 800, height: 600 },
-  isBedrock: true,
-} as const;
 
 /**
  * Each region hides from the grid container rather than from inside its component, so the five
@@ -45,21 +37,6 @@ const HIDE_CHROME_CLASS: Readonly<Record<ChromeRegion, string>> = {
   panels: '[&>[data-chrome=panels]]:hidden',
   footer: '[&>[data-chrome=footer]]:hidden',
 };
-
-function BlankImageStarter() {
-  const [{ hasImage }] = useStore();
-  const { setBlankImage } = useApp();
-  const startedRef = useRef(false);
-
-  useEffect(() => {
-    if (hasImage || startedRef.current) return;
-
-    startedRef.current = true;
-    setBlankImage(DEFAULT_BLANK_IMAGE, { hasUnsavedChanges: false });
-  }, [hasImage, setBlankImage]);
-
-  return null;
-}
 
 function AppContainer() {
   const [isLayersDrawerOpen, setIsLayersDrawerOpen] = useState(false);
@@ -121,7 +98,6 @@ function AppContainer() {
         <SelectionShortcuts />
         <AdjustmentShortcuts />
         <ScreenModeShortcuts />
-        <BlankImageStarter />
         <Menu />
         <SidebarLeft />
 

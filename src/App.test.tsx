@@ -1,11 +1,10 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { setViewportWidth } from './test/setup.ts';
 import type { useScreenMode } from './contexts/ScreenMode.tsx';
 
-const setBlankImage = vi.hoisted(() => vi.fn());
 const dispatch = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted(() => ({
   canvasRef: { current: null },
@@ -90,13 +89,9 @@ vi.mock('./contexts/useFile.tsx', () => ({
 vi.mock('./hooks/useKeyboardEvents.tsx', () => ({
   KeyboardEventsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
-vi.mock('./hooks/useApp.ts', () => ({
-  useApp: () => ({ setBlankImage }),
-}));
 
 describe('App', () => {
   beforeEach(() => {
-    setBlankImage.mockClear();
     dispatch.mockClear();
     useStoreMock.mockClear();
     storeState.hasImage = false;
@@ -107,61 +102,6 @@ describe('App', () => {
 
   afterEach(() => {
     setViewportWidth(1280, 800);
-  });
-
-  it('starts with a default blank image and skips the landing screen', async () => {
-    render(<App />);
-
-    await waitFor(() => {
-      expect(setBlankImage).toHaveBeenCalledWith(
-        {
-          color: '#ffffff',
-          opacity: 1,
-          size: { width: 800, height: 600 },
-          isBedrock: true,
-        },
-        { hasUnsavedChanges: false }
-      );
-    });
-  });
-
-  it('never starts a blank image when a document is already open', async () => {
-    storeState.hasImage = true;
-    render(<App />);
-
-    await waitFor(() => {
-      expect(useStoreMock).toHaveBeenCalled();
-    });
-
-    expect(setBlankImage).not.toHaveBeenCalled();
-  });
-
-  it('starts the blank image exactly once even when the tree re-renders', async () => {
-    const { rerender } = render(<App />);
-
-    await waitFor(() => {
-      expect(setBlankImage).toHaveBeenCalledTimes(1);
-    });
-
-    rerender(<App />);
-    rerender(<App />);
-
-    await waitFor(() => {
-      expect(useStoreMock.mock.calls.length).toBeGreaterThan(1);
-    });
-    expect(setBlankImage).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not start a second blank image after the store reports an image', async () => {
-    const { rerender } = render(<App />);
-    await waitFor(() => {
-      expect(setBlankImage).toHaveBeenCalledTimes(1);
-    });
-
-    storeState.hasImage = true;
-    rerender(<App />);
-
-    expect(setBlankImage).toHaveBeenCalledTimes(1);
   });
 
   it('composes every application region exactly once', () => {
@@ -180,25 +120,12 @@ describe('App', () => {
     expect(state).toBe(storeState);
     expect(storeDispatch).toBe(dispatch);
   });
-
-  it('does not create a blank image after unmount', async () => {
-    const { unmount } = render(<App />);
-    await waitFor(() => {
-      expect(setBlankImage).toHaveBeenCalledTimes(1);
-    });
-
-    unmount();
-    storeState.hasImage = false;
-    useStoreMock.mockImplementation(() => [storeState, dispatch]);
-
-    expect(setBlankImage).toHaveBeenCalledTimes(1);
-  });
 });
 
 /**
  * The desktop-first contract.
  *
- * Everything above pins the blank-image lifecycle. These pin the shell's shape, because
+ * Everything above pins app composition and store access. These pin the shell's shape, because
  * that is what a mobile addition can break without any test noticing: presence assertions
  * pass for a region that moved, and a JS breakpoint is a silent remount of the canvas.
  */
