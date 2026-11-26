@@ -254,7 +254,7 @@ export function drawLayerSource(
   position: Pos = layer.pos,
   documentFrame?: DocumentFrame,
   preferCachedSource = false,
-  backingScale = 1
+  _backingScale = 1
 ): boolean {
   const presentationBounds = layer.presentationBounds;
   const hasBakedPresentation =
@@ -417,13 +417,10 @@ export function drawLayerSource(
       : getLayerBitmap(layer, position));
   if (!hasUsableRaster(bitmap)) return false;
 
-  // Use the bitmap's actual pixel dimensions as sourceSize when drawing to a HiDPI canvas
-  // (backingScale > 1). For 1x canvases, use the effectivePosition (CSS pixels) so that
-  // HiDPI bitmaps are scaled down to CSS size.
-  const sourceSize =
-    backingScale > 1
-      ? { width: bitmap.width, height: bitmap.height }
-      : { width: effectivePosition.width, height: effectivePosition.height };
+  // `position` and presentation operations use document-space CSS pixels. The destination
+  // context already carries `backingScale`, so drawing a HiDPI bitmap at its raw pixel size
+  // here applies that scale twice and shifts/scales the layer's pixels in the document.
+  const sourceSize = { width: effectivePosition.width, height: effectivePosition.height };
 
   const target: PresentationDrawTarget = { kind: 'document', frame: documentFrame };
   const evaluation = evaluatePresentationForDraw(

@@ -10,7 +10,7 @@ import { colors } from './colors.ts';
 import { colorReplacement, COLOR_REPLACEMENT_MAX_STAGING_PIXELS } from './colorReplacement.ts';
 import { crop } from './crop.ts';
 import { burn, dodge } from './dodgeBurn.ts';
-import { draw, type DrawToolArgs } from './draw.ts';
+import { draw, drawPaintWithSelection, type DrawToolArgs, type PaintToolArgs } from './draw.ts';
 import { ellipticalSelection } from './ellipticalSelection.ts';
 import { eraser } from './eraser.ts';
 import { featherMagneticLasso } from './featherMagneticLasso.ts';
@@ -364,8 +364,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     creator: true,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
-      const [canvas] = draw(params)(buildDrawArgs(args, 'pen'));
-      return [canvas];
+      return drawPaintWithSelection(params, buildDrawArgs(args, 'pen'), (args as Partial<PaintToolArgs>).selection);
     },
   },
   pencil: {
@@ -378,8 +377,11 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
       // in favour of a width it picks itself. Only a finite width may reach the clamp.
       const width = Number((args as Partial<DrawToolArgs>).lineWidth ?? DEFAULT_PENCIL_LINE_WIDTH);
       const lineWidth = Number.isFinite(width) ? Math.max(1, width) : DEFAULT_PENCIL_LINE_WIDTH;
-      const [canvas] = draw(params)(buildDrawArgs(args, 'pen', lineWidth));
-      return [canvas];
+      return drawPaintWithSelection(
+        params,
+        buildDrawArgs(args, 'pen', lineWidth),
+        (args as Partial<PaintToolArgs>).selection
+      );
     },
   },
   'color-replacement': {

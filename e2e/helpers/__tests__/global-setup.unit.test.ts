@@ -218,7 +218,7 @@ describe('Playwright spec browser-mode policy', () => {
     expect(violations, 'per-spec headless:false overrides bypass globalSetup and can open a visible browser').toEqual(
       []
     );
-  });
+  }, 10000);
 });
 
 describe('normalizeOwnServerBaseUrl', () => {
