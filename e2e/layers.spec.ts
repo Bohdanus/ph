@@ -568,7 +568,7 @@ test.describe('Layers', () => {
     await draw('#00aa00', { x: box.x + 160, y: box.y + 260 }, { x: box.x + 440, y: box.y + 260 }); // draw 3, top
 
     // Set opacity of top layer (draw 3) to 50%
-    await page.locator('details > summary').click();
+    await page.getByTestId('layer-opacity-summary').click();
     const opacitySlider = page.getByRole('slider', { name: 'Layer opacity' });
     await expect(opacitySlider).toBeVisible();
     await opacitySlider.fill('50');

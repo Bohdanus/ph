@@ -1,5 +1,6 @@
 import { test as base, expect, type Page } from '@playwright/test';
 import { ConsolePolice } from '../helpers/console-police';
+import { E2E_DEFAULT_DOCUMENT_STORAGE_KEY } from '../../src/testing/e2e-startup.ts';
 
 /**
  * The `test` object every spec in `e2e/` imports.
@@ -157,7 +158,25 @@ export const test = base.extend<{
   consolePolice: ConsolePolice;
   pinnedTheme: null;
   firstUseTourSuppressed: null;
+  initialEntry: 'workspace' | 'start-page';
+  workspaceStartup: null;
 }>({
+  initialEntry: ['workspace', { option: true }],
+  workspaceStartup: [
+    async ({ page, initialEntry }, use) => {
+      if (initialEntry === 'workspace') {
+        await page.addInitScript((storageKey) => {
+          try {
+            window.sessionStorage.setItem(storageKey, '1');
+          } catch {
+            // Opaque origins have no session storage to seed.
+          }
+        }, E2E_DEFAULT_DOCUMENT_STORAGE_KEY);
+      }
+      await use(null);
+    },
+    { auto: true },
+  ],
   consolePolice: [
     async ({ page }, use, testInfo) => {
       const police = new ConsolePolice(page);
