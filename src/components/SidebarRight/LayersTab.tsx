@@ -386,7 +386,7 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
           </details>
         </div>
       </div>
-      <div className="flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-white">
+      <div className="flex items-center gap-1 text-xs text-gray-600 dark:text-white">
         <span>Lock:</span>
         <div
           role="group"
@@ -410,7 +410,9 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
             className="col-start-4"
           />
         </div>
-        <LayerFillOpacityControl layer={layer} updateLayer={updateLayer} />
+        <div className="ml-auto">
+          <LayerFillOpacityControl layer={layer} updateLayer={updateLayer} />
+        </div>
       </div>
     </div>
   );

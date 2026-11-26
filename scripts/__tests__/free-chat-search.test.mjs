@@ -1,4 +1,5 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,19 +31,21 @@ import {
 import { sanitizeForLogging } from '../lib/secrets.mjs';
 
 // Mock statSync to simulate /mnt/c/Users not existing for Linux platform tests
-vi.mock('node:fs', () => {
-  const actualFs = vi.importActual('node:fs');
+vi.mock('node:fs', async () => {
+  const actualFs = await vi.importActual('node:fs');
   return {
     ...actualFs,
-    statSync: vi.fn((path) => {
+    statSync: vi.fn((path, ...args) => {
       if (path === '/mnt/c/Users') {
-        const err = new Error('ENOENT');
-        err.code = 'ENOENT';
-        throw err;
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
       }
-      return actualFs.statSync(path);
+      return actualFs.statSync(path, ...args);
     }),
   };
+});
+
+it('delegates non-WSL stat checks to the real filesystem implementation', () => {
+  expect(statSync(process.cwd()).isDirectory()).toBe(true);
 });
 
 function mockSpawnChild({ stdout = '', stderr = '', code = 0, signal = null, error = null, delay = 0 } = {}) {

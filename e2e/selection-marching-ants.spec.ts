@@ -483,8 +483,8 @@ test.describe('Selection Marching Ants', () => {
     ).toBeGreaterThan(1);
   });
 
-  // the border exists, and leaving the selection tools stops the loop
-  test('stops animating when a non-selection tool is selected', async ({ page }) => {
+  // Brush preserves an active selection, so its committed edge stays visible and keeps crawling.
+  test('continues animating while Brush preserves an active selection', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await selectPolygonalLassoTool(page);
@@ -493,24 +493,23 @@ test.describe('Selection Marching Ants', () => {
 
     await waitForBandToBePainted(page, BORDER_BAND, 'part of the committed selection');
 
-    // Brush, NOT `rectangular-selection`. The ants are now the committed border for every
-    // selection tool - all seven modes in `SELECTION_INTERACTION_MODES`, nine tools - so the
-    // rectangular marquee has ants of its own and switching to it leaves this test's premise
-    // intact for the wrong reason. Only a tool outside that list makes "a non-selection tool has
-    // no ants" the thing under test.
+    // Brush is a selection-preserving tool, so switching to it must retain the committed edge.
     await clickToolButton(page, 'brush');
 
-    // A stopped loop clears the canvas rather than freezing it, so the band goes
-    // back to empty and stays there. (`goToTool` also clears the active selection
-    // on a tool switch, so this does not isolate the mode gate from the clear -
-    // it pins the observable outcome of leaving the selection tools either way.)
     await expect
       .poll(async () => (await readAntsBand(page, BORDER_BAND)).opaqueCount, {
-        message: 'The ants canvas should be cleared once the selection tools are left',
+        message: 'The committed selection edge should remain visible on Brush',
       })
-      .toBe(0);
+      .toBeGreaterThan(0);
 
     const samples = await sampleAntsBandOverTime(page, BORDER_BAND);
-    expect(new Set(samples.map(fingerprint)).size, 'The ants canvas should stop repainting').toBe(STATIC_FRAME_COUNT);
+    expect(
+      samples.every((sample) => sample.opaqueCount > 0),
+      'every sampled frame should keep the committed edge visible'
+    ).toBe(true);
+    expect(
+      new Set(samples.map(fingerprint)).size,
+      'the selection edge should continue crawling while Brush preserves the selection'
+    ).toBeGreaterThan(1);
   });
 });
