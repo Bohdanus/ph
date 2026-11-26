@@ -364,11 +364,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     creator: true,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
-      return drawPaintWithSelection(
-        params,
-        buildDrawArgs(args, 'pen'),
-        (args as Partial<PaintToolArgs>).selection
-      );
+      return drawPaintWithSelection(params, buildDrawArgs(args, 'pen'), (args as Partial<PaintToolArgs>).selection);
     },
   },
   pencil: {
