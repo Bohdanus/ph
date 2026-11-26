@@ -125,11 +125,13 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  RecordingOffscreenCanvas.instances = [];
 });
 
 describe('healingBrush structure', () => {
-  it('is a distinct export (no other tool shares its processor)', () => {
-    expect(typeof healingBrush).toBe('function');
+  it('is the registered module-level processor for Healing Brush', async () => {
+    const { toolProcessors } = await import('../toolProcessors.ts');
+    expect(toolProcessors['healing-brush'].imageProcessor).toBe(healingBrush);
   });
 
   it('is a two-stage curried processor that reads its params and its args', () => {
@@ -216,8 +218,32 @@ describe('healingBrush exact pixel coverage', () => {
       })
     );
 
-    expect(at(canvas.pixels, 4, 4)).toEqual([31, 111, 171, 255]);
-    expect(at(canvas.pixels, 2, 4)).toEqual(gradientPixel(2, 4));
+    // The offset is (-3,-3), so every point in this 3x3 block is inside radius 1.5;
+    // the next axial pixels are distance 2 and remain untouched. Eight inner pixels
+    // receive a 17.94 luminance correction; the center's (1,1) source pixel is blue,
+    // so its correction is 11.1 and it rounds to [31, 111, 171].
+    const healedPixels: Array<[number, number, [number, number, number, number]]> = [
+      [3, 3, [18, 118, 118, 255]],
+      [4, 3, [38, 118, 118, 255]],
+      [5, 3, [58, 118, 118, 255]],
+      [3, 4, [18, 118, 118, 255]],
+      [4, 4, [31, 111, 171, 255]],
+      [5, 4, [58, 118, 118, 255]],
+      [3, 5, [18, 118, 118, 255]],
+      [4, 5, [38, 118, 118, 255]],
+      [5, 5, [58, 118, 118, 255]],
+    ];
+    for (const [x, y, expected] of healedPixels) {
+      expect(at(canvas.pixels, x, y)).toEqual(expected);
+    }
+    for (const [x, y] of [
+      [2, 4],
+      [6, 4],
+      [4, 2],
+      [4, 6],
+    ]) {
+      expect(at(canvas.pixels, x, y)).toEqual(gradientPixel(x, y));
+    }
   });
 
   it('uses cosine falloff for a soft tip and leaves the half-open rim untouched', () => {
@@ -254,7 +280,7 @@ describe('healingBrush exact pixel coverage', () => {
     expect(at(canvas.pixels, 4, 4)).toEqual([56, 106, 136, 255]);
   });
 
-  it('uses different source offsets for aligned and free strokes', () => {
+  it('keeps the historical last-dab offset for unaligned records without a samplingOffset', () => {
     const points = [
       { x: 4, y: 4 },
       { x: 6, y: 4 },
@@ -270,6 +296,58 @@ describe('healingBrush exact pixel coverage', () => {
 
     expect(at(aligned.pixels, 6, 4)).toEqual([78, 118, 118, 255]);
     expect(at(free.pixels, 6, 4)).toEqual([43, 123, 183, 255]);
+  });
+
+  it('uses a persisted per-stroke offset in either alignment mode', () => {
+    const points = [
+      { x: 4, y: 4 },
+      { x: 6, y: 4 },
+    ];
+    const samplingOffset = { x: -3, y: -3 };
+    const aligned = run(
+      gradientFixture(),
+      args({
+        size: 3,
+        hardness: 100,
+        opacity: 1,
+        source: { x: 1, y: 1 },
+        points,
+        aligned: true,
+        samplingOffset,
+      })
+    );
+    const unaligned = run(
+      gradientFixture(),
+      args({
+        size: 3,
+        hardness: 100,
+        opacity: 1,
+        source: { x: 1, y: 1 },
+        points,
+        aligned: false,
+        samplingOffset,
+      })
+    );
+
+    expect(unaligned.pixels).toEqual(aligned.pixels);
+    expect(at(unaligned.pixels, 6, 4)).toEqual([78, 118, 118, 255]);
+  });
+
+  it('treats a persisted zero offset as distinct from a missing legacy offset', () => {
+    const data = gradientFixture();
+    const current = run(
+      data,
+      args({
+        source: { x: 1, y: 1 },
+        points: [{ x: 4, y: 4 }],
+        aligned: false,
+        samplingOffset: { x: 0, y: 0 },
+      })
+    );
+    const legacy = run(data, args({ source: { x: 1, y: 1 }, points: [{ x: 4, y: 4 }], aligned: false }));
+
+    expect(current.pixels).toEqual(data);
+    expect(legacy.pixels).not.toEqual(data);
   });
 
   it('reads the original source pixels across overlapping dabs', () => {
@@ -467,10 +545,19 @@ describe('healingBrush point coordinate handling', () => {
     expect(canvas.pixels).toEqual(canvasSingle.pixels);
   });
 
-  it('points outside canvas bounds are clamped by clampPointToSize', () => {
-    const canvas = run(FIXTURE, args({ size: 3, points: [{ x: -10, y: -10 }] }));
-    expect(canvas.width).toBe(size.width);
-    expect(canvas.height).toBe(size.height);
+  it('leaves every pixel unchanged when the whole stroke is outside the canvas', () => {
+    const canvas = run(
+      FIXTURE,
+      args({
+        size: 8,
+        points: [
+          { x: 40, y: 40 },
+          { x: 44, y: 44 },
+        ],
+      })
+    );
+
+    expect(canvas.pixels).toEqual(FIXTURE);
   });
 });
 

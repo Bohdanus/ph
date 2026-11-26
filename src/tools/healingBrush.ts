@@ -8,7 +8,11 @@ export type HealingBrushToolArgs = {
   hardness: number;
   opacity: number;
   source: Point | null;
+  /** Most recent aligned source point; transient tool state, absent on legacy actions. */
+  alignedSource?: Point | null;
   aligned: boolean;
+  /** Per-stroke source-to-first-dab translation; absent on legacy history. */
+  samplingOffset?: Point;
   points: Point[];
   toolName: 'healing-brush';
 };
@@ -20,9 +24,13 @@ const luminance = (red: number, green: number, blue: number): number => 0.299 * 
 const clampChannel = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
 
 const cloneOffset = (source: Point, points: Point[], aligned: boolean): Point => {
+  // Keep the historical calculation for recorded actions that predate samplingOffset.
   const anchor = aligned ? points[0] : points[points.length - 1];
   return { x: source.x - anchor.x, y: source.y - anchor.y };
 };
+
+const isFinitePoint = (point: Point | null | undefined): point is Point =>
+  Boolean(point && Number.isFinite(point.x) && Number.isFinite(point.y));
 
 const dabSpan = (center: Point, radius: number, size: Size) => ({
   left: Math.max(0, Math.ceil(center.x - radius)),
@@ -66,7 +74,7 @@ const healDab = (
 
 export const healingBrush =
   ({ bitmap, size }: ProcessorToolParams) =>
-  ({ size: tipSize, hardness, opacity, source, aligned, points }: HealingBrushToolArgs): ToolResult => {
+  ({ size: tipSize, hardness, opacity, source, aligned, samplingOffset, points }: HealingBrushToolArgs): ToolResult => {
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
     ctx.drawImage(bitmap, 0, 0);
@@ -88,7 +96,13 @@ export const healingBrush =
     if (centers.length === 0) return [canvas];
     const image = ctx.getImageData(0, 0, size.width, size.height);
     const sourceData = new Uint8ClampedArray(image.data);
-    const offset = cloneOffset(source, centers, aligned);
+    const offset =
+      samplingOffset === undefined
+        ? cloneOffset(source, centers, aligned)
+        : isFinitePoint(samplingOffset)
+          ? samplingOffset
+          : null;
+    if (!offset) return [canvas];
     for (const center of centers) healDab(sourceData, image.data, size, center, offset, settings);
     ctx.putImageData(image, 0, 0);
     return [canvas];

@@ -497,10 +497,18 @@ Sources:
 
 Adobe distinguishes the Healing Brush from Spot Healing by its manual
 Alt/Option-click source. This implementation samples a source point, carries the
-source offset across the stroke when Aligned is on, and adjusts the sampled RGB
+source offset across committed strokes when Aligned is on, and adjusts the sampled RGB
 texture toward the destination luminance before compositing it through the tip.
 That is a deterministic approximation, not a claim to Adobe’s private
 Poisson-blending implementation.
+
+Adobe's current Healing Brush guide says Aligned On continuously samples as you
+paint, while Off reuses the initial sample point each time painting starts. New
+app strokes keep one source-to-first-dab offset for the whole drag; Aligned then
+advances its source by the completed stroke displacement, while Off starts each
+drag at the original Alt/Option source. New history items save that offset as
+`samplingOffset` so preview and replay agree. Older history items omit the field
+and retain the renderer they were recorded with.
 
 Pattern source, Sample Current & Below / All Layers, Ignore Adjustment Layers,
 Diffusion, pressure-driven size, blend-mode selection, cross-document sampling
@@ -509,6 +517,7 @@ and selection clipping remain deferred. They are recorded as missing controls in
 
 Sources:
 
+- <https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html>
 - <https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html>
 - <https://helpx.adobe.com/photoshop/using/healing-examples.html>
 - <https://helpx.adobe.com/photoshop/using/nondestructive-editing.html>
