@@ -15,6 +15,7 @@ import {
   fillSaveDialog,
   submitSaveDialogForDownload,
   exportFormats,
+  documentResolutionCanvasDataUrl,
   prepareExportDownloadDirectory,
   verifyExportContainer,
 } from './export/helpers';
@@ -106,9 +107,8 @@ async function exportPsd(
   filename: string,
   options: { expectDrawing?: boolean } = {}
 ): Promise<string> {
-  const sourceDataUrl = await getWorkspaceCanvas(page).evaluate((element) =>
-    (element as HTMLCanvasElement).toDataURL('image/png')
-  );
+  const documentSize = await readWorkspaceDocumentSize(page, 'exportPsd');
+  const sourceDataUrl = await getWorkspaceCanvas(page).evaluate(documentResolutionCanvasDataUrl, documentSize);
   const psdFormat = exportFormats.find((f) => f.extension === '.psd')!;
   await openSaveDialog(page);
   await fillSaveDialog(page, filename, psdFormat.label);
