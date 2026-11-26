@@ -136,9 +136,9 @@ npm --version
 Install the Kilo Code CLI with the Linux npm managed by nvm. This keeps its
 global executable in WSL instead of using a Windows npm prefix. The official
 Kilo package is `@kilocode/cli`; see the [Kilo CLI guide](https://kilo.ai/docs/code-with-ai/platforms/cli).
-npm 12 and newer require explicit install-script approval (see the [npm install
+npm 11 and newer require explicit install-script approval (see the [npm install
 documentation](https://docs.npmjs.com/cli/v12/commands/npm-install/)), while
-npm 10 and 11 use the standard global-install command:
+npm 10 uses the standard global-install command:
 
 ```bash
 (
@@ -173,7 +173,7 @@ if [[ ! "$NPM_MAJOR" =~ ^[0-9]+$ ]]; then
   echo "ERROR: Could not parse the installed npm major version: $NPM_VERSION" >&2
   exit 1
 fi
-if (( NPM_MAJOR >= 12 )); then
+if (( NPM_MAJOR >= 11 )); then
   npm install -g --allow-scripts=@kilocode/cli @kilocode/cli
 else
   npm install -g @kilocode/cli
@@ -186,6 +186,10 @@ fi
 kilo --version
 )
 ```
+
+The explicit npm 11+ allowlist runs only the CLI package's postinstall. A standard
+npm 11.19.1 install reported that it had skipped this script even though the
+version command worked, so keep the package-scoped approval in this setup.
 
 Kilo's default Windows auth file is
 `%USERPROFILE%\.local\share\kilo\auth.json`; the setup below also
@@ -268,6 +272,11 @@ cp "$WINDOWS_KILO_AUTH" "$WSL_KILO_AUTH"
 chmod 600 "$WSL_KILO_AUTH"
 )
 ```
+
+A successful `kilo --version` checks the local binary, not provider authentication.
+If the free-model runner reports that Kilo authentication was rejected,
+refresh Windows Kilo credentials and repeat the private copy step above; count
+only a completion that confirms the exact provider/model and zero cost.
 
 For an isolated raw Kilo CLI run, keep the database and session data on the
 Linux filesystem and copy only the auth file into the temporary XDG data

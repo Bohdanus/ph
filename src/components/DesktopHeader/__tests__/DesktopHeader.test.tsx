@@ -187,11 +187,10 @@ afterEach(() => {
 });
 
 describe('DesktopHeader', () => {
-  it('renders the File, Tools, Image, Edit and Window menu buttons', () => {
+  it('renders the File, Image, Edit, View and Window menu buttons', () => {
     renderHeader();
 
     expect(screen.getByRole('button', { name: 'File' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Tools' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Image' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'View' })).toBeInTheDocument();
