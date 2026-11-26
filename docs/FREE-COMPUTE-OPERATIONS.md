@@ -123,6 +123,42 @@ The current Kilo CLI has no `--max-tokens` option. For Kilo completions, the run
 `--max-tokens` value is a response-length instruction; Kilo and the model control the actual
 generation budget. The OpenRouter and Groq routes send a provider-side token limit.
 
+### WSL setup and authentication
+
+Use a Kilo CLI installed inside the same WSL distribution as the repository. Windows and WSL have
+separate CLI installations and authentication stores; a Windows Kilo login does not authenticate
+the WSL CLI. Do not copy `auth.json` between hosts. If `kilo` is missing in WSL, install the
+[Kilo CLI](https://kilo.ai/docs/code-with-ai/platforms/cli-reference) with WSL's Node environment:
+
+```sh
+npm install --global @kilocode/cli
+kilo --version
+```
+
+Start `kilo auth login` from an interactive WSL terminal and complete its account sign-in flow as
+described in [Kilo's authentication guide](https://kilo.ai/docs/getting-started/setup-authentication).
+Then use `kilo auth list` to confirm that a Kilo Gateway entry is present. That command only lists
+saved credentials; it does not prove the Gateway will accept them. Likewise, `--list` reports model
+catalog and CLI discovery, not a successful inference. `KILO_CLI` selects an executable when automatic
+discovery misses it; it does not repair authentication.
+
+Verify the exact free route with one small, tool-free request from a repository worktree:
+
+```sh
+printf '%s\n' 'Reply with exactly READY.' > /tmp/kilo-free-smoke.txt
+node scripts/free-model-pool.mjs \
+  --provider kilo \
+  --model nvidia/nemotron-3-ultra-550b-a55b:free \
+  --prompt-file /tmp/kilo-free-smoke.txt \
+  --max-tokens 300 \
+  --output-file /tmp/kilo-free-smoke.result
+```
+
+Check the result for the requested Kilo model, `finish_reason: stop`, and `cost: 0`. If it reports an
+authentication rejection, stop Kilo inference attempts and repeat `kilo auth login` in that same WSL
+environment before trying again. Do not copy credentials from Windows or inspect or print their
+contents. See [WSL setup](WSL-SETUP.md) for keeping project tooling inside Linux.
+
 ### Free read-only Kilo task agents
 
 Use the repository example at

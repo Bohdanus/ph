@@ -5,6 +5,8 @@ describe('preservesSelectionOnToolSwitch', () => {
   it.each([
     'polygonal-lasso',
     'rectangular-selection',
+    'brush',
+    'pencil',
     'paint-bucket',
     'magic-eraser',
     'eraser',
@@ -16,7 +18,7 @@ describe('preservesSelectionOnToolSwitch', () => {
     expect(preservesSelectionOnToolSwitch(toolName)).toBe(true);
   });
 
-  it.each(['brush', 'draw', 'blur', 'smudge', 'gradient', 'reposition', 'crop'] as const)(
+  it.each(['draw', 'blur', 'smudge', 'gradient', 'reposition', 'crop'] as const)(
     'does not keep a selection for unsupported pixel tool %s',
     (toolName) => {
       expect(preservesSelectionOnToolSwitch(toolName)).toBe(false);

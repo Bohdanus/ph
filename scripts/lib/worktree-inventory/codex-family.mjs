@@ -65,7 +65,7 @@ function collectExecSessionIds(value, pendingProcesses, allowUnmarked = true) {
         (typeof value.chunk_id === 'string' && value.chunk_id.length > 0) || Number.isSafeInteger(value.chunk_id);
       const numericSessionIdValue =
         Number.isSafeInteger(value.session_id) ||
-        (typeof value.session_id === 'string' && /^\d+$/.test(value.session_id));
+        (typeof value.session_id === 'string' && /^-?\d+$/.test(value.session_id));
       const numericSessionId = numericSessionIdValue && Number(value.session_id) > 0;
       if (numericSessionId) {
         if (hasChunkId || allowUnmarked) {

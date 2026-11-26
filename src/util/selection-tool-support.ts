@@ -19,6 +19,8 @@ export const SELECTION_PRESERVING_TOOL_NAMES: ReadonlySet<ToolName> = new Set([
   'elliptical-selection',
   'single-row-marquee',
   'single-column-marquee',
+  'brush',
+  'pencil',
   'paint-bucket',
   'magic-eraser',
   'eraser',

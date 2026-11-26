@@ -67,6 +67,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 
 vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ setBlankImage, setImageFromUpload }) }));
 vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => ({ openLoadImageDialog, openNewImageDialog }) }));
+vi.mock('../../../contexts/AutoSaveContext.tsx', () => ({ useAutoSave: () => ({ isCheckingAutosave: false }) }));
 vi.mock('../../../contexts/useLayer.ts', () => ({ useLayers: () => ({ drawAllLayers }) }));
 const marker = vi.hoisted(() => {
   return (name: string) => {
@@ -512,7 +513,7 @@ describe('Main tool-area routing', () => {
     // dismissed` and `reports the failure through console.error when the file dialog rejects`, so
     // the claim kept here is the one none of them makes — the control is not disabled, which is
     // what a `disabled` empty state would satisfy `.toBeTruthy()` on just as well.
-    expect(screen.getByRole('button', { name: 'Open File' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Open image' })).toBeEnabled();
   });
 
   it('hides the canvas stack while no image is open', () => {
@@ -669,11 +670,18 @@ describe('Main tool-area routing', () => {
       expect(ants().style.display, `${toolName} must keep an existing selection visible`).toBe('block');
     }
 
-    for (const toolName of ['reposition', 'brush', 'crop'] as const) {
+    for (const toolName of ['reposition', 'crop'] as const) {
       storeState.toolName = toolName;
       rerender(<GuardedMain />);
 
       expect(ants().style.display, `${toolName} does not yet preserve or consume selections`).toBe('none');
+    }
+
+    for (const toolName of ['brush', 'pencil'] as const) {
+      storeState.toolName = toolName;
+      rerender(<GuardedMain />);
+
+      expect(ants().style.display, `${toolName} keeps the active paint selection visible`).toBe('block');
     }
 
     // With no committed selection and no selection tool draft, the overlay and its animation are
@@ -747,7 +755,7 @@ describe('Main empty-document actions', () => {
     openLoadImageDialog.mockResolvedValue(data);
     render(<GuardedMain />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open image' }));
     await vi.waitFor(() => expect(setImageFromUpload).toHaveBeenCalledExactlyOnceWith(data));
     expect(setBlankImage).not.toHaveBeenCalled();
   });
@@ -756,7 +764,7 @@ describe('Main empty-document actions', () => {
     openLoadImageDialog.mockResolvedValue(null);
     render(<GuardedMain />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open image' }));
     // `Main` reads the dialog with `const data = await openLoadImageDialog();` — the click opens
     // it and nothing else, so the handler makes exactly that one argument-less call. The bare
     // form could not tell that from a handler that passed a path, a filter or the click event on.
@@ -770,7 +778,7 @@ describe('Main empty-document actions', () => {
     openLoadImageDialog.mockRejectedValue(new Error('no access'));
     render(<GuardedMain />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open image' }));
     // The dialog threw before it could name a file, so the upload must not have been attempted:
     // the console report and the untouched document are the whole of the failure now that the
     // modal is gone, and the second half is what keeps a handler that still called
@@ -786,7 +794,7 @@ describe('Main empty-document actions', () => {
     openLoadImageDialog.mockRejectedValue({ code: 'EACCES' });
     render(<GuardedMain />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open image' }));
 
     // This is the whole point of the two-argument form. Stringified, a rejection that is not an
     // `Error` collapses to `[object Object]` and the reason is gone; passed through, the console
@@ -803,7 +811,7 @@ describe('Main empty-document actions', () => {
     openNewImageDialog.mockResolvedValue(size);
     render(<GuardedMain />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Custom size…' }));
     await vi.waitFor(() => expect(setBlankImage).toHaveBeenCalledExactlyOnceWith(size));
     expect(setImageFromUpload).not.toHaveBeenCalled();
   });
@@ -812,7 +820,7 @@ describe('Main empty-document actions', () => {
     openNewImageDialog.mockResolvedValue(null);
     render(<GuardedMain />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Custom size…' }));
     // The mirror of the load dialog above: `const data = await openNewImageDialog();`, one
     // argument-less call for one click.
     await vi.waitFor(() => expect(openNewImageDialog).toHaveBeenCalledExactlyOnceWith());
@@ -825,7 +833,7 @@ describe('Main empty-document actions', () => {
     openNewImageDialog.mockRejectedValue(new Error('canceled'));
     render(<GuardedMain />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Custom size…' }));
     // A rejected dialog yields no size, so no blank document may be created from it — the
     // console report and an unchanged document are the whole of the failure.
     await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith('Failed to create document:', expect.any(Error)));
@@ -837,7 +845,7 @@ describe('Main empty-document actions', () => {
     openNewImageDialog.mockRejectedValue('plain failure');
     render(<GuardedMain />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Custom size…' }));
 
     // Stringified, this would arrive as `Failed to create document: plain failure` — the reason
     // survives by accident for a string, but only because `String(x)` on a string is `x`; an

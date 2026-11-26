@@ -714,33 +714,36 @@ describe('codexRolloutState', () => {
     }
   });
 
-  it('rejects a non-positive exec session identifier even when it has a matching completion', () => {
-    const text = [
-      { type: 'event_msg', payload: { type: 'task_started' } },
-      {
-        type: 'response_item',
-        payload: {
-          type: 'custom_tool_call_output',
-          output: [{ type: 'input_text', text: 'Output:\n{"session_id": -15435}' }],
+  it.each([-15435, '-15435'])(
+    'rejects a non-positive exec session identifier %s even when it has a matching completion',
+    (sessionId) => {
+      const text = [
+        { type: 'event_msg', payload: { type: 'task_started' } },
+        {
+          type: 'response_item',
+          payload: {
+            type: 'custom_tool_call_output',
+            output: [{ type: 'input_text', text: `Output:\n${JSON.stringify({ session_id: sessionId })}` }],
+          },
         },
-      },
-      {
-        type: 'event_msg',
-        payload: {
-          type: 'item_completed',
-          item: { type: 'CommandExecution', process_id: '-15435', status: 'completed' },
+        {
+          type: 'event_msg',
+          payload: {
+            type: 'item_completed',
+            item: { type: 'CommandExecution', process_id: String(sessionId), status: 'completed' },
+          },
         },
-      },
-      { type: 'event_msg', payload: { type: 'task_complete' } },
-    ]
-      .map((event) => JSON.stringify(event))
-      .join('\n');
+        { type: 'event_msg', payload: { type: 'task_complete' } },
+      ]
+        .map((event) => JSON.stringify(event))
+        .join('\n');
 
-    expect(codexRolloutState(text)).toMatchObject({
-      status: 'unproven',
-      reason: 'Codex command execution result could not be parsed safely',
-    });
-  });
+      expect(codexRolloutState(text)).toMatchObject({
+        status: 'unproven',
+        reason: 'Codex command execution result could not be parsed safely',
+      });
+    }
+  );
 
   it('ignores session ID type declarations in unstructured tool documentation', () => {
     const text = [

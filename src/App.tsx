@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import Menu from './components/Menu/Menu';
 import Footer from './components/Footer/Footer';
 import SidebarLeft from './components/SidebarLeft/SidebarLeft';
@@ -9,7 +9,7 @@ import { MobileShell } from './components/Mobile/MobileShell.tsx';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { StoreProvider, useStore } from './contexts/StoreContext.tsx';
 import { UnsavedChangesProvider } from './contexts/UnsavedChangesContext.tsx';
-import { AutoSaveProvider, useAutoSave } from './contexts/AutoSaveContext.tsx';
+import { AutoSaveProvider } from './contexts/AutoSaveContext.tsx';
 import { CurrentToolProvider } from './contexts/useCurrentTool.tsx';
 import { FileProvider } from './contexts/useFile.tsx';
 import { KeyboardEventsProvider } from './hooks/useKeyboardEvents.tsx';
@@ -18,21 +18,11 @@ import { SelectionShortcuts } from './components/Common/SelectionShortcuts.tsx';
 import { AdjustmentShortcuts } from './components/Common/AdjustmentShortcuts.tsx';
 import { ScreenModeShortcuts } from './components/Common/ScreenModeShortcuts.tsx';
 import { ErrorBoundary } from './components/Common/ErrorBoundary.tsx';
-import { FirstUseProvider } from './contexts/FirstUseContext.tsx';
-import { FirstUseTour, hasSeenFirstUseTour } from './components/Common/FirstUseTour.tsx';
-import { useApp } from './hooks/useApp.ts';
 import { useIsMobileViewport } from './hooks/useMediaQuery.ts';
 import { RightPanelVisibilityProvider, useRightPanelVisibility } from './contexts/RightPanelVisibility.tsx';
 import { PanelLayoutProvider, usePanelLayout } from './contexts/PanelLayout.tsx';
 import { ScreenModeProvider, useScreenMode, type ChromeRegion } from './contexts/ScreenMode.tsx';
 import { edgePlacement } from './util/edge-placement.ts';
-
-const DEFAULT_BLANK_IMAGE = {
-  color: '#ffffff',
-  opacity: 1,
-  size: { width: 800, height: 600 },
-  isBedrock: true,
-} as const;
 
 /**
  * Each region hides from the grid container rather than from inside its component, so the five
@@ -48,39 +38,12 @@ const HIDE_CHROME_CLASS: Readonly<Record<ChromeRegion, string>> = {
   footer: '[&>[data-chrome=footer]]:hidden',
 };
 
-function BlankImageStarter() {
-  const [{ hasImage }] = useStore();
-  const { setBlankImage } = useApp();
-  const startedRef = useRef(false);
-
-  useEffect(() => {
-    if (hasImage || startedRef.current) return;
-
-    startedRef.current = true;
-    setBlankImage(DEFAULT_BLANK_IMAGE, { hasUnsavedChanges: false });
-  }, [hasImage, setBlankImage]);
-
-  return null;
-}
-
 function AppContainer() {
   const [isLayersDrawerOpen, setIsLayersDrawerOpen] = useState(false);
   const [isToolSheetOpen, setIsToolSheetOpen] = useState(false);
   const [{ hasImage, toolName }] = useStore();
   const layout = usePanelLayout();
   const isMobile = useIsMobileViewport();
-  const { autosaveMetadata } = useAutoSave();
-
-  // Defer the first-use tour until the blank document is ready: SidebarLeft is
-  // intentionally absent before then, and the tour's steps point at its tiles.
-  // Keep eligibility separate from viewport visibility so crossing into the
-  // mobile band hides, but does not permanently dismiss, the desktop/tablet tour.
-  // Suppress the tour while an autosave recovery banner is mounted so the two
-  // modal surfaces never stack — they share a single document-level focus trap
-  // and an Escape key dismisses whichever trap loses capture.
-  const [shouldOfferFirstUseTour, setShouldOfferFirstUseTour] = useState(() => !hasImage && !hasSeenFirstUseTour());
-  const isFirstUseTourVisible = shouldOfferFirstUseTour && hasImage && !isMobile && !autosaveMetadata;
-  const completeFirstUseTour = useCallback(() => setShouldOfferFirstUseTour(false), []);
   const { isOpen: isRightPanelOpen } = useRightPanelVisibility();
   const { visibility } = useScreenMode();
   const hiddenChromeClasses = (Object.keys(HIDE_CHROME_CLASS) as ChromeRegion[])
@@ -129,14 +92,12 @@ function AppContainer() {
     // reorder, so the focus order the shell has always had is intact.
     <>
       <div
-        aria-hidden={isFirstUseTourVisible || undefined}
         className={`grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[auto_1fr_auto] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[auto_1fr_auto] max-md:[grid-template-areas:'header''main''bottom'] dark:bg-gray-900 ${hiddenChromeClasses}`}
       >
         <AppKeyboardShortcuts />
         <SelectionShortcuts />
         <AdjustmentShortcuts />
         <ScreenModeShortcuts />
-        <BlankImageStarter />
         <Menu />
         <SidebarLeft />
 
@@ -186,7 +147,6 @@ function AppContainer() {
           onToggleLayers={() => setIsLayersDrawerOpen((open) => !open)}
         />
       </div>
-      {isFirstUseTourVisible && <FirstUseTour onComplete={completeFirstUseTour} />}
     </>
   );
 }
@@ -209,9 +169,7 @@ function App() {
                   <PanelLayoutProvider>
                     <ScreenModeProvider>
                       <RightPanelVisibilityProvider>
-                        <FirstUseProvider>
-                          <AppContainer />
-                        </FirstUseProvider>
+                        <AppContainer />
                       </RightPanelVisibilityProvider>
                     </ScreenModeProvider>
                   </PanelLayoutProvider>
