@@ -288,6 +288,12 @@ the common Git directory and remains when a failed wrapper leaves Git state behi
 refreshes shared hook dispatchers before it commits. A pinned landing commit without a current
 lease is refused by the commit helper and message guard.
 
+Pass the exact host-native chat ID described by [`CHAT-ID.md`](CHAT-ID.md) to both `land` and
+`takeover`. The wrapper validates the Kilo, Codex, and Copilot ID shapes before acquiring or
+transferring a lease, so timestamps and descriptive labels cannot be recorded as owners. Shape
+validation does not identify the session; resolve the current chat through its host before running
+the command.
+
 A detached watcher posts a shared swarm note when the lease reaches 15 minutes and four hours.
 At 15 minutes, every other agent should mention the blocker in its own current chat and continue
 unrelated work. It must not wait for the landing owner or modify the occupied worktree.
@@ -876,8 +882,13 @@ its remedy is nothing rather than a plausible-looking command that fatals.
 **An orphan `AUTO_MERGE` has guarded recovery paths, not a guessed abort.** When it is
 the only operation marker, the worktree is clean, the index has no unresolved paths,
 and the marker names exactly `HEAD^{tree}`, the remaining file can be a stale artifact from a completed
-rebase. First identify the current designated main checkout from `git worktree list
---porcelain`; select the unique worktree block whose `branch` is `refs/heads/main`.
+rebase. First identify the current designated main checkout with
+`npm run main:landing -- status --json`. Verify its reported `mainPath` is present in
+`git worktree list --porcelain`, then verify the checkout's shared Git directory and
+designated-main identity. Recovery can intentionally leave a damaged `refs/heads/main`
+worktree beside its registered replacement, so selecting the unique branch entry is
+not safe. If status cannot name and verify one designated checkout, stop and follow
+the Git metadata recovery procedure; do not guess.
 Invoke that checkout's `scripts/recover-stale-auto-merge.mjs` by
 absolute path, while keeping the process working directory at the target task
 worktree root:
@@ -960,6 +971,9 @@ sessions ran there, and which of those are unfinished, blocked or dead. **It is
 regenerated, never hand-edited**, and it is the first thing to read before
 deleting a worktree or starting one that may already exist. The list does not
 belong in prose; regenerate it.
+
+An inventory schema mismatch is a refusal, not a prompt to continue with stale
+data. Regenerate `WORKTREES.json` before disposal after an inventory schema change.
 
 **It is UNTRACKED and gitignored, and that is a hard rule, not a convenience.**
 Everything in it describes the machine that generated it — session ids, chat
@@ -1529,8 +1543,14 @@ on `agent_id`, which is the **git branch** — `resolveIdentity` prefers
 that variable. Two sessions on one branch are one agent to the board and cannot
 deny each other a file.
 
-**Liveness is recency only.** `agents.last_pid` and `session_id` are written and
-never read — the one process-level signal the schema carries is consulted nowhere.
+**Liveness is recency only.** `agents.last_pid` and `session_id` do not affect the
+liveness verdict. Inventory exposes the first stored `KILO_RUN_ID` as
+`firstKiloRunId`, solely as a history correlation clue. Do not assume it is a direct
+key in Kilo's `session` table; the run ID can be shared by child agents. The board
+keeps only the first Kilo run per branch, so this optional field is not an exhaustive
+owner list and never proves a chat family dead. A missing or unresolved ID means
+history is unknown and never justifies reclamation. The lookup supplements the full
+family walk; re-run the live-session overlay immediately before reclamation.
 
 **Unreadable lease deadlines fail closed.** The claim and lock checks use
 `isLiveDeadline`: a parseable future deadline is live, and an unparseable value
@@ -1625,8 +1645,10 @@ own work, not a sweep that could not have leaked.
 
 The database is global and **nothing in it is scoped to a session**: identity is
 the git branch, and the `agents` table's `session_id` column records only the
-first Kilo run to touch a branch and is never read back. So a `swarm note` from
-one worktree is in the same log every other session's `swarm watch --follow`
+first Kilo run ID to touch a branch. The generated inventory exposes that value as
+`firstKiloRunId` so it can lead to a history lookup, but it is not exhaustive and
+does not replace the full family walk or live overlay. A `swarm note` from one
+worktree is in the same log every other session's `swarm watch --follow`
 tails. That is why these are not optional politeness:
 
 - **Claim before the first edit**, not after: `npm run swarm -- claim <id> --files

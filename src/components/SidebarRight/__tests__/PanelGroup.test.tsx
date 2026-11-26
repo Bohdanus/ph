@@ -117,6 +117,7 @@ describe('PanelGroup', () => {
     it('derives the group, the row and the control from one id, and is focusable', () => {
       const { group, row, control } = setup({ id: 'history' });
 
+      expect(group).toHaveAttribute('id', 'panel-group-history');
       expect(group).toHaveAttribute('data-testid', 'panel-group-history');
       expect(row).toHaveAttribute('data-testid', 'panel-header-row-history');
       expect(control).toHaveAttribute('data-testid', 'panel-header-history');

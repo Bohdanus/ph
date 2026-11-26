@@ -153,8 +153,8 @@ export const AppKeyboardShortcuts = () => {
   const toggleLayersPanel = useCallback(() => {
     if (layersVisible && typeof document !== 'undefined') {
       const activeElement = document.activeElement;
-      const layersBody = document.getElementById('panel-body-layers');
-      if (activeElement instanceof Element && layersBody?.contains(activeElement)) {
+      const layersPanel = document.getElementById('panel-group-layers');
+      if (activeElement instanceof Element && layersPanel?.contains(activeElement)) {
         document.getElementById('panel-header-history')?.focus();
       }
     }

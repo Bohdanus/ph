@@ -1018,6 +1018,7 @@ export default function LayersTab() {
                       }}
                       className={[
                         'text-sm text-gray-800 dark:text-gray-100 truncate outline-none',
+                        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500',
                         isEditable ? 'bg-blue-50 dark:bg-blue-900/20' : '',
                       ].join(' ')}
                       style={{

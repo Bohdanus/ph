@@ -19,7 +19,7 @@ import { curatedFor } from './curated.mjs';
 import { inferBoardIssues } from './board.mjs';
 import { auditVerdict, unread, isReadUnfinished } from './chat-audit.mjs';
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 const RISK_ORDER = { high: 0, medium: 1, low: 2 };
 

@@ -67,6 +67,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 
 vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ setBlankImage, setImageFromUpload }) }));
 vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => ({ openLoadImageDialog, openNewImageDialog }) }));
+vi.mock('../../../contexts/AutoSaveContext.tsx', () => ({ useAutoSave: () => ({ isCheckingAutosave: false }) }));
 vi.mock('../../../contexts/useLayer.ts', () => ({ useLayers: () => ({ drawAllLayers }) }));
 const marker = vi.hoisted(() => {
   return (name: string) => {

@@ -164,6 +164,20 @@ describe('SidebarRight', () => {
     expect(bottom?.style.flex).toBe('0.8 1 0%');
   });
 
+  it('keeps the Layers icon as a restore control in icon-only mode while F7 hides its panel', () => {
+    seed();
+    const { container } = renderWithLayout(<SidebarRight />, { dockWidth: 40, layersVisible: false });
+
+    expect(container.querySelector('[data-testid="panel-group-layers"]')).toBeNull();
+    const layersIcon = container.querySelector<HTMLButtonElement>('[data-testid="dock-icon-layers"]');
+    expect(layersIcon).toBeInTheDocument();
+
+    fireEvent.click(layersIcon!);
+
+    expect(container.querySelector('[data-testid="panel-group-layers"]')).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('panelLayout') ?? '{}').layersVisible).toBe(true);
+  });
+
   it('lets History fill the dock while F7 has hidden Layers, preserving the split for restore', () => {
     seed();
     const { container } = renderWithLayout(<SidebarRight />, { layersVisible: false, splitRatio: 0.35 });

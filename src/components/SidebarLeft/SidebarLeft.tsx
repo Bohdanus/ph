@@ -20,7 +20,6 @@ import { descriptionKeyFor } from '../../tools/descriptions/tooltips.ts';
 import { findToolProcessor, toolProcessors } from '../../tools/toolProcessors.ts';
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 import { useFirstUse } from '../../hooks/useFirstUse.ts';
-import { useFirstUseContext } from '../../contexts/FirstUseContext.tsx';
 import { DEFAULT_VIEW_STATE } from '../../contexts/view-state.ts';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
 import type { ToolbarOverflowPlan, ToolbarSlot } from './toolbar-overflow.ts';
@@ -245,7 +244,6 @@ const SidebarLeft = () => {
   } | null>(null);
   const flyoutFocusRequestRef = useRef(0);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
-  const { highlightedTools } = useFirstUseContext();
   // ONE column is the default, and that is Photoshop's default: "Tools by default are in a
   // single column" — the double-chevron at the top of the Tools panel switches to two columns
   // to save vertical room, which is only coherent if one column is where you start. It is also
@@ -684,7 +682,6 @@ const SidebarLeft = () => {
     const tileToolName = tileTool !== null ? descriptionKeyFor(tileTool.name, tileTool.figure) : null;
     const isTileUnimplemented = tileToolName !== null && isUnimplementedTool(tileToolName);
     const isTileNew = tileToolName !== null && isUnimplementedTool(tileToolName) && isToolNew(tileToolName);
-    const isTileHighlighted = tileToolName !== null && highlightedTools.includes(tileToolName);
 
     return (
       <li
@@ -718,7 +715,7 @@ const SidebarLeft = () => {
             aria-pressed={identity === undefined ? group.some((tool) => tool.name === toolName) : undefined}
             className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}${
               isTileUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''
-            }${isTileHighlighted ? ' tool-highlight-pulse' : ''}`}
+            }`}
             onClick={(event) => {
               // A native click does not carry the pointer id that produced it. While a
               // pointer owns the pending long-press, another pointer's click must not
@@ -1012,7 +1009,6 @@ const SidebarLeft = () => {
                 const toolDescriptionKey = descriptionKeyFor(tool.name, tool.figure);
                 const isUnimplemented = isUnimplementedTool(toolDescriptionKey);
                 const isFlyoutItemNew = isUnimplemented && isToolNew(toolDescriptionKey);
-                const isFlyoutItemHighlighted = highlightedTools.includes(toolDescriptionKey);
 
                 return (
                   <li key={`${tool.name}-${slugifyToolLabel(tool.label)}`} role="none">
@@ -1052,7 +1048,7 @@ const SidebarLeft = () => {
                         isSelected
                           ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
                           : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
-                      }${isUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''}${isFlyoutItemHighlighted ? ' tool-highlight-pulse' : ''}`}
+                      }${isUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''}`}
                       onMouseEnter={() => {
                         if (isFlyoutItemNew) markToolAsSeen(toolDescriptionKey);
                       }}

@@ -34,9 +34,10 @@ import { FillToolArea } from './FillToolArea.tsx';
 import { ViewToolArea, type ViewToolMode } from './ViewToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
-import { PRIMARY_BUTTON_LARGE, TEXT_LINK_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
+import { PRIMARY_BUTTON_LARGE } from '../ToolbarsRight/buttonStyles.ts';
 import { useApp } from '../../hooks/useApp.ts';
 import { useFile } from '../../contexts/useFile.tsx';
+import { useAutoSave } from '../../contexts/AutoSaveContext.tsx';
 import { loadDocumentFile } from '../../contexts/image-load-save-utils.ts';
 import { MoveToolArea } from './MoveToolArea.tsx';
 import { SelectionMarchingAnts } from './SelectionMarchingAnts.tsx';
@@ -77,6 +78,12 @@ export const SELECTION_INTERACTION_MODES: ReadonlySet<string> = new Set([
   'rectangular-selection',
 ]);
 
+const START_IMAGE_PRESETS = [
+  { id: 'landscape', label: 'Landscape', width: 1920, height: 1080 },
+  { id: 'square', label: 'Square', width: 1080, height: 1080 },
+  { id: 'portrait', label: 'Portrait', width: 1080, height: 1350 },
+] as const;
+
 const Main = () => {
   const [
     {
@@ -94,6 +101,7 @@ const Main = () => {
     },
   ] = useStore();
   const { theme } = useTheme();
+  const { isCheckingAutosave } = useAutoSave();
   const { setBlankImage, setImageFromUpload } = useApp();
   const { openLoadImageDialog, openNewImageDialog } = useFile();
   const { confirmDiscard } = useUnsavedChanges();
@@ -534,38 +542,99 @@ const Main = () => {
       onDrop={handleDrop}
     >
       {renderContent()}
-      {!hasImage && (
-        <div className="flex flex-col items-center gap-4">
-          <button
-            className={PRIMARY_BUTTON_LARGE}
-            onClick={async () => {
-              try {
-                const data = await openLoadImageDialog();
-                if (data) await setImageFromUpload(data);
-              } catch (error) {
-                console.error('Failed to open file:', error);
-              }
-            }}
-            data-testid="main-open-file-button"
+      {!hasImage &&
+        (isCheckingAutosave ? (
+          <div
+            className="flex h-full w-full items-center justify-center text-sm text-gray-500 dark:text-gray-400"
+            role="status"
           >
-            Open File
-          </button>
-          <button
-            className={`${TEXT_LINK_BUTTON} focus:outline-none`}
-            onClick={async () => {
-              try {
-                const data = await openNewImageDialog();
-                if (data) setBlankImage(data);
-              } catch (error) {
-                console.error('Failed to create document:', error);
-              }
-            }}
-            data-testid="main-blank-image-button"
+            Loading your workspace…
+          </div>
+        ) : (
+          <section
+            aria-labelledby="start-page-title"
+            className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center gap-8 px-6 py-10"
+            data-testid="start-page"
           >
-            blank image
-          </button>
-        </div>
-      )}
+            <div>
+              <p className="mb-2 text-sm font-medium uppercase tracking-[0.16em] text-blue-600 dark:text-blue-400">
+                Photo
+              </p>
+              <h1
+                className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-100"
+                id="start-page-title"
+              >
+                Create a new image
+              </h1>
+              <p className="mt-2 max-w-xl text-sm text-gray-600 dark:text-gray-300">
+                Choose a canvas size to start with, set your own dimensions, or open an image from your device.
+              </p>
+            </div>
+
+            <div aria-label="Canvas size presets" className="grid grid-cols-3 gap-4" role="group">
+              {START_IMAGE_PRESETS.map(({ id, label, width, height }) => (
+                <button
+                  className="flex min-h-44 min-w-0 flex-col items-start rounded-lg border border-gray-300 bg-white p-4 text-left shadow-sm transition hover:border-blue-500 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:hover:border-blue-400"
+                  data-testid={`main-preset-${id}-button`}
+                  key={id}
+                  onClick={() =>
+                    setBlankImage({
+                      color: '#ffffff',
+                      opacity: 1,
+                      size: { width, height },
+                      isBedrock: true,
+                    })
+                  }
+                  type="button"
+                >
+                  <span className="mb-4 flex h-16 w-full items-center justify-center" aria-hidden="true">
+                    <span
+                      className="block rounded-sm border border-blue-300 bg-blue-50 dark:border-blue-600 dark:bg-blue-950"
+                      style={{ aspectRatio: `${width} / ${height}`, maxHeight: '4rem', maxWidth: '8rem', width: '80%' }}
+                    />
+                  </span>
+                  <span className="font-medium text-gray-900 dark:text-gray-100">{label}</span>
+                  <span className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {width} × {height} px
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                className={PRIMARY_BUTTON_LARGE}
+                data-testid="main-blank-image-button"
+                onClick={async () => {
+                  try {
+                    const data = await openNewImageDialog();
+                    if (data) setBlankImage(data);
+                  } catch (error) {
+                    console.error('Failed to create document:', error);
+                  }
+                }}
+                type="button"
+              >
+                Custom size…
+              </button>
+              <button
+                className="rounded-md border border-gray-300 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                data-testid="main-open-file-button"
+                onClick={async () => {
+                  try {
+                    const data = await openLoadImageDialog();
+                    if (data) await setImageFromUpload(data);
+                  } catch (error) {
+                    console.error('Failed to open file:', error);
+                  }
+                }}
+                type="button"
+              >
+                Open image
+              </button>
+            </div>
+          </section>
+        ))}
     </main>
   );
 };

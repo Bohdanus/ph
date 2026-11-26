@@ -43,6 +43,7 @@ function sameTextRect(left: TextToolArgs['rect'], right: TextToolArgs['rect']): 
 
 export interface AutoSaveContextType {
   isAutosaveAvailable: boolean;
+  isCheckingAutosave: boolean;
   pendingAutosave: boolean;
   autosaveMetadata: AutosaveMetadata | null;
   recoverFromAutosave: () => Promise<void>;
@@ -130,6 +131,7 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
   const setImageFromUploadRef = useRef(setImageFromUpload);
 
   const [autosaveMetadata, setAutosaveMetadata] = useState<AutosaveMetadata | null>(null);
+  const [isCheckingAutosave, setIsCheckingAutosave] = useState(() => isAutosaveAvailable());
   const [pendingAutosave, setPendingAutosave] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [dismissError, setDismissError] = useState<string | null>(null);
@@ -214,6 +216,9 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
         if (!cancelled) {
           console.error('AutoSave: Failed to check for existing autosave', error);
         }
+      })
+      .finally(() => {
+        if (!cancelled) setIsCheckingAutosave(false);
       });
     return () => {
       cancelled = true;
@@ -454,12 +459,13 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
   const value = useMemo<AutoSaveContextType>(
     () => ({
       isAutosaveAvailable: isAutosaveAvailable(),
+      isCheckingAutosave,
       pendingAutosave,
       autosaveMetadata,
       recoverFromAutosave,
       dismissAutosave,
     }),
-    [pendingAutosave, autosaveMetadata, recoverFromAutosave, dismissAutosave]
+    [isCheckingAutosave, pendingAutosave, autosaveMetadata, recoverFromAutosave, dismissAutosave]
   );
 
   useEffect(() => {
