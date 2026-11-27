@@ -55,7 +55,9 @@ describe('FileProvider PSD integration', () => {
     });
     fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'psd' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(savePsd).toHaveBeenCalledWith(input.layers, input.size));
+    await waitFor(() =>
+      expect(savePsd).toHaveBeenCalledWith(input.layers, input.size, undefined, expect.any(Function))
+    );
     expect(resolved).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true);
     await act(async () => {
@@ -115,7 +117,9 @@ describe('FileProvider PSD integration', () => {
     });
     fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'psd' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(savePsd).toHaveBeenCalledWith(input.layers, input.size));
+    await waitFor(() =>
+      expect(savePsd).toHaveBeenCalledWith(input.layers, input.size, undefined, expect.any(Function))
+    );
     expect(resolved).not.toHaveBeenCalled();
     await act(async () => {
       finish(new Error('Encoding failed'));
@@ -539,7 +543,9 @@ describe('FileProvider save dialog edge cases', () => {
       target: { value: 'psd' },
     });
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
-    await waitFor(() => expect(savePsd).toHaveBeenCalledWith(input.layers, input.size));
+    await waitFor(() =>
+      expect(savePsd).toHaveBeenCalledWith(input.layers, input.size, undefined, expect.any(Function))
+    );
     expect(resolved).not.toHaveBeenCalled();
     await act(async () => {
       finish(new Error('PSD encoding failed'));
@@ -730,7 +736,7 @@ describe('FileProvider save dialog after a failed export', () => {
 
     expect(savePsd).toHaveBeenCalledTimes(2);
     for (const call of vi.mocked(savePsd).mock.calls) {
-      expect(call).toEqual([input.layers, input.size, documentFrame]);
+      expect(call).toEqual([input.layers, input.size, documentFrame, expect.any(Function)]);
     }
     expect(downloadBlob).toHaveBeenCalledTimes(1);
     expect(resolved).toHaveBeenCalledExactlyOnceWith(null);
@@ -911,10 +917,10 @@ describe('FileProvider document frame and non-Error failures', () => {
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
 
     await waitFor(() => expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'psd' }));
-    expect(savePsd).toHaveBeenCalledWith(input.layers, input.size, documentFrame);
+    expect(savePsd).toHaveBeenCalledWith(input.layers, input.size, documentFrame, expect.any(Function));
   });
 
-  it('falls back to the two-argument encoder when no document frame is supplied', async () => {
+  it('passes the snapshot guard when no document frame is supplied', async () => {
     vi.mocked(savePsd).mockResolvedValue(new ArrayBuffer(8));
     render(
       <FileProvider>
@@ -934,8 +940,7 @@ describe('FileProvider document frame and non-Error failures', () => {
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
 
     await waitFor(() => expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'psd' }));
-    expect(savePsd).toHaveBeenCalledWith(input.layers, input.size);
-    expect(vi.mocked(savePsd).mock.calls[0]).toHaveLength(2);
+    expect(savePsd).toHaveBeenCalledWith(input.layers, input.size, undefined, expect.any(Function));
   });
 
   it('logs a non-Error load failure verbatim and resolves null', async () => {

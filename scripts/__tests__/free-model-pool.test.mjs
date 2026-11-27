@@ -1190,7 +1190,7 @@ console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }))
     }
   });
 
-  it('excludes caller ancestor bins when the caller root is a symlink', async () => {
+  it('excludes caller ancestor bins when the caller root is a symlink', async (context) => {
     const parent = await mkdtemp(join(tmpdir(), 'free-model-opencode-symlinked-caller-root-'));
     const callerParent = join(parent, 'caller-parent');
     const callerRoot = join(callerParent, 'project');
@@ -1210,10 +1210,17 @@ console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }))
         "console.log('ancestor package command');",
         'opencode'
       );
-      const callerCommand = join(callerBin, 'opencode');
-      symlinkSync(packageCommand, callerCommand);
-      symlinkSync(callerRoot, callerRootAlias, 'dir');
-      symlinkSync(callerCommand, join(aliasBin, 'opencode'));
+      const callerCommand = join(callerBin, basename(packageCommand));
+      try {
+        symlinkSync(packageCommand, callerCommand);
+        symlinkSync(callerRoot, callerRootAlias, process.platform === 'win32' ? 'junction' : 'dir');
+        symlinkSync(callerCommand, join(aliasBin, basename(callerCommand)));
+      } catch (error) {
+        if (process.platform === 'win32' && ['EPERM', 'EACCES', 'ENOTSUP'].includes(error?.code)) {
+          context.skip('File symlinks are unavailable in this Windows environment');
+        }
+        throw error;
+      }
       const environment = { PATH: aliasBin };
 
       expect(
@@ -2102,7 +2109,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
     });
     await expect(
       runOpenCodeCompletion({ command: '/missing-opencode', model, prompt: 'prompt', providerOwned: true })
-    ).rejects.toThrow(/ENOENT/);
+    ).rejects.toThrow(/OpenCode CLI was not found outside the project paths/);
   });
 
   it('runs provider-owned Nemotron through the tool-free OpenCode adapter with its minimum token profile', async () => {

@@ -18,13 +18,14 @@ import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
 import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
 import type { NewDocumentBlankParams } from './tool-types.ts';
 import { stripOutputFileExtension } from '../constants/imageFormats.ts';
-import { useOptionalStore } from './StoreContext.tsx';
+import { useOptionalStore, type StoreData } from './StoreContext.tsx';
 import { durableLayerPresentationMismatch } from './durable-render-projection.ts';
 import { composeDurableDocument } from './durable-compositor.ts';
 import { replayDurableAtCursor } from './durable-replay.ts';
 import { getAssetRegistry } from './asset-registry.ts';
 import { durableExportRecords } from './export-canvas.ts';
 import { documentFrameEquals } from './document-frame.ts';
+import { layersDifferOnlyByPresentation } from './layer-presentation.ts';
 
 // Pre-warm AVIF encoder WASM on provider mount to eliminate first-encode fetch latency
 import { init as initAvifEncoder } from '@jsquash/avif/encode';
@@ -56,6 +57,137 @@ export interface FileContextType {
   openSaveImageDialog: (data: ImageSaveInput) => Promise<ImageSaveResponse | null>;
 }
 
+type FileInputStoreSnapshot = Pick<
+  StoreData,
+  'documentId' | 'documentRevision' | 'branchRevision' | 'historyIndex' | 'layers' | 'totalSize' | 'documentFrame'
+>;
+
+function presentationBoundsAreSame(left: LayersRecord, right: LayersRecord): boolean {
+  const ids = Object.keys(left);
+  return (
+    ids.length === Object.keys(right).length &&
+    ids.every((id) => {
+      const leftBounds = left[id]?.presentationBounds;
+      const rightBounds = right[id]?.presentationBounds;
+      if (!leftBounds || !rightBounds) return leftBounds === rightBounds;
+      return (
+        leftBounds.x === rightBounds.x &&
+        leftBounds.y === rightBounds.y &&
+        leftBounds.width === rightBounds.width &&
+        leftBounds.height === rightBounds.height
+      );
+    })
+  );
+}
+
+function layersMatchFileInputSnapshot(previous: LayersRecord, current: LayersRecord): boolean {
+  // A Save dialog can remain open while the renderer replaces disposable cache
+  // records (including ImageBitmap-backed durable presentations). Export must
+  // then read the current records, never the potentially retired staged cache.
+  // Keep geometry fixed and compare every non-cache field through the shared
+  // presentation-only guard.
+  return layersDifferOnlyByPresentation(previous, current) && presentationBoundsAreSame(previous, current);
+}
+
+function currentLayersForFileInput(
+  current: StoreData | null,
+  opened: FileInputStoreSnapshot | null,
+  input: Pick<ImageSaveInput, 'layers' | 'size' | 'documentFrame'>
+): LayersRecord {
+  if (!opened) return input.layers;
+  if (
+    !current ||
+    current.documentId !== opened.documentId ||
+    current.documentRevision !== opened.documentRevision ||
+    current.branchRevision !== opened.branchRevision ||
+    current.historyIndex !== opened.historyIndex ||
+    current.totalSize.width !== opened.totalSize.width ||
+    current.totalSize.height !== opened.totalSize.height ||
+    !documentFrameEquals(current.documentFrame, opened.documentFrame) ||
+    current.totalSize.width !== input.size.width ||
+    current.totalSize.height !== input.size.height ||
+    (input.documentFrame !== undefined && !documentFrameEquals(input.documentFrame, opened.documentFrame)) ||
+    !layersMatchFileInputSnapshot(input.layers, opened.layers) ||
+    !layersMatchFileInputSnapshot(opened.layers, current.layers)
+  ) {
+    throw new Error('The document changed while the Save dialog was open. Close and reopen it before exporting.');
+  }
+  // Presentation-only promotion can replace a staged ImageBitmap while the
+  // dialog is open. Use the current records once their logical state is proven
+  // identical, so export never reads the retired cache from the staged record.
+  return current.layers;
+}
+
+function durableExportCursor(
+  store: StoreData | null,
+  input: Pick<ImageSaveInput, 'layers' | 'size' | 'documentFrame'>
+): number | null {
+  if (!store) return null;
+  const document = store.durableDocument;
+  const selector = store.renderSelector;
+  const presentation = store.durablePresentation;
+  const projection = store.durableRenderProjection;
+  const frameMatches =
+    input.documentFrame && store.documentFrame
+      ? documentFrameEquals(input.documentFrame, store.documentFrame)
+      : input.documentFrame === store.documentFrame;
+
+  if (
+    store.durableStatus !== 'current' ||
+    !document ||
+    store.layers !== input.layers ||
+    store.totalSize.width !== input.size.width ||
+    store.totalSize.height !== input.size.height ||
+    !frameMatches ||
+    document.documentId !== store.documentId ||
+    document.documentRevision !== store.documentRevision ||
+    document.branchRevision !== store.branchRevision ||
+    presentation.status !== 'durable' ||
+    presentation.reason !== null ||
+    presentation.cursor !== document.cursor ||
+    selector.source !== 'durable' ||
+    selector.documentId !== store.documentId ||
+    selector.documentRevision !== store.documentRevision ||
+    selector.branchRevision !== store.branchRevision ||
+    selector.historyCursor !== store.historyIndex ||
+    !documentFrameEquals(selector.frame, store.documentFrame) ||
+    !projection ||
+    projection.status !== 'durable' ||
+    projection.documentId !== document.documentId ||
+    projection.documentRevision !== document.documentRevision ||
+    projection.branchRevision !== document.branchRevision ||
+    projection.durableRevision !== document.durableRevision ||
+    projection.historyCursor !== presentation.cursor ||
+    !documentFrameEquals(projection.frame, store.documentFrame)
+  ) {
+    return null;
+  }
+
+  // This is deliberately the cursor accepted for the durable presentation.
+  // It need not equal historyIndex: legacy rows can map to the preceding
+  // durable entry (for example, the opening-document row maps to cursor -1).
+  return presentation.cursor;
+}
+
+function replayMatchesDurableExportSnapshot(
+  replay: ReturnType<typeof replayDurableAtCursor>,
+  store: StoreData,
+  cursor: number
+): boolean {
+  const document = store.durableDocument;
+  return (
+    document !== null &&
+    replay.documentId === document.documentId &&
+    replay.documentRevision === document.documentRevision &&
+    replay.branchRevision === document.branchRevision &&
+    replay.durableRevision === document.durableRevision &&
+    replay.cursor === cursor &&
+    documentFrameEquals(replay.frame, store.documentFrame) &&
+    replay.totalSize.width === store.totalSize.width &&
+    replay.totalSize.height === store.totalSize.height
+  );
+}
+
 const FileContext = createContext<FileContextType | undefined>(undefined);
 
 type FileProviderProps = PropsWithChildren;
@@ -68,7 +200,12 @@ export const FileProvider = ({ children }: FileProviderProps) => {
   useEffect(() => {
     latestStoreRef.current = store;
   }, [store]);
+  const getCurrentStoreSnapshot = useCallback(() => {
+    const observed = latestStoreRef.current;
+    return observed?.getCurrentState?.() ?? observed;
+  }, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputStoreSnapshotRef = useRef<FileInputStoreSnapshot | null>(null);
 
   const [showNewDialog, setShowNewDialog] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
@@ -136,13 +273,28 @@ export const FileProvider = ({ children }: FileProviderProps) => {
     });
   }, []);
 
-  const openSaveImageDialog = useCallback((input: ImageSaveInput) => {
-    setFileInput(input);
-    setShowSaveDialog(true);
-    return new Promise<ImageSaveResponse | null>((resolve) => {
-      saveResolverRef.current = resolve;
-    });
-  }, []);
+  const openSaveImageDialog = useCallback(
+    (input: ImageSaveInput) => {
+      const current = getCurrentStoreSnapshot();
+      fileInputStoreSnapshotRef.current = current
+        ? {
+            documentId: current.documentId,
+            documentRevision: current.documentRevision,
+            branchRevision: current.branchRevision,
+            historyIndex: current.historyIndex,
+            layers: current.layers,
+            totalSize: { ...current.totalSize },
+            documentFrame: { ...current.documentFrame },
+          }
+        : null;
+      setFileInput(input);
+      setShowSaveDialog(true);
+      return new Promise<ImageSaveResponse | null>((resolve) => {
+        saveResolverRef.current = resolve;
+      });
+    },
+    [getCurrentStoreSnapshot]
+  );
 
   const value = useMemo(
     () => ({ openNewImageDialog, openLoadImageDialog, openSaveImageDialog }),
@@ -152,29 +304,31 @@ export const FileProvider = ({ children }: FileProviderProps) => {
   async function handleImageSave({ fileName, format, quality }: ImageSaveResponse): Promise<ImageSaveResponse | null> {
     let durableComposite: Awaited<ReturnType<typeof composeDurableDocument>> | undefined;
     try {
-      const { layers, size, documentFrame } = fileInput!;
+      const input = fileInput!;
+      const { size, documentFrame } = input;
+      let layers = input.layers;
       let exportLayers = layers;
       let exportSize = size;
       let exportFrame = documentFrame;
-      const current = latestStoreRef.current;
-      const frameMatches =
-        documentFrame && current?.documentFrame
-          ? documentFrameEquals(documentFrame, current.documentFrame)
-          : documentFrame === current?.documentFrame;
-      if (
-        current?.durableStatus === 'current' &&
-        current.durableDocument &&
-        current.durableDocument.cursor === current.historyIndex &&
-        current.durableDocument.documentId === current.documentId &&
-        current.durableDocument.documentRevision === current.documentRevision &&
-        current.durableDocument.branchRevision === current.branchRevision &&
-        layers === current.layers &&
-        size.width === current.totalSize.width &&
-        size.height === current.totalSize.height &&
-        frameMatches
-      ) {
+      const openedStoreSnapshot = fileInputStoreSnapshotRef.current;
+      const current = getCurrentStoreSnapshot();
+      layers = currentLayersForFileInput(current, openedStoreSnapshot, input);
+      exportLayers = layers;
+      // Durable export skips the runtime cache. Keep that fast path limited to
+      // the exact layer map supplied to and captured by Save, still current at
+      // export time. Otherwise export the current live records through legacy.
+      const durableCursor =
+        openedStoreSnapshot &&
+        input.layers === openedStoreSnapshot.layers &&
+        current?.layers === openedStoreSnapshot.layers
+          ? durableExportCursor(current, { layers, size, documentFrame })
+          : null;
+      let durableExportSelected = false;
+      let durableExportSnapshot: StoreData | null = null;
+      if (current?.durableDocument && durableCursor !== null) {
         try {
-          const replay = replayDurableAtCursor(current.durableDocument, current.durableDocument.cursor);
+          const replay = replayDurableAtCursor(current.durableDocument, durableCursor);
+          const replayMatchesSnapshot = replayMatchesDurableExportSnapshot(replay, current, durableCursor);
           // The compositor materializes visible layers only. PSD must keep legacy
           // records whenever a hidden layer could otherwise lose its pixel data.
           const hiddenLayersBlockPsd =
@@ -183,6 +337,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
           const layerSetMatchesLegacy =
             replayLayerIds.length === Object.keys(layers).length && replayLayerIds.every((layerId) => layers[layerId]);
           const pixelApprovedForExport =
+            replayMatchesSnapshot &&
             !hiddenLayersBlockPsd &&
             layerSetMatchesLegacy &&
             Object.values(replay.layers).every((replayLayer) => {
@@ -200,6 +355,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
               assetRegistry: getAssetRegistry(),
             });
             durableComposite = composite;
+            layers = currentLayersForFileInput(getCurrentStoreSnapshot(), openedStoreSnapshot, input);
             const materializedBoundsApprovedForExport = Object.values(replay.layers).every((replayLayer) => {
               if (!replayLayer.snapshot.visible) return true;
               const existing = layers[replayLayer.snapshot.id];
@@ -213,37 +369,76 @@ export const FileProvider = ({ children }: FileProviderProps) => {
             if (!materializedBoundsApprovedForExport) {
               composite.release();
               durableComposite = undefined;
+              exportLayers = layers;
+              exportSize = size;
+              exportFrame = documentFrame;
             } else {
-              const records = durableExportRecords(replay, composite);
-              const latest = latestStoreRef.current;
+              const latest = getCurrentStoreSnapshot();
+              layers = currentLayersForFileInput(latest, openedStoreSnapshot, input);
               if (
                 !latest ||
-                latest.durableStatus !== 'current' ||
-                latest.durableDocument?.durableRevision !== current.durableDocument.durableRevision ||
-                latest.historyIndex !== current.historyIndex ||
-                latest.documentRevision !== current.documentRevision ||
-                latest.branchRevision !== current.branchRevision
+                latest.layers !== current.layers ||
+                latest.durableDocument !== current.durableDocument ||
+                latest.renderSelector !== current.renderSelector ||
+                latest.durablePresentation !== current.durablePresentation ||
+                latest.durableRenderProjection !== current.durableRenderProjection ||
+                durableExportCursor(latest, { layers, size, documentFrame }) !== durableCursor
               ) {
                 composite.release();
                 durableComposite = undefined;
+                exportLayers = layers;
+                exportSize = size;
+                exportFrame = documentFrame;
               } else {
+                const records = durableExportRecords(replay, composite);
                 exportLayers = records.layers;
                 exportSize = records.size;
                 exportFrame = records.frame;
+                durableExportSelected = true;
+                durableExportSnapshot = latest;
               }
             }
           }
         } catch {
           durableComposite?.release();
           durableComposite = undefined;
+          layers = currentLayersForFileInput(getCurrentStoreSnapshot(), openedStoreSnapshot, input);
+          exportLayers = layers;
+          exportSize = size;
+          exportFrame = documentFrame;
         }
       }
 
       if (format === 'psd') {
         const { savePsd } = await import('./psd-utils.ts');
+        const refreshSnapshotBeforeRasterize = (): LayersRecord | undefined => {
+          const latest = getCurrentStoreSnapshot();
+          layers = currentLayersForFileInput(latest, openedStoreSnapshot, input);
+          if (durableExportSelected) {
+            if (
+              !latest ||
+              !durableExportSnapshot ||
+              latest.durableStatus !== 'current' ||
+              latest.layers !== durableExportSnapshot.layers ||
+              latest.durableDocument !== durableExportSnapshot.durableDocument ||
+              latest.renderSelector !== durableExportSnapshot.renderSelector ||
+              latest.durablePresentation !== durableExportSnapshot.durablePresentation ||
+              latest.durableRenderProjection !== durableExportSnapshot.durableRenderProjection ||
+              durableExportCursor(latest, { layers, size, documentFrame }) !== durableCursor
+            ) {
+              throw new Error(
+                'The document changed while the Save dialog was open. Close and reopen it before exporting.'
+              );
+            }
+            return undefined;
+          }
+          exportLayers = layers;
+          return layers;
+        };
+        refreshSnapshotBeforeRasterize();
         const buffer = exportFrame
-          ? await savePsd(exportLayers, exportSize, exportFrame)
-          : await savePsd(exportLayers, exportSize);
+          ? await savePsd(exportLayers, exportSize, exportFrame, refreshSnapshotBeforeRasterize)
+          : await savePsd(exportLayers, exportSize, undefined, refreshSnapshotBeforeRasterize);
         downloadBlob(new Blob([buffer], { type: 'image/vnd.adobe.photoshop' }), fileName, 'psd');
       } else {
         // Rendered here rather than handed in, so the encoded pixels are the DOCUMENT at
@@ -263,6 +458,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       // still on screen.
       setShowSaveDialog(false);
       setFileInput(null);
+      fileInputStoreSnapshotRef.current = null;
       return quality === undefined ? { fileName, format } : { fileName, format, quality };
     } catch (error) {
       // Resolve the caller's promise with null so openSaveImageDialog callers
@@ -296,6 +492,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
     saveResolverRef.current = null;
     setShowSaveDialog(false);
     setFileInput(null);
+    fileInputStoreSnapshotRef.current = null;
   };
 
   return (
