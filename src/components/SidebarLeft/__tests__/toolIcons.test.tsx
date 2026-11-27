@@ -86,6 +86,10 @@ const toolIconNames = [
 ] as const satisfies readonly ToolIconName[];
 
 const shapeFigures = allTools.flatMap((tool) => (tool.figure ? [tool.figure] : []));
+const nonInheritedPaintValues = (source: string) =>
+  [...source.matchAll(/\b(?:fill|stroke)\s*=\s*["']([^"']+)["']/g)]
+    .map(([, paint]) => paint)
+    .filter((paint) => paint !== 'none' && paint !== 'currentColor');
 
 /** Widen the record so a name the union no longer allows can still be probed. */
 const iconsByName = toolIcons as Record<string, unknown>;
@@ -202,13 +206,12 @@ describe('tool icon factories', () => {
 
     expect(Object.keys(sources)).toHaveLength(62);
     for (const [path, source] of Object.entries(sources)) {
-      const paints = [...source.matchAll(/\b(?:fill|stroke)=["']([^"']+)["']/g)].map(([, paint]) => paint);
-
-      expect(
-        paints.filter((paint) => paint !== 'none' && paint !== 'currentColor'),
-        path
-      ).toEqual([]);
+      expect(nonInheritedPaintValues(source), path).toEqual([]);
     }
+  });
+
+  it('detects non-inherited SVG paints with whitespace around the attribute equals sign', () => {
+    expect(nonInheritedPaintValues('<path fill = "#fff" stroke = "red"/>')).toEqual(['#fff', 'red']);
   });
 });
 
