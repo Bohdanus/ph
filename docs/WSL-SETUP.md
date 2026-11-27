@@ -120,7 +120,7 @@ Binding to `0.0.0.0` listens on all WSL interfaces; depending on WSL networking
 and firewall settings, the server may be reachable from other devices on your
 local network. Use it only on a trusted network, and stop the server when done.
 
-## Kilo Code CLI with Windows-saved credentials
+## Kilo Code CLI with WSL-native credentials
 
 Use the Linux Node.js and npm installation from a WSL task worktree. In a
 non-interactive shell that uses nvm, load Node explicitly and verify the
@@ -192,92 +192,64 @@ The explicit npm 11+ allowlist runs only the CLI package's postinstall. A standa
 npm 11.19.1 install reported that it had skipped this script even though the
 version command worked, so keep the package-scoped approval in this setup.
 
-Kilo's default Windows auth file is
-`%USERPROFILE%\.local\share\kilo\auth.json`; the setup below also
-uses Windows `XDG_DATA_HOME` if it is set. Copy it to a private regular file
-under WSL's `XDG_DATA_HOME` (or `$HOME/.local/share` when unset). Keep that
-Linux data directory outside the repository because the free-model runner
-rejects project-local auth paths. This replaces an existing regular WSL auth
-file; use a separate XDG data directory if you need to preserve different WSL
-credentials. Re-run this copy step after Windows Kilo re-authentication or
-credential rotation. Keep the WSL auth.json as a regular file rather than a
-symlink because the free-model runner rejects a symlinked WSL auth source. Do
-not print, share, or commit this file.
+The WSL CLI has its own authentication store, separate from the Windows Kilo
+installation. Do not copy `auth.json` between hosts. The free-model runner reads
+`$XDG_DATA_HOME/kilo/auth.json`; when `XDG_DATA_HOME` is unset, its fallback also
+honors `USERPROFILE`, which WSL may inherit from Windows. Set `XDG_DATA_HOME`
+explicitly in every WSL shell used for Kilo login or free-model requests. Keep the
+regular auth file outside the repository and on the Linux filesystem.
+
+Run this from the WSL task worktree in the shell you will use for Kilo:
 
 ```bash
-(
 set -euo pipefail
-WINDOWS_PROFILE="$(powershell.exe -NoLogo -NoProfile -NonInteractive -Command '[Environment]::GetEnvironmentVariable("USERPROFILE")' | tr -d '\r')"
-WINDOWS_XDG_DATA_HOME="$(powershell.exe -NoLogo -NoProfile -NonInteractive -Command '[Environment]::GetEnvironmentVariable("XDG_DATA_HOME")' | tr -d '\r')"
-if [[ -n "$WINDOWS_XDG_DATA_HOME" ]]; then
-  WINDOWS_KILO_DATA_HOME="$(wslpath -u "$WINDOWS_XDG_DATA_HOME")"
-else
-  if [[ -z "$WINDOWS_PROFILE" ]]; then
-    echo "ERROR: Could not resolve the Windows USERPROFILE or XDG_DATA_HOME." >&2
-    exit 1
-  fi
-  WINDOWS_KILO_DATA_HOME="$(wslpath -u "$WINDOWS_PROFILE")/.local/share"
-fi
-case "$WINDOWS_KILO_DATA_HOME" in
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+case "$XDG_DATA_HOME" in
   /*) ;;
-  *)
-    echo "ERROR: Windows Kilo data path must resolve to an absolute Linux path." >&2
-    exit 1
-    ;;
+  *) echo "ERROR: XDG_DATA_HOME must be an absolute Linux path." >&2; exit 1 ;;
 esac
-WINDOWS_KILO_AUTH="$WINDOWS_KILO_DATA_HOME/kilo/auth.json"
-WSL_KILO_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
-case "$WSL_KILO_DATA_HOME" in
-  /*) ;;
-  *)
-    echo "ERROR: XDG_DATA_HOME must be an absolute Linux path." >&2
-    exit 1
-    ;;
-esac
-if ! WSL_KILO_DATA_HOME="$(realpath -m -- "$WSL_KILO_DATA_HOME")"; then
-  echo "ERROR: Could not resolve the WSL XDG data directory." >&2
-  exit 1
-fi
-# Check the nearest existing parent so a missing XDG directory on /mnt is still rejected.
-WSL_KILO_DATA_PROBE="$WSL_KILO_DATA_HOME"
-while [[ ! -e "$WSL_KILO_DATA_PROBE" ]]; do
-  WSL_KILO_DATA_PROBE="$(dirname "$WSL_KILO_DATA_PROBE")"
-done
-if ! WSL_KILO_FS_TYPE="$(stat -f -c '%T' "$WSL_KILO_DATA_PROBE")"; then
-  echo "ERROR: Could not inspect the XDG data filesystem: $WSL_KILO_DATA_PROBE" >&2
-  exit 1
-fi
+install -d -m 700 -- "$XDG_DATA_HOME"
+XDG_DATA_HOME="$(realpath -- "$XDG_DATA_HOME")"
+export XDG_DATA_HOME
+WSL_KILO_FS_TYPE="$(stat -f -c '%T' "$XDG_DATA_HOME")"
 case "$WSL_KILO_FS_TYPE" in
   v9fs|9p|drvfs)
-    echo "ERROR: XDG_DATA_HOME must be on the Linux filesystem, not a Windows mount: $WSL_KILO_DATA_HOME" >&2
+    echo "ERROR: XDG_DATA_HOME must be on the Linux filesystem: $XDG_DATA_HOME" >&2
     exit 1
     ;;
 esac
-WSL_KILO_DATA_DIR="$WSL_KILO_DATA_HOME/kilo"
+REPO_ROOT="$(realpath -- "$(git rev-parse --show-toplevel)")"
+case "$XDG_DATA_HOME/" in
+  "$REPO_ROOT/"*)
+    echo "ERROR: XDG_DATA_HOME must be outside the repository: $XDG_DATA_HOME" >&2
+    exit 1
+    ;;
+esac
+WSL_KILO_DATA_DIR="$XDG_DATA_HOME/kilo"
 WSL_KILO_AUTH="$WSL_KILO_DATA_DIR/auth.json"
-umask 077
-if [[ ! -f "$WINDOWS_KILO_AUTH" || -L "$WINDOWS_KILO_AUTH" || ! -r "$WINDOWS_KILO_AUTH" ]]; then
-  echo "ERROR: Windows Kilo auth path must resolve to a readable regular file, not a symlink: $WINDOWS_KILO_AUTH" >&2
-  exit 1
-fi
 if [[ -L "$WSL_KILO_DATA_DIR" ]]; then
-  echo "ERROR: WSL Kilo data directory must not be a symlink." >&2
+  echo "ERROR: WSL Kilo data directory must not be a symlink: $WSL_KILO_DATA_DIR" >&2
   exit 1
 fi
-install -d -m 700 "$WSL_KILO_DATA_DIR"
-if [ -L "$WSL_KILO_AUTH" ]; then
-  echo "ERROR: replace the WSL auth symlink with a private file copy first." >&2
+install -d -m 700 -- "$WSL_KILO_DATA_DIR"
+if [[ -L "$WSL_KILO_AUTH" || ( -e "$WSL_KILO_AUTH" && ! -f "$WSL_KILO_AUTH" ) ]]; then
+  echo "ERROR: WSL Kilo auth path must be a regular file, not a symlink: $WSL_KILO_AUTH" >&2
   exit 1
 fi
-cp "$WINDOWS_KILO_AUTH" "$WSL_KILO_AUTH"
-chmod 600 "$WSL_KILO_AUTH"
-)
+umask 077
+kilo auth login
+if [[ -L "$WSL_KILO_AUTH" || ! -f "$WSL_KILO_AUTH" ]]; then
+  echo "ERROR: Kilo login did not create a regular WSL auth file: $WSL_KILO_AUTH" >&2
+  exit 1
+fi
+chmod 600 -- "$WSL_KILO_AUTH"
+kilo auth list
 ```
 
-A successful `kilo --version` checks the local binary, not provider authentication.
-If the free-model runner reports that Kilo authentication was rejected,
-refresh Windows Kilo credentials and repeat the private copy step above; count
-only a completion that confirms the exact provider/model and zero cost.
+`kilo auth list` confirms that a WSL Gateway entry exists; it does not prove the
+Gateway will accept it. Verify a successful completion with the [free-model smoke
+check](FREE-COMPUTE-OPERATIONS.md#wsl-setup-and-authentication). Do not print,
+share, or commit the credential file.
 
 For an isolated raw Kilo CLI run, keep the database and session data on the
 Linux filesystem and copy only the auth file into the temporary XDG data

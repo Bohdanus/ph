@@ -3589,7 +3589,7 @@ describe('resolveSessionDb', () => {
 });
 
 describe('the CLI staleness check', () => {
-  const { equivalent } = await_import_cli();
+  const { equivalent, describeDrift } = await_import_cli();
 
   const doc = (over = {}) =>
     JSON.stringify({
@@ -3613,6 +3613,135 @@ describe('the CLI staleness check', () => {
         })
       )
     ).toBe(true);
+  });
+
+  it('ignores elapsed chat-age telemetry while preserving chat classification', () => {
+    const chatSnapshot = (idleMs, hours) =>
+      doc({
+        worktrees: [
+          {
+            name: 'ph',
+            chats: {
+              unfinished: [
+                {
+                  id: 'ses_example',
+                  state: 'abandoned-midflight',
+                  idleMs,
+                  reasons: [`idle for ${hours}h and the last turn ended on "tool-calls", not a completed stop`],
+                  toolErrors: 4,
+                  creditsFailures: 0,
+                  blockedOn: null,
+                },
+              ],
+              dead: [],
+            },
+          },
+        ],
+      });
+
+    expect(equivalent(chatSnapshot(32_400_000, 9), chatSnapshot(36_000_000, 10))).toBe(true);
+    expect(
+      equivalent(chatSnapshot(32_400_000, 9), chatSnapshot(32_400_000, 9).replace('tool-calls', 'turn-complete'))
+    ).toBe(false);
+    expect(
+      equivalent(
+        chatSnapshot(32_400_000, 9),
+        chatSnapshot(32_400_000, 9)
+          .replace('abandoned-midflight', 'active')
+          .replace('idle for 9h', 'last message 1m ago')
+      )
+    ).toBe(false);
+    expect(
+      equivalent(
+        chatSnapshot(32_400_000, 9).replace('idle for', 'audit note: idle for'),
+        chatSnapshot(36_000_000, 10).replace('idle for', 'audit note: idle for')
+      )
+    ).toBe(false);
+  });
+
+  it('normalizes active-session minute ages and omits age-only chat drift', () => {
+    const activeSnapshot = (idleMs, minutes) =>
+      doc({
+        worktrees: [
+          {
+            name: 'ph',
+            chats: {
+              unfinished: [
+                {
+                  id: 'ses_active',
+                  state: 'active',
+                  idleMs,
+                  reasons: [`last message ${minutes}m ago`],
+                  toolErrors: 0,
+                  creditsFailures: 0,
+                  blockedOn: null,
+                },
+              ],
+              dead: [],
+            },
+          },
+        ],
+      });
+    const previous = activeSnapshot(60_000, 1);
+    const current = activeSnapshot(120_000, 2);
+
+    expect(equivalent(previous, current)).toBe(true);
+    expect(describeDrift(previous, current)).toBe('  (no per-worktree field changed)\n');
+  });
+
+  it('reports meaningful chat evidence changes without showing unchanged summaries', () => {
+    const snapshot = (toolErrors) =>
+      doc({
+        worktrees: [
+          {
+            name: 'ph',
+            chats: {
+              unfinished: [
+                {
+                  id: 'ses_example',
+                  state: 'abandoned-midflight',
+                  idleMs: 32_400_000,
+                  reasons: ['idle for 9h and the last turn ended on "tool-calls", not a completed stop'],
+                  toolErrors,
+                  creditsFailures: 0,
+                  blockedOn: null,
+                },
+              ],
+              dead: [],
+            },
+          },
+        ],
+      });
+
+    const drift = describeDrift(snapshot(1), snapshot(2));
+    expect(drift).toContain('~ ph: chats ');
+    expect(drift).toContain('"toolErrors":1');
+    expect(drift).toContain('"toolErrors":2');
+    expect(drift).not.toContain('idleMs');
+  });
+
+  it('keeps malformed chat structures fail-closed and reports omitted details without throwing', () => {
+    const snapshot = (version) =>
+      doc({
+        worktrees: [
+          {
+            name: 'ph',
+            chats: {
+              unfinished: 'unexpected scalar',
+              dead: null,
+              readUnfinished: [null],
+              metadata: { version },
+            },
+          },
+        ],
+      });
+
+    const previous = snapshot(1);
+    const current = snapshot(2);
+    expect(equivalent(previous, current)).toBe(false);
+    expect(() => describeDrift(previous, current)).not.toThrow();
+    expect(describeDrift(previous, current)).toContain('chats changed (details omitted)');
+    expect(() => describeDrift(doc({ worktrees: [{ name: 'ph', chats: null }] }), current)).not.toThrow();
   });
 
   it('still fails on a real change', () => {

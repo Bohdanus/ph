@@ -506,6 +506,7 @@ describe('Main tool-area routing', () => {
 
     render(<GuardedMain />);
 
+    expect(screen.getByTestId('start-page')).toBeVisible();
     expect(toolAreaTestId()).toBe(-1);
     // The empty state is not just non-empty of tool areas: its one affordance is a LIVE control.
     // The three click paths on this button are already driven further down by

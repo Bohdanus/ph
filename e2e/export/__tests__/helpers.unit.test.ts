@@ -682,7 +682,7 @@ interface LocatorSurface {
   textContent: Mock<() => Promise<string | null>>;
   getAttribute: Mock<(name: string) => Promise<string | null>>;
   boundingBox: Mock<() => Promise<Box | null>>;
-  evaluate: Mock<(read: (element: unknown) => unknown) => Promise<unknown>>;
+  evaluate: Mock<(read: (element: unknown, arg?: unknown) => unknown, arg?: unknown) => Promise<unknown>>;
   setInputFiles: Mock<(file: string) => Promise<void>>;
   or: Mock<(locator: LocatorSurface) => LocatorSurface>;
   nth: Mock<(index: number) => LocatorSurface>;
@@ -755,9 +755,20 @@ function asPlaywright<T extends object>(surface: object): T {
  * its source image with `toDataURL()`; logical dimensions come from the workspace fit
  * attributes, not this element's physical backing-store width and height.
  */
+const FAKE_DOCUMENT_DRAW_IMAGE = vi.fn();
+const FAKE_DOCUMENT_CANVAS = {
+  width: 0,
+  height: 0,
+  getContext: () => ({ drawImage: FAKE_DOCUMENT_DRAW_IMAGE }),
+  toDataURL: () => SOURCE_DATA_URL,
+};
+const FAKE_CANVAS_DOCUMENT = {
+  createElement: vi.fn(() => FAKE_DOCUMENT_CANVAS),
+};
 const FAKE_CANVAS_ELEMENT = {
   width: DEFAULT_DOCUMENT_WIDTH,
   height: DEFAULT_DOCUMENT_HEIGHT,
+  ownerDocument: FAKE_CANVAS_DOCUMENT,
   toDataURL: () => SOURCE_DATA_URL,
 };
 const FAKE_HIDPI_CANVAS_ELEMENT = {
@@ -782,7 +793,9 @@ function createLocatorMock(overrides: Partial<LocatorSurface> = {}): LocatorSurf
       return null;
     }),
     boundingBox: vi.fn().mockResolvedValue(null),
-    evaluate: vi.fn(async (read: (element: unknown) => unknown) => read(FAKE_CANVAS_ELEMENT)),
+    evaluate: vi.fn(async (read: (element: unknown, arg?: unknown) => unknown, arg?: unknown) =>
+      read(FAKE_CANVAS_ELEMENT, arg)
+    ),
     setInputFiles: vi.fn().mockResolvedValue(undefined),
     or: vi.fn(),
     nth: vi.fn(),
@@ -948,6 +961,8 @@ function isValidExportFormat(value: unknown): value is ExportFormat {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  FAKE_DOCUMENT_CANVAS.width = 0;
+  FAKE_DOCUMENT_CANVAS.height = 0;
 });
 
 afterEach(() => {
@@ -1208,7 +1223,9 @@ describe('Export Helpers', () => {
       const box: Box = { x: 64, y: 48, width: 512, height: 384 };
       const canvas = createLocatorMock({
         boundingBox: vi.fn().mockResolvedValue(box),
-        evaluate: vi.fn(async (read) => read(FAKE_HIDPI_CANVAS_ELEMENT)),
+        evaluate: vi.fn(async (read: (element: unknown, arg?: unknown) => unknown, arg?: unknown) =>
+          read(FAKE_HIDPI_CANVAS_ELEMENT, arg)
+        ),
       });
       const workspaceContainer = createLocatorMock();
       const drawTool = createLocatorMock();
@@ -1246,7 +1263,10 @@ describe('Export Helpers', () => {
       expect(surface.mouse.up).toHaveBeenCalled();
       expect(surface.screenshot).toHaveBeenCalledWith({ clip: redrawClip(box) });
       expect(canvas.evaluate).toHaveBeenCalledTimes(1);
-      expect(canvas.evaluate.mock.calls[0]?.[0](FAKE_HIDPI_CANVAS_ELEMENT)).toBe(SOURCE_DATA_URL);
+      expect(canvas.evaluate.mock.calls[0]?.[0](FAKE_HIDPI_CANVAS_ELEMENT, documentSize)).toBe(SOURCE_DATA_URL);
+      expect(FAKE_DOCUMENT_CANVAS.width).toBe(documentSize.width);
+      expect(FAKE_DOCUMENT_CANVAS.height).toBe(documentSize.height);
+      expect(FAKE_DOCUMENT_DRAW_IMAGE).toHaveBeenCalledWith(FAKE_HIDPI_CANVAS_ELEMENT, 0, 0, 800, 600);
       expect(workspaceContainer.getAttribute).toHaveBeenCalledWith('data-fit-document-width');
       expect(workspaceContainer.getAttribute).toHaveBeenCalledWith('data-fit-document-height');
       expect(result).toEqual({

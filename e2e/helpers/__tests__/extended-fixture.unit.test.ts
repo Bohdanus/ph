@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as playwright from '@playwright/test';
 import * as extended from '../../fixtures/extended-test';
+import { E2E_DEFAULT_DOCUMENT_STORAGE_KEY } from '../../../src/testing/e2e-startup.ts';
 
 /**
  * `extended-test.ts` without a browser.
@@ -43,7 +44,7 @@ type FixtureBody = (args: unknown, use: (value: never) => Promise<void>, testInf
 interface RegisteredFixture {
   readonly name: string;
   readonly body: FixtureBody;
-  readonly options: { readonly auto?: boolean } | undefined;
+  readonly options: { readonly auto?: boolean; readonly option?: boolean } | undefined;
 }
 
 /** The shape `addInitScript` is called with: the page function and its serialised argument. */
@@ -151,7 +152,7 @@ function fixture(name: string): RegisteredFixture {
   for (const layer of contributedLayers()) {
     const entry = layer.fixtures[name];
     if (entry === undefined) continue;
-    const [body, options] = entry as [FixtureBody, { readonly auto?: boolean } | undefined];
+    const [body, options] = entry as [FixtureBody, { readonly auto?: boolean; readonly option?: boolean } | undefined];
     return { name, body, options };
   }
   throw new Error(`e2e/fixtures/extended-test.ts registers no fixture named ${name}`);
@@ -170,9 +171,13 @@ function fixtureNames(): string[] {
  * was called, which is what makes the ordering assertions about the body rather than
  * about the file's own statements.
  */
-async function runFixture(registered: RegisteredFixture, recording: Recording): Promise<void> {
+async function runFixture(
+  registered: RegisteredFixture,
+  recording: Recording,
+  fixtureArgs: Record<string, unknown> = {}
+): Promise<void> {
   await registered.body(
-    { page: recording.page },
+    { page: recording.page, ...fixtureArgs },
     async () => {
       recording.log.push('use');
     },
@@ -239,19 +244,56 @@ describe('the shared test object', () => {
 });
 
 describe('the fixtures it registers', () => {
-  it('contributes exactly consolePolice, pinnedTheme, and firstUseTourSuppressed', () => {
+  it('contributes the shared console, theme, first-use, and workspace entry fixtures', () => {
     // The point of the shared object is that it is universal, so a fixture added here is
     // one every spec in `e2e/` silently acquires. Reading the registry rather than
     // asserting on two names is what makes a third one visible here rather than only in
     // the file that added it.
-    expect(fixtureNames()).toEqual(['consolePolice', 'firstUseTourSuppressed', 'pinnedTheme']);
+    expect(fixtureNames()).toEqual([
+      'consolePolice',
+      'firstUseTourSuppressed',
+      'initialEntry',
+      'pinnedTheme',
+      'workspaceStartup',
+    ]);
   });
 
-  it.each(['consolePolice', 'pinnedTheme', 'firstUseTourSuppressed'])('registers %s as auto', (name) => {
-    // `auto` is the whole argument for this file over a helper each spec calls by hand:
-    // a helper is opt-in per spec, and `auto` is opt-out, which is the property a check
-    // nobody can forget depends on.
-    expect(fixture(name).options?.auto).toBe(true);
+  it.each(['consolePolice', 'pinnedTheme', 'firstUseTourSuppressed', 'workspaceStartup'])(
+    'registers %s as auto',
+    (name) => {
+      // `auto` is the whole argument for this file over a helper each spec calls by hand:
+      // a helper is opt-in per spec, and `auto` is opt-out, which is the property a check
+      // nobody can forget depends on.
+      expect(fixture(name).options?.auto).toBe(true);
+    }
+  );
+
+  it('defaults initialEntry to the workspace and declares it as a Playwright option', () => {
+    const entry = fixture('initialEntry');
+    expect(entry.body).toBe('workspace');
+    expect(entry.options?.option).toBe(true);
+  });
+});
+
+describe('the workspaceStartup fixture', () => {
+  it('seeds the development-only clean-document marker before each workspace test', async () => {
+    const recording = recorder();
+    await runFixture(fixture('workspaceStartup'), recording, { initialEntry: 'workspace' });
+
+    expect(recording.log).toEqual(['page.addInitScript', 'use', 'body returned']);
+    expect(recording.initScripts).toHaveLength(1);
+    const { fn, arg } = recording.initScripts[0];
+    const sessionStorage = memoryStorage();
+    runInPage(fn, arg, { sessionStorage });
+    expect(sessionStorage.getItem(E2E_DEFAULT_DOCUMENT_STORAGE_KEY)).toBe('1');
+  });
+
+  it('leaves a start-page test without the workspace marker', async () => {
+    const recording = recorder();
+    await runFixture(fixture('workspaceStartup'), recording, { initialEntry: 'start-page' });
+
+    expect(recording.log).toEqual(['use', 'body returned']);
+    expect(recording.initScripts).toHaveLength(0);
   });
 });
 

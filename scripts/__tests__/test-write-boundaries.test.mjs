@@ -26,8 +26,8 @@ const REVIEWED = {
   },
   'dispose-worktree.test.mjs': {
     scope:
-      'Filesystem fixtures are created under unique OS temporary directories and cleaned up; child Git is test-controlled.',
-    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=17 filesystem-write:rmSync=5 filesystem-write:mkdirSync=24 filesystem-write:symlinkSync=2 filesystem-write:renameSync=2 subprocess:execFileSync=1 subprocess:spawnSync=1`,
+      'Filesystem, branch-upstream, duplicate-main, path-race, inventory, and archive fixtures live under unique OS temporary directories; child Git operates only on those fixtures.',
+    patterns: `filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=20 filesystem-write:rmSync=5 filesystem-write:mkdirSync=32 filesystem-write:symlinkSync=2 filesystem-write:renameSync=2 subprocess:execFileSync=2 subprocess:spawnSync=5`,
   },
   'docs-index.test.mjs': {
     scope: 'Subprocess invocation is part of the docs-index contract; review its command and cwd.',
@@ -445,7 +445,7 @@ describe('script-test resource boundary audit', () => {
     expect(() => scanTestSource('const broken = ;', 'broken.test.mjs')).toThrow('Could not parse broken.test.mjs');
   });
 
-  // These two full-tree scans can exceed Vitest's default 5s under parallel suite load.
+  // These repeated full-tree scans can exceed Vitest's default 5s under parallel suite load.
   it('derives every script test and requires exact reviewed pattern classifications', () => {
     const tests = deriveScriptTests(TEST_DIRECTORY);
     const names = new Set(tests.map(({ name }) => name));
@@ -494,7 +494,7 @@ describe('script-test resource boundary audit', () => {
       const source = readFileSync(join(TEST_DIRECTORY, file), 'utf8');
       expect(source, `${file} must retain the evidence for ${resource}`).toContain(evidence);
     }
-  });
+  }, 15_000);
 
   it('keeps process-wide environment mutation separate from filesystem writes', () => {
     const tests = new Map(deriveScriptTests(TEST_DIRECTORY).map(({ name, findings }) => [name, findings]));

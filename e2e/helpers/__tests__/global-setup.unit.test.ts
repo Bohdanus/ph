@@ -69,13 +69,23 @@ function unwrapExpression(expression: ts.Expression): ts.Expression {
   return current;
 }
 
+function staticStringValue(expression: ts.Expression): string | undefined {
+  const current = unwrapExpression(expression);
+  if (ts.isStringLiteralLike(current)) return current.text;
+  if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = staticStringValue(current.left);
+    const right = staticStringValue(current.right);
+    return left === undefined || right === undefined ? undefined : left + right;
+  }
+  return undefined;
+}
+
 function staticMemberName(expression: ts.Expression): string | undefined {
   const current = unwrapExpression(expression);
   if (ts.isPropertyAccessExpression(current)) return current.name.text;
   if (!ts.isElementAccessExpression(current) || !current.argumentExpression) return undefined;
 
-  const argument = unwrapExpression(current.argumentExpression);
-  return ts.isStringLiteralLike(argument) ? argument.text : undefined;
+  return staticStringValue(current.argumentExpression);
 }
 
 function isImportedTestApi(
@@ -94,11 +104,16 @@ function isImportedTestApi(
 }
 
 function isHeadlessPropertyName(name: ts.PropertyName): boolean {
-  const current = ts.isComputedPropertyName(name) ? unwrapExpression(name.expression) : name;
-  return (ts.isIdentifier(current) || ts.isStringLiteralLike(current)) && current.text === 'headless';
+  const expression = ts.isComputedPropertyName(name) ? name.expression : name;
+  const current = unwrapExpression(expression);
+  return ts.isIdentifier(current) ? current.text === 'headless' : staticStringValue(current) === 'headless';
 }
 
 function findPerSpecHeadedOverrides(source: string, fileName: string): string[] {
+  // Skip AST construction unless the source contains a direct or computed member call.
+  // Computed calls are included because their names may be statically built from string literals.
+  if (!/(?:\.\s*use\s*(?:\?\.\s*)?\(|\[[^\]]*\]\s*(?:\?\.\s*)?\()/.test(source)) return [];
+
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const testNames = new Set<string>();
   const testNamespaceNames = new Set<string>();
@@ -197,6 +212,46 @@ describe('Playwright spec browser-mode policy', () => {
     const source = [
       "import { test } from '../fixtures/extended-test';",
       "test['use'](({ ['headless']: (false as boolean) } as const));",
+    ].join('\n');
+
+    expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual(['nested/sample.spec.ts:2']);
+  });
+
+  it('recognizes property and API member names formed by static string concatenation', () => {
+    const source = [
+      "import { test } from '../fixtures/extended-test';",
+      "test.use({ ['head' + 'less']: false });",
+      "test['u' + 'se']({ ['head' + 'less']: false });",
+      "test.use?.({ ['head' + 'less']: false });",
+      "test['u' + 'se']?.({ ['head' + 'less']: false });",
+    ].join('\n');
+
+    expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual([
+      'nested/sample.spec.ts:2',
+      'nested/sample.spec.ts:3',
+      'nested/sample.spec.ts:4',
+      'nested/sample.spec.ts:5',
+    ]);
+  });
+
+  it('recognizes escaped spellings of the headed override property', () => {
+    const source = [
+      "import { test } from '../fixtures/extended-test';",
+      "test.use({ ['head\\u006cess']: false });",
+      "test.use({ ['\\x68eadless']: false });",
+    ].join('\n');
+
+    expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual([
+      'nested/sample.spec.ts:2',
+      'nested/sample.spec.ts:3',
+    ]);
+  });
+
+  it('recognizes a property name formed with a string line continuation', () => {
+    const continuation = '\\' + '\n';
+    const source = [
+      "import { test } from '../fixtures/extended-test';",
+      "test.use({ ['head" + continuation + "less']: false });",
     ].join('\n');
 
     expect(findPerSpecHeadedOverrides(source, 'nested/sample.spec.ts')).toEqual(['nested/sample.spec.ts:2']);

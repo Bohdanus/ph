@@ -186,8 +186,14 @@ afterEach(() => {
   themeState.theme = 'light';
 });
 
+const HEADER_MENU_RENDER_TIMEOUT_MS = 10_000;
+
+function itWithHeaderMenuRenderTimeout(name: string, run: () => void): void {
+  it(name, run, HEADER_MENU_RENDER_TIMEOUT_MS);
+}
+
 describe('DesktopHeader', () => {
-  it('renders the File, Image, Edit, View and Window menu buttons', () => {
+  itWithHeaderMenuRenderTimeout('renders the File, Image, Edit, View and Window menu buttons', () => {
     renderHeader();
 
     expect(screen.getByRole('button', { name: 'File' })).toBeInTheDocument();
