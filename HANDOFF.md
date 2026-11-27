@@ -178,7 +178,8 @@ These results establish the typed producer and fallback behavior for this bounde
 promote durable replay to logical authority. The typed action stores source arguments and registers
 no raster asset or durable materialization lease. Its runtime `tmpCanvas` is also retained by the
 pre-existing module-level `textRasterCache` in `src/tools/text.ts`, which has no production
-clear/eviction caller in the current tree. This slice does not prove that cache's lifetime or disposal.
+clear/eviction caller in the current tree. An exported clear helper exists, but the current-tree
+callers are tests only. This slice does not prove that cache's lifetime or disposal.
 Keep the `ownership-unproven` navigation gate closed until a separate reviewed change proves durable
 source ownership and failure containment across the remaining surfaces. Whole-document teardown,
 broader frame/style parity, and durable undo/redo cutover remain separate contracts. See

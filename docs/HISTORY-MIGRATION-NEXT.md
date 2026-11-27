@@ -20,8 +20,9 @@ after the candidate's earlier `73f43c071` base. At this check,
 `df8a37f2a0abfa8bf2364d352b18a5d504256c8b`; the feature branch was at `e881100` on `mirror` and
 absent on `origin`. The four-file clarification commit `18d07eb5` records the E2E reference limits,
 the cache-lifetime caveat, and the direct no-raster-registration assertion. The current candidate has
-not yet been pushed to either remote. Push the reviewed feature branch to the requested `origin` and
-update its existing `mirror` branch; do not push either `main` ref.
+not yet been pushed to either remote. This checkpoint also records that the exported text-cache clear
+helper has test-only call sites in the current tree. Push the reviewed feature branch to the requested
+`origin` and update its existing `mirror` branch; do not push either `main` ref.
 
 `main:landing -- status --json` designates
 `/Users/bkalynovskyi/ph/.kilo/worktrees/landing-main-fresh-20261124` at local `main` pin `64f5d7d`,
@@ -85,10 +86,10 @@ authority. An enabled typed text-source replacement in the tested prefix remains
 `ownership-unproven`; disabled text operations are skipped, so the effective baseline determines
 whether the projection is durable or falls back with `renderer-incompatible`. The immutable typed
 text action registers no raster asset and carries no disposable raster lease. Its runtime `tmpCanvas`
-is also retained by the pre-existing module-level `textRasterCache` in `src/tools/text.ts`; the cache
-has no production clear/eviction caller in the current tree. This slice does not prove that cache's
-lifetime or disposal. Generic durable-projection lease tests are a separate lifetime contract and
-are not evidence that a text canvas should be closed. Whole-document teardown, broader frame parity,
+is also retained by the pre-existing module-level `textRasterCache` in `src/tools/text.ts`. An
+exported clear helper exists, but current-tree call sites are tests only; production cache lifetime
+and disposal remain unproven. Generic durable-projection lease tests are a separate lifetime contract
+and are not evidence that a text canvas should be closed. Whole-document teardown, broader frame parity,
 Photoshop comparison, and durable undo/redo authority cutover remain separate work.
 
 ### Historical validation — 2026-11-27 17:49 UTC
