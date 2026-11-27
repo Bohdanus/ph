@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { samePath } from '../lib/path-identity.mjs';
 
-import { createReplacementMainWorktree, land, main as mainLanding, watch } from '../main-landing.mjs';
+import {
+  canRecoverOrphanAutoMerge,
+  createReplacementMainWorktree,
+  land,
+  main as mainLanding,
+  watch,
+} from '../main-landing.mjs';
 import { decide, registerMainWorktree, resolveWorktree, run, OVERRIDE_VAR } from '../main-worktree-guard.mjs';
 
 /**
@@ -491,6 +497,11 @@ describe('the guard tells a main worktree from a linked one on a real repository
           if (polls > 60) throw new Error('watcher exceeded the two expected observation windows');
         },
         now: () => clock,
+        selfProcessStartTokenImpl: () => 'fixture-self-process-token',
+        canRecoverOrphanAutoMergeImpl: (owner, at) =>
+          canRecoverOrphanAutoMerge(owner, at, { owner: false, child: false }),
+        cleanMainImpl: () => false,
+        notifyIfDueImpl: () => {},
         recoveryOptions: {
           now: () => clock,
           startHeartbeat: () => null,
