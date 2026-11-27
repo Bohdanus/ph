@@ -578,7 +578,9 @@ export function buildInventory({
       writtenRecently: records.filter(
         (r) => r.writeHistory.calls > 0 && r.writeHistory.lastAtMs > effectiveNow - liveWindowMs
       ).length,
-      goneWorktreesWithWrites: writeAudit?.available ? writeAudit.goneWorktrees.length : 0,
+      goneWorktreesWithWrites: writeAudit?.available
+        ? writeAudit.goneWorktrees.filter((worktree) => worktree.writeCalls > 0).length
+        : 0,
       totalWriteCalls: writeAudit?.available ? writeAudit.totalWriteCalls : 0,
       totalReadCalls: writeAudit?.available ? writeAudit.totalReadCalls : 0,
       // The size of the gap `writeHistory` cannot close: shell calls that ran
