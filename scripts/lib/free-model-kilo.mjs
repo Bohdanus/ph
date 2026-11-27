@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import {
   access,
+  chmod,
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -184,8 +186,14 @@ async function createIsolatedKiloDataHome(environment, isolatedHome, platform) {
       if (!authStat.isFile() || authStat.isSymbolicLink()) {
         throw new Error('Kilo auth path must be a regular file');
       }
-      if (platform === 'win32') await symlink(originalAuthFile, join(isolatedKiloData, 'auth.json'), 'file');
-      else await symlink(originalAuthFile, join(isolatedKiloData, 'auth.json'));
+      const isolatedAuthFile = join(isolatedKiloData, 'auth.json');
+      if (platform === 'win32') {
+        // Avoid copying credentials into a caller-selected Windows TEMP with an unverified ACL.
+        await symlink(originalAuthFile, isolatedAuthFile, 'file');
+      } else {
+        await copyFile(originalAuthFile, isolatedAuthFile, constants.COPYFILE_EXCL);
+        await chmod(isolatedAuthFile, 0o600);
+      }
     }
   }
   return isolatedDataHome;
@@ -1731,7 +1739,7 @@ export async function runKiloCompletion({
       try {
         await rm(isolatedHome, { recursive: true, force: true });
       } catch {
-        // Best-effort cleanup after child exit; removing the isolated auth symlink preserves its source file.
+        // Best-effort cleanup of isolated Kilo data after child exit.
       }
     }
   }

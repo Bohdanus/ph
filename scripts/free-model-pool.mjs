@@ -187,13 +187,16 @@ function windowsExecutableExtensions(command, environment, pathApi) {
 
 function resolveExplicitOpenCodePath(command, environment, cwd, pathApi, platform) {
   const resolved = pathApi.resolve(cwd, command);
-  if (platform !== 'win32' || pathApi.extname(resolved)) return resolved;
-  for (const extension of windowsExecutableExtensions(resolved, environment, pathApi)) {
-    const candidate = `${resolved}${extension}`;
+  if (platform === 'win32' && pathApi.extname(resolved)) return resolved;
+  const candidates =
+    platform === 'win32'
+      ? windowsExecutableExtensions(resolved, environment, pathApi).map((extension) => `${resolved}${extension}`)
+      : [resolved];
+  for (const candidate of candidates) {
     try {
       if (statSync(candidate).isFile()) return candidate;
     } catch {
-      // Missing and inaccessible explicit candidates are skipped in PATHEXT order.
+      // Missing and inaccessible explicit candidates are skipped.
     }
   }
   return null;
