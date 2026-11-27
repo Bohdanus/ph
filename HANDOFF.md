@@ -164,9 +164,9 @@ is independent of the next ownership slice and remains gated.
 StoreProvider tests cover typed append, the baseline-adjusted durable cursor, redo-branch
 truncation, disabled-row navigation, runtime `tmpCanvas` identity, and `ownership-unproven`
 fallback. A same-stack edit during a pending legacy replay is fenced before stale canvas paint,
-preview cleanup, or finalization. The product E2E checks one in-place point-text edit against exact
-Canvas, PNG, PSD composite, and PSD text-layer pixels from an independent Canvas text oracle; it
-also checks undo/redo pixels.
+preview cleanup, finalization, or rollback after a rejected publication. The product E2E checks one
+in-place point-text edit against exact Canvas, PNG, PSD composite, and PSD text-layer pixels from an
+independent Canvas text oracle; it also checks undo/redo pixels.
 
 These results establish the typed producer and fallback behavior for this bounded path; they do not
 promote durable replay to logical authority. The action stores typed source arguments and registers

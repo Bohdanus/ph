@@ -5,14 +5,17 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
-## Latest continuation reconciliation — 2026-11-27 17:02 UTC
+## Latest continuation reconciliation — 2026-11-27 17:28 UTC
 
 ### Current refs and ownership
 
-The PH-93 candidate is `/Users/bkalynovskyi/ph/.kilo/worktrees/history-text-source-lifecycle-20261127`
-on `task/history-text-source-lifecycle-20261127`. Its tip is `7edd63c7717711177f1a22c34481941f9845473f`,
-a merge of feature commit `52c55bf54ca425f27308756c4b15d8461bfbd3fa` with local `main` pin
-`73f43c07147eca4c16e22f363573adbeb332cc99`. The candidate worktree is clean. At this check,
+The PH-93 candidate worktree is
+`/Users/bkalynovskyi/ph/.kilo/worktrees/history-text-source-lifecycle-20261127` on
+`task/history-text-source-lifecycle-20261127`. Its verified source/test commit is
+`d432beced88af1c7bb24bab49089ab77f15d5e24`, tree
+`c3c72d28eb95caa57ffcb4e7c6f2d5953c7ed9c1`, descended from local `main` pin
+`73f43c07147eca4c16e22f363573adbeb332cc99` through the PH-93 feature commits. The worktree was clean
+at this ref snapshot. At this check,
 `mirror/main` was `df8a37f2a0abfa8bf2364d352b18a5d504256c8b`, `origin/main` was
 `cf3598671fedb3b799851fbba5d767ce752288ba`, and the PH-93 branch did not yet exist on `mirror`.
 Use `mirror` for the feature-branch push; `origin` is the upstream remote.
@@ -24,6 +27,11 @@ wrapper's designated path and identity immediately before landing; do not choose
 by branch name alone. The PH-93 claim is active. The scoped `repo:state -- --for-landing
 task/history-text-source-lifecycle-20261127` gate reported this candidate clear and 14 unrelated
 worktree findings; those findings are outside this task and remain untouched.
+
+Prior Codex chats and the Sonnet/ADR material supplied architecture and parity leads; they are not
+treated as proof. This pass rechecked the current implementation and test contracts. It preserves
+the known Nov. 23 mixed-source retained-affine result as a separate, unresolved diagnostic with no
+attributed root cause or Photoshop conclusion.
 
 ### PH-93 proof and authority boundary
 
@@ -37,12 +45,15 @@ history item. A redo-branch replacement truncates the abandoned typed action. Di
 preserve the independent legacy/durable cursor mapping and keep navigation behind
 `ownership-unproven`.
 
-The new `useHistory` freshness fence reads the latest synchronous StoreProvider snapshot after
-navigation publication and before replay paint, preview cleanup, or finalization. A real Provider
-test reproduces a same-stack cursor reset followed by a typed replacement while unsupported history
-forces immediate legacy fallback; the stale replay must not draw over the replacement. The hook
-test separately pins cancellation, no preview clear, and no late finalization. Existing Provider
-coverage continues to pin refused final draws and preview interleaving.
+The new `useHistory` freshness fence checks the logical replay timeline after navigation publication
+and before replay paint, preview cleanup, finalization, or rollback. A real Provider test reproduces a
+same-stack cursor reset followed by a typed replacement while unsupported history forces immediate
+legacy fallback; the stale replay must not draw over the replacement. Hook tests separately pin
+cancellation, no preview clear, and no late finalization. A rejected-publisher regression also proves
+that a newer text replacement is not rolled back or marked unavailable when the old replay fails.
+Existing Provider coverage continues to pin refused final draws and preview interleaving. This new
+fence is specific to document/history identity and cursor; it does not introduce a runtime-cache or
+preview-generation token.
 
 The product E2E reaches an in-place point-text edit, keeps the original layer identity and one typed
 history row, and requires exact 800×600 backing-pixel equality at 1× for the committed Canvas, PNG,
@@ -59,14 +70,15 @@ runtime layer cache. Generic durable-projection lease tests are a separate lifet
 not evidence that a text canvas should be closed. Whole-document teardown, broader frame parity,
 Photoshop comparison, and durable undo/redo authority cutover remain separate work.
 
-### Validation — 2026-11-27 17:08 UTC
+### Validation — 2026-11-27 17:26 UTC
 
-Against synchronized source candidate `7edd63c7717711177f1a22c34481941f9845473f`, the focused
-history/text suite passed 5 files / 144 tests, `npm run tsc -- --pretty false` passed, targeted ESLint
-passed without warnings, and `npm run build` passed. Product E2E run
-`2026-11-27T17-08-33-649Z-274` passed both Google Chrome and Google Chrome HiDPI projects (2 tests).
-Prettier and `git diff --check` passed after editing this continuation. These checks do not resolve
-the separate mixed-source affine parity diagnostic or prove Photoshop behavior.
+Against source/test commit `d432beced88af1c7bb24bab49089ab77f15d5e24` and tree
+`c3c72d28eb95caa57ffcb4e7c6f2d5953c7ed9c1`, the focused history/text suite passed 5 files / 145
+tests, `npm run tsc -- --pretty false` passed, targeted ESLint and Prettier passed, and
+`npm run build` passed. Product E2E run `2026-11-27T17-26-11-872Z-40507` passed both Google Chrome
+and Google Chrome HiDPI projects (2 tests). The rejected-publication regression is included in the
+145-test result. Prettier and `git diff --check` also passed after editing this continuation. These
+checks do not resolve the separate mixed-source affine parity diagnostic or prove Photoshop behavior.
 
 ### Next actions
 
