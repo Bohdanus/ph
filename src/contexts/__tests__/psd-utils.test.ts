@@ -203,6 +203,31 @@ function pixels(...values: number[]): PixelData {
 }
 
 describe('PSD codec binary roundtrip', () => {
+  it('runs the optional snapshot guard after loading the encoder and before rasterizing', async () => {
+    const stale = new Error('export snapshot is stale');
+    const beforeRasterize = vi.fn(() => {
+      throw stale;
+    });
+
+    await expect(savePsd({}, { width: 1, height: 1 }, undefined, beforeRasterize)).rejects.toBe(stale);
+
+    expect(beforeRasterize).toHaveBeenCalledExactlyOnceWith();
+    expect(drawCalls).toEqual([]);
+  });
+
+  it('uses the live layer records returned by the post-import snapshot guard', async () => {
+    const staged = layer({ name: 'staged', tmpCanvas: raster(pixel(255, 0, 0, 255)) });
+    const live = { ...staged, name: 'live', tmpCanvas: raster(pixel(0, 0, 255, 255)) };
+    const beforeRasterize = vi.fn(() => ({ [live.id]: live }));
+
+    const saved = await savePsd({ [staged.id]: staged }, { width: 1, height: 1 }, undefined, beforeRasterize);
+    const decoded = readPsd(saved, { useImageData: true });
+
+    expect(beforeRasterize).toHaveBeenCalledExactlyOnceWith();
+    expect(decoded.children?.[0]?.name).toBe('live');
+    expect(decoded.children?.[0]?.imageData?.data).toEqual(new Uint8ClampedArray([0, 0, 255, 255]));
+  });
+
   it('opens a real layered PSD through the document loader with displayable leaf layers', async () => {
     const buffer = await writePsd(
       {

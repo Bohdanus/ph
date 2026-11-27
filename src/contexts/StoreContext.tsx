@@ -479,6 +479,8 @@ type StoreAction = Action | InternalAction;
 
 export type PublicAction = Action;
 export type StoreDispatch = Dispatch<PublicAction>;
+type StoreContextState = StoreData & { getCurrentState: () => StoreData };
+type StoreContextValue = [StoreContextState, StoreDispatch];
 
 /**
  * The action kinds `dispatchAction` handles itself, in the order the chain below
@@ -515,7 +517,7 @@ type UninterceptedActionType = Exclude<StoreAction['type'], (typeof INTERCEPTED_
 export const DEFAULT_FOREGROUND_COLOR = '#000000';
 export const DEFAULT_BACKGROUND_COLOR = '#ffffff';
 
-const StoreContext = createContext<[StoreData, StoreDispatch] | undefined>(undefined);
+const StoreContext = createContext<StoreContextValue | undefined>(undefined);
 
 const initialState: StoreData = {
   canvasRef: { current: null },
@@ -2397,6 +2399,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
   const store = {
     ...storeState,
+    // Consumers that cross an async boundary can check freshness against the
+    // dispatcher's synchronous state, before React publishes the next render.
+    getCurrentState: () => latestStateRef.current,
     canvasRef,
     toolOverlayRef,
     rectOverlayRef,
@@ -2421,10 +2426,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   return <StoreContext.Provider value={[store, dispatch]}>{children}</StoreContext.Provider>;
 }
 
-export const useStore = (): [StoreData, StoreDispatch] => {
+export const useStore = (): StoreContextValue => {
   const ctx = useContext(StoreContext);
   if (!ctx) throw new Error('useStore must be used within StoreProvider');
   return ctx;
 };
 
-export const useOptionalStore = (): [StoreData, StoreDispatch] | null => useContext(StoreContext) ?? null;
+export const useOptionalStore = (): StoreContextValue | null => useContext(StoreContext) ?? null;

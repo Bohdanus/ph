@@ -3,7 +3,7 @@ import { useLayoutEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { type FileContextType, FileProvider, useFile } from '../useFile.tsx';
-import { saveImageToDisk } from '../image-load-save-utils.ts';
+import { downloadBlob, saveImageToDisk } from '../image-load-save-utils.ts';
 import { savePsd } from '../psd-utils.ts';
 import { composeDurableDocument, DurableCompositionRefusal, type DurableComposite } from '../durable-compositor.ts';
 import { replayDurableAtCursor, type DurableReplayResult } from '../durable-replay.ts';
@@ -148,20 +148,50 @@ function durableFixture() {
   const store = {
     durableStatus: 'current',
     durableDocument,
-    historyIndex: durableDocument.cursor,
+    // The opening-document history row is legacy index 0, but it maps to the
+    // durable baseline cursor -1. Export must preserve that provenance instead
+    // of comparing these two cursor domains directly.
+    historyIndex: 0,
     documentId: durableDocument.documentId,
     documentRevision: durableDocument.documentRevision,
     branchRevision: durableDocument.branchRevision,
     layers: legacyLayers,
     totalSize: size,
     documentFrame: frame,
+    durablePresentation: { status: 'durable', cursor: durableDocument.cursor, reason: null },
+    renderSelector: {
+      source: 'durable',
+      documentId: durableDocument.documentId,
+      documentRevision: durableDocument.documentRevision,
+      branchRevision: durableDocument.branchRevision,
+      historyCursor: 0,
+      frame,
+    },
+    durableRenderProjection: {
+      documentId: durableDocument.documentId,
+      documentRevision: durableDocument.documentRevision,
+      branchRevision: durableDocument.branchRevision,
+      durableRevision: durableDocument.durableRevision,
+      historyCursor: durableDocument.cursor,
+      frame,
+      status: 'durable',
+      layers: legacyLayers,
+    },
   } as unknown as StoreData;
 
   return { composite, legacyLayers, release, replay, store };
 }
 
+function exposeStore(store: StoreData): StoreData & { getCurrentState: () => StoreData } {
+  const exposed: StoreData & { getCurrentState: () => StoreData } = {
+    ...store,
+    getCurrentState: () => ((durableStore.current as [StoreData, unknown] | null)?.[0] ?? exposed) as StoreData,
+  };
+  return exposed;
+}
+
 function renderWithStore(store: StoreData) {
-  durableStore.current = [store, vi.fn()];
+  durableStore.current = [exposeStore(store), vi.fn()];
   return render(
     <FileProvider>
       <Consumer />
@@ -170,7 +200,7 @@ function renderWithStore(store: StoreData) {
 }
 
 function rerenderWithStore(rerender: ReturnType<typeof render>['rerender'], store: StoreData) {
-  durableStore.current = [store, vi.fn()];
+  durableStore.current = [exposeStore(store), vi.fn()];
   rerender(
     <FileProvider>
       <Consumer />
@@ -178,13 +208,13 @@ function rerenderWithStore(rerender: ReturnType<typeof render>['rerender'], stor
   );
 }
 
-function save(format: 'image/png' | 'psd') {
+function save(format: 'image/png' | 'psd', exportFrame = frame) {
   act(() => {
     void filesRef.current!.openSaveImageDialog({
       fileName: 'drawing.png',
       layers: (durableStore.current as [StoreData])[0].layers,
       size,
-      documentFrame: frame,
+      documentFrame: exportFrame,
     });
   });
   fireEvent.change(screen.getByTestId('save-dialog-format-select'), { target: { value: format } });
@@ -201,35 +231,176 @@ describe('FileProvider durable export adapter parity', () => {
   it.each([
     ['raster', 'image/png'],
     ['PSD', 'psd'],
-  ] as const)('routes a current durable document through durableExportRecords for %s export', async (_, format) => {
-    const { composite, release, replay, store } = durableFixture();
+  ] as const)(
+    'routes a mapped legacy cursor through its current durable presentation for %s export',
+    async (_, format) => {
+      const { composite, release, replay, store } = durableFixture();
+      vi.mocked(replayDurableAtCursor).mockReturnValue(replay);
+      vi.mocked(composeDurableDocument).mockResolvedValue(composite);
+      vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
+      vi.mocked(savePsd).mockResolvedValue(new ArrayBuffer(8));
+      renderWithStore(store);
+
+      save(format);
+
+      const expectedLayer = expect.objectContaining({
+        id: 'durable-layer',
+        bitmap: composite.layers['durable-layer']!.bitmap,
+        tmpCanvas: null,
+        pos: { x: 9, y: 10, width: 20, height: 16 },
+      });
+      if (format === 'psd') {
+        await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
+        expect(savePsd).toHaveBeenCalledWith(
+          expect.objectContaining({ 'durable-layer': expectedLayer }),
+          size,
+          frame,
+          expect.any(Function)
+        );
+      } else {
+        await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
+        expect(renderExportCanvas).toHaveBeenCalledWith(
+          expect.objectContaining({ 'durable-layer': expectedLayer }),
+          size,
+          frame
+        );
+      }
+      expect(replayDurableAtCursor).toHaveBeenCalledWith(store.durableDocument, -1);
+      expect(release).toHaveBeenCalledExactlyOnceWith();
+    }
+  );
+
+  it('keeps the legacy export when the current canvas presentation is not durable', async () => {
+    const { composite, legacyLayers, replay, store } = durableFixture();
     vi.mocked(replayDurableAtCursor).mockReturnValue(replay);
     vi.mocked(composeDurableDocument).mockResolvedValue(composite);
     vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
-    vi.mocked(savePsd).mockResolvedValue(new ArrayBuffer(8));
+    renderWithStore({
+      ...store,
+      durablePresentation: { status: 'legacy-fallback', cursor: -1, reason: 'unsupported-source' },
+      renderSelector: { ...store.renderSelector, source: 'legacy' },
+      durableRenderProjection: null,
+    });
+
+    save('image/png');
+
+    await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
+    expect(renderExportCanvas).toHaveBeenCalledWith(legacyLayers, size, frame);
+    expect(composeDurableDocument).not.toHaveBeenCalled();
+  });
+
+  it('refuses an export when its staged frame differs from the open document frame', async () => {
+    const { store } = durableFixture();
     renderWithStore(store);
 
-    save(format);
+    save('image/png', { ...frame, x: frame.x + 1 });
 
-    const expectedLayer = expect.objectContaining({
-      id: 'durable-layer',
-      bitmap: composite.layers['durable-layer']!.bitmap,
-      tmpCanvas: null,
-      pos: { x: 9, y: 10, width: 20, height: 16 },
-    });
-    if (format === 'psd') {
-      await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
-      expect(savePsd).toHaveBeenCalledWith(expect.objectContaining({ 'durable-layer': expectedLayer }), size, frame);
-    } else {
-      await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
-      expect(renderExportCanvas).toHaveBeenCalledWith(
-        expect.objectContaining({ 'durable-layer': expectedLayer }),
+    expect(await screen.findByText(/document changed while the Save dialog was open/i)).toBeInTheDocument();
+    expect(renderExportCanvas).not.toHaveBeenCalled();
+  });
+
+  it('keeps legacy export when the supplied layer map is not the captured durable presentation', async () => {
+    const { composite, legacyLayers, replay, store } = durableFixture();
+    vi.mocked(replayDurableAtCursor).mockReturnValue(replay);
+    vi.mocked(composeDurableDocument).mockResolvedValue(composite);
+    vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
+    renderWithStore(store);
+
+    act(() => {
+      void filesRef.current!.openSaveImageDialog({
+        fileName: 'drawing.png',
+        layers: { ...legacyLayers },
         size,
-        frame
-      );
-    }
-    expect(replayDurableAtCursor).toHaveBeenCalledWith(store.durableDocument, -1);
-    expect(release).toHaveBeenCalledExactlyOnceWith();
+        documentFrame: frame,
+      });
+    });
+    fireEvent.change(screen.getByTestId('save-dialog-format-select'), { target: { value: 'image/png' } });
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+
+    await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
+    expect(renderExportCanvas).toHaveBeenCalledWith(legacyLayers, size, frame);
+    expect(composeDurableDocument).not.toHaveBeenCalled();
+  });
+
+  it('uses live layer records after a presentation-only promotion while the Save dialog is open', async () => {
+    const { store } = durableFixture();
+    // ImageBitmap-backed durable presentation caches have no getContext method;
+    // promotions accept them as a CanvasImageSource too.
+    const stagedBitmap = { width: 20, height: 16, close: vi.fn() } as unknown as ImageBitmap;
+    const stagedLayer = {
+      ...store.layers['durable-layer']!,
+      bitmap: null,
+      tmpCanvas: stagedBitmap,
+    };
+    const stagedLayers: LayersRecord = { ...store.layers, 'durable-layer': stagedLayer };
+    const openedStore = { ...store, durableStatus: 'stale' as const, layers: stagedLayers };
+    const promotedLayer = {
+      ...stagedLayer,
+      bitmap: { width: 20, height: 16, close: vi.fn() } as unknown as ImageBitmap,
+      tmpCanvas: null,
+    };
+    const promotedLayers: LayersRecord = { ...stagedLayers, 'durable-layer': promotedLayer };
+    renderWithStore(openedStore);
+
+    act(() => {
+      void filesRef.current!.openSaveImageDialog({
+        fileName: 'drawing.png',
+        layers: stagedLayers,
+        size,
+        documentFrame: frame,
+      });
+    });
+    durableStore.current = [exposeStore({ ...openedStore, layers: promotedLayers }), vi.fn()];
+    fireEvent.change(screen.getByTestId('save-dialog-format-select'), { target: { value: 'image/png' } });
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+
+    await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
+    expect(renderExportCanvas).toHaveBeenCalledWith(promotedLayers, size, frame);
+    expect(composeDurableDocument).not.toHaveBeenCalled();
+  });
+
+  it('rebinds legacy PSD rasterization to live records after cache promotion during encoder import', async () => {
+    const { store } = durableFixture();
+    const stagedLayer = {
+      ...store.layers['durable-layer']!,
+      bitmap: null,
+      tmpCanvas: { width: 20, height: 16, close: vi.fn() } as unknown as ImageBitmap,
+    };
+    const stagedLayers: LayersRecord = { ...store.layers, 'durable-layer': stagedLayer };
+    const openedStore = { ...store, durableStatus: 'stale' as const, layers: stagedLayers };
+    const promotedLayers: LayersRecord = {
+      ...stagedLayers,
+      'durable-layer': {
+        ...stagedLayer,
+        bitmap: { width: 20, height: 16, close: vi.fn() } as unknown as ImageBitmap,
+        tmpCanvas: null,
+      },
+    };
+    let finishEncoderImport!: () => void;
+    let layersAtRasterization: LayersRecord | undefined;
+    vi.mocked(savePsd).mockImplementationOnce(
+      async (_layers, _size, _frame, beforeRasterize) =>
+        new Promise<ArrayBuffer>((resolve, reject) => {
+          finishEncoderImport = () => {
+            try {
+              layersAtRasterization = beforeRasterize?.();
+              resolve(new ArrayBuffer(8));
+            } catch (error) {
+              reject(error);
+            }
+          };
+        })
+    );
+    renderWithStore(openedStore);
+
+    save('psd');
+    await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
+    durableStore.current = [exposeStore({ ...openedStore, layers: promotedLayers }), vi.fn()];
+    await act(async () => finishEncoderImport());
+
+    expect(layersAtRasterization).toBe(promotedLayers);
+    expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), 'drawing (copy)', 'psd');
+    expect(composeDurableDocument).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -262,7 +433,7 @@ describe('FileProvider durable export adapter parity', () => {
 
     if (format === 'psd') {
       await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
-      expect(savePsd).toHaveBeenCalledWith(legacyLayers, size, frame);
+      expect(savePsd).toHaveBeenCalledWith(legacyLayers, size, frame, expect.any(Function));
     } else {
       await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
       expect(renderExportCanvas).toHaveBeenCalledWith(legacyLayers, size, frame);
@@ -295,7 +466,7 @@ describe('FileProvider durable export adapter parity', () => {
     save('psd');
 
     await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
-    expect(savePsd).toHaveBeenCalledWith(hiddenLegacyLayers, size, frame);
+    expect(savePsd).toHaveBeenCalledWith(hiddenLegacyLayers, size, frame, expect.any(Function));
     expect(composeDurableDocument).not.toHaveBeenCalled();
     expect(composite.release).not.toHaveBeenCalled();
   });
@@ -320,7 +491,7 @@ describe('FileProvider durable export adapter parity', () => {
 
     if (format === 'psd') {
       await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
-      expect(savePsd).toHaveBeenCalledWith(legacyLayersWithExtra, size, frame);
+      expect(savePsd).toHaveBeenCalledWith(legacyLayersWithExtra, size, frame, expect.any(Function));
     } else {
       await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
       expect(renderExportCanvas).toHaveBeenCalledWith(legacyLayersWithExtra, size, frame);
@@ -361,7 +532,7 @@ describe('FileProvider durable export adapter parity', () => {
 
     if (format === 'psd') {
       await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
-      expect(savePsd).toHaveBeenCalledWith(legacyLayers, size, frame);
+      expect(savePsd).toHaveBeenCalledWith(legacyLayers, size, frame, expect.any(Function));
       expect(renderExportCanvas).not.toHaveBeenCalled();
       expect(saveImageToDisk).not.toHaveBeenCalled();
     } else {
@@ -398,7 +569,7 @@ describe('FileProvider durable export adapter parity', () => {
 
     if (format === 'psd') {
       await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
-      expect(savePsd).toHaveBeenCalledWith(legacyLayers, size, frame);
+      expect(savePsd).toHaveBeenCalledWith(legacyLayers, size, frame, expect.any(Function));
     } else {
       await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
       expect(renderExportCanvas).toHaveBeenCalledWith(legacyLayers, size, frame);
@@ -473,6 +644,123 @@ describe('FileProvider durable export adapter parity', () => {
 
     await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
     expect(renderExportCanvas).toHaveBeenCalledWith(legacyLayers, size, frame);
+    expect(release).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it('refuses export if document identity or layer identity changes during durable composition', async () => {
+    const { composite, release, replay, store } = durableFixture();
+    const layer = composite.layers['durable-layer']!;
+    const mismatchedComposite = {
+      ...composite,
+      layers: {
+        ...composite.layers,
+        'durable-layer': { ...layer, bounds: { ...layer.bounds, x: layer.bounds.x + 1 } },
+      },
+    } as unknown as DurableComposite;
+    let finish!: (value: DurableComposite) => void;
+    vi.mocked(replayDurableAtCursor).mockReturnValue(replay);
+    vi.mocked(composeDurableDocument).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
+    renderWithStore(store);
+
+    save('image/png');
+    await waitFor(() => expect(composeDurableDocument).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      durableStore.current = [
+        exposeStore({
+          ...store,
+          documentId: 'replacement-document',
+          durableDocument: { ...store.durableDocument!, documentId: 'replacement-document' },
+          layers: { ...store.layers },
+        }),
+        vi.fn(),
+      ];
+      finish(mismatchedComposite);
+    });
+
+    expect(await screen.findByText(/document changed while the Save dialog was open/i)).toBeInTheDocument();
+    expect(renderExportCanvas).not.toHaveBeenCalled();
+    expect(saveImageToDisk).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it('rechecks PSD snapshot freshness after the encoder import and before reading layer sources', async () => {
+    const { store } = durableFixture();
+    let finishEncoderImport!: () => void;
+    vi.mocked(savePsd).mockImplementationOnce(
+      async (_layers, _size, _frame, beforeRasterize) =>
+        new Promise<ArrayBuffer>((resolve, reject) => {
+          finishEncoderImport = () => {
+            try {
+              beforeRasterize?.();
+              resolve(new ArrayBuffer(8));
+            } catch (error) {
+              reject(error);
+            }
+          };
+        })
+    );
+    renderWithStore({ ...store, durableStatus: 'stale' });
+
+    save('psd');
+    await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      durableStore.current = [
+        exposeStore({
+          ...store,
+          documentId: 'replacement-document',
+          durableDocument: { ...store.durableDocument!, documentId: 'replacement-document' },
+          layers: { ...store.layers },
+        }),
+        vi.fn(),
+      ];
+      finishEncoderImport();
+    });
+
+    expect(await screen.findByText(/document changed while the Save dialog was open/i)).toBeInTheDocument();
+    expect(downloadBlob).not.toHaveBeenCalled();
+  });
+
+  it('rechecks durable presentation authority after the PSD encoder import', async () => {
+    const { composite, replay, release, store } = durableFixture();
+    let finishEncoderImport!: () => void;
+    vi.mocked(replayDurableAtCursor).mockReturnValue(replay);
+    vi.mocked(composeDurableDocument).mockResolvedValue(composite);
+    vi.mocked(savePsd).mockImplementationOnce(
+      async (_layers, _size, _frame, beforeRasterize) =>
+        new Promise<ArrayBuffer>((resolve, reject) => {
+          finishEncoderImport = () => {
+            try {
+              beforeRasterize?.();
+              resolve(new ArrayBuffer(8));
+            } catch (error) {
+              reject(error);
+            }
+          };
+        })
+    );
+    renderWithStore(store);
+
+    save('psd');
+    await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
+    durableStore.current = [
+      exposeStore({
+        ...store,
+        durablePresentation: { ...store.durablePresentation },
+        renderSelector: { ...store.renderSelector },
+        durableRenderProjection: { ...store.durableRenderProjection! },
+      }),
+      vi.fn(),
+    ];
+    await act(async () => finishEncoderImport());
+
+    expect(await screen.findByText(/document changed while the Save dialog was open/i)).toBeInTheDocument();
+    expect(downloadBlob).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalledExactlyOnceWith();
   });
 });

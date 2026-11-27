@@ -198,7 +198,12 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
   return { size, layers, warnings };
 }
 
-export async function savePsd(layers: LayersRecord, size: Size, frame?: DocumentFrame): Promise<ArrayBuffer> {
+export async function savePsd(
+  layers: LayersRecord,
+  size: Size,
+  frame?: DocumentFrame,
+  beforeRasterize?: () => LayersRecord | undefined
+): Promise<ArrayBuffer> {
   validateSize(size);
   const documentFrame = resolveDocumentFrame(size, frame);
   const exportSize = documentFrameSize(documentFrame);
@@ -235,8 +240,21 @@ export async function savePsd(layers: LayersRecord, size: Size, frame?: Document
     return { layer, fillOpacity: layerFillOpacity, blendMode, left, top, width, height };
   });
   const { writePsd } = await import('ag-psd');
+  const liveLayers = beforeRasterize?.();
+  const rasterizationPlan = liveLayers
+    ? (() => {
+        const ids = Object.keys(liveLayers);
+        if (ids.length !== prepared.length || prepared.some(({ layer }) => !liveLayers[layer.id])) {
+          throw new Error('PSD layer set changed before rasterization');
+        }
+        // Rebind only the source records after the caller's freshness check.
+        // Their logical metadata and bounds were validated against this same
+        // staged snapshot before the import; only disposable caches may differ.
+        return prepared.map((entry) => ({ ...entry, layer: liveLayers[entry.layer.id]! }));
+      })()
+    : prepared;
   const { canvas, ctx } = canvas2d(exportSize.width, exportSize.height);
-  const children = prepared.map(
+  const children = rasterizationPlan.map(
     ({ layer, fillOpacity: layerFillOpacity, blendMode, left, top, width, height }): PsdLayer => {
       const source = layer.tmpCanvas ?? layer.bitmap;
       const raster = canvas2d(source ? width : 1, source ? height : 1);

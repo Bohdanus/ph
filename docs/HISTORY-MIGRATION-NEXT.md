@@ -5,6 +5,76 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
+## Latest continuation reconciliation — 2026-11-27 14:56 UTC
+
+### Current refs and bounded candidate
+
+The candidate worktree is
+`/Users/bkalynovskyi/ph/.kilo/worktrees/durable-export-cursor-safety-20261127` on
+`task/durable-export-cursor-safety-20261127`, based on local `main` pin
+`c6999be5c36af1857ff37f55f4c8b50fea0d4cac`. The canonical `mirror/main` live head matched this
+pin at 2026-11-27 14:47 UTC. The local `origin` remote is not the canonical `ph` remote; use
+`mirror` for current refs and any authorized push.
+
+This bounded production fix protects export while the Save dialog and PSD encoder cross async
+boundaries. `HistoryItem[]` and `replayHistory()` remain logical authority; durable replay remains a
+staged export/presentation path with legacy fallback. The durable cursor is the accepted
+`durablePresentation.cursor`, after checking the legacy render selector and durable projection; it
+is not inferred by equating that cursor with `historyIndex`.
+
+At dialog open, the provider captures document identity/revisions, history index, dimensions, frame,
+and the live layer map. Before export and before PSD rasterization, it rejects logical document
+changes and exact presentation-bound changes. When cache-only records change, it reads the current
+live layer records so it cannot rasterize a retired staged bitmap. This preserves the logical
+snapshot, not a byte-pinned cache snapshot: a cache-only publication with the same logical fields
+and bounds is exported from its current runtime records. Durable export is disabled when layer-map
+identity differs among the caller-supplied map, opening snapshot, and current map. Text source
+create/replace can supply a distinct but logically matching map and therefore stays on legacy
+export. After asynchronous composition and again after the PSD
+encoder import, the durable document, selector, presentation, projection, cursor, and layer-map
+identity are rechecked. PSD prepares logical geometry before its import and rebinds only the raster
+source records after the final freshness check.
+
+The export review does not change renderer admission, alpha tolerances, or the migration acceptance
+contract. The supplied 2026-11-23 direct/cached blank-affine observation still localizes a
+fixture-specific difference without identifying its cause or establishing Photoshop behavior. This
+candidate does not resolve that pixel-parity gap. The next separate source-ownership slice remains
+the open `ph-93` work described below; recheck its ownership and current `main` before starting it.
+
+### Validation and independent review
+
+At 2026-11-27 14:56 UTC, the focused export and StoreContext suite passed 5 files / 181 tests;
+`npm run tsc -- --pretty false`, `npm run build`, formatting, and `git diff --check` passed.
+`npm run lint:check` exited 0 with 132 warnings and no errors. The warnings are repository-wide;
+direct ESLint on the changed files exited 0 with four existing Fast Refresh warnings in
+`StoreContext.tsx`.
+
+Independent Sol and Terra reviews found and corrected three issues in earlier drafts: reversed
+promotion direction, assuming every promotion source has `getContext()` (durable `tmpCanvas` may be
+an `ImageBitmap`), and missing durable-presentation authority revalidation after the PSD import.
+Both re-reviewed the latest guards and found no remaining stale-bitmap or async authority race in
+the inspected paths. The review is scoped to source/cache lifetime and freshness; it does not prove
+real-browser pixel equality for every presentation cache or replace the pending export parity gates.
+
+### Ordered next steps
+
+1. Recheck the task diff, canonical `mirror/main`, file holds, and scoped landing state before commit,
+   push, or merge. Push only the reviewed branch through the repository gates; land through the
+   pinned `main:landing` wrapper only after revalidating its owner, parent/tree pins, and operation
+   scope.
+2. After this bounded export-snapshot fix lands, resume `ph-93` in a fresh worktree from the then
+   approved `main`. Recheck the issue and producer ownership. Trace `commitDirtyTool` →
+   `replaceLayerSource` → `REPLACE_LAYER_SOURCE_ACTION`; prove append and navigation fallback,
+   bitmap/tmpCanvas identity and resource lifetime, stale/refused work, draw failures and preview
+   interleaving, plus exact production canvas, PNG, and PSD pixels. Keep `ownership-unproven` closed
+   until the proof passes; do not infer disposable ownership for the immutable text action.
+3. Keep the fractional-frame matrix separate. Preserve exact-zero comparisons for runtime, PNG,
+   PSD layers, and PSD composite; do not promote refused adapter measurements or change frame
+   publication based on those diagnostics.
+4. Treat whole-document replacement teardown and durable logical undo/redo authority cutover as
+   later architectural work. Revisit cutover only after every surface has explicit identity,
+   coverage, freshness, lease, preview, failure, and fallback proofs.
+
 ## Latest continuation reconciliation — 2026-11-21 23:31 UTC
 
 ### Current refs, ownership, and landing state
