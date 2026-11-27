@@ -146,8 +146,8 @@ async function readWorkspacePixels(page: Page) {
     .toBuffer({ resolveWithObject: true });
 }
 
-/** Pin the point-text inputs through the controls a user sees before building an independent oracle. */
-async function pinIndependentPointTextStyle(page: Page): Promise<void> {
+/** Pin the point-text fixture through user-visible controls before building its Canvas reference. */
+async function pinPointTextFixtureStyle(page: Page): Promise<void> {
   await page.locator('#font-family-select').click();
   await page.locator('#font-family-list').getByRole('button', { name: 'Arial', exact: true }).click();
 
@@ -170,16 +170,16 @@ async function pinIndependentPointTextStyle(page: Page): Promise<void> {
   }
 }
 
-/** Install a one-shot capture listener so the oracle uses the actual trusted placement event. */
+/** Install a one-shot capture listener so the reference uses the actual trusted placement event. */
 async function armWorkspacePointerCapture(page: Page): Promise<void> {
   await page.evaluate(() => {
     const workspace = document.querySelector<HTMLElement>('[data-testid="workspace-container"]');
-    if (!workspace) throw new Error('text oracle: the workspace container is missing');
+    if (!workspace) throw new Error('text reference: the workspace container is missing');
     const capture = (event: PointerEvent) => {
       if (!workspace.contains(event.target as Node)) return;
-      workspace.dataset.historyOracleClientX = String(event.clientX);
-      workspace.dataset.historyOracleClientY = String(event.clientY);
-      workspace.dataset.historyOraclePointerTrusted = String(event.isTrusted);
+      workspace.dataset.historyReferenceClientX = String(event.clientX);
+      workspace.dataset.historyReferenceClientY = String(event.clientY);
+      workspace.dataset.historyReferencePointerTrusted = String(event.isTrusted);
       document.removeEventListener('pointerdown', capture, true);
     };
     document.addEventListener('pointerdown', capture, true);
@@ -189,31 +189,33 @@ async function armWorkspacePointerCapture(page: Page): Promise<void> {
 async function readWorkspacePointerCapture(page: Page): Promise<{ clientX: number; clientY: number }> {
   return await page.evaluate(() => {
     const workspace = document.querySelector<HTMLElement>('[data-testid="workspace-container"]');
-    if (!workspace) throw new Error('text oracle: the workspace container is missing');
-    const { historyOracleClientX, historyOracleClientY, historyOraclePointerTrusted } = workspace.dataset;
-    delete workspace.dataset.historyOracleClientX;
-    delete workspace.dataset.historyOracleClientY;
-    delete workspace.dataset.historyOraclePointerTrusted;
-    const clientX = Number(historyOracleClientX);
-    const clientY = Number(historyOracleClientY);
-    if (historyOraclePointerTrusted !== 'true' || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
-      throw new Error('text oracle: no trusted workspace pointerdown was captured');
+    if (!workspace) throw new Error('text reference: the workspace container is missing');
+    const { historyReferenceClientX, historyReferenceClientY, historyReferencePointerTrusted } = workspace.dataset;
+    delete workspace.dataset.historyReferenceClientX;
+    delete workspace.dataset.historyReferenceClientY;
+    delete workspace.dataset.historyReferencePointerTrusted;
+    const clientX = Number(historyReferenceClientX);
+    const clientY = Number(historyReferenceClientY);
+    if (historyReferencePointerTrusted !== 'true' || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+      throw new Error('text reference: no trusted workspace pointerdown was captured');
     }
     return { clientX, clientY };
   });
 }
 
 /**
- * Independently reconstruct a point-text layer and its document/PSD rasterization from browser
- * geometry and fresh Canvas contexts. This intentionally does not read app-published fit values,
- * the PSD's reported bounds, or the app's text-rendering helpers.
+ * Build a same-browser Canvas reference for point-text raster and export comparisons from captured
+ * browser geometry and fresh Canvas contexts. The paint path is separate from app render/export
+ * helpers, but this fixture intentionally shares the current point-text bounds/baseline formula,
+ * 64px Arial style, 1.2 line height, 5px padding, and test color. It is a raster/export regression
+ * reference, not an independent layout specification or Photoshop oracle.
  */
-async function independentPointTextOracle(
+async function sameBrowserPointTextReference(
   page: Page,
   pointer: { clientX: number; clientY: number },
   expectedText: string
 ) {
-  const oracle = await page.evaluate(
+  const reference = await page.evaluate(
     async ({ clientX, clientY, text, fontSize, lineHeight, padding, color }) => {
       await document.fonts.load(`${fontSize}px Arial`, text);
       await document.fonts.ready;
@@ -221,18 +223,18 @@ async function independentPointTextOracle(
       const workspace = document.querySelector<HTMLElement>('[data-testid="workspace-container"]');
       const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
       const zoomContainer = canvas?.parentElement;
-      if (!workspace || !canvas || !zoomContainer) throw new Error('text oracle: workspace geometry is unavailable');
+      if (!workspace || !canvas || !zoomContainer) throw new Error('text reference: workspace geometry is unavailable');
       if (window.devicePixelRatio !== 1) {
-        throw new Error(`text oracle: expected devicePixelRatio 1, got ${window.devicePixelRatio}`);
+        throw new Error(`text reference: expected devicePixelRatio 1, got ${window.devicePixelRatio}`);
       }
       if (canvas.width !== 800 || canvas.height !== 600) {
-        throw new Error(`text oracle: expected an 800x600 blank document, got ${canvas.width}x${canvas.height}`);
+        throw new Error(`text reference: expected an 800x600 blank document, got ${canvas.width}x${canvas.height}`);
       }
       if (getComputedStyle(zoomContainer).transform !== 'none') {
-        throw new Error('text oracle: the workspace view transform is not identity');
+        throw new Error('text reference: the workspace view transform is not identity');
       }
       if (workspace.scrollLeft !== 0 || workspace.scrollTop !== 0) {
-        throw new Error('text oracle: the workspace scroll position is not zero');
+        throw new Error('text reference: the workspace scroll position is not zero');
       }
 
       const rect = workspace.getBoundingClientRect();
@@ -252,7 +254,7 @@ async function independentPointTextOracle(
       const viewportY = rect.top + workspace.clientTop;
       const scale = Math.min(viewportWidth / canvas.width, viewportHeight / canvas.height);
       if (![viewportX, viewportY, viewportWidth, viewportHeight, scale].every(Number.isFinite) || scale <= 0) {
-        throw new Error('text oracle: workspace viewport geometry is invalid');
+        throw new Error('text reference: workspace viewport geometry is invalid');
       }
       const fitOffsetX = (viewportWidth - canvas.width * scale) / 2;
       const fitOffsetY = (viewportHeight - canvas.height * scale) / 2;
@@ -265,7 +267,7 @@ async function independentPointTextOracle(
       htmlMeasureCanvas.height = 1;
       const htmlContext = htmlMeasureCanvas.getContext('2d');
       const offscreenContext = new OffscreenCanvas(1, 1).getContext('2d');
-      if (!htmlContext || !offscreenContext) throw new Error('text oracle: both 2D context types are required');
+      if (!htmlContext || !offscreenContext) throw new Error('text reference: both 2D context types are required');
 
       const readMetrics = (context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D) => {
         context.font = `${fontSize}px Arial`;
@@ -276,9 +278,10 @@ async function independentPointTextOracle(
         const ascent = vertical.fontBoundingBoxAscent;
         const descent = vertical.fontBoundingBoxDescent;
         if (![advance, ascent, descent].every((value) => typeof value === 'number' && Number.isFinite(value))) {
-          throw new Error('text oracle: Canvas did not provide finite text metrics');
+          throw new Error('text reference: Canvas did not provide finite text metrics');
         }
-        if (advance <= 0 || ascent <= 0 || descent < 0) throw new Error('text oracle: text metrics are out of range');
+        if (advance <= 0 || ascent <= 0 || descent < 0)
+          throw new Error('text reference: text metrics are out of range');
         return { advance, ascent, descent };
       };
       const htmlMetrics = readMetrics(htmlContext);
@@ -289,7 +292,7 @@ async function independentPointTextOracle(
         htmlMetrics.descent !== offscreenMetrics.descent
       ) {
         throw new Error(
-          `text oracle: HTML and OffscreenCanvas metrics differ: ${JSON.stringify({ htmlMetrics, offscreenMetrics })}`
+          `text reference: HTML and OffscreenCanvas metrics differ: ${JSON.stringify({ htmlMetrics, offscreenMetrics })}`
         );
       }
 
@@ -300,14 +303,12 @@ async function independentPointTextOracle(
       const right = left + layerWidth;
       const bottom = top + layerHeight;
       if (left < 0 || top < 0 || right > canvas.width || bottom > canvas.height) {
-        throw new Error(
-          `text oracle: independently derived point bounds require clamping: ${left},${top} ${layerWidth}x${layerHeight}`
-        );
+        throw new Error(`text reference: point bounds require clamping: ${left},${top} ${layerWidth}x${layerHeight}`);
       }
 
       const layerCanvas = new OffscreenCanvas(Math.ceil(layerWidth), Math.ceil(layerHeight));
       const layerContext = layerCanvas.getContext('2d');
-      if (!layerContext) throw new Error('text oracle: no source-layer 2D context');
+      if (!layerContext) throw new Error('text reference: no source-layer 2D context');
       layerContext.font = `${fontSize}px Arial`;
       layerContext.textAlign = 'left';
       layerContext.textBaseline = 'alphabetic';
@@ -319,20 +320,20 @@ async function independentPointTextOracle(
       documentCanvas.width = canvas.width;
       documentCanvas.height = canvas.height;
       const documentContext = documentCanvas.getContext('2d');
-      if (!documentContext) throw new Error('text oracle: no document-reference 2D context');
+      if (!documentContext) throw new Error('text reference: no document-reference 2D context');
       documentContext.imageSmoothingEnabled = false;
       documentContext.filter = 'none';
       documentContext.globalAlpha = 1;
       documentContext.globalCompositeOperation = 'source-over';
       documentContext.drawImage(layerCanvas, left, top, layerWidth, layerHeight);
 
-      // The fresh document's Blank 1 layer is solid white. Build the full canvas/export
-      // oracle independently from that known background and the text raster above.
+      // The fresh document's Blank 1 layer is solid white. Build a separate full-canvas export
+      // reference from that known background and the text raster above.
       const compositeCanvas = document.createElement('canvas');
       compositeCanvas.width = canvas.width;
       compositeCanvas.height = canvas.height;
       const compositeContext = compositeCanvas.getContext('2d');
-      if (!compositeContext) throw new Error('text oracle: no independent composite 2D context');
+      if (!compositeContext) throw new Error('text reference: no composite 2D context');
       compositeContext.fillStyle = '#ffffff';
       compositeContext.fillRect(0, 0, compositeCanvas.width, compositeCanvas.height);
       compositeContext.imageSmoothingEnabled = false;
@@ -349,7 +350,7 @@ async function independentPointTextOracle(
       psdCanvas.width = psdWidth;
       psdCanvas.height = psdHeight;
       const psdContext = psdCanvas.getContext('2d');
-      if (!psdContext) throw new Error('text oracle: no PSD-reference 2D context');
+      if (!psdContext) throw new Error('text reference: no PSD-reference 2D context');
       psdContext.imageSmoothingEnabled = false;
       psdContext.filter = 'none';
       psdContext.globalAlpha = 1;
@@ -383,10 +384,10 @@ async function independentPointTextOracle(
       .toBuffer({ resolveWithObject: true });
 
   return {
-    ...oracle,
-    documentPixels: await decode(oracle.documentDataUrl),
-    compositePixels: await decode(oracle.compositeDataUrl),
-    psdLayerPixels: await decode(oracle.psdLayerDataUrl),
+    ...reference,
+    documentPixels: await decode(reference.documentDataUrl),
+    compositePixels: await decode(reference.compositeDataUrl),
+    psdLayerPixels: await decode(reference.psdLayerDataUrl),
   };
 }
 
@@ -710,7 +711,7 @@ const isDraftFrame: PixelPredicate = (red, green, blue, alpha) =>
   green >= STROKE_ANALYSIS.SELECTION_GREEN_MIN &&
   blue >= STROKE_ANALYSIS.SELECTION_BLUE_MIN;
 
-/** The only colour the tool's ink is written in, so one predicate can find it on the canvas. */
+/** The test fixture color used to identify text ink on the canvas. */
 const TEXT_COLOR = '#ff0000';
 
 /** `HANDLE_SIZE` from `src/util/constants.ts`; see {@link TEXT_PADDING_DOC_PX} for why it is a copy. */
@@ -1003,8 +1004,8 @@ const CARET_CLICK = { x: 450, y: 250 };
 
 /** Where the second box of the commit-on-click test goes: far enough from the first to be a placement. */
 const FIRST_BOX_CLICK = { x: 200, y: 200 };
-/** The independent point-text oracle uses a wide phrase, so place it away from document clamping. */
-const TEXT_ORACLE_CLICK = { x: 600, y: 200 };
+/** The point-text reference uses a wide phrase, so place it away from document clamping. */
+const TEXT_REFERENCE_CLICK = { x: 600, y: 200 };
 const SECOND_BOX_CLICK = { x: 150, y: 450 };
 const CANVAS_REENTRY_TEXT = 'Canvas route';
 const CLICK_LADDER_TEXT = 'Alpha beta gamma delta epsilon';
@@ -2160,7 +2161,7 @@ test.describe('Canvas Type-tool re-entry', () => {
   test.describe('durable text-source export parity at 1x', () => {
     test.use({ deviceScaleFactor: 1 });
 
-    test('an in-place text replacement keeps legacy history and matches independent same-browser text and PSD oracles', async ({
+    test('an in-place text replacement preserves legacy history and matches same-browser Canvas/PNG/PSD references', async ({
       page,
     }) => {
       const layerRows = page.getByTitle('Drag to reorder');
@@ -2176,13 +2177,13 @@ test.describe('Canvas Type-tool re-entry', () => {
         'the 1x project must expose the 800x600 document backing'
       ).toEqual({ width: 800, height: 600 });
 
-      await pinIndependentPointTextStyle(page);
+      await pinPointTextFixtureStyle(page);
       await page.evaluate(async (text) => {
         await document.fonts.load('64px Arial', text);
         await document.fonts.ready;
       }, `${CANVAS_REENTRY_TEXT}X`);
       await armWorkspacePointerCapture(page);
-      await clickToPlace(page, box, TEXT_ORACLE_CLICK);
+      await clickToPlace(page, box, TEXT_REFERENCE_CLICK);
       const placementPointer = await readWorkspacePointerCapture(page);
       await page.keyboard.type(CANVAS_REENTRY_TEXT);
       await page.keyboard.press('Escape');
@@ -2245,7 +2246,7 @@ test.describe('Canvas Type-tool re-entry', () => {
       ).toContainText('edit layer source');
       await expect(replacementRow.getByTitle('Current state')).toBeVisible();
 
-      const textOracle = await independentPointTextOracle(page, placementPointer, editedText);
+      const textReference = await sameBrowserPointTextReference(page, placementPointer, editedText);
       const strip = page.getByTestId('dev-status-strip');
       await expect(strip).toHaveAttribute('data-status', 'current');
       await expect(strip).toHaveAttribute('data-presentation-status', 'unpublished');
@@ -2258,8 +2259,8 @@ test.describe('Canvas Type-tool re-entry', () => {
         channels: editedPixels.info.channels,
       }).toEqual({ width: 800, height: 600, channels: 4 });
       expect(
-        editedPixels.data.equals(textOracle.compositePixels.data),
-        'the committed canvas must match an independent white-background plus Canvas-text composite'
+        editedPixels.data.equals(textReference.compositePixels.data),
+        'the committed canvas must match the same-browser white-background plus Canvas-text reference'
       ).toBe(true);
       expect(editedPixels.data.equals(beforePixels.data), 'the edit did not change the committed text pixels').toBe(
         false
@@ -2292,8 +2293,8 @@ test.describe('Canvas Type-tool re-entry', () => {
       });
       if (!psd.imageData) throw new Error('Missing PSD composite');
       expect(
-        Buffer.from(psd.imageData.data).equals(textOracle.compositePixels.data),
-        'PSD composite must match the independent white-background plus Canvas-text composite'
+        Buffer.from(psd.imageData.data).equals(textReference.compositePixels.data),
+        'PSD composite must match the same-browser white-background plus Canvas-text reference'
       ).toBe(true);
       const psdTextLayers = psd.children?.filter((layer) => /^text \d+$/i.test(layer.name ?? '')) ?? [];
       expect(psdTextLayers, 'the in-place replacement must export exactly one text layer').toHaveLength(1);
@@ -2310,11 +2311,11 @@ test.describe('Canvas Type-tool re-entry', () => {
           width: psdTextLayer.imageData.width,
           height: psdTextLayer.imageData.height,
         },
-        'PSD layer bounds must match the independently measured fractional text box rounded by the PSD contract'
-      ).toEqual(textOracle.bounds);
+        'PSD layer bounds must match the reference box rounded by the PSD bounds contract'
+      ).toEqual(textReference.bounds);
       expect(
-        psdTextLayerData.equals(textOracle.psdLayerPixels.data),
-        'PSD layer pixels must match the independent Canvas raster'
+        psdTextLayerData.equals(textReference.psdLayerPixels.data),
+        'PSD layer pixels must match the fresh Canvas-context raster reference'
       ).toBe(true);
 
       await openSaveDialog(page);
@@ -2336,8 +2337,8 @@ test.describe('Canvas Type-tool re-entry', () => {
         channels: 4,
       });
       expect(
-        png.data.equals(textOracle.compositePixels.data),
-        'PNG pixels must match the independent white-background plus Canvas-text composite'
+        png.data.equals(textReference.compositePixels.data),
+        'PNG pixels must match the same-browser white-background plus Canvas-text reference'
       ).toBe(true);
 
       await getUndoButton(page).click();
@@ -2357,7 +2358,7 @@ test.describe('Canvas Type-tool re-entry', () => {
       await backgroundRow.getByRole('button', { name: 'Hide layer' }).click();
       await expect(backgroundRow.getByRole('button', { name: 'Show layer' })).toBeVisible();
       await expect
-        .poll(async () => (await readWorkspacePixels(page)).data.equals(textOracle.documentPixels.data))
+        .poll(async () => (await readWorkspacePixels(page)).data.equals(textReference.documentPixels.data))
         .toBe(true);
       const isolatedCanvasPixels = await readWorkspacePixels(page);
       expect(
@@ -2366,18 +2367,18 @@ test.describe('Canvas Type-tool re-entry', () => {
           height: isolatedCanvasPixels.info.height,
           channels: isolatedCanvasPixels.info.channels,
         },
-        'the independent document oracle uses the complete RGBA workspace backing'
+        'the reference document uses the complete RGBA workspace backing'
       ).toEqual({ width: 800, height: 600, channels: 4 });
       const isolatedTextLayerPixels = cropWorkspacePixels(
         isolatedCanvasPixels.data,
         isolatedCanvasPixels.info.width,
         isolatedCanvasPixels.info.height,
-        textOracle.bounds.left,
-        textOracle.bounds.top,
-        textOracle.bounds.width,
-        textOracle.bounds.height
+        textReference.bounds.left,
+        textReference.bounds.top,
+        textReference.bounds.width,
+        textReference.bounds.height
       );
-      expect(psdTextLayerData.equals(isolatedTextLayerPixels), 'the PSD layer crop uses independent bounds').toBe(true);
+      expect(psdTextLayerData.equals(isolatedTextLayerPixels), 'the PSD layer crop uses reference bounds').toBe(true);
     });
   });
 });

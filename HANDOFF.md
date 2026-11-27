@@ -162,18 +162,26 @@ is independent of the next ownership slice and remains gated.
 **PH-93 source replacement remains behind the ownership gate.** The product path is
 `commitDirtyTool` (`useLayer.ts`) → `replaceLayerSource` → typed `REPLACE_LAYER_SOURCE_ACTION`.
 StoreProvider tests cover typed append, the baseline-adjusted durable cursor, redo-branch
-truncation, disabled-row navigation, runtime `tmpCanvas` identity, and `ownership-unproven`
-fallback. A same-stack edit during a pending legacy replay is fenced before stale canvas paint,
-preview cleanup, finalization, or rollback after a rejected publication. The product E2E checks one
-in-place point-text edit against exact Canvas, PNG, PSD composite, and PSD text-layer pixels from an
-independent Canvas text oracle; it also checks undo/redo pixels.
+truncation, disabled-row navigation, runtime `tmpCanvas` identity, and the ownership gate. The adapter
+test also pins the byte-for-byte derived entry and absence of raster registration. An enabled typed
+replacement in the tested prefix returns `ownership-unproven`; disabled text operations are
+skipped, so a supported effective baseline may render durably while an unsupported one falls back
+with `renderer-incompatible`. The real StoreProvider interleaving case is
+`resetHistoryTo.durable.test.tsx`; separate hook tests with a mocked store check cancellation,
+preview preservation, and rejected-publication rollback. The product E2E checks one in-place point-text
+edit against exact Canvas, PNG, PSD composite, and PSD text-layer pixels using fresh same-browser
+Canvas contexts and captured geometry. The reference shares the fixture's style and point-text layout
+formula; it proves raster/export consistency, not independent layout semantics or Photoshop parity.
+Undo/redo pixels are checked exactly.
 
 These results establish the typed producer and fallback behavior for this bounded path; they do not
-promote durable replay to logical authority. The action stores typed source arguments and registers
-no raster asset, so its runtime `tmpCanvas` has no durable materialization lease to release. Keep the
-`ownership-unproven` navigation gate closed until a separate reviewed change proves durable source
-ownership and failure containment across the remaining surfaces. Whole-document teardown, broader
-frame/style parity, and durable undo/redo cutover remain separate contracts. See
+promote durable replay to logical authority. The typed action stores source arguments and registers
+no raster asset or durable materialization lease. Its runtime `tmpCanvas` is also retained by the
+pre-existing module-level `textRasterCache` in `src/tools/text.ts`, which has no production
+clear/eviction caller in the current tree. This slice does not prove that cache's lifetime or disposal.
+Keep the `ownership-unproven` navigation gate closed until a separate reviewed change proves durable
+source ownership and failure containment across the remaining surfaces. Whole-document teardown,
+broader frame/style parity, and durable undo/redo cutover remain separate contracts. See
 `docs/HISTORY-MIGRATION-NEXT.md` for the evidence and current-ref reconciliation.
 
 A bounded source-backed create exception allows an image or blank `NEW_LAYER_ACTION` to

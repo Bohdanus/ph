@@ -5,20 +5,23 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
-## Latest continuation reconciliation — 2026-11-27 17:49 UTC
+## Latest continuation reconciliation — 2026-11-27 21:13 UTC
 
 ### Current refs and ownership
 
 The PH-93 candidate worktree is
 `/Users/bkalynovskyi/ph/.kilo/worktrees/history-text-source-lifecycle-20261127` on
 `task/history-text-source-lifecycle-20261127`. Its verified source/test commit is
-`d07a4b7fe7ec993265e22ad8650a906673205eae`, tree
-`aabcd11304580aadb91789594ad3717456b95694`, descended from local `main` pin
-`73f43c07147eca4c16e22f363573adbeb332cc99` through the PH-93 feature commits. The worktree is clean
-and tracks `mirror/task/history-text-source-lifecycle-20261127` at the same SHA. At this check,
-`mirror/main` was `df8a37f2a0abfa8bf2364d352b18a5d504256c8b` and `origin/main` was
-`73f43c07147eca4c16e22f363573adbeb332cc99`. Use `mirror` for the feature-branch push; `origin` is
-the upstream remote. The feature branch is pushed; `main` has not been pushed.
+`e881100c6ab2c00726c58b081ae6f90d2127cd34`, tree
+`03d0f0f7f72d9c2ad2ba9c6bc605ae1339711d3e`, descended from local `main` pin
+`73f43c07147eca4c16e22f363573adbeb332cc99` through the PH-93 feature commits. The base commit is
+pushed to `mirror/task/history-text-source-lifecycle-20261127`. At this check,
+`origin/main` was `73f43c07147eca4c16e22f363573adbeb332cc99` and `mirror/main` was
+`df8a37f2a0abfa8bf2364d352b18a5d504256c8b`; the feature branch was absent on `origin`. The current
+uncommitted changes are the E2E reference terminology, this reconciliation, the HANDOFF clarification,
+and the no-raster-registration assertion in `history-adapter.source-edit.test.ts`. The requested
+feature branch must be pushed to `origin` after those changes are reviewed. `mirror` currently remains
+at `e881100`; neither remote `main` has been pushed.
 
 `main:landing -- status --json` designates
 `/Users/bkalynovskyi/ph/.kilo/worktrees/landing-main-fresh-20261124` at the same `73f43c071` pin,
@@ -28,10 +31,18 @@ by branch name alone. The PH-93 claim is active. The scoped `repo:state -- --for
 task/history-text-source-lifecycle-20261127` gate reported this candidate clear and 14 unrelated
 worktree findings; those findings are outside this task and remain untouched.
 
-Prior Codex chats and the Sonnet/ADR material supplied architecture and parity leads; they are not
-treated as proof. This pass rechecked the current implementation and test contracts. It preserves
-the known Nov. 23 mixed-source retained-affine result as a separate, unresolved diagnostic with no
-attributed root cause or Photoshop conclusion.
+The two earlier Codex history threads were rechecked: `01a17f24` (plan) and `01a1791a` (continuation
+audit). Their gate ordering, legacy-authority boundary and parity findings remain useful leads; older
+ref and worktree claims were not carried forward without live checks. A local Kilo sweep from Nov. 15
+returned review/audit child sessions rather than an implementation-owner chat. Its PH-93 review
+findings were rechecked against this tree: the point-text E2E now describes its shared same-browser
+Canvas reference precisely, and the source-edit conversion test now pins the no-raster-registration
+property. The Nov. 27 Sonnet architecture review says it relied on a supplied summary, the public
+repository page and one repository document, not the current branch or production source; its
+blank-first/D1/D2 sequencing recommendations are advisory, not verified constraints on this task.
+This pass rechecked the current implementation and tests. It preserves the known Nov. 23 mixed-source
+retained-affine result as a separate, unresolved diagnostic with no attributed root cause or Photoshop
+conclusion.
 
 ### PH-93 proof and authority boundary
 
@@ -41,14 +52,18 @@ appends to the logical `HistoryItem[]`, maps legacy `historyIndex` to the durabl
 without counting the opening baseline row, and leaves the render selector on legacy with
 `durablePresentation` unpublished and no composition. The action stores typed source arguments only;
 the replacement runtime layer retains its new `tmpCanvas` identity and has no `bitmap` payload in the
-history item. A redo-branch replacement truncates the abandoned typed action. Disabled-row tests
-preserve the independent legacy/durable cursor mapping and keep navigation behind
-`ownership-unproven`.
+history item. The adapter test pins the byte-for-byte converted entry and proves that source-edit
+derivation makes no `AssetRegistry.registerBaseline` call. A redo-branch replacement truncates the
+abandoned typed action. Disabled-row tests
+preserve the independent legacy/durable cursor mapping. An enabled typed replacement in the tested
+prefix returns `ownership-unproven`; disabled text-source operations are skipped, so a supported
+effective baseline may present durably while an unsupported one returns `renderer-incompatible`.
 
 The new `useHistory` freshness fence checks the logical replay timeline after navigation publication
-and before replay paint, preview cleanup, finalization, or rollback. A real Provider test reproduces a
-same-stack cursor reset followed by a typed replacement while unsupported history forces immediate
-legacy fallback; the stale replay must not draw over the replacement. Hook tests separately pin
+and before replay paint, preview cleanup, finalization, or rollback. The real StoreProvider test in
+`src/contexts/__tests__/resetHistoryTo.durable.test.tsx` reproduces a same-stack cursor reset followed
+by a typed replacement while unsupported history forces immediate legacy fallback; the stale replay
+must not draw over the replacement. Separate `useHistory` hook tests with a mocked store pin
 cancellation, no preview clear, and no late finalization. A rejected-publisher regression also proves
 that a newer text replacement is not rolled back or marked unavailable when the old replay fails.
 Existing Provider coverage continues to pin refused final draws and preview interleaving. This new
@@ -57,20 +72,26 @@ preview-generation token.
 
 The product E2E reaches an in-place point-text edit, keeps the original layer identity and one typed
 history row, and requires exact 800×600 backing-pixel equality at 1× for the committed Canvas, PNG,
-PSD composite, and cropped PSD text layer against an independently drawn Canvas text oracle. It also
-checks PSD layer bounds and exact undo/redo pixels. The same test passed in both configured Chrome
-projects, including the HiDPI project forced to a 1× document backing. This is one point-text fixture
-and a same-browser Canvas oracle; it is not a Photoshop oracle or a claim about every text style,
-affine/frame combination, or mixed-source case.
+PSD composite, and cropped PSD text layer against a fresh same-browser Canvas reference. The reference
+uses fresh Canvas contexts and captured browser geometry, but intentionally shares the fixture's
+64px Arial style, 1.2 line height, 5px padding, color, and current point-text bounds/baseline formula.
+It checks raster/export consistency, not independent layout semantics or Photoshop parity. The E2E
+also checks PSD layer bounds and exact undo/redo pixels. The same test passed in both configured
+Chrome projects, including the HiDPI project forced to a 1× document backing. This is one point-text
+fixture and does not establish every text style, affine/frame combination, or mixed-source case.
 
 This slice does not open the ownership gate. `HistoryItem[]` and `replayHistory()` remain logical
-authority, and text-source navigation remains on `ownership-unproven` fallback. The immutable typed
-text action registers no raster asset and carries no disposable raster lease; its `tmpCanvas` is a
-runtime layer cache. Generic durable-projection lease tests are a separate lifetime contract and are
-not evidence that a text canvas should be closed. Whole-document teardown, broader frame parity,
+authority. An enabled typed text-source replacement in the tested prefix remains behind
+`ownership-unproven`; disabled text operations are skipped, so the effective baseline determines
+whether the projection is durable or falls back with `renderer-incompatible`. The immutable typed
+text action registers no raster asset and carries no disposable raster lease. Its runtime `tmpCanvas`
+is also retained by the pre-existing module-level `textRasterCache` in `src/tools/text.ts`; the cache
+has no production clear/eviction caller in the current tree. This slice does not prove that cache's
+lifetime or disposal. Generic durable-projection lease tests are a separate lifetime contract and
+are not evidence that a text canvas should be closed. Whole-document teardown, broader frame parity,
 Photoshop comparison, and durable undo/redo authority cutover remain separate work.
 
-### Validation — 2026-11-27 17:49 UTC
+### Historical validation — 2026-11-27 17:49 UTC
 
 Against source/test commit `d432beced88af1c7bb24bab49089ab77f15d5e24` and tree
 `c3c72d28eb95caa57ffcb4e7c6f2d5953c7ed9c1`, the focused history/text suite passed 5 files / 145
@@ -85,12 +106,22 @@ with 4 existing expected-failure pins. The subsequent feature push to `mirror` s
 both passed. Commit hooks, Prettier, and `git diff --check` also passed on this snapshot. These checks
 do not resolve the separate mixed-source affine parity diagnostic or prove Photoshop behavior.
 
+### Validation — 2026-11-27 21:14 UTC
+
+On the current working tree based on `e881100c6ab2c00726c58b081ae6f90d2127cd34`, the exact product
+E2E passed both Google Chrome projects in run `2026-11-27T21-02-52-134Z-99714` (2 tests). The six
+focused history/text test files passed 164 tests, including the added direct no-raster-registration
+assertion. `npm run tsc -- --pretty false`, Prettier on the four changed files, and `git diff --check`
+passed. These checks include uncommitted changes; full pre-push gates and independent review of the
+exact committed candidate are still required.
+
 ### Next actions
 
 1. Obtain two independent read-only reviews using verified free tool-free routes; recheck every
    actionable finding against the exact source and tests. No paid fallback is authorized.
 2. After the final review and any required fixes, rerun the necessary gates and push the exact final
-   feature-branch SHA to `mirror`; do not force-update the branch or push `main`.
+   feature-branch SHA to the requested `origin`, then verify the pushed ref; do not force-update the
+   branch or push `main`.
 3. Recheck current refs, PH-93 ownership, file holds, and the designated landing path. Land through
    the pinned `main:landing` wrapper only after the exact candidate is reviewed and its gates pass.
 4. Keep `ownership-unproven` closed. Durable navigation eligibility requires a separate proof and
