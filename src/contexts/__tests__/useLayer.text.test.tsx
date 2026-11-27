@@ -5,6 +5,7 @@ import type { ToolArgs } from '../tool-types.ts';
 import type { TextToolArgs } from '../../tools/text.ts';
 import type { Layer } from '../layer-types.ts';
 import * as durableCompositor from '../durable-compositor.ts';
+import * as historyAdapter from '../history-adapter.ts';
 import { StoreProvider, useStore } from '../StoreContext.tsx';
 import { CurrentToolProvider, useCurrentTool } from '../useCurrentTool.tsx';
 import { useLayers } from '../useLayer.ts';
@@ -1482,6 +1483,105 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(result.current.store.layers[originalLayer.id]?.tmpCanvas).toBe(appendedRuntimeLayer.tmpCanvas);
     expect(result.current.store.layers[originalLayer.id]?.bitmap).toBe(appendedRuntimeLayer.bitmap);
     expect(result.current.store.durableRenderProjection).toBeNull();
+    expect(compose).not.toHaveBeenCalled();
+  });
+
+  it('preserves a typed legacy append when source planning and shadow conversion both throw', () => {
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+    const result = setupTextTool();
+    const originalRaster = new OffscreenCanvas(100, 50);
+    const replacementRaster = new OffscreenCanvas(100, 50);
+    const originalArgs = makeTextArgs();
+    vi.mocked(createLayerSource).mockImplementationOnce((params: { source: unknown }): Layer => ({
+      id: 'mock-layer-1',
+      name: 'Mock',
+      isBedrock: false,
+      tmpCanvas: originalRaster,
+      bitmap: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 0,
+      pos: { x: 0, y: 0, width: 100, height: 50 },
+      presentationBounds: null,
+      operations: [],
+      source: params.source as Layer['source'],
+    }));
+    act(() => {
+      result.current.store.currentArgs.current = originalArgs;
+      result.current.layers.commitDirtyTool();
+    });
+
+    const originalLayer = result.current.store.layers['mock-layer-1'];
+    act(() => result.current.layers.beginTextLayerEdit(originalLayer.id));
+    const historyBeforeEdit = [...result.current.store.history];
+    const editedArgs = makeTextArgs({ text: 'Updated', editingLayerId: originalLayer.id });
+    result.current.store.currentArgs.current = editedArgs;
+    vi.mocked(createLayerSource).mockClear();
+    vi.mocked(createLayerSource).mockImplementationOnce((params: { source: unknown }): Layer => ({
+      id: 'mock-layer-raster',
+      name: 'Mock',
+      isBedrock: false,
+      tmpCanvas: replacementRaster,
+      bitmap: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 0,
+      pos: { x: 0, y: 0, width: 100, height: 50 },
+      presentationBounds: null,
+      operations: [],
+      source: params.source as Layer['source'],
+    }));
+
+    const planningError = new Error('producer source plan failed');
+    const deriveError = new Error('store source derivation failed');
+    const conversionError = new Error('full shadow conversion failed');
+    planHistoryAppend.mockImplementationOnce(() => {
+      throw planningError;
+    });
+    const derive = vi.spyOn(historyAdapter, 'deriveReplaceLayerSourceEntry').mockImplementation(() => {
+      throw deriveError;
+    });
+    const convert = vi.spyOn(historyAdapter, 'convertLegacyHistorySafely').mockImplementation(() => {
+      throw conversionError;
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let committed: ReturnType<typeof result.current.layers.commitDirtyTool> = null;
+    let deriveCalls = 0;
+    let conversionCalls = 0;
+    try {
+      act(() => {
+        committed = result.current.layers.commitDirtyTool();
+      });
+      deriveCalls = derive.mock.calls.length;
+      conversionCalls = convert.mock.calls.length;
+    } finally {
+      derive.mockRestore();
+      convert.mockRestore();
+      log.mockRestore();
+    }
+
+    expect(committed).not.toBeNull();
+    expect(deriveCalls).toBe(1);
+    expect(conversionCalls).toBe(1);
+    const store = result.current.store;
+    expect(store.history).toHaveLength(historyBeforeEdit.length + 1);
+    expect(store.historyIndex).toBe(historyBeforeEdit.length);
+    const replacement = store.history.at(-1);
+    expect(replacement).toMatchObject({ actionName: REPLACE_LAYER_SOURCE_ACTION, layerId: originalLayer.id });
+    expect(replacement?.args).not.toHaveProperty('tmpCanvas');
+    expect(replacement?.args).not.toHaveProperty('bitmap');
+    expect(store.layers[originalLayer.id]?.tmpCanvas).toBe(replacementRaster);
+    expect(store.layers[originalLayer.id]?.bitmap).toBeNull();
+    expect(store.durableStatus).toBe('unavailable');
+    expect(store.durableDocument).toBeNull();
+    expect(store.durableDiagnostics).toContainEqual(
+      expect.objectContaining({ severity: 'error', code: 'conversion-failed', message: conversionError.message })
+    );
+    expect(store.renderSelector.source).toBe('legacy');
     expect(compose).not.toHaveBeenCalled();
   });
 
