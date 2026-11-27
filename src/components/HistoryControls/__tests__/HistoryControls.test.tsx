@@ -57,6 +57,8 @@ describe('HistoryControls rendering', () => {
 
     expect(undoButton().querySelector('svg')).toHaveAttribute('viewBox', '0 0 32 32');
     expect(redoButton().querySelector('svg')).toHaveAttribute('viewBox', '0 0 32 32');
+    expect(undoButton().querySelector('svg')).toHaveAttribute('stroke', 'currentColor');
+    expect(redoButton().querySelector('svg')).toHaveAttribute('stroke', 'currentColor');
     expect(undoButton().querySelector('path')).toHaveAttribute('d');
     expect(redoButton().querySelector('path')).toHaveAttribute('d');
   });

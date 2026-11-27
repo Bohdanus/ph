@@ -1,6 +1,8 @@
 import type { SvgIconFactory, ToolIconName } from './types';
 import { createAssetIcon } from './icons/AssetIcon.tsx';
 
+const brushPencilIcon = createAssetIcon('brush');
+
 export const toolIcons: Record<ToolIconName, SvgIconFactory> & Record<'shape-star', SvgIconFactory> = {
   reposition: createAssetIcon('reposition'),
   hand: createAssetIcon('hand'),
@@ -41,8 +43,8 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> & Record<'shape-sta
   dodge: createAssetIcon('dodge'),
   burn: createAssetIcon('burn'),
   sponge: createAssetIcon('sponge'),
-  brush: createAssetIcon('brush'),
-  pencil: createAssetIcon('pencil'),
+  brush: brushPencilIcon,
+  pencil: brushPencilIcon,
   'color-replacement': createAssetIcon('color-replacement'),
   eraser: createAssetIcon('eraser'),
   'magic-eraser': createAssetIcon('magic-eraser'),

@@ -161,6 +161,10 @@ describe('tool icon factories', () => {
 
       expect(svg).toBeTruthy();
       expect(svg).toHaveAttribute('aria-hidden', 'true');
+      expect(svg).toHaveAttribute('stroke', 'currentColor');
+      expect(svg).toHaveAttribute('stroke-width', '1.8');
+      expect(svg).toHaveAttribute('stroke-linecap', 'round');
+      expect(svg).toHaveAttribute('stroke-linejoin', 'round');
       expect(svg).toHaveAttribute('viewBox', '0 0 32 32');
       expect(svg?.querySelector('title')?.textContent).toBe(`${name} icon`);
       expect(svg?.childElementCount ?? 0).toBeGreaterThan(0);
@@ -185,13 +189,21 @@ describe('tool icon factories', () => {
     expect(container.querySelector('svg')?.innerHTML).toContain('currentColor');
   });
 
-  it('uses the supplied pencil artwork instead of reusing the brush icon', () => {
-    const brush = render(toolIcons.brush({ title: 'Brush icon' }));
-    const pencil = render(toolIcons.pencil({ title: 'Pencil icon' }));
+  it('shares the brush icon with pencil according to the supplied mapping', () => {
+    expect(toolIcons.pencil).toBe(toolIcons.brush);
+  });
 
-    expect(pencil.container.querySelector('svg')?.innerHTML).not.toEqual(
-      brush.container.querySelector('svg')?.innerHTML
-    );
+  it('keeps all supplied asset paints inheriting the toolbar color', () => {
+    const sources = import.meta.glob('../../../assets/tool-icons/currentColor/*.svg', {
+      eager: true,
+      import: 'default',
+      query: '?raw',
+    }) as Record<string, string>;
+
+    expect(Object.keys(sources)).toHaveLength(62);
+    for (const [path, source] of Object.entries(sources)) {
+      expect(source, path).not.toMatch(/#[0-9a-f]{3,8}/i);
+    }
   });
 });
 
