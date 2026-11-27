@@ -5,31 +5,31 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
-## Latest continuation reconciliation — 2026-11-27 21:13 UTC
+## Latest continuation reconciliation — 2026-11-27 21:26 UTC
 
 ### Current refs and ownership
 
 The PH-93 candidate worktree is
 `/Users/bkalynovskyi/ph/.kilo/worktrees/history-text-source-lifecycle-20261127` on
 `task/history-text-source-lifecycle-20261127`. Its verified source/test commit is
-`e881100c6ab2c00726c58b081ae6f90d2127cd34`, tree
-`03d0f0f7f72d9c2ad2ba9c6bc605ae1339711d3e`, descended from local `main` pin
-`73f43c07147eca4c16e22f363573adbeb332cc99` through the PH-93 feature commits. The base commit is
-pushed to `mirror/task/history-text-source-lifecycle-20261127`. At this check,
+`c2aa94d2c80de2cbd1e168b4fe89b7496adb1126`, tree
+`aa632a997da882e9db03ccf8bffb6205d0fade7d`, merged with current local `main` pin
+`64f5d7d2a57faa02ee1425a092fb27c328396159`. The integration includes seven current-main commits
+after the candidate's earlier `73f43c071` base. At this check,
 `origin/main` was `73f43c07147eca4c16e22f363573adbeb332cc99` and `mirror/main` was
-`df8a37f2a0abfa8bf2364d352b18a5d504256c8b`; the feature branch was absent on `origin`. The current
-uncommitted changes are the E2E reference terminology, this reconciliation, the HANDOFF clarification,
-and the no-raster-registration assertion in `history-adapter.source-edit.test.ts`. The requested
-feature branch must be pushed to `origin` after those changes are reviewed. `mirror` currently remains
-at `e881100`; neither remote `main` has been pushed.
+`df8a37f2a0abfa8bf2364d352b18a5d504256c8b`; the feature branch was at `e881100` on `mirror` and
+absent on `origin`. The four-file clarification commit `18d07eb5` records the E2E reference limits,
+the cache-lifetime caveat, and the direct no-raster-registration assertion. The current candidate has
+not yet been pushed to either remote. Push the reviewed feature branch to the requested `origin` and
+update its existing `mirror` branch; do not push either `main` ref.
 
 `main:landing -- status --json` designates
-`/Users/bkalynovskyi/ph/.kilo/worktrees/landing-main-fresh-20261124` at the same `73f43c071` pin,
-clean and unoccupied. Another registered worktree also has local `main` at that pin. Recheck the
-wrapper's designated path and identity immediately before landing; do not choose a `main` worktree
-by branch name alone. The PH-93 claim is active. The scoped `repo:state -- --for-landing
-task/history-text-source-lifecycle-20261127` gate reported this candidate clear and 14 unrelated
-worktree findings; those findings are outside this task and remain untouched.
+`/Users/bkalynovskyi/ph/.kilo/worktrees/landing-main-fresh-20261124` at local `main` pin `64f5d7d`,
+clean and unoccupied at the last check. The PH-93 claim is active, and its temporary exclusion for
+`docs/HISTORY-MIGRATION-NEXT.md` ended when the origin-main sync issue `ph-121` resolved. The last
+scoped `repo:state -- --for-landing task/history-text-source-lifecycle-20261127` check reported the
+candidate clear with 15 unrelated worktree findings; rerun it against the reviewed exact candidate
+before landing. Leave those unrelated findings untouched.
 
 The two earlier Codex history threads were rechecked: `01a17f24` (plan) and `01a1791a` (continuation
 audit). Their gate ordering, legacy-authority boundary and parity findings remain useful leads; older
@@ -106,7 +106,7 @@ with 4 existing expected-failure pins. The subsequent feature push to `mirror` s
 both passed. Commit hooks, Prettier, and `git diff --check` also passed on this snapshot. These checks
 do not resolve the separate mixed-source affine parity diagnostic or prove Photoshop behavior.
 
-### Validation — 2026-11-27 21:14 UTC
+### Historical validation — 2026-11-27 21:14 UTC
 
 On the current working tree based on `e881100c6ab2c00726c58b081ae6f90d2127cd34`, the exact product
 E2E passed both Google Chrome projects in run `2026-11-27T21-02-52-134Z-99714` (2 tests). The six
@@ -115,13 +115,24 @@ assertion. `npm run tsc -- --pretty false`, Prettier on the four changed files, 
 passed. These checks include uncommitted changes; full pre-push gates and independent review of the
 exact committed candidate are still required.
 
+### Validation after current-main sync — 2026-11-27 21:25 UTC
+
+On integrated source/test commit `c2aa94d2c80de2cbd1e168b4fe89b7496adb1126` and tree
+`aa632a997da882e9db03ccf8bffb6205d0fade7d`, the six focused history/text files passed 164 tests,
+`npm run tsc -- --pretty false` passed, and Prettier passed on the changed handoff, migration, E2E,
+README, and adapter-test files. The docs-index test passed 10 tests through Vitest. Product E2E run
+`2026-11-27T21-25-18-488Z-76271` passed in both Google Chrome projects (2 tests). The test still
+establishes exact same-browser Canvas/PNG/PSD raster consistency for one 1× point-text fixture; it is
+not independent text-layout or Photoshop proof. Full pre-push unit/performance gates and two
+independent free-route reviews remain pending on the exact final checkpoint.
+
 ### Next actions
 
-1. Obtain two independent read-only reviews using verified free tool-free routes; recheck every
+1. Obtain two independent read-only reviews through verified free Kilo routes; check every
    actionable finding against the exact source and tests. No paid fallback is authorized.
-2. After the final review and any required fixes, rerun the necessary gates and push the exact final
-   feature-branch SHA to the requested `origin`, then verify the pushed ref; do not force-update the
-   branch or push `main`.
+2. Fix supported findings, rerun relevant tests, and push the reviewed branch to `origin` and its
+   existing `mirror` ref so the full pre-push unit/performance gates run on the exact tree. Verify
+   both pushed refs; do not force-update or push `main`.
 3. Recheck current refs, PH-93 ownership, file holds, and the designated landing path. Land through
    the pinned `main:landing` wrapper only after the exact candidate is reviewed and its gates pass.
 4. Keep `ownership-unproven` closed. Durable navigation eligibility requires a separate proof and
