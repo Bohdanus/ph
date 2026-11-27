@@ -5,20 +5,20 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
-## Latest continuation reconciliation — 2026-11-27 17:28 UTC
+## Latest continuation reconciliation — 2026-11-27 17:49 UTC
 
 ### Current refs and ownership
 
 The PH-93 candidate worktree is
 `/Users/bkalynovskyi/ph/.kilo/worktrees/history-text-source-lifecycle-20261127` on
 `task/history-text-source-lifecycle-20261127`. Its verified source/test commit is
-`d432beced88af1c7bb24bab49089ab77f15d5e24`, tree
-`c3c72d28eb95caa57ffcb4e7c6f2d5953c7ed9c1`, descended from local `main` pin
-`73f43c07147eca4c16e22f363573adbeb332cc99` through the PH-93 feature commits. The worktree was clean
-at this ref snapshot. At this check,
-`mirror/main` was `df8a37f2a0abfa8bf2364d352b18a5d504256c8b`, `origin/main` was
-`cf3598671fedb3b799851fbba5d767ce752288ba`, and the PH-93 branch did not yet exist on `mirror`.
-Use `mirror` for the feature-branch push; `origin` is the upstream remote.
+`d07a4b7fe7ec993265e22ad8650a906673205eae`, tree
+`aabcd11304580aadb91789594ad3717456b95694`, descended from local `main` pin
+`73f43c07147eca4c16e22f363573adbeb332cc99` through the PH-93 feature commits. The worktree is clean
+and tracks `mirror/task/history-text-source-lifecycle-20261127` at the same SHA. At this check,
+`mirror/main` was `df8a37f2a0abfa8bf2364d352b18a5d504256c8b` and `origin/main` was
+`73f43c07147eca4c16e22f363573adbeb332cc99`. Use `mirror` for the feature-branch push; `origin` is
+the upstream remote. The feature branch is pushed; `main` has not been pushed.
 
 `main:landing -- status --json` designates
 `/Users/bkalynovskyi/ph/.kilo/worktrees/landing-main-fresh-20261124` at the same `73f43c071` pin,
@@ -70,24 +70,29 @@ runtime layer cache. Generic durable-projection lease tests are a separate lifet
 not evidence that a text canvas should be closed. Whole-document teardown, broader frame parity,
 Photoshop comparison, and durable undo/redo authority cutover remain separate work.
 
-### Validation — 2026-11-27 17:26 UTC
+### Validation — 2026-11-27 17:49 UTC
 
 Against source/test commit `d432beced88af1c7bb24bab49089ab77f15d5e24` and tree
 `c3c72d28eb95caa57ffcb4e7c6f2d5953c7ed9c1`, the focused history/text suite passed 5 files / 145
 tests, `npm run tsc -- --pretty false` passed, targeted ESLint and Prettier passed, and
 `npm run build` passed. Product E2E run `2026-11-27T17-26-11-872Z-40507` passed both Google Chrome
 and Google Chrome HiDPI projects (2 tests). The rejected-publication regression is included in the
-145-test result. Prettier and `git diff --check` also passed after editing this continuation. These
-checks do not resolve the separate mixed-source affine parity diagnostic or prove Photoshop behavior.
+145-test result. The first full push gate exposed stale synchronous-state mocks in the replay-diagnostic
+and pixel-parity suites, plus two unindexed ADRs. The mocks now model the StoreProvider state reader
+and synchronous replay dispatch; both ADRs are indexed. The focused rerun passed 3 files / 55 tests
+with 4 existing expected-failure pins. The subsequent feature push to `mirror` succeeded at
+`d07a4b7fe7ec993265e22ad8650a906673205eae`; success means the pre-push unit and performance gates
+both passed. Commit hooks, Prettier, and `git diff --check` also passed on this snapshot. These checks
+do not resolve the separate mixed-source affine parity diagnostic or prove Photoshop behavior.
 
 ### Next actions
 
-1. Finish exact-tree validation and a tool-free review through the verified free Kilo route; treat
-   findings as leads and recheck each against source and tests.
-2. Commit the current reconciliation, push the feature branch to `mirror`, and record the pushed
-   SHA. Do not push `main` or force-update the feature branch.
+1. Obtain two independent read-only reviews using verified free tool-free routes; recheck every
+   actionable finding against the exact source and tests. No paid fallback is authorized.
+2. After the final review and any required fixes, rerun the necessary gates and push the exact final
+   feature-branch SHA to `mirror`; do not force-update the branch or push `main`.
 3. Recheck current refs, PH-93 ownership, file holds, and the designated landing path. Land through
-   the pinned `main:landing` wrapper only after the candidate is reviewed and its final gates pass.
+   the pinned `main:landing` wrapper only after the exact candidate is reviewed and its gates pass.
 4. Keep `ownership-unproven` closed. Durable navigation eligibility requires a separate proof and
    reviewed production change; this text-source slice does not change it.
 
