@@ -21,15 +21,6 @@ const MAX_TAIL_BYTES = 16 * 1024 * 1024;
 const MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
 const READ_BLOCK_BYTES = 64 * 1024;
 const FILE_SNAPSHOT_FIELDS = ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'];
-const NUMERIC_EXEC_SESSION_ID_FIELD = /\bsession_id\\?["']?\s*:\s*(?:"[+-]?\d+"|'[+-]?\d+'|[+-]?\d+)/i;
-const INCOMPLETE_EXEC_SESSION_ID_FIELD = /\bsession_id\\?["']?\s*:\s*(?:(?:["']|[+-])?\s*\d*\s*(?=$|[,}\r\n\]]))/im;
-const INCOMPLETE_EXEC_SESSION_ID_KEY = /(?:^|[,{])\s*\\?["']?session_id\\?["']?\s*(?=$|[},\]])/im;
-const INCOMPLETE_UNSTRUCTURED_EXEC_SESSION_ID_FIELD =
-  /\bsession_id\\?["']?\s*:\s*(?:(?:["'][+-]?\d*|[+-])\s*)?(?=$|[\r\n])/im;
-
-function hasMalformedExecSessionIdField(text) {
-  return NUMERIC_EXEC_SESSION_ID_FIELD.test(text) || INCOMPLETE_EXEC_SESSION_ID_FIELD.test(text);
-}
 
 function sameFileSnapshot(before, after) {
   return FILE_SNAPSHOT_FIELDS.every((field) => before[field] === after[field]);
@@ -39,136 +30,16 @@ export function isCodexThreadId(value) {
   return typeof value === 'string' && UUID.test(value.trim());
 }
 
-function appendOutputText(value, chunks) {
-  if (typeof value === 'string') chunks.push(value);
-  else if (Array.isArray(value)) value.forEach((entry) => appendOutputText(entry, chunks));
-  else if (value && typeof value === 'object') {
-    if (typeof value.text === 'string') chunks.push(value.text);
-    Object.entries(value)
-      .filter(([key]) => key !== 'text')
-      .forEach(([, entry]) => appendOutputText(entry, chunks));
+function normalizeCommandProcessId(value) {
+  if (Number.isSafeInteger(value)) return value > 0 ? String(value) : null;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^-?\d+$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    return Number.isSafeInteger(numeric) && numeric > 0 ? String(numeric) : null;
   }
-}
-
-function collectExecSessionIds(value, pendingProcesses, allowUnmarked = true) {
-  let recognized = false;
-  let malformed = false;
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const result = collectExecSessionIds(entry, pendingProcesses, allowUnmarked);
-      recognized ||= result.recognized;
-      malformed ||= result.malformed;
-    }
-  } else if (value && typeof value === 'object') {
-    if (Object.hasOwn(value, 'session_id')) {
-      const hasChunkId =
-        (typeof value.chunk_id === 'string' && value.chunk_id.length > 0) || Number.isSafeInteger(value.chunk_id);
-      const numericSessionIdValue =
-        Number.isSafeInteger(value.session_id) ||
-        (typeof value.session_id === 'string' && /^-?\d+$/.test(value.session_id));
-      const numericSessionId = numericSessionIdValue && Number(value.session_id) > 0;
-      if (numericSessionId) {
-        if (hasChunkId || allowUnmarked) {
-          recognized = true;
-          pendingProcesses.add(String(value.session_id));
-        } else {
-          malformed = true;
-        }
-      } else if (numericSessionIdValue) {
-        malformed = true;
-      } else if (value.session_id === null && hasChunkId) {
-        recognized = true;
-      } else if (value.session_id !== null && value.session_id !== undefined && hasChunkId) {
-        malformed = true;
-      }
-    }
-    for (const [key, entry] of Object.entries(value)) {
-      if (key === 'output') continue;
-      const result = collectExecSessionIds(entry, pendingProcesses, false);
-      recognized ||= result.recognized;
-      malformed ||= result.malformed;
-    }
-  } else if (typeof value === 'string') {
-    const candidate = value.trim();
-    if (candidate.startsWith('{') || candidate.startsWith('[')) {
-      try {
-        return collectExecSessionIds(JSON.parse(candidate), pendingProcesses, allowUnmarked);
-      } catch {
-        malformed = hasMalformedExecSessionIdField(candidate);
-      }
-    } else {
-      malformed = hasMalformedExecSessionIdField(candidate);
-    }
-  }
-  return { recognized, malformed };
-}
-
-function visitJsonValues(text, visit) {
-  let start = -1;
-  let segmentStart = 0;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  let count = 0;
-  let unparsedSessionField = false;
-  const unstructuredSegments = [];
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index];
-    if (start < 0) {
-      if (character === '{' || character === '[') {
-        unstructuredSegments.push(text.slice(segmentStart, index));
-        start = index;
-        depth = 1;
-        inString = false;
-        escaped = false;
-      }
-      continue;
-    }
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (character === '\\') escaped = true;
-      else if (character === '"') inString = false;
-      continue;
-    }
-    if (character === '"') inString = true;
-    else if (character === '{' || character === '[') depth += 1;
-    else if (character === '}' || character === ']') depth -= 1;
-    if (depth === 0) {
-      const candidate = text.slice(start, index + 1);
-      try {
-        visit(JSON.parse(candidate));
-        count += 1;
-      } catch {
-        unparsedSessionField ||=
-          hasMalformedExecSessionIdField(candidate) || INCOMPLETE_EXEC_SESSION_ID_KEY.test(candidate);
-      }
-      start = -1;
-      segmentStart = index + 1;
-    }
-  }
-  const incomplete = start >= 0 ? text.slice(start) : '';
-  unparsedSessionField ||=
-    hasMalformedExecSessionIdField(incomplete) || INCOMPLETE_EXEC_SESSION_ID_KEY.test(incomplete);
-  if (start < 0) unstructuredSegments.push(text.slice(segmentStart));
-  unparsedSessionField ||= INCOMPLETE_UNSTRUCTURED_EXEC_SESSION_ID_FIELD.test(unstructuredSegments.join(''));
-  return { count, unparsedSessionField };
-}
-
-function trackPendingExecProcesses(payload, pendingProcesses) {
-  const chunks = [];
-  appendOutputText(payload.output, chunks);
-  const output = chunks.join('\n');
-  const outputMarker = output.indexOf('Output:');
-  const resultText = outputMarker >= 0 ? output.slice(outputMarker + 'Output:'.length) : output;
-  let recognized = false;
-  let malformed = false;
-  const scan = visitJsonValues(resultText, (value) => {
-    const result = collectExecSessionIds(value, pendingProcesses);
-    recognized ||= result.recognized;
-    malformed ||= result.malformed;
-  });
-  const mentionsMalformedSessionId = hasMalformedExecSessionIdField(resultText);
-  return malformed || scan.unparsedSessionField || (mentionsMalformedSessionId && !recognized && scan.count === 0);
+  return trimmed;
 }
 
 /** Select the most recently modified indexed Codex state database without reading its contents. */
@@ -203,9 +74,11 @@ export function resolveCodexStateDb({ env = process.env, home = homedir(), list 
 /**
  * Determine whether the newest task in one Codex rollout is terminal.
  * Task completion is only trusted if no later user turn, task start, turn
- * context, assistant response, or tool call followed it. An exec result with a
- * session ID remains outstanding until its matching CommandExecution event;
- * this prevents a task-complete marker from hiding a still-running process.
+ * context, assistant response, or tool call followed it. Only explicit
+ * CommandExecution lifecycle events establish outstanding processes: nested
+ * custom-tool output may contain session IDs belonging to another runtime.
+ * A native command start remains outstanding until its matching completion,
+ * even when it occurs after the task-complete marker.
  * Once terminal, only explicitly recognized bookkeeping may follow; a new or
  * unknown event shape makes completion unproven until another recognized
  * terminal marker appears.
@@ -216,27 +89,29 @@ export function codexRolloutState(text) {
   let terminalInvalidated = false;
   let parsedLines = 0;
   const pendingProcesses = new Set();
-  let execProcessStateUnproven = false;
+  let commandProcessStateUnproven = false;
   try {
     for (const line of text.split(/\r?\n/)) {
       if (!line.trim()) continue;
       const event = JSON.parse(line);
       parsedLines += 1;
       const payload = event?.payload ?? {};
-      if (event?.type === 'response_item' && payload.type === 'custom_tool_call_output') {
-        execProcessStateUnproven ||= trackPendingExecProcesses(payload, pendingProcesses);
-      }
-      const completedProcessId =
+      const commandEvent =
         event?.type === 'event_msg' &&
-        payload.type === 'item_completed' &&
-        payload.item?.type === 'CommandExecution' &&
-        payload.item.process_id !== undefined
-          ? String(payload.item.process_id)
-          : null;
-      if (completedProcessId && pendingProcesses.delete(completedProcessId)) {
-        // A command started before the terminal marker can finish after it. The
-        // late event proves that process stopped; it does not reopen the chat.
-        continue;
+        ['item_started', 'item_completed'].includes(payload.type) &&
+        payload.item?.type === 'CommandExecution';
+      if (commandEvent) {
+        const processId = normalizeCommandProcessId(payload.item.process_id);
+        if (!processId) commandProcessStateUnproven = true;
+        else if (payload.type === 'item_started') {
+          pendingProcesses.add(processId);
+          if (latest === 'complete') latest = 'active';
+          continue;
+        } else if (pendingProcesses.delete(processId)) {
+          // A command started before the terminal marker can finish after it.
+          // The late event proves that process stopped; it does not reopen the chat.
+          continue;
+        }
       }
       if (
         event?.type === 'task_complete' ||
@@ -285,7 +160,7 @@ export function codexRolloutState(text) {
     return { status: 'unproven', reason: `rollout JSON is invalid: ${error.message}` };
   }
   if (parsedLines === 0) return { status: 'unproven', reason: 'rollout has no events' };
-  if (latest === 'complete' && (pendingProcesses.size > 0 || execProcessStateUnproven)) {
+  if (latest === 'complete' && (pendingProcesses.size > 0 || commandProcessStateUnproven)) {
     return {
       status: 'unproven',
       reason:
