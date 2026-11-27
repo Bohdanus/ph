@@ -1027,6 +1027,8 @@ generated snapshot is fresh; it does not replace a live ownership or disposal au
 worktree state, regenerate the inventory and run `npm run repo:state` for any worktree whose Git
 operation state matters. For branch-only refs, also run `npm run branches:orphan`. A failed or
 unreadable report is not a clean result and must remain a recovery case.
+The freshness comparison ignores regenerated timestamps and display-only elapsed chat ages, but
+still detects chat-state transitions and changes to the non-age evidence in chat reasons.
 
 The default base resolves the fully qualified `refs/heads/main`, then
 `refs/remotes/origin/main`. An explicit short `--base` name that matches more than one ref is
@@ -1052,6 +1054,16 @@ zero. An ancestor commit is historical evidence, not proof that its behavior is 
 the current `main` tree: a later commit or merge resolution may have reverted it. Before calling
 work landed, inspect the current call sites and behavior in `main`; when a specific implementation
 matters, compare the relevant files or tests on both trees. An unknown comparison remains unknown.
+
+The disposer runs guarded `git branch -d` from the identity-verified registered `main` worktree.
+Git otherwise prefers a candidate's configured upstream over `HEAD`, which could let an unrelated
+branch make an unmerged candidate look safe to delete. A command-scoped config overlay cannot
+replace a multivalued `branch.<name>.merge` entry; adding local `main` can leave the unrelated
+upstream in effect. The disposer instead overrides `branch.<name>.remote` with a unique,
+unconfigured remote name for this command. Git then finds no configured upstream and checks the
+candidate against the current `HEAD` of the registered main worktree. Do not force this command
+through the repository's common Git directory: linked worktrees share refs, but each has its own
+`HEAD`, and the common directory's `HEAD` can belong to an unrelated task branch.
 
 Some local or remote refs preserve an upstream or earlier implementation rather than task work for
 the current application. Missing patches alone do not make such a ref a merge candidate. Verify its
@@ -1130,6 +1142,10 @@ It refuses, and says which signal refused, unless all of these hold:
   while retaining its branch;
 - it is not the base branch, even when the repository uses a bare primary
   worktree and checks out the base branch in a linked worktree;
+- when recovery leaves multiple registered `main` checkouts, the disposer uses
+  the canonical saved identity to select the designated replacement. If that
+  identity, path, or common Git directory cannot be verified, disposal refuses;
+  never choose the first checkout or remove the retained damaged one by name;
 - **no board claim, no board file lock and no live board agent** names it;
 - **no Kilo session** has it as its `directory` inside the live window;
 - the coordinator has checked the four-hour Codex live overlay immediately before each dry-run and

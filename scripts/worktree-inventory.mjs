@@ -582,22 +582,61 @@ async function runAsyncMain(opts) {
   printSummary(inventory, opts.quiet);
 }
 
+/** Remove only wall-clock age telemetry from the serialized session summaries. */
+function stripChatAgeTelemetry(chats) {
+  if (!chats || typeof chats !== 'object') return;
+  for (const state of ['unfinished', 'dead']) {
+    if (!Array.isArray(chats[state])) continue;
+    for (const session of chats[state]) {
+      if (!session || typeof session !== 'object' || Array.isArray(session)) continue;
+      delete session.idleMs;
+      if (Array.isArray(session.reasons)) {
+        session.reasons = session.reasons.map((reason) => {
+          if (typeof reason !== 'string') return reason;
+          return reason
+            .replace(/^last message -?\d+m ago$/g, 'last message <elapsed> ago')
+            .replace(
+              /^idle for -?\d+h( and the last turn ended on [^\r\n]*, not a completed stop)$/g,
+              'idle for <elapsed>$1'
+            )
+            .replace(
+              /^last turn completed -?\d+h ago and nothing has happened since$/g,
+              'last turn completed <elapsed> ago and nothing has happened since'
+            );
+        });
+      }
+    }
+  }
+}
+
+function normalizedDocument(text) {
+  const doc = JSON.parse(text);
+  delete doc.generatedAt;
+  if (doc.ownership && typeof doc.ownership === 'object') delete doc.ownership.asOf;
+  for (const worktree of doc.worktrees ?? []) stripChatAgeTelemetry(worktree.chats);
+  return doc;
+}
+
+function normalizedChats(chats) {
+  if (chats === undefined) return undefined;
+  const normalized = JSON.parse(JSON.stringify(chats));
+  stripChatAgeTelemetry(normalized);
+  return normalized;
+}
+
 /**
- * Are two documents the same apart from their generation and evaluation times?
+ * Are two documents the same apart from their clocks and display-only chat ages?
  *
  * Both timestamps move on every ordinary run. The evaluation time is metadata
  * for the recency decisions, while `generatedAt` is the freshness clock used by
- * disposal. Every verdict and per-worktree field remains part of the comparison.
+ * disposal. Chat `idleMs` and the rounded age prefix in its reasons are display
+ * telemetry; the classified state and the rest of each reason remain part of
+ * the comparison, so a transition across the live threshold still invalidates
+ * the snapshot.
  */
 export function equivalent(aText, bText) {
   try {
-    const strip = (text) => {
-      const doc = JSON.parse(text);
-      delete doc.generatedAt;
-      if (doc.ownership && typeof doc.ownership === 'object') delete doc.ownership.asOf;
-      return JSON.stringify(doc);
-    };
-    return strip(aText) === strip(bText);
+    return JSON.stringify(normalizedDocument(aText)) === JSON.stringify(normalizedDocument(bText));
   } catch {
     return false;
   }
@@ -612,7 +651,7 @@ export function equivalent(aText, bText) {
  * message as a changed timestamp. This names the fields an operator would act
  * on, so a stale file says which worktree to go and look at.
  */
-function describeDrift(currentText, nextText) {
+export function describeDrift(currentText, nextText) {
   let a;
   let b;
   try {
@@ -650,6 +689,7 @@ function describeDrift(currentText, nextText) {
     'locked',
     'prunableReason',
     'legacy',
+    'chats',
     'writeHistory',
     // Ownership is watched because a suppressed-liveness file drifts on a
     // timer, not on a commit: the derived signals keep ageing and the operator
@@ -666,6 +706,57 @@ function describeDrift(currentText, nextText) {
   const scalar = (v) => (v === null || typeof v !== 'object' ? v : '…');
   const describeField = (name, key, prev, next) => {
     if (name === 'writeHistory') return `writeHistory.lastAt ${prev?.lastAt} -> ${next?.lastAt}`;
+    if (key === 'chats') {
+      const summary = (value) => {
+        const normalized = normalizedChats(value);
+        const records = (items, select) =>
+          Array.isArray(items)
+            ? items.map((item) => {
+                if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+                return select(item);
+              })
+            : items;
+        return JSON.stringify({
+          count: normalized?.count,
+          subagentCount: normalized?.subagentCount,
+          byState: normalized?.byState,
+          activeChatIds: normalized?.activeChatIds,
+          unfinishedChatIds: normalized?.unfinishedChatIds,
+          lastActivity: normalized?.lastActivity,
+          readCount: normalized?.read?.length ?? 0,
+          unfinished: records(
+            normalized?.unfinished,
+            ({ id, title, state, reasons, toolErrors, creditsFailures, blockedOn }) => ({
+              id,
+              title,
+              state,
+              reasons,
+              toolErrors,
+              creditsFailures,
+              blockedOn,
+            })
+          ),
+          dead: records(normalized?.dead, ({ id, title, state, reasons, creditsFailures }) => ({
+            id,
+            title,
+            state,
+            reasons,
+            creditsFailures,
+          })),
+          readUnfinished: records(normalized?.readUnfinished, ({ id, readState, readRisk, workOnNoRef, note }) => ({
+            id,
+            readState,
+            readRisk,
+            workOnNoRef,
+            note,
+          })),
+        });
+      };
+      const before = summary(prev);
+      const after = summary(next);
+      if (before === after) return 'chats changed (details omitted)';
+      return `chats ${before} -> ${after}`;
+    }
     return `${key} ${scalar(prev)} -> ${scalar(next)}`;
   };
 
@@ -675,7 +766,10 @@ function describeDrift(currentText, nextText) {
       lines.push(`  + ${w.name} (${w.branch}) is new`);
       continue;
     }
-    const changed = watched.filter((k) => JSON.stringify(prev[k]) !== JSON.stringify(w[k]));
+    const changed = watched.filter((k) => {
+      if (k === 'chats') return JSON.stringify(normalizedChats(prev[k])) !== JSON.stringify(normalizedChats(w[k]));
+      return JSON.stringify(prev[k]) !== JSON.stringify(w[k]);
+    });
     if (changed.length > 0) {
       lines.push(`  ~ ${w.name}: ${changed.map((k) => describeField(w.name, k, prev[k], w[k])).join(', ')}`);
     }

@@ -25,6 +25,7 @@
 import { describe, expect, it, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -765,16 +766,17 @@ describe('dispose execution', () => {
   function harness(answers = {}) {
     const calls = [];
     const cwdCalls = [];
+    const runOptions = [];
     const writes = [];
     const answerCounts = new Map();
     let simulatedBranchRefPresent = true;
     const run = (cwd, args, opts = {}) => {
       cwdCalls.push(cwd);
       calls.push(args);
+      runOptions.push(opts);
       const key = args.join(' ');
       const answerKey = answers[key] === undefined ? `${args[0]} ${args[1]}` : key;
-      const isBranchDeletion =
-        args[0] === '--git-dir' && args[2] === 'branch' && (args[3] === '-d' || args[3] === '-D');
+      const isBranchDeletion = args[0] === 'branch' && (args[1] === '-d' || args[1] === '-D');
       const isBranchRefCheck =
         args[0] === '--git-dir' &&
         args[2] === 'for-each-ref' &&
@@ -800,7 +802,7 @@ describe('dispose execution', () => {
         writes.push({ p, bytes: data.length });
       },
     };
-    return { run, fs, calls, cwdCalls, writes };
+    return { run, fs, calls, cwdCalls, runOptions, writes };
   }
 
   it('anchors the tip before it removes anything, so no gc can make it unreachable', () => {
@@ -1050,7 +1052,7 @@ describe('dispose execution', () => {
   it('deletes the branch with -d, and keeps it when git refuses', () => {
     const ok = harness();
     const kept = harness({
-      '--git-dir /repo/.git branch -d fix/task': new Error("error: the branch 'fix/task' is not fully merged"),
+      'branch -d fix/task': new Error("error: the branch 'fix/task' is not fully merged"),
       '--git-dir /repo/.git for-each-ref --format=%(refname) -- refs/heads/fix/task': 'refs/heads/fix/task',
     });
 
@@ -1059,7 +1061,14 @@ describe('dispose execution', () => {
       fs: ok.fs,
     });
     expect(deleted.branchDeleted).toBe(true);
-    expect(ok.calls.some((c) => c.join(' ') === '--git-dir /repo/.git branch -d fix/task')).toBe(true);
+    const deleteAt = ok.calls.findIndex((c) => c.join(' ') === 'branch -d fix/task');
+    expect(deleteAt).toBeGreaterThanOrEqual(0);
+    expect(ok.cwdCalls[deleteAt]).toBe('/foreign/reused-main');
+    expect(ok.runOptions[deleteAt].env).toMatchObject({
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'branch.fix/task.remote',
+    });
+    expect(ok.runOptions[deleteAt].env.GIT_CONFIG_VALUE_0).toMatch(/^codex-disposer-no-upstream-[0-9a-f-]{36}$/);
     expect(ok.calls.some((c) => c.includes('-D'))).toBe(false);
 
     const refused = dispose('/repo', greenState(), { run: kept.run, fs: kept.fs });
@@ -1100,9 +1109,10 @@ describe('dispose execution', () => {
       deleteReason: 'patch-absorbed',
     });
     const anchorAt = h.calls.findIndex((c) => c[0] === 'update-ref');
-    const deleteAt = h.calls.findIndex((c) => c.join(' ') === '--git-dir /repo/.git branch -D fix/task');
+    const deleteAt = h.calls.findIndex((c) => c.join(' ') === 'branch -D fix/task');
     expect(anchorAt).toBeGreaterThanOrEqual(0);
     expect(deleteAt).toBeGreaterThan(anchorAt);
+    expect(h.cwdCalls[deleteAt]).toBe(greenState().mainWorktreePath);
     expect(result.branchDeleted).toBe(true);
     expect(result.steps.join('\n')).toContain('after anchoring its recovery ref');
   });
@@ -1120,7 +1130,7 @@ describe('dispose execution', () => {
     });
     const anchorAt = h.calls.findIndex((c) => c[0] === 'update-ref');
     const removeAt = h.calls.findIndex((c) => c[0] === 'worktree' && c[1] === 'remove');
-    const deleteAt = h.calls.findIndex((c) => c.join(' ') === '--git-dir /repo/.git branch -D fix/task');
+    const deleteAt = h.calls.findIndex((c) => c.join(' ') === 'branch -D fix/task');
     expect(anchorAt).toBeGreaterThanOrEqual(0);
     expect(removeAt).toBeGreaterThan(anchorAt);
     expect(deleteAt).toBeGreaterThan(removeAt);
@@ -1160,7 +1170,7 @@ describe('dispose execution', () => {
     expect(result.worktreeRemoved).toBe(true);
     expect(result.branchDeleted).toBe(false);
     expect(result.branchKept).toBe(true);
-    expect(h.calls.some((c) => c.join(' ') === '--git-dir /repo/.git branch -D fix/task')).toBe(false);
+    expect(h.calls.some((c) => c.join(' ') === 'branch -D fix/task')).toBe(false);
     expect(result.steps.join('\n')).toContain('main moved or became unreadable after worktree removal');
     expect(result.anchorRef).toContain(KEEP_REF_PREFIX);
   });
@@ -1306,7 +1316,7 @@ describe('dispose execution', () => {
 
   it('removes the worktree even when the branch deletion is refused, and reports both', () => {
     const h = harness({
-      '--git-dir /repo/.git branch -d fix/task': new Error('not fully merged'),
+      'branch -d fix/task': new Error('not fully merged'),
       '--git-dir /repo/.git rev-parse --verify --quiet refs/heads/fix/task^{commit}': 'abc1234',
     });
     const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs });
@@ -1326,9 +1336,7 @@ describe('dispose execution', () => {
       fs: h.fs,
     });
     const removeAt = h.calls.findIndex((args) => args[0] === 'worktree' && args[1] === 'remove');
-    const branchDeleteAt = h.calls.findIndex(
-      (args) => args[0] === '--git-dir' && args[1] === '/repo/.git' && args[2] === 'branch' && args[3] === '-d'
-    );
+    const branchDeleteAt = h.calls.findIndex((args) => args.join(' ') === 'branch -d fix/task');
 
     expect(h.cwdCalls[removeAt]).toBe(target);
     expect(branchDeleteAt).toBeGreaterThan(removeAt);
@@ -1336,9 +1344,77 @@ describe('dispose execution', () => {
     expect(result).toMatchObject({ worktreeRemoved: true, branchDeleted: true, branchKept: false });
   });
 
+  it('ignores an unrelated configured upstream when deciding whether to delete a branch', () => {
+    const repo = join(TMP, 'branch-upstream-override');
+    mkdirSync(repo, { recursive: true });
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'disposer test',
+      GIT_AUTHOR_EMAIL: 'disposer@example.invalid',
+      GIT_COMMITTER_NAME: 'disposer test',
+      GIT_COMMITTER_EMAIL: 'disposer@example.invalid',
+    };
+    const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', env });
+
+    git('init', '--quiet', '--initial-branch=main');
+    writeFileSync(join(repo, 'base.txt'), 'main\n');
+    git('add', 'base.txt');
+    git('commit', '--quiet', '-m', 'main');
+    const mainTip = git('rev-parse', 'HEAD').trim();
+    git('switch', '--quiet', '-c', 'topic');
+    writeFileSync(join(repo, 'topic.txt'), 'topic\n');
+    git('add', 'topic.txt');
+    git('commit', '--quiet', '-m', 'topic');
+    const topicTip = git('rev-parse', 'HEAD').trim();
+    git('switch', '--quiet', 'main');
+    git('branch', 'upstream', topicTip);
+    git('branch', '--set-upstream-to=upstream', 'topic');
+
+    // Without the command-scoped override, -d accepts the topic because its
+    // configured upstream contains it, even though local main does not.
+    const ordinaryDelete = spawnSync('git', ['branch', '-d', 'topic'], { cwd: repo, encoding: 'utf8', env });
+    expect(ordinaryDelete.status).toBe(0);
+
+    git('branch', 'topic', topicTip);
+    git('branch', '--set-upstream-to=upstream', 'topic');
+    const guardEnv = {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'branch.topic.remote',
+      GIT_CONFIG_VALUE_0: 'codex-disposer-no-upstream-test',
+    };
+    const configuredUpstream = spawnSync('git', ['for-each-ref', '--format=%(upstream)', 'refs/heads/topic'], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: { ...env, ...guardEnv },
+    });
+    const guardedDelete = spawnSync('git', ['branch', '-d', 'topic'], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: { ...env, ...guardEnv },
+    });
+
+    expect(configuredUpstream.status).toBe(0);
+    expect(configuredUpstream.stdout.trim()).toBe('');
+    expect(guardedDelete.status).not.toBe(0);
+    expect(guardedDelete.stderr).toMatch(/not fully merged/i);
+    expect(git('show-ref', '--hash', '--verify', 'refs/heads/topic').trim()).toBe(topicTip);
+
+    // Conversely, a stale upstream must not keep a candidate that really is
+    // merged into the designated main worktree from being deleted.
+    git('branch', '--force', 'upstream', mainTip);
+    git('merge', '--ff-only', 'topic');
+    const mergedDelete = spawnSync('git', ['branch', '-d', 'topic'], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: { ...env, ...guardEnv },
+    });
+    expect(mergedDelete.status).toBe(0);
+    expect(git('branch', '--list', 'topic').trim()).toBe('');
+  });
+
   it('reports a runner failure without labeling it an unmerged branch', () => {
     const h = harness({
-      '--git-dir /repo/.git branch -d fix/task': new Error('spawnSync git ENOENT'),
+      'branch -d fix/task': new Error('spawnSync git ENOENT'),
       '--git-dir /repo/.git for-each-ref --format=%(refname) -- refs/heads/fix/task': new Error('spawnSync git ENOENT'),
     });
     const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs });
@@ -1953,6 +2029,88 @@ describe('a bare name that identifies two worktrees identifies neither', () => {
       found: false,
       listError: 'git worktree list returned no worktrees',
     });
+  });
+});
+
+describe('the disposer resolves the designated main when recovery leaves duplicate main entries', () => {
+  function fixture({ registration = true, markerIdentity = 'replacement-identity' } = {}) {
+    const root = join(TMP, 'duplicate-main', registration ? markerIdentity : 'unregistered');
+    const primary = join(root, 'primary');
+    const oldMain = join(root, 'landing-main-damaged');
+    const replacementMain = join(root, 'landing-main-fresh');
+    const taskPath = join(root, 'task');
+    const commonDir = join(root, '.git');
+    const replacementGitDir = join(commonDir, 'worktrees', 'landing-main-fresh');
+    const taskGitDir = join(commonDir, 'worktrees', 'task');
+    mkdirSync(primary, { recursive: true });
+    mkdirSync(oldMain, { recursive: true });
+    mkdirSync(replacementMain, { recursive: true });
+    mkdirSync(taskPath, { recursive: true });
+    mkdirSync(replacementGitDir, { recursive: true });
+    mkdirSync(taskGitDir, { recursive: true });
+    mkdirSync(commonDir, { recursive: true });
+    writeFileSync(join(replacementGitDir, 'kilo-main-worktree-identity'), `${markerIdentity}\n`);
+
+    const entries = [
+      { path: primary, branch: 'feature' },
+      { path: oldMain, branch: 'main' },
+      { path: replacementMain, branch: 'main' },
+      { path: taskPath, branch: 'fix/task' },
+    ];
+    const config = registration
+      ? {
+          'ph.mainWorktreeGitDir': replacementGitDir,
+          'ph.mainWorktreePath': replacementMain,
+          'ph.mainWorktreeIdentity': 'replacement-identity',
+        }
+      : {};
+    const run = (cwd, args) => {
+      if (args[0] === 'config') {
+        const key = args.at(-1);
+        if (Object.hasOwn(config, key)) return { stdout: config[key] };
+        throw Object.assign(new Error('config key not found'), { status: 1 });
+      }
+      if (args[0] === 'rev-parse' && args.includes('--git-common-dir')) return { stdout: commonDir };
+      if (args[0] === 'rev-parse' && args.includes('--absolute-git-dir')) {
+        if (realpathSync(cwd) === realpathSync(replacementMain)) return { stdout: replacementGitDir };
+        if (realpathSync(cwd) === realpathSync(taskPath)) return { stdout: taskGitDir };
+        return { stdout: commonDir };
+      }
+      if (args[0] === 'symbolic-ref') {
+        return { stdout: realpathSync(cwd) === realpathSync(replacementMain) ? 'main' : 'feature' };
+      }
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return { stdout: 'tip-sha' };
+      if (args[0] === 'rev-parse' && args[1] === '--verify') return { stdout: 'base-sha' };
+      return { stdout: '' };
+    };
+
+    return { entries, oldMain, replacementMain, taskPath, run };
+  }
+
+  it('uses the identity-verified replacement and leaves the damaged checkout registered', () => {
+    const state = fixture();
+    const result = readGitState(state.taskPath, state.taskPath, {
+      list: () => state.entries,
+      run: state.run,
+    });
+
+    expect(result.found).toBe(true);
+    expect(result.mainWorktreePath).toBe(state.replacementMain);
+    expect(existsSync(state.oldMain)).toBe(true);
+  });
+
+  it.each([
+    ['without a saved identity', { registration: false }],
+    ['with a stale identity marker', { markerIdentity: 'stale-identity' }],
+  ])('fails closed %s', (_label, options) => {
+    const state = fixture(options);
+    const result = readGitState(state.taskPath, state.taskPath, {
+      list: () => state.entries,
+      run: state.run,
+    });
+
+    expect(result.found).toBe(true);
+    expect(result.mainWorktreePath).toBeNull();
   });
 });
 

@@ -87,7 +87,7 @@
 
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
   lstatSync,
@@ -115,7 +115,11 @@ import {
   unmergedPaths,
 } from './lib/git-operation-state.mjs';
 import { listWorktrees } from './lib/worktree-inventory/git.mjs';
-import { resolveInventoryPath, resolveRepositoryRoot } from './lib/worktree-inventory/location.mjs';
+import {
+  resolveInventoryPath,
+  resolveMainWorktreeRoot,
+  resolveRepositoryRoot,
+} from './lib/worktree-inventory/location.mjs';
 
 /**
  * How old the inventory may be before the disposal is refused.
@@ -724,7 +728,11 @@ export const PLACEHOLDER_BRANCHES = new Set(['(detached)', '(unknown)']);
  * crash on a locked tree and pass a prunable one as clean. Two parsers of one git
  * format will drift when git adds a field; a strict subset is a scheduled bug.
  */
-export function readGitState(cwd, target, { run = defaultRun, list = listWorktrees } = {}) {
+export function readGitState(
+  cwd,
+  target,
+  { run = defaultRun, list = listWorktrees, resolveMainRoot = resolveMainWorktreeRoot } = {}
+) {
   let entries;
   try {
     entries = list(cwd);
@@ -779,10 +787,32 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
 
   // After removal, the invoking cwd may be the directory Git just deleted.
   // Capture a surviving main checkout from the same repository before mutation.
-  const mainWorktrees = entries.filter(
-    (entry) => entry.bare !== true && entry.branch === 'main' && !entry.prunableReason
-  );
-  const registeredMainPath = mainWorktrees.length === 1 ? mainWorktrees[0].path : null;
+  const registeredMainEntries = entries.filter((entry) => entry.bare !== true && entry.branch === 'main');
+  let registeredMainPath =
+    registeredMainEntries.length === 1 && !registeredMainEntries[0].prunableReason
+      ? registeredMainEntries[0].path
+      : null;
+  if (registeredMainEntries.length > 1) {
+    // Recovery can leave a damaged old checkout registered beside its clean
+    // replacement. Branch name alone cannot distinguish them; use the same
+    // identity-checked resolver that selects the inventory and landing roots.
+    // Reuse the roster already read above so this decision cannot race a second
+    // worktree-list snapshot. The resolver fails closed when registration is
+    // absent, partial, stale, or points at a different checkout.
+    let designatedMainPath = null;
+    try {
+      designatedMainPath = resolveMainRoot(cwd, { run, parse: () => entries });
+    } catch {
+      // A resolver failure is unknown main identity, never permission to guess.
+    }
+    if (designatedMainPath) {
+      const designatedMatches = registeredMainEntries.filter(
+        (entry) =>
+          !entry.prunableReason && existsSync(entry.path) && samePath(realpathIfExists(entry.path), designatedMainPath)
+      );
+      if (designatedMatches.length === 1) registeredMainPath = designatedMatches[0].path;
+    }
+  }
   let mainWorktreePath = null;
   if (registeredMainPath && existsSync(registeredMainPath) && commonDir) {
     try {
@@ -1612,6 +1642,10 @@ export function dispose(
   // path is replaced after readGitState validates it.
   const runInRepository = (args) => run(mainWorktreeCwd, ['--git-dir', gitState.commonDir, ...args]);
   const runInCommonDir = (args) => run(gitState.commonDir, ['--git-dir', gitState.commonDir, ...args]);
+  // Branch deletion must run from the registered main worktree. Passing
+  // --git-dir=<common-dir> instead loses that checkout context and can make a
+  // main-merged branch look unmerged when the shared HEAD belongs to a task.
+  const runInMainWorktree = (args, options) => run(mainWorktreeCwd, args, options);
   let branchRefCheckError = null;
   const branchRefExists = () => {
     if (!gitState.branch) return null;
@@ -1795,9 +1829,24 @@ export function dispose(
       return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept };
     }
     const deleteFlag = deleteUnmergedBranch ? '-D' : '-d';
+    const deleteArgs = ['branch', deleteFlag, gitState.branch];
+    const branchConfigSubsection = gitState.branch;
+    const deleteOptions = {
+      // `git branch -d` prefers a configured upstream over HEAD. A config
+      // overlay cannot replace a multivalued branch.<name>.merge entry: adding
+      // local main leaves the unrelated upstream in place, and Git can then
+      // delete an unmerged branch. Give this command a unique, unconfigured
+      // remote instead. Git sees no upstream and falls back to the registered
+      // main worktree's HEAD. The UUID avoids accidentally naming a real remote.
+      env: {
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: `branch.${branchConfigSubsection}.remote`,
+        GIT_CONFIG_VALUE_0: `codex-disposer-no-upstream-${randomUUID()}`,
+      },
+    };
     let deleteError = null;
     try {
-      runInRepository(['branch', deleteFlag, gitState.branch]);
+      runInMainWorktree(deleteArgs, deleteOptions);
       branchDeleted = true;
       if (deleteUnmergedBranch) {
         steps.push(
@@ -1812,7 +1861,7 @@ export function dispose(
       const outcome = branchKept === true ? 'KEPT' : branchKept === false ? 'MISSING' : 'UNVERIFIED';
       const recovery = ref ? `The captured tip remains anchored at ${ref}.` : 'No recovery anchor exists.';
       steps.push(
-        `${outcome} branch ${gitState.branch}: could not delete it with \`git branch ${deleteFlag}\` (${firstLine(deleteError)}). ${branchRefCheckError ? `Ref verification also failed: ${branchRefCheckError}. ` : ''}${recovery}`
+        `${outcome} branch ${gitState.branch}: could not delete it with \`git ${deleteArgs.join(' ')}\` (${firstLine(deleteError)}). ${branchRefCheckError ? `Ref verification also failed: ${branchRefCheckError}. ` : ''}${recovery}`
       );
       return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept };
     }
@@ -1846,12 +1895,13 @@ function realpathIfExists(p) {
 }
 
 /** The one command runner, so every effect is injectable. */
-function defaultRun(cwd, args, { input } = {}) {
+function defaultRun(cwd, args, { input, env } = {}) {
   return {
     stdout: execFileSync('git', args, {
       cwd,
       encoding: 'utf8',
       input,
+      ...(env ? { env: { ...process.env, ...env } } : {}),
       maxBuffer: 64 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],
     }),
@@ -2052,7 +2102,7 @@ function main(argv) {
     process.stdout.write(
       verdict.keepBranch
         ? `dispose: ${gitState.name} (${gitState.branch}) is clear to remove, and the branch will be KEPT.\n  would archive tracked edits and untracked files under the common git directory\n  would remove ${gitState.absolutePath}\n  would NOT run git branch -d ${gitState.branch}\n`
-        : `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose.\n  would anchor ${gitState.tip} at ${ref ?? 'nothing — the ref name is invalid'}\n  would remove ${gitState.absolutePath}\n  would git branch ${verdict.deleteUnmergedBranch ? '-D' : '-d'} ${gitState.branch}${verdict.deleteReason === 'merge-tree-no-op' ? ' (merge result equals the recorded main tree)' : verdict.deleteReason === 'patch-absorbed' ? ' (all non-merge patches are already on the base)' : ''}\n`
+        : `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose.\n  would anchor ${gitState.tip} at ${ref ?? 'nothing — the ref name is invalid'}\n  would remove ${gitState.absolutePath}\n  would run git branch ${verdict.deleteUnmergedBranch ? '-D' : '-d'} ${gitState.branch} from the registered main worktree${verdict.deleteReason === 'merge-tree-no-op' ? ' (merge result equals the recorded main tree)' : verdict.deleteReason === 'patch-absorbed' ? ' (all non-merge patches are already on the base)' : ''}\n`
     );
     return 0;
   }
