@@ -252,9 +252,30 @@ const renderPair = async (rawScenario: ReplayParityScenario, cursor: number): Pr
   storeStateMock.activeLayerId = null;
   storeStateMock.deletedLayers = {};
   storeStateMock.branchRevision = 0;
+  Object.assign(storeStateMock, {
+    documentId: `pixel-parity-${scenario.name}`,
+    documentRevision: 0,
+    getCurrentState: () => storeStateMock,
+  });
   const visibleCanvas = document.createElement('canvas');
   storeStateMock.canvasRef.current = visibleCanvas;
   dispatchMock.mockClear();
+  dispatchMock.mockImplementation((rawAction: unknown) => {
+    const action = rawAction as {
+      type?: string;
+      payload?: {
+        updates?: Record<string, unknown>;
+        timeline?: { entries: HistoryItem[]; cursor: number; branchRevision: number };
+      };
+    };
+    if (action.type !== 'APPLY_HISTORY_REPLAY' || !action.payload?.timeline) return;
+    const { entries, cursor, branchRevision } = action.payload.timeline;
+    Object.assign(storeStateMock, action.payload.updates, {
+      history: [...entries],
+      historyIndex: cursor,
+      branchRevision,
+    });
+  });
 
   const { result, unmount } = renderHook(() => useHistory());
   try {

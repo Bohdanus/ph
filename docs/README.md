@@ -49,12 +49,14 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 ## System
 
-| Document                                                                     | Its one job                                                                   |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [`FEATURES.md`](FEATURES.md)                                                 | Capability inventory against Photoshop, including what the platform cannot do |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)                                         | The store, the layer model, both history systems, rendering, file I/O         |
-| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)                               | The durable-history migration contract and cutover sequence                   |
-| [`HISTORY-MIGRATION-AUDIT-20261107.md`](HISTORY-MIGRATION-AUDIT-20261107.md) | Dated audit of durable-history parity gates and open export findings          |
+| Document                                                                                                                   | Its one job                                                                   |
+| -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [`FEATURES.md`](FEATURES.md)                                                                                               | Capability inventory against Photoshop, including what the platform cannot do |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                                                                                       | The store, the layer model, both history systems, rendering, file I/O         |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)                                                                             | The durable-history migration contract and cutover sequence                   |
+| [`HISTORY-MIGRATION-AUDIT-20261107.md`](HISTORY-MIGRATION-AUDIT-20261107.md)                                               | Dated audit of durable-history parity gates and open export findings          |
+| [`adr/0001-multi-document-and-rendering-refactor-sequence.md`](adr/0001-multi-document-and-rendering-refactor-sequence.md) | Proposed sequencing guardrails while history migration remains open           |
+| [`adr/0001-opus-review-prompt.md`](adr/0001-opus-review-prompt.md)                                                         | Bounded independent review prompt for the multi-document/rendering ADR        |
 
 ## Working practice
 

@@ -149,6 +149,7 @@ function resetStoreState(history: HistoryItem[]) {
     activeSelectionId: null,
     branchRevision: 0,
     hasUnsavedChanges: false,
+    getCurrentState: () => storeStateMock,
   });
 }
 
