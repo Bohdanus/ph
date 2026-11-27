@@ -417,7 +417,7 @@ export const penDescriptions: Record<
       'src/contexts/tool-types.ts:71',
       'src/util/settings.ts:114',
       'src/components/Main/Main.tsx:360',
-      'src/components/SidebarLeft/toolIcons.tsx:83',
+      'src/components/SidebarLeft/toolIcons.tsx:58',
     ],
     appNotes:
       "Not implemented. Photoshop documents no options-bar control specific to this tool — selecting it shows the Pen group's bar, so every control on it belongs to the Pen and none is the Add Anchor Point tool's own — which is why its options table is empty. What the app does render is the standard Pen's chip list, on a panel with a TODO badge, over a tool whose registered processor is the same shared stub that returns a null bitmap the whole Pen family uses, over state that is nothing but its own name, and over no Paths panel to select a path in. The app's SidebarLeft gives this tool the same pen-nib icon as the Pen itself, so the three anchor-point tools are visually indistinguishable from it. " +
@@ -446,7 +446,7 @@ export const penDescriptions: Record<
       'src/contexts/tool-types.ts:72',
       'src/util/settings.ts:115',
       'src/components/Main/Main.tsx:360',
-      'src/components/SidebarLeft/toolIcons.tsx:84',
+      'src/components/SidebarLeft/toolIcons.tsx:59',
     ],
     appNotes:
       "Not implemented. Photoshop documents no options-bar control specific to this tool — selecting it shows the Pen group's bar, so every control on it belongs to the Pen and none is the Delete Anchor Point tool's own — which is why its options table is empty. What the app does render is the standard Pen's chip list, on a panel with a TODO badge, over a tool whose registered processor is the same shared stub that returns a null bitmap the whole Pen family uses, over state that is nothing but its own name, and over no Paths panel to select a path in. The app's SidebarLeft gives this tool the same pen-nib icon as the Pen itself. " +
@@ -481,7 +481,7 @@ export const penDescriptions: Record<
       'src/contexts/tool-types.ts:73',
       'src/util/settings.ts:116',
       'src/components/Main/Main.tsx:360',
-      'src/components/SidebarLeft/toolIcons.tsx:85',
+      'src/components/SidebarLeft/toolIcons.tsx:60',
       'src/contexts/__tests__/history-adapter.tool-conversion.test.ts:242',
       'src/contexts/history-adapter.ts:550',
     ],

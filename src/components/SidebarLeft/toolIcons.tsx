@@ -1,114 +1,67 @@
 import type { SvgIconFactory, ToolIconName } from './types';
+import { createAssetIcon } from './icons/AssetIcon.tsx';
 
-import { BlurIcon } from './icons/BlurIcon';
-import { BrushToolIcon } from './icons/BrushToolIcon';
-import { BurnIcon } from './icons/BurnIcon';
-import { CloneStampIcon } from './icons/CloneStampIcon';
-import { ColorIcon } from './icons/ColorIcon';
-import { ColorReplacementIcon } from './icons/ColorReplacementIcon';
-import { CropIcon } from './icons/CropIcon';
-import { DodgeIcon } from './icons/DodgeIcon';
-import { DrawIcon } from './icons/DrawIcon';
-import { EllipseShapeIcon } from './icons/EllipseShapeIcon';
-import { EllipticalSelectionIcon } from './icons/EllipticalSelectionIcon';
-import { EraserIcon } from './icons/EraserIcon';
-import { EyedropperIcon } from './icons/EyedropperIcon';
-import { ColorSamplerIcon } from './icons/ColorSamplerIcon';
-import { RulerIcon } from './icons/RulerIcon';
-import { RedEyeIcon } from './icons/RedEyeIcon';
-import { SpotHealingIcon } from './icons/SpotHealingIcon';
-import { HealingBrushIcon } from './icons/HealingBrushIcon';
-import { PatchIcon } from './icons/PatchIcon';
-import { FeatherMagneticLassoIcon } from './icons/FeatherMagneticLassoIcon';
-import { FreeformPenIcon } from './icons/FreeformPenIcon';
-import { FreehandLassoIcon } from './icons/FreehandLassoIcon';
-import { GradientIcon } from './icons/GradientIcon';
-import { InvertIcon } from './icons/InvertIcon';
-import { LevelsIcon } from './icons/LevelsIcon';
-import { LineShapeIcon } from './icons/LineShapeIcon';
-import { MagicEraserIcon } from './icons/MagicEraserIcon';
-import { MagicWandIcon } from './icons/MagicWandIcon';
-import { MoveIcon } from './icons/MoveIcon';
-import { HandIcon } from './icons/HandIcon';
-import { ZoomIcon } from './icons/ZoomIcon';
-import { RotateViewIcon } from './icons/RotateViewIcon';
-import { PaintBucketIcon } from './icons/PaintBucketIcon';
-import { PenToolIcon } from './icons/PenToolIcon';
-import { PolygonalLassoIcon } from './icons/PolygonalLassoIcon';
-import { QuickSelectionIcon } from './icons/QuickSelectionIcon';
-import { RectangularSelectionIcon } from './icons/RectangularSelectionIcon';
-import { RectangleShapeIcon } from './icons/RectangleShapeIcon';
-import { ShapeIcon } from './icons/ShapeIcon';
-import { StarIcon } from './icons/StarIcon';
-import { SharpenIcon } from './icons/SharpenIcon';
-import { SingleColumnMarqueeIcon } from './icons/SingleColumnMarqueeIcon';
-import { SingleRowMarqueeIcon } from './icons/SingleRowMarqueeIcon';
-import { SmudgeIcon } from './icons/SmudgeIcon';
-import { SpongeIcon } from './icons/SpongeIcon';
-import { TextIcon } from './icons/TextIcon';
-import { TransformIcon } from './icons/TransformIcon';
+const brushPencilIcon = createAssetIcon('brush');
 
 export const toolIcons: Record<ToolIconName, SvgIconFactory> & Record<'shape-star', SvgIconFactory> = {
-  reposition: MoveIcon,
-  hand: HandIcon,
-  zoom: ZoomIcon,
-  'rotate-view': RotateViewIcon,
-  color: ColorIcon,
-  blur: BlurIcon,
-  levels: LevelsIcon,
-  invert: InvertIcon,
-  transform: TransformIcon,
-  crop: CropIcon,
-  draw: DrawIcon,
-  shape: ShapeIcon,
-  'shape-rectangle': RectangleShapeIcon,
-  'shape-oval': EllipseShapeIcon,
-  'shape-line': LineShapeIcon,
-  'shape-triangle': ShapeIcon,
-  'shape-polygon': ShapeIcon,
-  'shape-star': StarIcon,
-  text: TextIcon,
-  'freehand-lasso': FreehandLassoIcon,
-  'polygonal-lasso': PolygonalLassoIcon,
-  'feather-magnetic-lasso': FeatherMagneticLassoIcon,
-  'magic-wand': MagicWandIcon,
-  'rectangular-selection': RectangularSelectionIcon,
-  'elliptical-selection': EllipticalSelectionIcon,
-  'single-row-marquee': SingleRowMarqueeIcon,
-  'single-column-marquee': SingleColumnMarqueeIcon,
-  'quick-selection': QuickSelectionIcon,
-  'clone-stamp': CloneStampIcon,
-  'red-eye': RedEyeIcon,
-  'spot-healing': SpotHealingIcon,
-  'healing-brush': HealingBrushIcon,
-  patch: PatchIcon,
-  gradient: GradientIcon,
-  sharpen: SharpenIcon,
-  smudge: SmudgeIcon,
-  dodge: DodgeIcon,
-  burn: BurnIcon,
-  sponge: SpongeIcon,
-  brush: BrushToolIcon,
-  pencil: BrushToolIcon,
-  'color-replacement': ColorReplacementIcon,
-  // Four distinct icons, not a shared BrushToolIcon as `brush`/`pencil` do: those two are the same
-  // physical tool at two hardnesses, while an eraser drawn as a brush would be a lie.
-  eraser: EraserIcon,
-  'magic-eraser': MagicEraserIcon,
-  'paint-bucket': PaintBucketIcon,
-  eyedropper: EyedropperIcon,
-  'color-sampler': ColorSamplerIcon,
-  ruler: RulerIcon,
-  pen: PenToolIcon,
-  'freeform-pen': FreeformPenIcon,
-  'curvature-pen': PenToolIcon,
-  'add-anchor-point': PenToolIcon,
-  'delete-anchor-point': PenToolIcon,
-  'convert-point': PenToolIcon,
-  rectangle: RectangleShapeIcon,
-  ellipse: EllipseShapeIcon,
-  triangle: ShapeIcon,
-  polygon: ShapeIcon,
-  line: LineShapeIcon,
-  'custom-shape': ShapeIcon,
+  reposition: createAssetIcon('reposition'),
+  hand: createAssetIcon('hand'),
+  zoom: createAssetIcon('zoom'),
+  'rotate-view': createAssetIcon('rotate-view'),
+  color: createAssetIcon('color'),
+  blur: createAssetIcon('blur'),
+  levels: createAssetIcon('levels'),
+  invert: createAssetIcon('invert'),
+  transform: createAssetIcon('transform'),
+  crop: createAssetIcon('crop'),
+  draw: createAssetIcon('draw'),
+  shape: createAssetIcon('shape'),
+  'shape-rectangle': createAssetIcon('shape-rectangle'),
+  'shape-oval': createAssetIcon('shape-oval'),
+  'shape-line': createAssetIcon('shape-line'),
+  'shape-triangle': createAssetIcon('shape-triangle'),
+  'shape-polygon': createAssetIcon('shape-polygon'),
+  'shape-star': createAssetIcon('shape-star'),
+  text: createAssetIcon('text'),
+  'freehand-lasso': createAssetIcon('freehand-lasso'),
+  'polygonal-lasso': createAssetIcon('polygonal-lasso'),
+  'feather-magnetic-lasso': createAssetIcon('feather-magnetic-lasso'),
+  'magic-wand': createAssetIcon('magic-wand'),
+  'rectangular-selection': createAssetIcon('rectangular-selection'),
+  'elliptical-selection': createAssetIcon('elliptical-selection'),
+  'single-row-marquee': createAssetIcon('single-row-marquee'),
+  'single-column-marquee': createAssetIcon('single-column-marquee'),
+  'quick-selection': createAssetIcon('quick-selection'),
+  'clone-stamp': createAssetIcon('clone-stamp'),
+  'red-eye': createAssetIcon('red-eye'),
+  'spot-healing': createAssetIcon('spot-healing'),
+  'healing-brush': createAssetIcon('healing-brush'),
+  patch: createAssetIcon('patch'),
+  gradient: createAssetIcon('gradient'),
+  sharpen: createAssetIcon('sharpen'),
+  smudge: createAssetIcon('smudge'),
+  dodge: createAssetIcon('dodge'),
+  burn: createAssetIcon('burn'),
+  sponge: createAssetIcon('sponge'),
+  brush: brushPencilIcon,
+  pencil: brushPencilIcon,
+  'color-replacement': createAssetIcon('color-replacement'),
+  eraser: createAssetIcon('eraser'),
+  'magic-eraser': createAssetIcon('magic-eraser'),
+  'paint-bucket': createAssetIcon('paint-bucket'),
+  eyedropper: createAssetIcon('eyedropper'),
+  'color-sampler': createAssetIcon('color-sampler'),
+  ruler: createAssetIcon('ruler'),
+  pen: createAssetIcon('pen'),
+  'freeform-pen': createAssetIcon('freeform-pen'),
+  'curvature-pen': createAssetIcon('curvature-pen'),
+  'add-anchor-point': createAssetIcon('add-anchor-point'),
+  'delete-anchor-point': createAssetIcon('delete-anchor-point'),
+  'convert-point': createAssetIcon('convert-point'),
+  rectangle: createAssetIcon('rectangle'),
+  ellipse: createAssetIcon('ellipse'),
+  triangle: createAssetIcon('triangle'),
+  polygon: createAssetIcon('polygon'),
+  line: createAssetIcon('line'),
+  'custom-shape': createAssetIcon('custom-shape'),
 };

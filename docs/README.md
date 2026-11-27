@@ -58,6 +58,13 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`adr/0001-multi-document-and-rendering-refactor-sequence.md`](adr/0001-multi-document-and-rendering-refactor-sequence.md) | Proposed sequencing guardrails while history migration remains open           |
 | [`adr/0001-opus-review-prompt.md`](adr/0001-opus-review-prompt.md)                                                         | Bounded independent review prompt for the multi-document/rendering ADR        |
 
+## Architecture proposals
+
+| Document                                                                                                                   | Its one job                                                                                           |
+| -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [`adr/0001-multi-document-and-rendering-refactor-sequence.md`](adr/0001-multi-document-and-rendering-refactor-sequence.md) | Proposed sequencing for multi-document support and future rendering work during the history migration |
+| [`adr/0001-opus-review-prompt.md`](adr/0001-opus-review-prompt.md)                                                         | The bounded prompt for an independent review of the proposed architecture decision                    |
+
 ## Working practice
 
 | Document                                                                                               | Its one job                                                                                          |
