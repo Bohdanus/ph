@@ -376,6 +376,14 @@ export const useHistory = () => {
         cancelHistoryReplayPresentation?.(attemptId);
         return Promise.resolve();
       }
+      // Publication can reject after another same-stack edit has replaced the
+      // replay timeline. The success path fences its paint above; fence this
+      // failure path too before restoring the older snapshot or reporting that
+      // the newer document is unavailable.
+      if (replayDispatched && !isReplayTimelineCurrent()) {
+        if (attemptId !== null) cancelHistoryReplayPresentation?.(attemptId);
+        return Promise.resolve();
+      }
       if (attemptId === null && hasPendingHistoryReplayPresentation?.(documentId, documentRevision)) {
         // A newer request failed while a previously accepted replay is still
         // composing. Its failure must not invalidate the replay already in

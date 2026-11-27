@@ -1357,6 +1357,69 @@ describe('useHistory undo replay', () => {
       expect(historyPresentationEvents).toEqual(['replay-dispatch', 'begin', 'edit-dispatch']);
     });
 
+    it('does not roll back a typed source replacement when replay publication rejects', async () => {
+      const { state } = setup();
+      const publication = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
+      state.publishDurableNavigationPresentation = vi.fn(() => publication.promise);
+      const { result } = renderHook(() => useHistory());
+      let navigation!: Promise<void>;
+
+      act(() => {
+        navigation = result.current.resetHistoryTo(0);
+      });
+      expect(state.historyIndex).toBe(0);
+      expect(historyReplayAttemptState.pending).toBe(true);
+
+      const replayLayer = state.layers['layer-1'];
+      if (!replayLayer) throw new Error('the pending replay did not publish its layer');
+      const replacementSource = {
+        kind: 'tool' as const,
+        args: { toolName: 'text', text: 'Committed while publication failed' } as never,
+        pos: replayLayer.pos,
+        isBedrock: false as const,
+      };
+      const replacementLayer: Layer = {
+        ...replayLayer,
+        source: replacementSource,
+        bitmap: null,
+        tmpCanvas: new OffscreenCanvas(40, 20),
+      };
+      act(() => {
+        dispatchMock({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates: { layers: { ...state.layers, 'layer-1': replacementLayer } },
+            historyItem: {
+              id: 'text-source-replacement-after-rejected-replay',
+              layerId: 'layer-1',
+              actionName: REPLACE_LAYER_SOURCE_ACTION,
+              args: { source: replacementSource },
+            },
+          },
+        });
+      });
+      expect(state.history.map((item) => item.id)).toEqual(['h-1', 'text-source-replacement-after-rejected-replay']);
+      expect(state.historyIndex).toBe(1);
+      expect(state.layers['layer-1']?.source).toEqual(replacementSource);
+      expect(state.layers['layer-1']?.tmpCanvas).toBe(replacementLayer.tmpCanvas);
+
+      await act(async () => {
+        publication.reject(new Error('durable publication rejected'));
+        await navigation;
+      });
+
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'COMMIT_DOCUMENT_EDIT']);
+      expect(rendererControl.drawCalls).toHaveLength(0);
+      expect(storeStateMock.clearPreviewLayers).not.toHaveBeenCalled();
+      expect(storeStateMock.cancelHistoryReplayPresentation).toHaveBeenCalledOnce();
+      expect(storeStateMock.finalizeHistoryReplayPresentation).not.toHaveBeenCalled();
+      expect(state.historyIndex).toBe(1);
+      expect(state.history.at(-1)?.id).toBe('text-source-replacement-after-rejected-replay');
+      expect(state.layers['layer-1']?.source).toEqual(replacementSource);
+      expect(state.layers['layer-1']?.tmpCanvas).toBe(replacementLayer.tmpCanvas);
+      expect(historyPresentationEvents).toEqual(['replay-dispatch', 'begin', 'edit-dispatch']);
+    });
+
     it('does not supersede a pending replay when a later replay fails before dispatch', async () => {
       const { state } = setup();
       const publication = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
