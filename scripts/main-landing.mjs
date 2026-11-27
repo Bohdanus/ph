@@ -117,6 +117,26 @@ function gitConfigValue(key, cwd) {
   throw new Error((result.stderr || result.stdout || 'could not read Git config').trim());
 }
 
+function exactStatInteger(value) {
+  if (typeof value === 'bigint') return value;
+  return Number.isSafeInteger(value) ? BigInt(value) : null;
+}
+
+function sameStatIdentity(left, right) {
+  const leftDevice = exactStatInteger(left.dev);
+  const rightDevice = exactStatInteger(right.dev);
+  const leftInode = exactStatInteger(left.ino);
+  const rightInode = exactStatInteger(right.ino);
+  return (
+    leftDevice !== null &&
+    rightDevice !== null &&
+    leftInode !== null &&
+    rightInode !== null &&
+    leftDevice === rightDevice &&
+    leftInode === rightInode
+  );
+}
+
 function resolvePath(value, base) {
   if (!value) return null;
   return resolve(isAbsolute(value) ? value : join(base, value));
@@ -643,7 +663,13 @@ function invalidTimestampMessage(owner) {
 
 export function readFailureLogLock(
   file,
-  { lstatImpl = lstatSync, openImpl = openSync, fstatImpl = fstatSync, readImpl = readSync, closeImpl = closeSync } = {}
+  {
+    lstatImpl = (candidate) => lstatSync(candidate, { bigint: true }),
+    openImpl = openSync,
+    fstatImpl = (descriptor) => fstatSync(descriptor, { bigint: true }),
+    readImpl = readSync,
+    closeImpl = closeSync,
+  } = {}
 ) {
   let pathStat;
   try {
@@ -652,7 +678,8 @@ export function readFailureLogLock(
     if (error?.code === 'ENOENT') return { status: 'missing' };
     throw error;
   }
-  if (!pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.nlink !== 1) {
+  const pathLinks = exactStatInteger(pathStat.nlink);
+  if (!pathStat.isFile() || pathStat.isSymbolicLink() || pathLinks !== 1n) {
     throw new Error('main landing failure log lock is not a single-link regular file');
   }
 
@@ -660,25 +687,23 @@ export function readFailureLogLock(
   try {
     descriptor = openImpl(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const stat = fstatImpl(descriptor);
-    if (!stat.isFile() || !Number.isSafeInteger(stat.nlink) || stat.nlink > 1) {
+    const descriptorLinks = exactStatInteger(stat.nlink);
+    if (!stat.isFile() || descriptorLinks === null || descriptorLinks > 1n) {
       throw new Error('main landing failure log lock is not a single-link regular file');
     }
-    if (stat.nlink === 0 || stat.dev !== pathStat.dev || stat.ino !== pathStat.ino) {
+    if (descriptorLinks === 0n || !sameStatIdentity(stat, pathStat)) {
       return { status: 'changing' };
     }
-    if (
-      !Number.isSafeInteger(pathStat.dev) ||
-      !Number.isSafeInteger(pathStat.ino) ||
-      pathStat.ino <= 0 ||
-      stat.nlink !== 1
-    ) {
+    const pathInode = exactStatInteger(pathStat.ino);
+    if (pathInode === null || pathInode <= 0n || descriptorLinks !== 1n) {
       throw new Error('main landing failure log lock changed during inspection');
     }
-    if (!Number.isSafeInteger(stat.size) || stat.size <= 0 || stat.size > FAILURE_LOG_LOCK_MAX_BYTES) {
+    const size = exactStatInteger(stat.size);
+    if (size === null || size <= 0n || size > BigInt(FAILURE_LOG_LOCK_MAX_BYTES)) {
       return { status: 'unreadable' };
     }
 
-    const buffer = Buffer.alloc(stat.size);
+    const buffer = Buffer.alloc(Number(size));
     let bytesRead = 0;
     while (bytesRead < buffer.length) {
       const count = readImpl(descriptor, buffer, bytesRead, buffer.length - bytesRead, bytesRead);
@@ -863,27 +888,30 @@ function appendFailureLogWhileLocked(paths, message) {
   try {
     let pathStat;
     try {
-      pathStat = lstatSync(file);
+      pathStat = lstatSync(file, { bigint: true });
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
     }
     if (pathStat && !pathStat.isSymbolicLink()) {
       if (!pathStat.isFile()) throw new Error('main landing failure log is not a regular file');
       descriptor = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
-      const stat = fstatSync(descriptor);
+      const stat = fstatSync(descriptor, { bigint: true });
       if (!stat.isFile()) throw new Error('main landing failure log is not a regular file');
+      const pathInode = exactStatInteger(pathStat.ino);
       const sameSingleLinkFile =
-        Number.isSafeInteger(pathStat.dev) &&
-        Number.isSafeInteger(pathStat.ino) &&
-        pathStat.ino > 0 &&
-        pathStat.nlink === 1 &&
-        stat.dev === pathStat.dev &&
-        stat.ino === pathStat.ino &&
-        stat.nlink === 1;
-      const length = sameSingleLinkFile ? Math.min(stat.size, previousLimit) : 0;
+        pathInode !== null &&
+        pathInode > 0n &&
+        exactStatInteger(pathStat.nlink) === 1n &&
+        exactStatInteger(stat.nlink) === 1n &&
+        sameStatIdentity(stat, pathStat);
+      const size = exactStatInteger(stat.size);
+      const length =
+        sameSingleLinkFile && size !== null && size <= BigInt(Number.MAX_SAFE_INTEGER)
+          ? Math.min(Number(size), previousLimit)
+          : 0;
       if (length > 0) {
         const buffer = Buffer.alloc(length);
-        const offset = stat.size - length;
+        const offset = Number(size) - length;
         let bytesRead = 0;
         while (bytesRead < length) {
           const count = readSync(descriptor, buffer, bytesRead, length - bytesRead, offset + bytesRead);
@@ -979,9 +1007,9 @@ function releaseLock(paths, leaseId) {
   }
 }
 
-function acquireRecoveryControl(paths, owner) {
+function acquireRecoveryControl(paths, owner, { selfProcessStartTokenImpl = processStartToken } = {}) {
   const lock = join(paths.lockDir, 'owner-control.lock');
-  const pidStartToken = processStartToken(process.pid);
+  const pidStartToken = selfProcessStartTokenImpl(process.pid);
   const runtimeScopeToken = processRuntimeScopeToken();
   if (!pidStartToken) {
     throw new Error('main landing owner-control lock cannot identify its process; refusing the recovery operation');
@@ -1488,8 +1516,8 @@ function heartbeat(paths, owner, step = owner.step, childPid = owner.owner.child
   }
 }
 
-function updateOwnedRecord(paths, leaseId, update) {
-  const controlLock = acquireRecoveryControl(paths, { leaseId });
+function updateOwnedRecord(paths, leaseId, update, { selfProcessStartTokenImpl = processStartToken } = {}) {
+  const controlLock = acquireRecoveryControl(paths, { leaseId }, { selfProcessStartTokenImpl });
   try {
     const current = readOwner(paths);
     if (!current || current.leaseId !== leaseId) {
@@ -2162,7 +2190,19 @@ async function recoverPersistentOrphanAutoMerge(
 export async function watch(
   paths,
   leaseId,
-  { sleep = sleepFor, now = Date.now, recoveryOptions = {}, readOwnerImpl = readOwner } = {}
+  {
+    sleep = sleepFor,
+    now = Date.now,
+    recoveryOptions = {},
+    readOwnerImpl = readOwner,
+    resolvePathsImpl = resolvePaths,
+    mainGitStateImpl = mainGitState,
+    orphanAutoMergeSignatureImpl = orphanAutoMergeSignature,
+    canRecoverOrphanAutoMergeImpl = canRecoverOrphanAutoMerge,
+    cleanMainImpl = cleanMain,
+    notifyIfDueImpl = notifyIfDue,
+    selfProcessStartTokenImpl = processStartToken,
+  } = {}
 ) {
   for (;;) {
     await sleep(WATCH_POLL_MS);
@@ -2170,16 +2210,17 @@ export async function watch(
     if (!ownerResult.ok) return 1;
     let owner = ownerResult.owner;
     if (!owner || owner.leaseId !== leaseId) return 0;
+    const updateOwner = (update) => updateOwnedRecord(paths, leaseId, update, { selfProcessStartTokenImpl });
     try {
       if (owner.mode === 'landing') {
-        owner = updateOwnedRecord(paths, leaseId, (current) =>
+        owner = updateOwner((current) =>
           current.mode === 'landing' ? { ...current, heartbeatAt: new Date(now()).toISOString() } : current
         );
       }
       if (owner.mode === 'landing' && !owner.autoMergeFailoverAttempted && owner.incomingSha && owner.treeSha) {
-        const currentPaths = resolvePaths(paths.cwd);
+        const currentPaths = resolvePathsImpl(paths.cwd);
         if (owner.originalMainPath && !samePath(currentPaths.mainPath, owner.originalMainPath)) {
-          owner = updateOwnedRecord(paths, leaseId, (current) => ({
+          owner = updateOwner((current) => ({
             ...current,
             autoMergeFailoverAttempted: true,
             step: 'automatic AUTO_MERGE failover stopped because the designated main path changed outside this lease',
@@ -2189,15 +2230,13 @@ export async function watch(
             'The designated main path changed outside the active landing lease. Automatic stale AUTO_MERGE failover stopped; preserve the old checkout and review the current main:landing status.'
           );
         } else {
-          const state = mainGitState(currentPaths);
-          const signature = orphanAutoMergeSignature(currentPaths, state);
+          const state = mainGitStateImpl(currentPaths);
+          const signature = orphanAutoMergeSignatureImpl(currentPaths, state);
           const wasObserving = Boolean(owner.autoMergeObservedSince);
           if (signature || wasObserving) {
-            owner = updateOwnedRecord(paths, leaseId, (current) =>
-              observeOrphanAutoMerge(current, state, signature, now())
-            );
+            owner = updateOwner((current) => observeOrphanAutoMerge(current, state, signature, now()));
           }
-          if (!isOrphanAutoMergeState(state) && wasObserving && cleanMain(currentPaths)) {
+          if (!isOrphanAutoMergeState(state) && wasObserving && cleanMainImpl(currentPaths)) {
             releaseLock(currentPaths, leaseId);
             boardNote(
               currentPaths,
@@ -2205,14 +2244,14 @@ export async function watch(
             );
             return 0;
           }
-          if (signature && canRecoverOrphanAutoMerge(owner, now())) {
+          if (signature && canRecoverOrphanAutoMergeImpl(owner, now())) {
             if (await recoverPersistentOrphanAutoMerge(currentPaths, owner, { ...recoveryOptions, now })) return 0;
             owner = readOwner(paths);
             if (!owner || owner.leaseId !== leaseId) return 0;
           }
         }
       }
-      notifyIfDue(paths, owner);
+      notifyIfDueImpl(paths, owner);
     } catch (error) {
       try {
         appendFailureLog(paths, 'watcher: ' + error.message);

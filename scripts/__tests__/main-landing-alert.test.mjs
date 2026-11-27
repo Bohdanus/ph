@@ -269,6 +269,46 @@ describe('main landing invalid lease timestamps and bounded failure logging', ()
     expect(closed).toHaveBeenCalledWith(23);
   });
 
+  it('compares Windows file IDs without rounding unsafe JavaScript numbers', () => {
+    const contents = Buffer.from(
+      JSON.stringify({
+        token: '123e4567-e89b-42d3-a456-426614174000',
+        pid: 123,
+        host: 'fixture-host',
+        platform: 'win32',
+        startedAt: '2026-11-26T12:00:00.000Z',
+      })
+    );
+    const inode = 78_250_043_527_657_800n;
+    const stat = {
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      nlink: 1n,
+      dev: 2_055_315_042n,
+      ino: inode,
+      size: BigInt(contents.length),
+    };
+    const result = readFailureLogLock('fixture-lock', {
+      lstatImpl: () => stat,
+      openImpl: () => 23,
+      fstatImpl: () => stat,
+      readImpl: (_descriptor, buffer, offset, length, position) =>
+        contents.copy(buffer, offset, position, position + length),
+      closeImpl: () => {},
+    });
+
+    expect(result).toEqual({
+      status: 'record',
+      record: {
+        token: '123e4567-e89b-42d3-a456-426614174000',
+        pid: 123,
+        host: 'fixture-host',
+        platform: 'win32',
+        startedAt: '2026-11-26T12:00:00.000Z',
+      },
+    });
+  });
+
   it('shows a missing lease ID and invalid timestamp in status without creating an alert marker', () => {
     const repo = mkdtempSync(join(tmpdir(), 'main-landing-invalid-status-'));
     tempDirectories.push(repo);
