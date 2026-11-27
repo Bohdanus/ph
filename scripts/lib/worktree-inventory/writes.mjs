@@ -661,6 +661,7 @@ export function auditWrites({ dbPath, root, worktreePaths = [], nowMs = Date.now
       .map(([key, r]) => {
         const w = summariseWrites(r.write, { nowMs, liveWindowMs });
         const rd = summariseReads(r.read, { nowMs, liveWindowMs });
+        const sh = summariseShell(r.shell, { nowMs, liveWindowMs });
         return {
           name: key.slice('gone:'.length),
           writeCalls: w.calls,
@@ -669,6 +670,8 @@ export function auditWrites({ dbPath, root, worktreePaths = [], nowMs = Date.now
           lastWriteAt: w.lastAt,
           readCalls: rd.calls,
           readerChatIds: rd.chats.map((c) => c.id),
+          shellCalls: sh.calls,
+          shellChatIds: sh.chats.map((c) => c.id),
         };
       })
       .sort((a, b) => b.writeCalls - a.writeCalls);
