@@ -193,7 +193,7 @@ describe('tool icon factories', () => {
     expect(toolIcons.pencil).toBe(toolIcons.brush);
   });
 
-  it('keeps all supplied asset paints inheriting the toolbar color', () => {
+  it('keeps all supplied asset paint attributes inheriting the toolbar color', () => {
     const sources = import.meta.glob('../../../assets/tool-icons/currentColor/*.svg', {
       eager: true,
       import: 'default',
@@ -202,7 +202,12 @@ describe('tool icon factories', () => {
 
     expect(Object.keys(sources)).toHaveLength(62);
     for (const [path, source] of Object.entries(sources)) {
-      expect(source, path).not.toMatch(/#[0-9a-f]{3,8}/i);
+      const paints = [...source.matchAll(/\b(?:fill|stroke)=["']([^"']+)["']/g)].map(([, paint]) => paint);
+
+      expect(
+        paints.filter((paint) => paint !== 'none' && paint !== 'currentColor'),
+        path
+      ).toEqual([]);
     }
   });
 });
