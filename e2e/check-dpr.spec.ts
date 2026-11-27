@@ -219,15 +219,13 @@ test.describe('Device pixel ratio', () => {
     });
 
     const diagnostic =
-      'live preview and committed pixels should stay within the measured HiDPI edge tolerance; presentation source: ' +
+      'commit should render the same device pixels as the live preview; presentation source: ' +
       comparison.presentationSource +
       '; comparison: ' +
       JSON.stringify(comparison);
-    // Repeated Chrome runs show at most 21 differing edge pixels and a maximum
-    // channel delta of 2. Bound both values tightly so one-level rasterization
-    // rounding stays acceptable while broad preview/commit mismatches still fail.
-    expect(comparison.maxChannelDelta, diagnostic).toBeLessThanOrEqual(2);
-    expect(comparison.differingPixels, diagnostic).toBeLessThanOrEqual(32);
+    // Keep the existing one-channel HiDPI edge rounding bound; any larger pixel
+    // delta is a preview/commit mismatch that needs an explicit renderer fix.
+    expect(comparison.maxChannelDelta, diagnostic).toBeLessThanOrEqual(1);
   });
 });
 

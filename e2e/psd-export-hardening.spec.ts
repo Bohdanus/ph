@@ -808,7 +808,7 @@ test.describe('PSD Export Hardening: Edge Cases', () => {
     // Draw content
     await drawStroke(page, box, documentSize, '#201010', { x: 100, y: 100 }, { x: 1900, y: 100 });
     await drawStroke(page, box, documentSize, '#102010', { x: 100, y: 750 }, { x: 1900, y: 750 });
-    const sourceDataUrl = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));
+    const sourceDataUrl = await canvas.evaluate(documentResolutionCanvasDataUrl, documentSize);
 
     const psdPath = await exportPsd(page, downloadDirectory, 'large-doc-test');
     const file = await readFile(psdPath);
