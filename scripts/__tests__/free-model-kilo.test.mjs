@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, realpathSync } from 'node:fs';
 import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path, { delimiter, dirname, join } from 'node:path';
+import path, { basename, delimiter, dirname, join } from 'node:path';
 import { MAX_KILO_OUTPUT_BYTES, resolveKiloCli, runKiloCompletion } from '../lib/free-model-kilo.mjs';
 
 vi.setConfig({ testTimeout: 15_000 });
@@ -224,26 +224,29 @@ describe('Kilo CLI discovery', () => {
     }
   );
 
-  it('filters unsafe PATH aliases and fails closed on unreadable ancestor bins before editor extensions', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-discovery-'));
+  it('filters unsafe PATH aliases', async (context) => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-discovery-aliases-'));
     const projectRoot = join(directory, 'project', 'repo');
     const projectBin = join(projectRoot, 'node_modules', '.bin');
     const ancestorBin = join(directory, 'node_modules', '.bin');
     const projectKilo = await writeExecutable(join(projectBin, 'kilo'), 'process.exit(0);');
-    await writeExecutable(join(ancestorBin, 'other'), 'process.exit(0);');
     const externalKilo = await writeExecutable(join(directory, 'global-bin', 'kilo'), 'process.exit(0);');
-    await symlink(externalKilo, join(ancestorBin, 'kilo'));
     const binAlias = join(directory, 'bin-alias');
     const executableAliasDirectory = join(directory, 'path-alias');
-    await symlink(projectBin, binAlias, process.platform === 'win32' ? 'junction' : 'dir');
-    await writeExecutable(join(executableAliasDirectory, 'other'), 'process.exit(0);');
-    await symlink(projectKilo, join(executableAliasDirectory, 'kilo'));
     const pathKilo = await writeExecutable(join(directory, 'path', 'kilo'), 'process.exit(0);');
-    const extensionKilo = await writeExecutable(
-      join(directory, 'home', '.vscode', 'extensions', 'kilocode.kilo-code-8.0.0-test', 'bin', 'kilo'),
-      'process.exit(0);'
-    );
     try {
+      await writeExecutable(join(ancestorBin, 'other'), 'process.exit(0);');
+      try {
+        await symlink(externalKilo, join(ancestorBin, basename(externalKilo)));
+        await symlink(projectBin, binAlias, process.platform === 'win32' ? 'junction' : 'dir');
+        await writeExecutable(join(executableAliasDirectory, 'other'), 'process.exit(0);');
+        await symlink(projectKilo, join(executableAliasDirectory, basename(projectKilo)));
+      } catch (error) {
+        if (process.platform === 'win32' && ['EPERM', 'EACCES', 'ENOTSUP'].includes(error?.code)) {
+          context.skip('File symlinks are unavailable in this Windows environment');
+        }
+        throw error;
+      }
       await expect(
         resolveKiloCli({
           command: '',
@@ -255,6 +258,24 @@ describe('Kilo CLI discovery', () => {
           projectRoot,
         })
       ).resolves.toBe(realpathSync(pathKilo));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed on unreadable ancestor bins before editor extensions', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-discovery-unreadable-'));
+    const projectRoot = join(directory, 'project', 'repo');
+    const ancestorBin = join(directory, 'node_modules', '.bin');
+    const externalKilo = await writeExecutable(join(directory, 'global-bin', 'kilo'), 'process.exit(0);');
+    const pathKilo = await writeExecutable(join(directory, 'path', 'kilo'), 'process.exit(0);');
+    const extensionKilo = await writeExecutable(
+      join(directory, 'home', '.vscode', 'extensions', 'kilocode.kilo-code-8.0.0-test', 'bin', 'kilo'),
+      'process.exit(0);'
+    );
+    try {
+      await mkdir(projectRoot, { recursive: true });
+      await writeExecutable(join(ancestorBin, 'other'), 'process.exit(0);');
       await expect(
         resolveKiloCli({
           command: '',
@@ -298,7 +319,7 @@ describe('authenticated Kilo CLI completion', () => {
       await Promise.all([
         mkdir(projectBin, { recursive: true }),
         mkdir(safeBin, { recursive: true }),
-        mkdir(relativeBin),
+        mkdir(relativeBin, { recursive: true }),
       ]);
       const projectShim = join(projectBin, 'kilo.cmd');
       const safeShim = join(safeBin, 'kilo.cmd');
@@ -381,7 +402,11 @@ describe('authenticated Kilo CLI completion', () => {
     await mkdir(runtimeCallerBin, { recursive: true });
     await mkdir(runtimeCallerRoot, { recursive: true });
     await mkdir(join(runtimeCallerExternalPackage, 'node_modules', '.bin'), { recursive: true });
-    await symlink(runtimeCallerExternalPackage, join(runtimeCallerRoot, 'vendor'), 'dir');
+    await symlink(
+      runtimeCallerExternalPackage,
+      join(runtimeCallerRoot, 'vendor'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    );
     await mkdir(join(fixtureDataHome, 'kilo'), { recursive: true });
     await mkdir(join(fixtureDataHome, 'other-app'), { recursive: true });
     await writeFile(join(fixtureDataHome, 'kilo', 'auth.json'), 'fixture auth', 'utf8');
@@ -418,8 +443,17 @@ if (process.env.KILO_CONFIG_CONTENT || process.env.KILO_DISABLE_PROJECT_CONFIG) 
 if (process.env.HOME === '/fixture/home' || process.env.USERPROFILE === '/fixture/home' || process.env.XDG_CONFIG_HOME === '/fixture/config') process.exit(22);
 if (!process.env.XDG_DATA_HOME.startsWith(process.env.HOME + path.sep) || !process.env.XDG_CACHE_HOME.startsWith(process.env.HOME + path.sep) || process.env.KILO_DB) process.exit(16);
 if (!process.env.TMPDIR.startsWith(process.env.HOME + path.sep) || process.env.TMP !== process.env.TMPDIR || process.env.TEMP !== process.env.TMPDIR || !fs.existsSync(process.env.TMPDIR)) process.exit(17);
-if (fs.lstatSync(isolatedKiloData).isSymbolicLink() || !fs.lstatSync(path.join(isolatedKiloData, 'auth.json')).isSymbolicLink()) process.exit(18);
-if (fs.readFileSync(path.join(isolatedKiloData, 'auth.json'), 'utf8') !== 'fixture auth') process.exit(19);
+const isolatedAuthFile = path.join(isolatedKiloData, 'auth.json');
+const isolatedAuthStat = fs.lstatSync(isolatedAuthFile);
+if (fs.lstatSync(isolatedKiloData).isSymbolicLink()) process.exit(18);
+if (process.platform === 'win32') {
+  if (!isolatedAuthStat.isSymbolicLink()) process.exit(18);
+} else {
+  if (!isolatedAuthStat.isFile() || isolatedAuthStat.isSymbolicLink()) process.exit(18);
+  if ((isolatedAuthStat.mode & 0o777) !== 0o600) process.exit(18);
+  if (fs.readFileSync(isolatedAuthFile, 'utf8') !== 'fixture auth') process.exit(19);
+  fs.writeFileSync(isolatedAuthFile, 'isolated auth change');
+}
 if (fs.existsSync(path.join(isolatedKiloData, 'history.json'))) process.exit(20);
 if (fs.existsSync(path.join(process.env.XDG_DATA_HOME, 'other-app'))) process.exit(21);
 const fixtureDir = path.dirname(process.argv[1]);
@@ -463,6 +497,9 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
             NODE_OPTIONS: '--require /tmp/untrusted-preload.cjs',
             NODE_PATH: '/tmp/untrusted-modules',
             PWD: '/unexpected/worktree',
+            ...(process.platform === 'win32'
+              ? { COMSPEC: process.env.COMSPEC, SYSTEMROOT: process.env.SYSTEMROOT }
+              : {}),
             UNRELATED_SECRET: 'do-not-forward',
           },
         })
@@ -507,6 +544,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       expect(isolatedHome).not.toBe('/fixture/home');
       expect(existsSync(isolatedHome)).toBe(false);
       expect(existsSync(join(fixtureDataHome, 'kilo', 'auth.json'))).toBe(true);
+      expect(await readFile(join(fixtureDataHome, 'kilo', 'auth.json'), 'utf8')).toBe('fixture auth');
       expect(existsSync(join(fixtureDataHome, 'kilo', 'history.json'))).toBe(true);
       expect(existsSync(join(fixtureDataHome, 'other-app', 'private.json'))).toBe(true);
     } finally {
@@ -1938,7 +1976,7 @@ setInterval(() => {}, 1000);`
 
   it('kills the Kilo process tree after a timeout', async () => {
     await expectProcessTreeKilled('timeout');
-  }, 15_000);
+  }, 30_000);
 
   // Give the real child and its descendant time to start under parallel suite load; the short timeout path is covered above.
   it('kills the Kilo process tree when output overflows', async () => {

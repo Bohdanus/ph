@@ -2114,9 +2114,13 @@ describe('provider rate-limit diagnostics', () => {
       chat,
     });
 
-    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
-      /No free model completed/
-    );
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'rk',
+        readWindowsUserOpenRouterKey: async () => null,
+      })
+    ).rejects.toThrow(/No free model completed/);
 
     expect(chat).toHaveBeenCalledTimes(1);
     expect(keyInfo).toHaveBeenCalledTimes(2);
@@ -3088,9 +3092,13 @@ describe('provider rate-limit diagnostics', () => {
       chat,
     });
 
-    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
-      /No free model completed/
-    );
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: 'rk',
+        readWindowsUserOpenRouterKey: async () => null,
+      })
+    ).rejects.toThrow(/No free model completed/);
 
     expect(keyInfo).toHaveBeenCalledTimes(2);
     expect(chat).toHaveBeenCalledTimes(1);

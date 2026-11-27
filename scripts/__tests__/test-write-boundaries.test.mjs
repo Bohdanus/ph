@@ -62,7 +62,7 @@ const REVIEWED = {
   'free-model-kilo.test.mjs': {
     scope:
       'Each fake Kilo CLI, auth-boundary, filtered PATH, caller-worktree, hard-link, protected-bin symlink-chain, descendant-symlink escape, relative command, symlinked XDG fixture, stderr quota, structured status-ordering, and status-text regressions use a unique OS temp directory with finally cleanup; project-local auth sentinels remain untouched and child processes use test-owned paths.',
-    patterns: `filesystem-write:link=1 filesystem-write:mkdir=25 filesystem-write:mkdtemp=39 filesystem-write:rm=39 filesystem-write:symlink=11 filesystem-write:writeFile=12 subprocess:spawnSync=1`,
+    patterns: `filesystem-write:link=1 filesystem-write:mkdir=26 filesystem-write:mkdtemp=40 filesystem-write:rm=40 filesystem-write:symlink=11 filesystem-write:writeFile=12 subprocess:spawnSync=1`,
   },
   'kilo-project-boundary.test.mjs': {
     scope:
