@@ -177,9 +177,21 @@ describe('tool icon factories', () => {
     });
 
     expect(new Set(drawings).size).toBe(3);
-    expect(drawings.some((drawing) => drawing.includes('<rect'))).toBe(true);
-    expect(drawings.some((drawing) => drawing.includes('<ellipse'))).toBe(true);
-    expect(drawings.every((drawing) => drawing.includes('path'))).toBe(false);
+  });
+
+  it('keeps supplied icon geometry inheriting the surrounding toolbar color', () => {
+    const { container } = render(toolIcons.reposition({ title: 'Move icon' }));
+
+    expect(container.querySelector('svg')?.innerHTML).toContain('currentColor');
+  });
+
+  it('uses the supplied pencil artwork instead of reusing the brush icon', () => {
+    const brush = render(toolIcons.brush({ title: 'Brush icon' }));
+    const pencil = render(toolIcons.pencil({ title: 'Pencil icon' }));
+
+    expect(pencil.container.querySelector('svg')?.innerHTML).not.toEqual(
+      brush.container.querySelector('svg')?.innerHTML
+    );
   });
 });
 
@@ -199,15 +211,10 @@ describe('deleted circle and square icon modules', () => {
     expect(toolIconsSource).not.toMatch(/shape-(square|circle)/);
   });
 
-  it('only imports icon modules that still exist on disk', () => {
-    const importedModules = [...toolIconsSource.matchAll(/from '\.\/icons\/([A-Za-z0-9_]+)'/g)].map(
-      (match) => `${match[1]}.tsx`
-    );
-
-    expect(importedModules.length).toBeGreaterThan(0);
-    for (const moduleName of importedModules) {
-      expect(Object.keys(iconModules)).toContain(`../icons/${moduleName}`);
-    }
+  it('routes every toolbar icon through the supplied SVG asset factory', () => {
+    expect(toolIconsSource).toContain("from './icons/AssetIcon.tsx'");
+    expect(toolIconsSource).toContain("createAssetIcon('reposition')");
+    expect(toolIconsSource).not.toMatch(/from '\.\/icons\/(?!AssetIcon)[A-Za-z0-9_]+/);
   });
 
   it('leaves no orphaned circle or square icon module behind the deletion', () => {

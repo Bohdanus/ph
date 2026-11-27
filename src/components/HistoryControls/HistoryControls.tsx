@@ -1,6 +1,10 @@
 import { useHistory } from '../../contexts/useHistory.ts';
 import { isDocumentGestureOpen } from '../../hooks/document-gesture.ts';
 import { TRANSPARENT_DARK_ICON_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
+import { createAssetIcon } from '../SidebarLeft/icons/AssetIcon.tsx';
+
+const UndoIcon = createAssetIcon('undo');
+const RedoIcon = createAssetIcon('redo');
 
 const HistoryControls = () => {
   const { canUndo, undo, canRedo, redo } = useHistory();
@@ -48,7 +52,7 @@ const HistoryControls = () => {
         title="Undo"
         data-testid="undo-button"
       >
-        ↩️
+        <UndoIcon title="" />
       </button>
       <button
         className={TRANSPARENT_DARK_ICON_BUTTON}
@@ -58,7 +62,7 @@ const HistoryControls = () => {
         title="Redo"
         data-testid="redo-button"
       >
-        ↪️
+        <RedoIcon title="" />
       </button>
     </div>
   );
