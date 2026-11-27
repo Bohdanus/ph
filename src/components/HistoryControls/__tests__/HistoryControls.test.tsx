@@ -52,11 +52,15 @@ describe('HistoryControls rendering', () => {
     expect(screen.getByTitle('Redo')).toBe(redoButton());
   });
 
-  it('renders the undo and redo glyphs', () => {
+  it('renders the supplied undo and redo SVGs', () => {
     render(<HistoryControls />);
 
-    expect(undoButton()).toHaveTextContent('↩️');
-    expect(redoButton()).toHaveTextContent('↪️');
+    expect(undoButton().querySelector('svg')).toHaveAttribute('viewBox', '0 0 32 32');
+    expect(redoButton().querySelector('svg')).toHaveAttribute('viewBox', '0 0 32 32');
+    expect(undoButton().querySelector('svg')).toHaveAttribute('stroke', 'currentColor');
+    expect(redoButton().querySelector('svg')).toHaveAttribute('stroke', 'currentColor');
+    expect(undoButton().querySelector('path')).toHaveAttribute('d');
+    expect(redoButton().querySelector('path')).toHaveAttribute('d');
   });
 });
 

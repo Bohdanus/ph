@@ -86,6 +86,10 @@ const toolIconNames = [
 ] as const satisfies readonly ToolIconName[];
 
 const shapeFigures = allTools.flatMap((tool) => (tool.figure ? [tool.figure] : []));
+const nonInheritedPaintValues = (source: string) =>
+  [...source.matchAll(/\b(?:fill|stroke)\s*=\s*["']([^"']+)["']/g)]
+    .map(([, paint]) => paint)
+    .filter((paint) => paint !== 'none' && paint !== 'currentColor');
 
 /** Widen the record so a name the union no longer allows can still be probed. */
 const iconsByName = toolIcons as Record<string, unknown>;
@@ -161,6 +165,10 @@ describe('tool icon factories', () => {
 
       expect(svg).toBeTruthy();
       expect(svg).toHaveAttribute('aria-hidden', 'true');
+      expect(svg).toHaveAttribute('stroke', 'currentColor');
+      expect(svg).toHaveAttribute('stroke-width', '1.8');
+      expect(svg).toHaveAttribute('stroke-linecap', 'round');
+      expect(svg).toHaveAttribute('stroke-linejoin', 'round');
       expect(svg).toHaveAttribute('viewBox', '0 0 32 32');
       expect(svg?.querySelector('title')?.textContent).toBe(`${name} icon`);
       expect(svg?.childElementCount ?? 0).toBeGreaterThan(0);
@@ -177,9 +185,33 @@ describe('tool icon factories', () => {
     });
 
     expect(new Set(drawings).size).toBe(3);
-    expect(drawings.some((drawing) => drawing.includes('<rect'))).toBe(true);
-    expect(drawings.some((drawing) => drawing.includes('<ellipse'))).toBe(true);
-    expect(drawings.every((drawing) => drawing.includes('path'))).toBe(false);
+  });
+
+  it('keeps supplied icon geometry inheriting the surrounding toolbar color', () => {
+    const { container } = render(toolIcons.reposition({ title: 'Move icon' }));
+
+    expect(container.querySelector('svg')?.innerHTML).toContain('currentColor');
+  });
+
+  it('shares the brush icon with pencil according to the supplied mapping', () => {
+    expect(toolIcons.pencil).toBe(toolIcons.brush);
+  });
+
+  it('keeps all supplied asset paint attributes inheriting the toolbar color', () => {
+    const sources = import.meta.glob('../../../assets/tool-icons/currentColor/*.svg', {
+      eager: true,
+      import: 'default',
+      query: '?raw',
+    }) as Record<string, string>;
+
+    expect(Object.keys(sources)).toHaveLength(62);
+    for (const [path, source] of Object.entries(sources)) {
+      expect(nonInheritedPaintValues(source), path).toEqual([]);
+    }
+  });
+
+  it('detects non-inherited SVG paints with whitespace around the attribute equals sign', () => {
+    expect(nonInheritedPaintValues('<path fill = "#fff" stroke = "red"/>')).toEqual(['#fff', 'red']);
   });
 });
 
@@ -199,15 +231,10 @@ describe('deleted circle and square icon modules', () => {
     expect(toolIconsSource).not.toMatch(/shape-(square|circle)/);
   });
 
-  it('only imports icon modules that still exist on disk', () => {
-    const importedModules = [...toolIconsSource.matchAll(/from '\.\/icons\/([A-Za-z0-9_]+)'/g)].map(
-      (match) => `${match[1]}.tsx`
-    );
-
-    expect(importedModules.length).toBeGreaterThan(0);
-    for (const moduleName of importedModules) {
-      expect(Object.keys(iconModules)).toContain(`../icons/${moduleName}`);
-    }
+  it('routes every toolbar icon through the supplied SVG asset factory', () => {
+    expect(toolIconsSource).toContain("from './icons/AssetIcon.tsx'");
+    expect(toolIconsSource).toContain("createAssetIcon('reposition')");
+    expect(toolIconsSource).not.toMatch(/from '\.\/icons\/(?!AssetIcon)[A-Za-z0-9_]+/);
   });
 
   it('leaves no orphaned circle or square icon module behind the deletion', () => {

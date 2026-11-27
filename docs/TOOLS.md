@@ -2274,7 +2274,7 @@ Implementation:
 - `src/contexts/tool-types.ts:71`
 - `src/util/settings.ts:114`
 - `src/components/Main/Main.tsx:360`
-- `src/components/SidebarLeft/toolIcons.tsx:83`
+- `src/components/SidebarLeft/toolIcons.tsx:58`
 
 Sources:
 
@@ -2306,7 +2306,7 @@ Implementation:
 - `src/contexts/tool-types.ts:72`
 - `src/util/settings.ts:115`
 - `src/components/Main/Main.tsx:360`
-- `src/components/SidebarLeft/toolIcons.tsx:84`
+- `src/components/SidebarLeft/toolIcons.tsx:59`
 
 Sources:
 
@@ -2342,7 +2342,7 @@ Implementation:
 - `src/contexts/tool-types.ts:73`
 - `src/util/settings.ts:116`
 - `src/components/Main/Main.tsx:360`
-- `src/components/SidebarLeft/toolIcons.tsx:85`
+- `src/components/SidebarLeft/toolIcons.tsx:60`
 - `src/contexts/__tests__/history-adapter.tool-conversion.test.ts:242`
 - `src/contexts/history-adapter.ts:550`
 
