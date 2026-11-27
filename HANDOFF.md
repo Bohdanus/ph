@@ -162,8 +162,11 @@ is independent of the next ownership slice and remains gated.
 **PH-93 source replacement remains behind the ownership gate.** The product path is
 `commitDirtyTool` (`useLayer.ts`) → `replaceLayerSource` → typed `REPLACE_LAYER_SOURCE_ACTION`.
 StoreProvider tests cover typed append, the baseline-adjusted durable cursor, redo-branch
-truncation, disabled-row navigation, runtime `tmpCanvas` identity, and the ownership gate. The adapter
-test also pins the byte-for-byte derived entry and absence of raster registration. An enabled typed
+truncation, disabled-row navigation, runtime `tmpCanvas` identity, and the ownership gate. A real
+StoreProvider failure test also proves the legacy replacement still appends when producer planning,
+StoreContext re-derivation, and full shadow conversion all throw; the replacement cache identity
+survives and the durable sidecar becomes unavailable. The adapter test pins the byte-for-byte derived
+entry and absence of raster registration. An enabled typed
 replacement in the tested prefix returns `ownership-unproven`; disabled text operations are
 skipped, so a supported effective baseline may render durably while an unsupported one falls back
 with `renderer-incompatible`. The real StoreProvider interleaving case is

@@ -5,15 +5,15 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
-## Latest continuation reconciliation — 2026-11-27 21:26 UTC
+## Latest continuation reconciliation — 2026-11-27 21:41 UTC
 
 ### Current refs and ownership
 
 The PH-93 candidate worktree is
 `/Users/bkalynovskyi/ph/.kilo/worktrees/history-text-source-lifecycle-20261127` on
 `task/history-text-source-lifecycle-20261127`. Its verified source/test commit is
-`c2aa94d2c80de2cbd1e168b4fe89b7496adb1126`, tree
-`aa632a997da882e9db03ccf8bffb6205d0fade7d`, merged with current local `main` pin
+`0f42e474f1bd37ed311c299eea691bfb8f2d8ee2`, tree
+`17b80273b34d83da38385591c2cd85640c2eaf7d`, merged with current local `main` pin
 `64f5d7d2a57faa02ee1425a092fb27c328396159`. The integration includes seven current-main commits
 after the candidate's earlier `73f43c071` base. At this check,
 `origin/main` was `73f43c07147eca4c16e22f363573adbeb332cc99` and `mirror/main` was
@@ -67,6 +67,10 @@ by a typed replacement while unsupported history forces immediate legacy fallbac
 must not draw over the replacement. Separate `useHistory` hook tests with a mocked store pin
 cancellation, no preview clear, and no late finalization. A rejected-publisher regression also proves
 that a newer text replacement is not rolled back or marked unavailable when the old replay fails.
+Another real StoreProvider test in `useLayer.text.test.tsx` forces producer planning, StoreContext
+source re-derivation, and whole-timeline shadow conversion to fail. The typed source replacement still
+appends to `HistoryItem[]`, keeps the replacement `tmpCanvas` identity, and leaves the durable
+sidecar unavailable behind legacy presentation.
 Existing Provider coverage continues to pin refused final draws and preview interleaving. This new
 fence is specific to document/history identity and cursor; it does not introduce a runtime-cache or
 preview-generation token.
@@ -116,7 +120,7 @@ assertion. `npm run tsc -- --pretty false`, Prettier on the four changed files, 
 passed. These checks include uncommitted changes; full pre-push gates and independent review of the
 exact committed candidate are still required.
 
-### Validation after current-main sync — 2026-11-27 21:25 UTC
+### Historical validation after current-main sync — 2026-11-27 21:25 UTC
 
 On integrated source/test commit `c2aa94d2c80de2cbd1e168b4fe89b7496adb1126` and tree
 `aa632a997da882e9db03ccf8bffb6205d0fade7d`, the six focused history/text files passed 164 tests,
@@ -126,6 +130,19 @@ README, and adapter-test files. The docs-index test passed 10 tests through Vite
 establishes exact same-browser Canvas/PNG/PSD raster consistency for one 1× point-text fixture; it is
 not independent text-layout or Photoshop proof. Full pre-push unit/performance gates and two
 independent free-route reviews remain pending on the exact final checkpoint.
+
+### Validation after source re-derivation failure containment — 2026-11-27 21:41 UTC
+
+On source/test commit `0f42e474f1bd37ed311c299eea691bfb8f2d8ee2` and tree
+`17b80273b34d83da38385591c2cd85640c2eaf7d`, the six focused history/text files passed 165 tests,
+
+including the new regression that failed before the StoreContext catch. Typecheck and Prettier
+passed. Product E2E run `2026-11-27T21-39-55-805Z-13520` passed in Google Chrome and Google Chrome
+HiDPI (2 tests) after the production change. The exact E2E remains one point-text raster/export
+consistency fixture, not independent layout or Photoshop proof.
+The docs-index test passed 10 tests through Vitest on this documentation checkpoint. Full pre-push
+unit/performance gates and two independent free-route reviews remain pending on the exact final
+checkpoint.
 
 ### Next actions
 
