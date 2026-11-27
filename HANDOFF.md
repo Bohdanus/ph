@@ -159,29 +159,22 @@ diagnostic-only while legacy fallback is active. Keep the broader frame matrix o
 angles, other affine combinations, other blank opacity values, and other text styling/rotation. It
 is independent of the next ownership slice and remains gated.
 
-**Next after the current `ph-71` diagnostic claim is reviewed and landed:** create or claim a separate
-source-ownership task for one product-reachable in-place text edit. Trace `commitDirtyTool` in
-`useLayer.ts` through `replaceLayerSource` to the typed `REPLACE_LAYER_SOURCE_ACTION`. Refresh the
-producer owner and handoff first. The current `StoreContext.tsx` gate returns
-`ownership-unproven` for this action, but existing StoreContext coverage uses a generic replacement
-history item; it does not prove the fallback for a valid typed text edit. Add StoreContext integration
-coverage that feeds the valid typed action through append, asserts no durable compose and the legacy
-selector/current legacy pixels, then invokes navigation and asserts the returned/published
-`legacy-fallback` with `ownership-unproven` for undo/redo and disabled-entry navigation. Append
-presentation remains `EMPTY_DURABLE_PRESENTATION` (`status: 'unpublished', cursor: null, reason: null`);
-do not require the navigation outcome at append time. Add a
-product E2E for the reachable text edit and exact legacy canvas plus production PNG/PSD output.
+**PH-93 source replacement remains behind the ownership gate.** The product path is
+`commitDirtyTool` (`useLayer.ts`) → `replaceLayerSource` → typed `REPLACE_LAYER_SOURCE_ACTION`.
+StoreProvider tests cover typed append, the baseline-adjusted durable cursor, redo-branch
+truncation, disabled-row navigation, runtime `tmpCanvas` identity, and `ownership-unproven`
+fallback. A same-stack edit during a pending legacy replay is fenced before stale canvas paint,
+preview cleanup, or finalization. The product E2E checks one in-place point-text edit against exact
+Canvas, PNG, PSD composite, and PSD text-layer pixels from an independent Canvas text oracle; it
+also checks undo/redo pixels.
 
-Prove old/new runtime `bitmap` and `tmpCanvas` identity/generation and any disposable durable
-materialization lease across append, navigation, disabled rows, redo-branch truncation, and document
-close. Assert no early release and exactly-once cleanup after the last reachable owner is removed;
-derive lease events from the actual implementation. The immutable text action does not register a
-raster asset. Give stale/refused work, failed final drawing, and preview interleaving explicit
-pass/fail assertions. Compare production canvas, PNG, and PSD layer/composite pixels byte-for-byte.
-Keep whole-document replacement on its own teardown contract. This slice ends with the gate closed;
-any eligibility change needs a separate reviewed change with full parity and failure-containment
-proofs. See
-`docs/HISTORY-MIGRATION-NEXT.md` for the full matrix and current-ref reconciliation.
+These results establish the typed producer and fallback behavior for this bounded path; they do not
+promote durable replay to logical authority. The action stores typed source arguments and registers
+no raster asset, so its runtime `tmpCanvas` has no durable materialization lease to release. Keep the
+`ownership-unproven` navigation gate closed until a separate reviewed change proves durable source
+ownership and failure containment across the remaining surfaces. Whole-document teardown, broader
+frame/style parity, and durable undo/redo cutover remain separate contracts. See
+`docs/HISTORY-MIGRATION-NEXT.md` for the evidence and current-ref reconciliation.
 
 A bounded source-backed create exception allows an image or blank `NEW_LAYER_ACTION` to
 request background composition only when the active cursor prefix before that create passes the
