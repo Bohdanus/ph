@@ -5,32 +5,29 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
-## Latest continuation reconciliation — 2026-11-27 22:08 UTC
+## Latest continuation reconciliation — 2026-11-27 23:24 UTC
 
 ### Current refs and ownership
 
 The PH-93 candidate worktree is
 `/Users/bkalynovskyi/ph/.kilo/worktrees/history-text-source-lifecycle-20261127` on
-`task/history-text-source-lifecycle-20261127`. Its current docs-inclusive candidate is
-`de29d8e46571424947ae2abda5ee3653ab865dd2`, tree
-`e1638c366abc2cb495602ea00262095e07ca9bc5`, merged with current local `main` pin
-`64f5d7d2a57faa02ee1425a092fb27c328396159`. The integration includes seven current-main commits
-after the candidate's earlier `73f43c071` base. At this check,
-`origin/main` was `73f43c07147eca4c16e22f363573adbeb332cc99` and `mirror/main` was
-`df8a37f2a0abfa8bf2364d352b18a5d504256c8b`; the feature branch was at `e881100` on `mirror` and
-absent on `origin`. The source-failure containment fix is in `0f42e474`; the later documentation
-commit `de29d8e` records that behavior and its validation. The feature branch remains unpushed to
-`origin` and `mirror` at this check. This checkpoint also records that the exported text-cache clear
-helper has test-only call sites in the current tree. Push the reviewed feature branch to the requested
-`origin` and update its existing `mirror` branch; do not push either `main` ref.
+`task/history-text-source-lifecycle-20261127`. Its reviewed source-and-review checkpoint is
+`6cb9baa5281351b97228d790303fc333bd894bac`, tree
+`a55e129acf3ee4d25e79ed57b4967b55ecc50e59`, based on local `main` pin
+`64f5d7d2a57faa02ee1425a092fb27c328396159`. The production fix is `0f42e474`; the preceding
+reviewed documentation checkpoint was `de29d8e`. Both feature remotes were at `6cb9baa` after
+successful pre-push gates. `origin/main` remained `73f43c07147eca4c16e22f363573adbeb332cc99` and
+`mirror/main` remained `df8a37f2a0abfa8bf2364d352b18a5d504256c8b`; neither main ref was pushed.
+The first local code landing is merge commit `38e8bcc56c9dd2655dfc33c8d33cb87274d0a354`, with
+parents `64f5d7d` and `6cb9baa` and tree `a55e129`. This follow-up only records the verified landing
+state. The exported text-cache clear helper still has test-only call sites in the current tree.
 
 `main:landing -- status --json` designates
-`/Users/bkalynovskyi/ph/.kilo/worktrees/landing-main-fresh-20261124` at local `main` pin `64f5d7d`,
-clean and unoccupied at the last check. The PH-93 claim is active, and its temporary exclusion for
-`docs/HISTORY-MIGRATION-NEXT.md` ended when the origin-main sync issue `ph-121` resolved. The last
-scoped `repo:state -- --for-landing task/history-text-source-lifecycle-20261127` check reported the
-candidate clear with 15 unrelated worktree findings; rerun it against the reviewed exact candidate
-before landing. Leave those unrelated findings untouched.
+`/Users/bkalynovskyi/ph/.kilo/worktrees/landing-main-fresh-20261124`; after landing it was clean and
+unoccupied at `38e8bcc`. The `ph-121` origin-main sync issue is resolved, and the PH-93 claim was
+released by the landing hook, then reacquired for this documentation follow-up. There are no
+conflicting file locks. The scoped repo-state check reported the candidate clear with 15 unrelated
+worktree findings; those findings were preserved and left untouched.
 
 The two earlier Codex history threads were rechecked: `01a17f24` (plan) and `01a1791a` (continuation
 audit). Their gate ordering, legacy-authority boundary and parity findings remain useful leads; older
@@ -144,7 +141,7 @@ The docs-index test passed 10 tests through Vitest on this documentation checkpo
 unit/performance gates and two independent free-route reviews remain pending on the exact final
 checkpoint.
 
-### Independent review and current validation — 2026-11-27 22:08 UTC
+### Independent review and current validation — 2026-11-27 23:24 UTC
 
 Three complete, exact-free Kilo reviews inspected the candidate at `de29d8e` (tree `e1638c3`):
 Nemotron 3 Ultra reviewed replay/failure handling; ERNIE 5.5 Flash reviewed text-source, export,
@@ -157,25 +154,27 @@ dispatcher. The real StoreProvider regressions are in `resetHistoryTo.durable.te
 `useLayer.text.test.tsx`. Timeline mutations advance cursor, length, branch revision, or document
 revision; the durable sidecar is produced from that timeline. Selection-only updates remain separate
 from durable inputs, and the post-await continuation does not rewrite them. Preview cleanup happens
-only after an accepted replay paint. The fence's entry comparison adds one linear scan; no measured
-performance regression was established, and the full pre-push performance gate is still pending.
+only after an accepted replay paint. The fence's entry comparison adds one linear scan; no measured performance regression was established.
 
 The committed source change remains `0f42e474` and no production code changed after it. On the current
 candidate, `npm run build` passed; `npm run lint:check` passed with the repository's existing warning
 count and no errors. The focused history/text suite passed 165 tests, `tsc` passed, the docs-index test
 passed 10 tests, and exact product E2E run `2026-11-27T21-39-55-805Z-13520` passed in Chrome and
-Chrome HiDPI. Full pre-push unit/performance gates remain to be run by the feature push.
+Chrome HiDPI. Feature pushes to `origin` and `mirror` at `6cb9baa` both completed their full unit and
+performance pre-push gates successfully. The pinned landing wrapper then created local merge
+`38e8bcc56c9dd2655dfc33c8d33cb87274d0a354`; post-landing verification confirmed its parents, tree,
+candidate ancestry, and clean main worktree. The remote main refs remain unchanged; only the feature
+branch was pushed.
 
-### Next actions
+### Remaining migration work
 
-1. Push this reviewed branch to `origin` and its existing `mirror` ref so the full pre-push
-   unit/performance gates run on the exact tree. Verify both pushed refs; do not force-update or push
-   `main`.
-2. Recheck current refs, PH-93 ownership, file holds, and the designated landing path. Land through
-   the pinned `main:landing` wrapper only after the exact candidate's push gates pass.
-3. Record the resulting remote and local landing refs, then verify clean status and ancestry.
-4. Keep `ownership-unproven` closed. Durable navigation eligibility requires a separate proof and
-   reviewed production change; this text-source slice does not change it.
+The PH-93 text-source lifecycle proof is pushed to both feature remotes and landed on local `main`.
+This does not complete durable-history migration or authorize a cutover. Keep `ownership-unproven`
+closed. The exact text raster/export evidence remains one same-browser point-text fixture, not
+independent layout semantics or Photoshop proof. Text-cache lifetime and disposal are still
+unproven, as are broader style/frame combinations and the separately recorded mixed-source
+blank-affine parity diagnostic. Start the next slice by rechecking live refs and ownership, then
+write a separate acceptance contract and proof plan for one of those gaps.
 
 ## Historical continuation reconciliation — 2026-11-27 14:56 UTC
 
