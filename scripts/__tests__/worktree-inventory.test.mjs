@@ -30,7 +30,13 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
 import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
-import { formatSummary, inventoryTarget, parseArgs, validatePinnedNow } from '../worktree-inventory.mjs';
+import {
+  formatActivityHistory,
+  formatSummary,
+  inventoryTarget,
+  parseArgs,
+  validatePinnedNow,
+} from '../worktree-inventory.mjs';
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import { parseHandoffDoc } from '../lib/agent-board/handoff-import.mjs';
 import {
@@ -4195,7 +4201,63 @@ describe('the call history', () => {
       expect(audit.byWorktree.get('gone:deleted').write.calls).toBe(2);
       expect(audit.byWorktree.has(ROOT)).toBe(false);
       expect(audit.goneWorktrees[0]).toEqual(
-        expect.objectContaining({ name: 'deleted', writeCalls: 2, chatCount: 1, chatIds: ['s1'] })
+        expect.objectContaining({
+          name: 'deleted',
+          writeCalls: 2,
+          chatCount: 1,
+          chatIds: ['s1'],
+          readCalls: 0,
+          readerChatIds: [],
+          shellCalls: 0,
+          shellChatIds: [],
+        })
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('keeps read-only and shell-only histories for deleted worktrees distinct from writes', () => {
+    const fx = makeSessionDb({
+      sessions: [
+        { id: 'reader', directory: `${ROOT}/.kilo/worktrees/deleted-read`, at: NOW - 10_000 },
+        { id: 'sheller', directory: `${ROOT}/.kilo/worktrees/deleted-shell`, at: NOW - 9_000 },
+      ],
+      calls: [
+        {
+          sessionId: 'reader',
+          at: NOW - 10_000,
+          data: tool('read', { filePath: `${ROOT}/.kilo/worktrees/deleted-read/src/a.ts` }),
+        },
+        { sessionId: 'sheller', at: NOW - 9_000, data: tool('bash', { command: 'npm test' }) },
+      ],
+    });
+    try {
+      const audit = run(fx.dbPath);
+      const readOnly = audit.goneWorktrees.find((worktree) => worktree.name === 'deleted-read');
+      const shellOnly = audit.goneWorktrees.find((worktree) => worktree.name === 'deleted-shell');
+
+      expect(readOnly).toEqual(
+        expect.objectContaining({
+          writeCalls: 0,
+          chatCount: 0,
+          lastWriteAt: null,
+          readCalls: 1,
+          readerChatIds: ['reader'],
+          shellCalls: 0,
+          shellChatIds: [],
+        })
+      );
+      expect(shellOnly).toEqual(
+        expect.objectContaining({
+          writeCalls: 0,
+          chatCount: 0,
+          lastWriteAt: null,
+          readCalls: 0,
+          readerChatIds: [],
+          shellCalls: 1,
+          shellChatIds: ['sheller'],
+        })
       );
     } finally {
       fx.cleanup();
@@ -4632,7 +4694,41 @@ describe('the call history', () => {
           },
         ],
       ]),
-      goneWorktrees: [{ name: 'deleted-one', writeCalls: 9, chatCount: 1, chatIds: ['s2'], lastWriteAt: null }],
+      goneWorktrees: [
+        {
+          name: 'deleted-one',
+          writeCalls: 9,
+          chatCount: 1,
+          chatIds: ['s2'],
+          lastWriteAt: null,
+          readCalls: 0,
+          readerChatIds: [],
+          shellCalls: 0,
+          shellChatIds: [],
+        },
+        {
+          name: 'deleted-read-only',
+          writeCalls: 0,
+          chatCount: 0,
+          chatIds: [],
+          lastWriteAt: null,
+          readCalls: 26,
+          readerChatIds: ['r1', 'r2'],
+          shellCalls: 0,
+          shellChatIds: [],
+        },
+        {
+          name: 'deleted-shell-only',
+          writeCalls: 0,
+          chatCount: 0,
+          chatIds: [],
+          lastWriteAt: null,
+          readCalls: 0,
+          readerChatIds: [],
+          shellCalls: 2,
+          shellChatIds: ['s3'],
+        },
+      ],
       attributedWriteCalls: 1,
       totalWriteCalls: 2,
       totalReadCalls: 3,
@@ -4679,6 +4775,18 @@ describe('the call history', () => {
     expect(inv.goneWorktrees).toEqual(writeAudit.goneWorktrees);
     expect(inv.totals.goneWorktreesWithWrites).toBe(1);
     expect(inv.totals.totalShellCalls).toBe(4);
+
+    const summary = formatActivityHistory(inv);
+    expect(summary).toContain('1 DELETED worktree(s) with recorded file-write calls');
+    expect(summary).toContain(
+      'WITH RECORDED ACTIVITY (file writes, reads, and shell calls; 3, sorted by file-write calls)'
+    );
+    expect(summary).toContain(
+      '0 file-write calls · 0 writer chat(s) · 26 read calls · 2 reader chat(s) · 0 shell calls (may write)'
+    );
+    expect(summary).toContain(
+      '0 file-write calls · 0 writer chat(s) · 0 read calls · 0 reader chat(s) · 2 shell calls (may write) · 1 shell chat(s)'
+    );
   });
 });
 

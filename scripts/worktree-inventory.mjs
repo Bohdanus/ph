@@ -180,8 +180,44 @@ export function formatSummary(inventory) {
   );
 }
 
-function printSummary(inventory, quiet) {
+export function formatActivityHistory(inventory) {
   const t = inventory.totals;
+  const own = inventory.ownership;
+  let output =
+    `WRITE HISTORY — ${t.withWriteHistory} worktree(s) with writers · ` +
+    `${t.writtenRecently} written in the last 30m · ` +
+    `${t.goneWorktreesWithWrites} DELETED worktree(s) with recorded file-write calls · ` +
+    `${t.totalWriteCalls} file-writing call(s)\n` +
+    `READ HISTORY — ${t.withReadHistory} worktree(s) with readers · ` +
+    `${t.totalReadCalls} read call(s)` +
+    (own.readsReleasedBefore
+      ? ` · ${own.readsReleasedChatCount} reader(s) held after the ${own.readsReleasedBefore} release\n`
+      : ' · no release has been applied (pass --release-reads to drop stale readers)\n') +
+    // Not a write count. The size of the gap `writeHistory` cannot close: any
+    // of these commands could have written a file, and the file does not pretend
+    // otherwise.
+    `SHELL TRAFFIC — ${t.withShellHistory} worktree(s) · ${t.totalShellCalls} command(s) with a workdir here, ` +
+    `any of which may have written a file that writeHistory cannot see\n`;
+
+  // Keep read-only and shell-only records visible without describing them as writers.
+  if (inventory.goneWorktrees.length > 0) {
+    output +=
+      `\nWORKTREES THAT NO LONGER EXIST, WITH RECORDED ACTIVITY ` +
+      `(file writes, reads, and shell calls; ${inventory.goneWorktrees.length}, sorted by file-write calls):\n`;
+    for (const g of inventory.goneWorktrees.slice(0, 25)) {
+      output +=
+        `  ${g.writeCalls} file-write calls · ${g.chatCount} writer chat(s) · ` +
+        `${g.readCalls} read calls · ${g.readerChatIds?.length ?? 0} reader chat(s) · ` +
+        `${g.shellCalls ?? 0} shell calls (may write) · ${g.shellChatIds?.length ?? 0} shell chat(s) · ` +
+        `${String(g.name).padEnd(38)} last file write ${g.lastWriteAt ?? 'none'}\n`;
+    }
+    if (inventory.goneWorktrees.length > 25) output += `  … and ${inventory.goneWorktrees.length - 25} more\n`;
+  }
+
+  return output;
+}
+
+function printSummary(inventory, quiet) {
   const byName = new Map(inventory.worktrees.map((w) => [w.name, w]));
   const line = (n) => `  ${n.padEnd(40)} ${byName.get(n)?.branch ?? ''}`;
   process.stdout.write(formatSummary(inventory));
@@ -204,41 +240,7 @@ function printSummary(inventory, quiet) {
       );
     }
   }
-  process.stdout.write(
-    `WRITE HISTORY — ${t.withWriteHistory} worktree(s) with writers · ` +
-      `${t.writtenRecently} written in the last 30m · ` +
-      `${t.goneWorktreesWithWrites} DELETED worktree(s) with writers · ` +
-      `${t.totalWriteCalls} file-writing call(s)\n` +
-      `READ HISTORY — ${t.withReadHistory} worktree(s) with readers · ` +
-      `${t.totalReadCalls} read call(s)` +
-      (own.readsReleasedBefore
-        ? ` · ${own.readsReleasedChatCount} reader(s) held after the ${own.readsReleasedBefore} release\n`
-        : ' · no release has been applied (pass --release-reads to drop stale readers)\n') +
-      // Not a write count. The size of what the write count cannot see: any of
-      // these commands could have written a file, and the file does not pretend
-      // otherwise.
-      `SHELL TRAFFIC — ${t.withShellHistory} worktree(s) · ${t.totalShellCalls} command(s) with a workdir here, ` +
-      `any of which may have written a file that writeHistory cannot see\n`
-  );
-
-  // Deleted worktrees are listed before the actionable lists because they are
-  // the entries with no other way to be discovered: `git worktree list` cannot
-  // return them, and no per-worktree record survives to carry them.
-  if (inventory.goneWorktrees.length > 0) {
-    process.stdout.write(
-      `\nWORKTREES THAT NO LONGER EXIST, AND WHO WROTE IN THEM ` +
-        `(${inventory.goneWorktrees.length}, sorted by write calls):\n`
-    );
-    for (const g of inventory.goneWorktrees.slice(0, 25)) {
-      process.stdout.write(
-        `  ${String(g.writeCalls).padStart(4)} calls · ${g.chatCount} chat(s) · ` +
-          `${String(g.name).padEnd(38)} last ${g.lastWriteAt ?? 'unknown'}\n`
-      );
-    }
-    if (inventory.goneWorktrees.length > 25) {
-      process.stdout.write(`  … and ${inventory.goneWorktrees.length - 25} more\n`);
-    }
-  }
+  process.stdout.write(formatActivityHistory(inventory));
 
   // The read audit, before the worktree table. A computed chat state cannot
   // tell you an agent reported "Done" for a branch that was never merged, and
