@@ -327,7 +327,7 @@ describe('useLayers text commit idempotency boundary', () => {
     });
     expect(result.current.store.layers[originalLayer.id].tmpCanvas).toBe(appendedRuntimeLayer.tmpCanvas);
     expect(result.current.store.layers[originalLayer.id].bitmap).toBe(appendedRuntimeLayer.bitmap);
-    expect(store.durableRenderProjection).toBeNull();
+    expect(result.current.store.durableRenderProjection).toBeNull();
     expect(compose).not.toHaveBeenCalled();
   });
 
