@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
 import {
@@ -327,7 +327,13 @@ describe('deriveReplaceLayerSourceEntry', () => {
     // The append boundary's `translate()` sees no store, so this is what makes a
     // source edit appendable rather than conversion-only. Asserted by calling it
     // with nothing: a signature demanding a registry would not compile here.
-    expect(deriveReplaceLayerSourceEntry(sourceEdit(toolSource(secondText, secondBox)))).not.toBeNull();
+    const registerBaseline = vi.spyOn(AssetRegistry.prototype, 'registerBaseline');
+    try {
+      expect(deriveReplaceLayerSourceEntry(sourceEdit(toolSource(secondText, secondBox)))).not.toBeNull();
+      expect(registerBaseline).not.toHaveBeenCalled();
+    } finally {
+      registerBaseline.mockRestore();
+    }
   });
 
   it('ignores nested args.enabled because the legacy gate is item.disabled', () => {

@@ -17,9 +17,10 @@ import { createMockImageBitmap, createMockOffscreenCanvas } from '../../__tests_
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
 import { createAffineLayerOperation } from '../layer-utils.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
+import type { ImageLayerSource, Layer, LayersRecord, ToolLayerSource } from '../layer-types.ts';
 import type { MaterializedLayer } from '../materialization.ts';
 import type { BitmapSource } from '../general-types.ts';
+import type { ToolArgs } from '../tool-types.ts';
 import {
   MERGE_ACTION,
   NEW_LAYER_ACTION,
@@ -1052,9 +1053,36 @@ describe('renderSelector contract', () => {
     };
   }
 
+  function textLayerSource(text: string, pos = { x: 0, y: 0, width: 100, height: 80 }): ToolLayerSource {
+    return {
+      kind: 'tool',
+      args: {
+        toolName: 'text',
+        text,
+        angle: 0,
+        fontSize: 24,
+        lineHeight: 1.1,
+        rect: { x1: 0, y1: 0, x2: 60, y2: 30 },
+        bold: false,
+        italic: false,
+        fontFamily: 'Arial',
+        color: '#000000',
+        align: 'left',
+      } as ToolArgs,
+      pos,
+      isBedrock: false,
+    };
+  }
+
   function makeComposite(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 }): DurableComposite {
+    const compositeBitmap = createMockImageBitmap(pos.width, pos.height);
     const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
-    const releaseMaterialized = vi.fn();
+    let materializedReleased = false;
+    const releaseMaterialized = vi.fn(() => {
+      if (materializedReleased) return;
+      materializedReleased = true;
+      materializedBitmap.close();
+    });
     const materialized: MaterializedLayer = {
       layerId: id,
       bitmap: materializedBitmap,
@@ -1071,13 +1099,30 @@ describe('renderSelector contract', () => {
       },
     };
     const layers = { [id]: materialized };
-    const releaseDetached = vi.fn(() => releaseMaterialized());
-    const releaseComposite = vi.fn(() => releaseMaterialized());
+    let compositeReleased = false;
+    let layersDetached = false;
+    let layersReleased = false;
+    const releaseLayers = () => {
+      if (layersReleased) return;
+      layersReleased = true;
+      releaseMaterialized();
+    };
+    const releaseDetached = vi.fn(releaseLayers);
+    const takeLayers = vi.fn(() => {
+      layersDetached = true;
+      return { layers, release: releaseDetached };
+    });
+    const releaseComposite = vi.fn(() => {
+      if (compositeReleased) return;
+      compositeReleased = true;
+      compositeBitmap.close();
+      if (!layersDetached) releaseLayers();
+    });
     return {
-      bitmap: materializedBitmap,
+      bitmap: compositeBitmap,
       frame: defaultFrame,
       layers,
-      takeLayers: () => ({ layers, release: releaseDetached }),
+      takeLayers,
       release: releaseComposite,
     };
   }
@@ -1310,6 +1355,364 @@ describe('renderSelector contract', () => {
       unmount();
     });
   }
+
+  it('appends a typed text replacement while keeping its presentation on the legacy selector', async () => {
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+    const pos = { x: 0, y: 0, width: 100, height: 80 };
+    const oldSource = textLayerSource('Before', pos);
+    const nextSource = textLayerSource('After', pos);
+    const oldCanvas = canvas(pos.width, pos.height);
+    const nextCanvas = canvas(pos.width, pos.height);
+    const oldLayer: Layer = {
+      ...createMockLayer({ id: layerId, pos }),
+      source: oldSource,
+      bitmap: null,
+      tmpCanvas: oldCanvas,
+    };
+    const nextLayer: Layer = { ...oldLayer, source: nextSource, bitmap: null, tmpCanvas: nextCanvas };
+    const { store, dispatch, unmount } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: oldLayer });
+    const legacyBaselineId = store().history[0]?.id;
+    expect(legacyBaselineId).toBeDefined();
+    expect(store().durableStatus).toBe('current');
+    compose.mockClear();
+
+    const replacementItem: HistoryItem = {
+      id: 'typed-text-replacement',
+      actionName: REPLACE_LAYER_SOURCE_ACTION,
+      layerId,
+      args: { source: nextSource },
+    };
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: { updates: { layers: { [layerId]: nextLayer } }, historyItem: replacementItem },
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const durableEntry = store().durableDocument?.history.at(-1);
+    if (durableEntry?.operation.kind !== 'replace-layer-source') {
+      throw new Error('typed replacement did not publish a durable replace-layer-source entry');
+    }
+    expect(durableEntry.operation.source.kind).toBe('text');
+    expect(durableEntry.operation.source.args.text).toBe('After');
+    expect(store().durableDocument?.history.map((entry) => entry.id)).toEqual([replacementItem.id]);
+    expect(store().durableDocument?.cursor).toBe(0);
+    expect(store().historyIndex).toBe(1);
+    expect(store().history.map((entry) => entry.id)).toEqual([legacyBaselineId, replacementItem.id]);
+    expect(store().durableStatus).toBe('current');
+    expect(store().history.at(-1)?.args).toEqual({ source: nextSource });
+    expect(store().history.at(-1)?.args).not.toHaveProperty('bitmap');
+    expect(store().history.at(-1)?.args).not.toHaveProperty('tmpCanvas');
+    expect(store().layers[layerId].source).toEqual(nextSource);
+    expect(store().layers[layerId].tmpCanvas).toBe(nextCanvas);
+    expect(store().layers[layerId].tmpCanvas).not.toBe(oldCanvas);
+    expect(store().layers[layerId].bitmap).toBeNull();
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation).toEqual({ status: 'unpublished', cursor: null, reason: null });
+    expect(store().durableRenderProjection).toBeNull();
+    expect(compose).not.toHaveBeenCalled();
+
+    replayHistoryTo(dispatch(), { [layerId]: nextLayer }, store().history, store().deletedLayers, store().historyIndex);
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+    expect(outcome).toMatchObject({
+      status: 'legacy-fallback',
+      reason: 'ownership-unproven',
+      cursor: 0,
+    });
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation).toMatchObject({
+      status: 'legacy-fallback',
+      reason: 'ownership-unproven',
+      cursor: 0,
+    });
+    expect(store().durableRenderProjection).toBeNull();
+    expect(compose).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('truncates an undone typed text replacement when a new replacement is committed', async () => {
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+    const pos = { x: 0, y: 0, width: 100, height: 80 };
+    const originalSource = textLayerSource('Before', pos);
+    const firstReplacementSource = textLayerSource('First', pos);
+    const secondReplacementSource = textLayerSource('Second', pos);
+    const originalCanvas = canvas(pos.width, pos.height);
+    const firstReplacementCanvas = canvas(pos.width, pos.height);
+    const secondReplacementCanvas = canvas(pos.width, pos.height);
+    const originalLayer: Layer = {
+      ...createMockLayer({ id: layerId, pos }),
+      source: originalSource,
+      bitmap: null,
+      tmpCanvas: originalCanvas,
+    };
+    const firstReplacementLayer: Layer = {
+      ...originalLayer,
+      source: firstReplacementSource,
+      bitmap: null,
+      tmpCanvas: firstReplacementCanvas,
+    };
+    const { store, dispatch, unmount } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: originalLayer });
+    const baselineHistoryId = store().history[0]?.id;
+    expect(baselineHistoryId).toBeDefined();
+    compose.mockClear();
+
+    const firstReplacementItem: HistoryItem = {
+      id: 'typed-text-replacement-first',
+      actionName: REPLACE_LAYER_SOURCE_ACTION,
+      layerId,
+      args: { source: firstReplacementSource },
+    };
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { [layerId]: firstReplacementLayer } },
+          historyItem: firstReplacementItem,
+        },
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // Legacy history counts the opening baseline; durable history stores only operations.
+    expect(store().historyIndex).toBe(1);
+    expect(store().durableDocument?.history.map((entry) => entry.id)).toEqual([firstReplacementItem.id]);
+    expect(store().durableDocument?.cursor).toBe(0);
+
+    replayHistoryTo(dispatch(), { [layerId]: originalLayer }, store().history, store().deletedLayers, 0);
+    expect(store().historyIndex).toBe(0);
+    expect(store().durableDocument?.history.map((entry) => entry.id)).toEqual([firstReplacementItem.id]);
+    expect(store().durableDocument?.cursor).toBe(-1);
+
+    const secondReplacementItem: HistoryItem = {
+      id: 'typed-text-replacement-second',
+      actionName: REPLACE_LAYER_SOURCE_ACTION,
+      layerId,
+      args: { source: secondReplacementSource },
+    };
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: {
+            layers: {
+              [layerId]: {
+                ...originalLayer,
+                source: secondReplacementSource,
+                tmpCanvas: secondReplacementCanvas,
+              },
+            },
+          },
+          historyItem: secondReplacementItem,
+        },
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(store().history.map((entry) => entry.id)).toEqual([baselineHistoryId, secondReplacementItem.id]);
+    expect(store().historyIndex).toBe(1);
+    expect(store().history.at(-1)?.args).toEqual({ source: secondReplacementSource });
+    expect(store().history.at(-1)?.args).not.toHaveProperty('tmpCanvas');
+    expect(store().history.at(-1)?.args).not.toHaveProperty('bitmap');
+    expect(store().durableDocument?.history.map((entry) => entry.id)).toEqual([secondReplacementItem.id]);
+    expect(store().durableDocument?.history.at(-1)?.operation).toMatchObject({
+      kind: 'replace-layer-source',
+      source: { kind: 'text', args: { text: 'Second' } },
+    });
+    expect(store().durableDocument?.cursor).toBe(0);
+    expect(store().durableStatus).toBe('current');
+    expect(store().layers[layerId].source).toEqual(secondReplacementSource);
+    expect(store().layers[layerId].tmpCanvas).toBe(secondReplacementCanvas);
+    expect(store().layers[layerId].tmpCanvas).not.toBe(originalCanvas);
+    expect(store().layers[layerId].tmpCanvas).not.toBe(firstReplacementCanvas);
+    expect(store().layers[layerId].bitmap).toBeNull();
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation).toEqual({ status: 'unpublished', cursor: null, reason: null });
+    expect(compose).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('uses renderer-incompatible fallback when a disabled text replacement leaves an unsupported baseline', async () => {
+    const composite = makeComposite();
+    const releaseComposite = vi.spyOn(composite, 'release');
+    const closeCompositeBitmap = vi.spyOn(composite.bitmap as ImageBitmap, 'close');
+    const materialized = composite.layers[layerId];
+    if (!materialized) throw new Error('the mocked text presentation layer is missing');
+    expect(composite.bitmap).not.toBe(materialized.bitmap);
+    const closeMaterializedBitmap = vi.spyOn(materialized.bitmap as ImageBitmap, 'close');
+    const releaseMaterializedLayer = vi.spyOn(materialized.lease, 'release');
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument').mockImplementation(async (replay) => {
+      // StoreContext must compose the replay output after the disabled source edit
+      // is skipped, leaving the baseline text source in place.
+      expect(replay.layers[layerId]?.snapshot.source).toMatchObject({
+        kind: 'text',
+        args: expect.objectContaining({ text: 'Before' }),
+      });
+      return composite;
+    });
+    const pos = { x: 0, y: 0, width: 100, height: 80 };
+    const source = textLayerSource('Before', pos);
+    const layer: Layer = {
+      ...createMockLayer({ id: layerId, pos }),
+      source,
+      bitmap: null,
+      tmpCanvas: canvas(pos.width, pos.height),
+    };
+    const replacementItem: HistoryItem = {
+      id: 'disabled-text-replacement',
+      actionName: REPLACE_LAYER_SOURCE_ACTION,
+      layerId,
+      args: { source: textLayerSource('After', pos) },
+      disabled: true,
+    };
+    const { store, dispatch, unmount } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    const entries = [...store().history, replacementItem];
+    replayHistoryTo(dispatch(), { [layerId]: layer }, entries, {}, 1);
+    const durableHistoryIdsBeforePublish = store().durableDocument?.history.map((entry) => entry.id);
+    const durableCursorBeforePublish = store().durableDocument?.cursor;
+    expect(store().history.map((entry) => entry.id)).toEqual(entries.map((entry) => entry.id));
+    expect(store().historyIndex).toBe(1);
+    expect(store().durableDocument?.history.at(-1)).toMatchObject({
+      id: replacementItem.id,
+      enabled: false,
+      operation: { kind: 'replace-layer-source' },
+    });
+    // The legacy cursor includes the opening baseline row; the durable cursor indexes
+    // only its converted operation rows, so this disabled replacement maps to 0.
+    expect(durableCursorBeforePublish).toBe(0);
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(outcome).toMatchObject({ status: 'legacy-fallback', reason: 'renderer-incompatible', cursor: 0 });
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durableRenderProjection).toBeNull();
+    expect(store().durablePresentation).toMatchObject({
+      status: 'legacy-fallback',
+      reason: 'renderer-incompatible',
+      detail: expect.stringContaining('source kind text is unsupported'),
+    });
+    expect(store().history.map((entry) => entry.id)).toEqual(entries.map((entry) => entry.id));
+    expect(store().historyIndex).toBe(1);
+    expect(store().durableDocument?.history.map((entry) => entry.id)).toEqual(durableHistoryIdsBeforePublish);
+    expect(store().durableDocument?.cursor).toBe(durableCursorBeforePublish);
+    expect(store().durablePresentation.cursor).toBe(0);
+    expect(compose).toHaveBeenCalledTimes(1);
+    expect(composite.takeLayers).toHaveBeenCalledOnce();
+    expect(releaseComposite).toHaveBeenCalledOnce();
+    expect(releaseMaterializedLayer).toHaveBeenCalledOnce();
+    expect(closeCompositeBitmap).toHaveBeenCalledOnce();
+    expect(closeMaterializedBitmap).toHaveBeenCalledOnce();
+    unmount();
+  });
+
+  it('keeps a disabled-row cursor behind the ownership gate when its prefix contains a typed replacement', async () => {
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+    const pos = { x: 0, y: 0, width: 100, height: 80 };
+    const originalSource = textLayerSource('Before', pos);
+    const activeSource = textLayerSource('Middle', pos);
+    const disabledSource = textLayerSource('After', pos);
+    const originalLayer: Layer = {
+      ...createMockLayer({ id: layerId, pos }),
+      source: originalSource,
+      bitmap: null,
+      tmpCanvas: canvas(pos.width, pos.height),
+    };
+    const activeLayer: Layer = {
+      ...originalLayer,
+      source: activeSource,
+      tmpCanvas: canvas(pos.width, pos.height),
+    };
+    const entries: HistoryItem[] = [
+      baselineItem({ [layerId]: originalLayer }),
+      {
+        id: 'active-typed-text-replacement',
+        actionName: REPLACE_LAYER_SOURCE_ACTION,
+        layerId,
+        args: { source: activeSource },
+      },
+      {
+        id: 'disabled-typed-text-replacement',
+        actionName: REPLACE_LAYER_SOURCE_ACTION,
+        layerId,
+        args: { source: disabledSource },
+        disabled: true,
+      },
+    ];
+    const { store, dispatch, unmount } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: originalLayer });
+
+    replayHistoryTo(dispatch(), { [layerId]: activeLayer }, entries, {}, 2);
+    expect(store().historyIndex).toBe(2);
+    const activeRuntimeLayer = store().layers[layerId];
+    expect(activeRuntimeLayer.tmpCanvas).toBe(activeLayer.tmpCanvas);
+    expect(activeRuntimeLayer.bitmap).toBe(activeLayer.bitmap);
+    expect(store().durableDocument?.history.map((entry) => entry.id)).toEqual([
+      'active-typed-text-replacement',
+      'disabled-typed-text-replacement',
+    ]);
+    expect(store().durableDocument?.history.map((entry) => entry.enabled)).toEqual([true, false]);
+    expect(store().durableDocument?.cursor).toBe(1);
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(outcome).toMatchObject({ status: 'legacy-fallback', reason: 'ownership-unproven', cursor: 1 });
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation).toMatchObject({
+      status: 'legacy-fallback',
+      reason: 'ownership-unproven',
+      cursor: 1,
+    });
+    expect(store().layers[layerId].tmpCanvas).toBe(activeRuntimeLayer.tmpCanvas);
+    expect(store().layers[layerId].bitmap).toBe(activeRuntimeLayer.bitmap);
+    expect(store().durableRenderProjection).toBeNull();
+    expect(compose).not.toHaveBeenCalled();
+
+    replayHistoryTo(dispatch(), { [layerId]: activeLayer }, entries, {}, 1);
+    expect(store().historyIndex).toBe(1);
+    expect(store().durableDocument?.history.map((entry) => entry.id)).toEqual([
+      'active-typed-text-replacement',
+      'disabled-typed-text-replacement',
+    ]);
+    expect(store().durableDocument?.cursor).toBe(0);
+    outcome = undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+    expect(outcome).toMatchObject({ status: 'legacy-fallback', reason: 'ownership-unproven', cursor: 0 });
+    expect(store().durablePresentation).toMatchObject({
+      status: 'legacy-fallback',
+      reason: 'ownership-unproven',
+      cursor: 0,
+    });
+    expect(store().layers[layerId].tmpCanvas).toBe(activeLayer.tmpCanvas);
+    expect(store().layers[layerId].bitmap).toBe(activeLayer.bitmap);
+    expect(compose).not.toHaveBeenCalled();
+    unmount();
+  });
 
   it('keeps rotated crops on the legacy selector until the frame-parity gate is explicit', async () => {
     const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');

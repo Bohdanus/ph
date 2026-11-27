@@ -152,6 +152,7 @@ export const useHistory = () => {
       documentId,
       documentRevision,
       clearPreviewLayers,
+      getCurrentState,
       publishDurableNavigationPresentation,
       beginHistoryReplayPresentation,
       isHistoryReplayPresentationCurrent,
@@ -218,6 +219,17 @@ export const useHistory = () => {
     let replayDispatched = false;
     let attemptId: number | null = null;
     const isCurrentAttempt = (id: number) => isHistoryReplayPresentationCurrent?.(id) ?? true;
+    const isReplayTimelineCurrent = () => {
+      const latest = getCurrentState();
+      return (
+        latest.documentId === documentId &&
+        latest.documentRevision === documentRevision &&
+        latest.branchRevision === _branchRevision &&
+        latest.historyIndex === targetIndex &&
+        latest.history.length === _history.length &&
+        latest.history.every((entry, index) => entry === _history[index])
+      );
+    };
     // Legacy replay remains the structural substrate and complete fallback. The
     // durable publication paints the normal path when every identity, coverage,
     // and materialization gate succeeds.
@@ -296,6 +308,15 @@ export const useHistory = () => {
         cancelHistoryReplayPresentation?.(attemptId);
         return;
       }
+      // A synchronous legacy fallback can resolve before React publishes the
+      // next render. Another edit may append to the timeline in that gap while
+      // this attempt token is still current. Check the dispatcher's latest
+      // snapshot before painting: the finalizer runs too late to prevent stale
+      // pixels or preview cleanup.
+      if (!isReplayTimelineCurrent()) {
+        cancelHistoryReplayPresentation?.(attemptId);
+        return;
+      }
       const painted =
         outcome.status === 'durable'
           ? (() => {
@@ -353,6 +374,14 @@ export const useHistory = () => {
     } catch (error) {
       if (attemptId !== null && !isCurrentAttempt(attemptId)) {
         cancelHistoryReplayPresentation?.(attemptId);
+        return Promise.resolve();
+      }
+      // Publication can reject after another same-stack edit has replaced the
+      // replay timeline. The success path fences its paint above; fence this
+      // failure path too before restoring the older snapshot or reporting that
+      // the newer document is unavailable.
+      if (replayDispatched && !isReplayTimelineCurrent()) {
+        if (attemptId !== null) cancelHistoryReplayPresentation?.(attemptId);
         return Promise.resolve();
       }
       if (attemptId === null && hasPendingHistoryReplayPresentation?.(documentId, documentRevision)) {

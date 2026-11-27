@@ -2014,7 +2014,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       let plannedEntry = action.payload.durableEntry;
       let plannerTransaction: DocumentAssetTransaction | undefined;
       if (plannedEntry == null && action.payload.historyItem.actionName === REPLACE_LAYER_SOURCE_ACTION) {
-        plannedEntry = deriveReplaceLayerSourceEntry(action.payload.historyItem);
+        try {
+          plannedEntry = deriveReplaceLayerSourceEntry(action.payload.historyItem);
+        } catch (error) {
+          // A typed source edit still belongs in the legacy timeline if its
+          // optional durable shadow cannot be re-derived. The whole-timeline
+          // fallback below either rebuilds that projection or contains its
+          // conversion failure without dropping the authoritative append.
+          plannedEntry = null;
+          console.error('Unable to derive a durable source replacement append plan', error);
+        }
       } else if (plannedEntry == null && sourceContext) {
         try {
           plannerTransaction = registry.beginDocumentAssetTransaction(currentState.documentId);

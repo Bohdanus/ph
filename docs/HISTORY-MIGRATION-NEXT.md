@@ -5,7 +5,179 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
-## Latest continuation reconciliation — 2026-11-27 14:56 UTC
+## Latest continuation reconciliation — 2026-11-27 22:08 UTC
+
+### Current refs and ownership
+
+The PH-93 candidate worktree is
+`/Users/bkalynovskyi/ph/.kilo/worktrees/history-text-source-lifecycle-20261127` on
+`task/history-text-source-lifecycle-20261127`. Its current docs-inclusive candidate is
+`de29d8e46571424947ae2abda5ee3653ab865dd2`, tree
+`e1638c366abc2cb495602ea00262095e07ca9bc5`, merged with current local `main` pin
+`64f5d7d2a57faa02ee1425a092fb27c328396159`. The integration includes seven current-main commits
+after the candidate's earlier `73f43c071` base. At this check,
+`origin/main` was `73f43c07147eca4c16e22f363573adbeb332cc99` and `mirror/main` was
+`df8a37f2a0abfa8bf2364d352b18a5d504256c8b`; the feature branch was at `e881100` on `mirror` and
+absent on `origin`. The source-failure containment fix is in `0f42e474`; the later documentation
+commit `de29d8e` records that behavior and its validation. The feature branch remains unpushed to
+`origin` and `mirror` at this check. This checkpoint also records that the exported text-cache clear
+helper has test-only call sites in the current tree. Push the reviewed feature branch to the requested
+`origin` and update its existing `mirror` branch; do not push either `main` ref.
+
+`main:landing -- status --json` designates
+`/Users/bkalynovskyi/ph/.kilo/worktrees/landing-main-fresh-20261124` at local `main` pin `64f5d7d`,
+clean and unoccupied at the last check. The PH-93 claim is active, and its temporary exclusion for
+`docs/HISTORY-MIGRATION-NEXT.md` ended when the origin-main sync issue `ph-121` resolved. The last
+scoped `repo:state -- --for-landing task/history-text-source-lifecycle-20261127` check reported the
+candidate clear with 15 unrelated worktree findings; rerun it against the reviewed exact candidate
+before landing. Leave those unrelated findings untouched.
+
+The two earlier Codex history threads were rechecked: `01a17f24` (plan) and `01a1791a` (continuation
+audit). Their gate ordering, legacy-authority boundary and parity findings remain useful leads; older
+ref and worktree claims were not carried forward without live checks. A local Kilo sweep from Nov. 15
+returned review/audit child sessions rather than an implementation-owner chat. Its PH-93 review
+findings were rechecked against this tree: the point-text E2E now describes its shared same-browser
+Canvas reference precisely, and the source-edit conversion test now pins the no-raster-registration
+property. The Nov. 27 Sonnet architecture review says it relied on a supplied summary, the public
+repository page and one repository document, not the current branch or production source; its
+blank-first/D1/D2 sequencing recommendations are advisory, not verified constraints on this task.
+This pass rechecked the current implementation and tests. It preserves the known Nov. 23 mixed-source
+retained-affine result as a separate, unresolved diagnostic with no attributed root cause or Photoshop
+conclusion.
+
+### PH-93 proof and authority boundary
+
+The product producer path is `commitDirtyTool` in `useLayer.ts` → `replaceLayerSource` → typed
+`REPLACE_LAYER_SOURCE_ACTION`. StoreProvider coverage proves that a valid text source replacement
+appends to the logical `HistoryItem[]`, maps legacy `historyIndex` to the durable operation cursor
+without counting the opening baseline row, and leaves the render selector on legacy with
+`durablePresentation` unpublished and no composition. The action stores typed source arguments only;
+the replacement runtime layer retains its new `tmpCanvas` identity and has no `bitmap` payload in the
+history item. The adapter test pins the byte-for-byte converted entry and proves that source-edit
+derivation makes no `AssetRegistry.registerBaseline` call. A redo-branch replacement truncates the
+abandoned typed action. Disabled-row tests
+preserve the independent legacy/durable cursor mapping. An enabled typed replacement in the tested
+prefix returns `ownership-unproven`; disabled text-source operations are skipped, so a supported
+effective baseline may present durably while an unsupported one returns `renderer-incompatible`.
+
+The new `useHistory` freshness fence checks the logical replay timeline after navigation publication
+and before replay paint, preview cleanup, finalization, or rollback. The real StoreProvider test in
+`src/contexts/__tests__/resetHistoryTo.durable.test.tsx` reproduces a same-stack cursor reset followed
+by a typed replacement while unsupported history forces immediate legacy fallback; the stale replay
+must not draw over the replacement. Separate `useHistory` hook tests with a mocked store pin
+cancellation, no preview clear, and no late finalization. A rejected-publisher regression also proves
+that a newer text replacement is not rolled back or marked unavailable when the old replay fails.
+Another real StoreProvider test in `useLayer.text.test.tsx` forces producer planning, StoreContext
+source re-derivation, and whole-timeline shadow conversion to fail. The typed source replacement still
+appends to `HistoryItem[]`, keeps the replacement `tmpCanvas` identity, and leaves the durable
+sidecar unavailable behind legacy presentation.
+Existing Provider coverage continues to pin refused final draws and preview interleaving. This new
+fence is specific to document/history identity and cursor; it does not introduce a runtime-cache or
+preview-generation token.
+
+The product E2E reaches an in-place point-text edit, keeps the original layer identity and one typed
+history row, and requires exact 800×600 backing-pixel equality at 1× for the committed Canvas, PNG,
+PSD composite, and cropped PSD text layer against a fresh same-browser Canvas reference. The reference
+uses fresh Canvas contexts and captured browser geometry, but intentionally shares the fixture's
+64px Arial style, 1.2 line height, 5px padding, color, and current point-text bounds/baseline formula.
+It checks raster/export consistency, not independent layout semantics or Photoshop parity. The E2E
+also checks PSD layer bounds and exact undo/redo pixels. The same test passed in both configured
+Chrome projects, including the HiDPI project forced to a 1× document backing. This is one point-text
+fixture and does not establish every text style, affine/frame combination, or mixed-source case.
+
+This slice does not open the ownership gate. `HistoryItem[]` and `replayHistory()` remain logical
+authority. An enabled typed text-source replacement in the tested prefix remains behind
+`ownership-unproven`; disabled text operations are skipped, so the effective baseline determines
+whether the projection is durable or falls back with `renderer-incompatible`. The immutable typed
+text action registers no raster asset and carries no disposable raster lease. Its runtime `tmpCanvas`
+is also retained by the pre-existing module-level `textRasterCache` in `src/tools/text.ts`. An
+exported clear helper exists, but current-tree call sites are tests only; production cache lifetime
+and disposal remain unproven. Generic durable-projection lease tests are a separate lifetime contract
+and are not evidence that a text canvas should be closed. Whole-document teardown, broader frame parity,
+Photoshop comparison, and durable undo/redo authority cutover remain separate work.
+
+### Historical validation — 2026-11-27 17:49 UTC
+
+Against source/test commit `d432beced88af1c7bb24bab49089ab77f15d5e24` and tree
+`c3c72d28eb95caa57ffcb4e7c6f2d5953c7ed9c1`, the focused history/text suite passed 5 files / 145
+tests, `npm run tsc -- --pretty false` passed, targeted ESLint and Prettier passed, and
+`npm run build` passed. Product E2E run `2026-11-27T17-26-11-872Z-40507` passed both Google Chrome
+and Google Chrome HiDPI projects (2 tests). The rejected-publication regression is included in the
+145-test result. The first full push gate exposed stale synchronous-state mocks in the replay-diagnostic
+and pixel-parity suites, plus two unindexed ADRs. The mocks now model the StoreProvider state reader
+and synchronous replay dispatch; both ADRs are indexed. The focused rerun passed 3 files / 55 tests
+with 4 existing expected-failure pins. The subsequent feature push to `mirror` succeeded at
+`d07a4b7fe7ec993265e22ad8650a906673205eae`; success means the pre-push unit and performance gates
+both passed. Commit hooks, Prettier, and `git diff --check` also passed on this snapshot. These checks
+do not resolve the separate mixed-source affine parity diagnostic or prove Photoshop behavior.
+
+### Historical validation — 2026-11-27 21:14 UTC
+
+On the current working tree based on `e881100c6ab2c00726c58b081ae6f90d2127cd34`, the exact product
+E2E passed both Google Chrome projects in run `2026-11-27T21-02-52-134Z-99714` (2 tests). The six
+focused history/text test files passed 164 tests, including the added direct no-raster-registration
+assertion. `npm run tsc -- --pretty false`, Prettier on the four changed files, and `git diff --check`
+passed. These checks include uncommitted changes; full pre-push gates and independent review of the
+exact committed candidate are still required.
+
+### Historical validation after current-main sync — 2026-11-27 21:25 UTC
+
+On integrated source/test commit `c2aa94d2c80de2cbd1e168b4fe89b7496adb1126` and tree
+`aa632a997da882e9db03ccf8bffb6205d0fade7d`, the six focused history/text files passed 164 tests,
+`npm run tsc -- --pretty false` passed, and Prettier passed on the changed handoff, migration, E2E,
+README, and adapter-test files. The docs-index test passed 10 tests through Vitest. Product E2E run
+`2026-11-27T21-25-18-488Z-76271` passed in both Google Chrome projects (2 tests). The test still
+establishes exact same-browser Canvas/PNG/PSD raster consistency for one 1× point-text fixture; it is
+not independent text-layout or Photoshop proof. Full pre-push unit/performance gates and two
+independent free-route reviews remain pending on the exact final checkpoint.
+
+### Validation after source re-derivation failure containment — 2026-11-27 21:41 UTC
+
+On source/test commit `0f42e474f1bd37ed311c299eea691bfb8f2d8ee2` and tree
+`17b80273b34d83da38385591c2cd85640c2eaf7d`, the six focused history/text files passed 165 tests,
+
+including the new regression that failed before the StoreContext catch. Typecheck and Prettier
+passed. Product E2E run `2026-11-27T21-39-55-805Z-13520` passed in Google Chrome and Google Chrome
+HiDPI (2 tests) after the production change. The exact E2E remains one point-text raster/export
+consistency fixture, not independent layout or Photoshop proof.
+The docs-index test passed 10 tests through Vitest on this documentation checkpoint. Full pre-push
+unit/performance gates and two independent free-route reviews remain pending on the exact final
+checkpoint.
+
+### Independent review and current validation — 2026-11-27 22:08 UTC
+
+Three complete, exact-free Kilo reviews inspected the candidate at `de29d8e` (tree `e1638c3`):
+Nemotron 3 Ultra reviewed replay/failure handling; ERNIE 5.5 Flash reviewed text-source, export,
+runtime identity, and exact-pixel evidence; a focused ERNIE review adjudicated the replay freshness
+claims. Each response finished with `stop`, reported cost `$0`, and made no OpenRouter request. The
+text/export and focused replay reviews reported no actionable findings. Nemotron raised potential
+freshness and coverage defects; local source review and the focused review found its missing-test,
+stale-ref, and duplicate-implementation claims contradicted by existing coverage and the synchronous
+dispatcher. The real StoreProvider regressions are in `resetHistoryTo.durable.test.tsx` and
+`useLayer.text.test.tsx`. Timeline mutations advance cursor, length, branch revision, or document
+revision; the durable sidecar is produced from that timeline. Selection-only updates remain separate
+from durable inputs, and the post-await continuation does not rewrite them. Preview cleanup happens
+only after an accepted replay paint. The fence's entry comparison adds one linear scan; no measured
+performance regression was established, and the full pre-push performance gate is still pending.
+
+The committed source change remains `0f42e474` and no production code changed after it. On the current
+candidate, `npm run build` passed; `npm run lint:check` passed with the repository's existing warning
+count and no errors. The focused history/text suite passed 165 tests, `tsc` passed, the docs-index test
+passed 10 tests, and exact product E2E run `2026-11-27T21-39-55-805Z-13520` passed in Chrome and
+Chrome HiDPI. Full pre-push unit/performance gates remain to be run by the feature push.
+
+### Next actions
+
+1. Push this reviewed branch to `origin` and its existing `mirror` ref so the full pre-push
+   unit/performance gates run on the exact tree. Verify both pushed refs; do not force-update or push
+   `main`.
+2. Recheck current refs, PH-93 ownership, file holds, and the designated landing path. Land through
+   the pinned `main:landing` wrapper only after the exact candidate's push gates pass.
+3. Record the resulting remote and local landing refs, then verify clean status and ancestry.
+4. Keep `ownership-unproven` closed. Durable navigation eligibility requires a separate proof and
+   reviewed production change; this text-source slice does not change it.
+
+## Historical continuation reconciliation — 2026-11-27 14:56 UTC
 
 ### Current refs and bounded candidate
 
