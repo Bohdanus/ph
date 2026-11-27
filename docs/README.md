@@ -56,6 +56,13 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)                               | The durable-history migration contract and cutover sequence                   |
 | [`HISTORY-MIGRATION-AUDIT-20261107.md`](HISTORY-MIGRATION-AUDIT-20261107.md) | Dated audit of durable-history parity gates and open export findings          |
 
+## Architecture proposals
+
+| Document                                                                                                                   | Its one job                                                                                           |
+| -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [`adr/0001-multi-document-and-rendering-refactor-sequence.md`](adr/0001-multi-document-and-rendering-refactor-sequence.md) | Proposed sequencing for multi-document support and future rendering work during the history migration |
+| [`adr/0001-opus-review-prompt.md`](adr/0001-opus-review-prompt.md)                                                         | The bounded prompt for an independent review of the proposed architecture decision                    |
+
 ## Working practice
 
 | Document                                                                                               | Its one job                                                                                          |
