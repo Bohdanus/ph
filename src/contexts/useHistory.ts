@@ -152,6 +152,7 @@ export const useHistory = () => {
       documentId,
       documentRevision,
       clearPreviewLayers,
+      getCurrentState,
       publishDurableNavigationPresentation,
       beginHistoryReplayPresentation,
       isHistoryReplayPresentationCurrent,
@@ -218,6 +219,17 @@ export const useHistory = () => {
     let replayDispatched = false;
     let attemptId: number | null = null;
     const isCurrentAttempt = (id: number) => isHistoryReplayPresentationCurrent?.(id) ?? true;
+    const isReplayTimelineCurrent = () => {
+      const latest = getCurrentState();
+      return (
+        latest.documentId === documentId &&
+        latest.documentRevision === documentRevision &&
+        latest.branchRevision === _branchRevision &&
+        latest.historyIndex === targetIndex &&
+        latest.history.length === _history.length &&
+        latest.history.every((entry, index) => entry === _history[index])
+      );
+    };
     // Legacy replay remains the structural substrate and complete fallback. The
     // durable publication paints the normal path when every identity, coverage,
     // and materialization gate succeeds.
@@ -293,6 +305,15 @@ export const useHistory = () => {
         ? await publishDurableNavigationPresentation(attemptId)
         : { status: 'legacy-fallback' as const, reason: 'stale' as const, cursor: targetIndex };
       if (outcome.status === 'stale' || !isCurrentAttempt(attemptId)) {
+        cancelHistoryReplayPresentation?.(attemptId);
+        return;
+      }
+      // A synchronous legacy fallback can resolve before React publishes the
+      // next render. Another edit may append to the timeline in that gap while
+      // this attempt token is still current. Check the dispatcher's latest
+      // snapshot before painting: the finalizer runs too late to prevent stale
+      // pixels or preview cleanup.
+      if (!isReplayTimelineCurrent()) {
         cancelHistoryReplayPresentation?.(attemptId);
         return;
       }

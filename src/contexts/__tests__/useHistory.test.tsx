@@ -7,6 +7,7 @@ import {
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
   REMOVE_ACTION,
+  REPLACE_LAYER_SOURCE_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
   SHOW_LAYER_ACTION,
@@ -314,6 +315,7 @@ function resetStoreState(history: HistoryItem[]) {
     activeSelectionId: null,
     branchRevision: 0,
     hasUnsavedChanges: false,
+    getCurrentState: () => storeStateMock,
     publishDurableNavigationPresentation: undefined,
     beginHistoryReplayPresentation: vi.fn((documentId: string, documentRevision: number) => {
       historyReplayAttemptState.value += 1;
@@ -1294,6 +1296,65 @@ describe('useHistory undo replay', () => {
 
       expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY']);
       expect(state.historyIndex).toBe(0);
+    });
+
+    it('does not draw or clear previews from a replay after a typed source replacement commits', async () => {
+      const { state } = setup();
+      const publication = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
+      state.publishDurableNavigationPresentation = vi.fn(() => publication.promise);
+      const { result } = renderHook(() => useHistory());
+      let navigation!: Promise<void>;
+
+      act(() => {
+        navigation = result.current.resetHistoryTo(0);
+      });
+      expect(state.historyIndex).toBe(0);
+      expect(historyReplayAttemptState.pending).toBe(true);
+
+      const replayLayer = state.layers['layer-1'];
+      if (!replayLayer) throw new Error('the pending replay did not publish its layer');
+      const replacementSource = {
+        kind: 'tool' as const,
+        args: { toolName: 'text', text: 'Updated' } as never,
+        pos: replayLayer.pos,
+        isBedrock: false as const,
+      };
+      const replacementLayer: Layer = {
+        ...replayLayer,
+        source: replacementSource,
+        bitmap: null,
+        tmpCanvas: new OffscreenCanvas(40, 20),
+      };
+      act(() => {
+        dispatchMock({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates: { layers: { ...state.layers, 'layer-1': replacementLayer } },
+            historyItem: {
+              id: 'text-source-replacement',
+              layerId: 'layer-1',
+              actionName: REPLACE_LAYER_SOURCE_ACTION,
+              args: { source: replacementSource },
+            },
+          },
+        });
+      });
+      expect(state.history.map((item) => item.id)).toEqual(['h-1', 'text-source-replacement']);
+      expect(state.historyIndex).toBe(1);
+      expect(state.layers['layer-1']?.tmpCanvas).toBe(replacementLayer.tmpCanvas);
+
+      await act(async () => {
+        publication.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: 0 });
+        await navigation;
+      });
+
+      expect(rendererControl.drawCalls).toHaveLength(0);
+      expect(storeStateMock.clearPreviewLayers).not.toHaveBeenCalled();
+      expect(storeStateMock.cancelHistoryReplayPresentation).toHaveBeenCalledOnce();
+      expect(storeStateMock.finalizeHistoryReplayPresentation).not.toHaveBeenCalled();
+      expect(state.historyIndex).toBe(1);
+      expect(state.layers['layer-1']?.tmpCanvas).toBe(replacementLayer.tmpCanvas);
+      expect(historyPresentationEvents).toEqual(['replay-dispatch', 'begin', 'edit-dispatch']);
     });
 
     it('does not supersede a pending replay when a later replay fails before dispatch', async () => {

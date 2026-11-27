@@ -17,7 +17,7 @@ import type { HistoryItem } from '../history-types.ts';
 import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
 import type { MaterializedLayer } from '../materialization.ts';
 import type { BitmapSource } from '../general-types.ts';
-import { OPEN_DOCUMENT_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION, REPLACE_LAYER_SOURCE_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -196,6 +196,69 @@ describe('publishDurablePresentation authority boundaries', () => {
     });
     expect(store().durableRenderProjection).toBeNull();
     expect(store().durableStatus).toBe('current');
+  });
+
+  it('skips a disabled typed source replacement and admits the supported blank baseline', async () => {
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+    const layer = blankLayer();
+    const replacementSource: Layer['source'] = {
+      kind: 'tool',
+      args: { toolName: 'text', text: 'After' } as never,
+      pos: layer.pos,
+      isBedrock: false,
+    };
+    const entries: HistoryItem[] = [
+      baselineItem({ [layerId]: layer }),
+      {
+        id: 'disabled-typed-text-replacement',
+        actionName: REPLACE_LAYER_SOURCE_ACTION,
+        layerId,
+        args: { source: replacementSource },
+        disabled: true,
+      },
+    ];
+    const { store, dispatch, unmount } = renderWithProbe();
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-disabled-text-replacement',
+          history: entries,
+          historyIndex: 1,
+          updates: { layers: { [layerId]: layer }, totalSize: initialSize, documentFrame: defaultFrame },
+        },
+      });
+    });
+
+    expect(store().durableDocument?.history).toMatchObject([
+      { id: 'disabled-typed-text-replacement', enabled: false, operation: { kind: 'replace-layer-source' } },
+    ]);
+    // Legacy index 1 includes the opening baseline; durable index 0 is the disabled operation row.
+    expect(store().historyIndex).toBe(1);
+    expect(store().durableDocument?.cursor).toBe(0);
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { layers: { [layerId]: layer }, deletedLayers: {}, activeLayerId: null },
+          timeline: { entries, cursor: 1, branchRevision: store().branchRevision },
+        },
+      });
+    });
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(outcome).toMatchObject({ status: 'durable', cursor: 0 });
+    expect(compose).toHaveBeenCalledOnce();
+    expect(store().renderSelector.source).toBe('durable');
+    expect(store().durablePresentation).toMatchObject({ status: 'durable', cursor: 0 });
+    expect(store().layers[layerId].source).toEqual(layer.source);
+    expect(store().durableStatus).toBe('current');
+    unmount();
   });
 
   it('releases the composite in finally when a navigation composition becomes stale', async () => {

@@ -10,17 +10,20 @@ import {
   RENAME_LAYER_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  REPLACE_LAYER_SOURCE_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
 import type { Selection } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { Layer } from '../layer-types.ts';
+import type { Layer, ToolLayerSource } from '../layer-types.ts';
+import type { ToolArgs } from '../tool-types.ts';
 
 type ProbeValue = {
   store: StoreData;
   dispatch: StoreDispatch;
   reset: (index: number) => Promise<void>;
   toggleDisabled: (id: string) => Promise<void>;
+  getCurrentState: () => StoreData;
 };
 
 function createProbe(ref: { current: ProbeValue | null }, attachCanvas = false) {
@@ -28,7 +31,13 @@ function createProbe(ref: { current: ProbeValue | null }, attachCanvas = false) 
     const [store, dispatch] = useStore();
     const { resetHistoryTo, toggleDisabled } = useHistory();
     useLayoutEffect(() => {
-      ref.current = { store, dispatch, reset: resetHistoryTo, toggleDisabled };
+      ref.current = {
+        store,
+        dispatch,
+        reset: resetHistoryTo,
+        toggleDisabled,
+        getCurrentState: store.getCurrentState,
+      };
     });
     return attachCanvas ? <canvas aria-label="visible workspace" ref={store.canvasRef} /> : null;
   }
@@ -55,6 +64,123 @@ function layer(name = 'Layer 1'): Layer {
 }
 
 describe('resetHistoryTo durable authority', () => {
+  it('does not paint a replay after a typed replacement commits during legacy fallback', async () => {
+    const ref = { current: null as ProbeValue | null };
+    const originalLayer = layer();
+    const baseline: HistoryItem = {
+      id: 'baseline',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId: 'layer-1',
+      documentSource: {
+        layers: { 'layer-1': originalLayer },
+        size: { width: 100, height: 80 },
+        frame: { x: 0, y: 0, width: 100, height: 80 },
+      },
+    } as HistoryItem;
+    const rename: HistoryItem = {
+      id: 'rename-before-text-edit',
+      actionName: RENAME_LAYER_ACTION,
+      layerId: 'layer-1',
+      args: { name: 'Renamed' },
+    };
+    const unsupported: HistoryItem = {
+      id: 'unsupported-suffix',
+      actionName: TOOL_ACTION,
+      layerId: 'layer-1',
+      args: { toolName: 'pen' },
+    };
+    const Probe = createProbe(ref, true);
+    const drawLayers = vi.spyOn(layerRenderer, 'drawLayersToCanvas').mockReturnValue(true);
+
+    render(
+      <StoreProvider>
+        <Probe />
+      </StoreProvider>
+    );
+    act(() => {
+      ref.current!.dispatch({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'text-replay-interleaving',
+          history: [baseline, rename, unsupported],
+          historyIndex: 2,
+          updates: {
+            layers: { 'layer-1': { ...originalLayer, name: 'Unsupported suffix state' } },
+            totalSize: { width: 100, height: 80 },
+            documentFrame: { x: 0, y: 0, width: 100, height: 80 },
+          },
+        },
+      });
+    });
+
+    const initial = ref.current!.store;
+    expect(initial.durableStatus).not.toBe('current');
+    expect(initial.canvasRef.current).not.toBeNull();
+    let navigation!: Promise<void>;
+    const textSource: ToolLayerSource = {
+      kind: 'tool',
+      args: {
+        toolName: 'text',
+        text: 'Updated',
+        angle: 0,
+        fontSize: 24,
+        lineHeight: 1.1,
+        rect: { x1: 0, y1: 0, x2: 60, y2: 30 },
+        bold: false,
+        italic: false,
+        fontFamily: 'Arial',
+        color: '#000000',
+        align: 'left',
+      } as ToolArgs,
+      pos: originalLayer.pos,
+      isBedrock: false,
+    };
+    const replacementLayer: Layer = {
+      ...initial.layers['layer-1']!,
+      source: textSource,
+      bitmap: null,
+      tmpCanvas: new OffscreenCanvas(100, 80),
+    };
+
+    act(() => {
+      navigation = ref.current!.reset(0);
+      expect(ref.current!.getCurrentState().historyIndex).toBe(0);
+      ref.current!.dispatch({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { 'layer-1': replacementLayer } },
+          historyItem: {
+            id: 'typed-text-source-replacement',
+            actionName: REPLACE_LAYER_SOURCE_ACTION,
+            layerId: 'layer-1',
+            args: { source: textSource },
+          },
+        },
+      });
+    });
+
+    const committed = ref.current!.getCurrentState();
+    expect(committed.history.at(-1)).toMatchObject({
+      id: 'typed-text-source-replacement',
+      actionName: REPLACE_LAYER_SOURCE_ACTION,
+    });
+    expect(committed.historyIndex).toBe(1);
+    expect(committed.layers['layer-1']?.source).toEqual(textSource);
+    expect(committed.layers['layer-1']?.tmpCanvas).toBe(replacementLayer.tmpCanvas);
+
+    await act(async () => {
+      await navigation;
+    });
+
+    const drawCalls = [...drawLayers.mock.calls];
+    drawLayers.mockRestore();
+
+    expect(drawCalls).toHaveLength(0);
+    expect(ref.current!.store.historyIndex).toBe(1);
+    expect(ref.current!.store.layers['layer-1']?.source).toEqual(textSource);
+    expect(ref.current!.store.durablePresentation).toEqual({ status: 'unpublished', cursor: null, reason: null });
+  });
+
   it('uses complete legacy fallback through a real StoreProvider when the durable sidecar is unavailable', async () => {
     const ref = { current: null as ProbeValue | null };
     const initialLayer = layer();
