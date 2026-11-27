@@ -5,22 +5,22 @@ architecture map; this file records the live gates and the next bounded proof sl
 measurements retain their run timestamps. Use the latest continuation reconciliation below for
 current refs, ownership, and follow-up scope.
 
-## Latest continuation reconciliation — 2026-11-27 21:41 UTC
+## Latest continuation reconciliation — 2026-11-27 22:08 UTC
 
 ### Current refs and ownership
 
 The PH-93 candidate worktree is
 `/Users/bkalynovskyi/ph/.kilo/worktrees/history-text-source-lifecycle-20261127` on
-`task/history-text-source-lifecycle-20261127`. Its verified source/test commit is
-`0f42e474f1bd37ed311c299eea691bfb8f2d8ee2`, tree
-`17b80273b34d83da38385591c2cd85640c2eaf7d`, merged with current local `main` pin
+`task/history-text-source-lifecycle-20261127`. Its current docs-inclusive candidate is
+`de29d8e46571424947ae2abda5ee3653ab865dd2`, tree
+`e1638c366abc2cb495602ea00262095e07ca9bc5`, merged with current local `main` pin
 `64f5d7d2a57faa02ee1425a092fb27c328396159`. The integration includes seven current-main commits
 after the candidate's earlier `73f43c071` base. At this check,
 `origin/main` was `73f43c07147eca4c16e22f363573adbeb332cc99` and `mirror/main` was
 `df8a37f2a0abfa8bf2364d352b18a5d504256c8b`; the feature branch was at `e881100` on `mirror` and
-absent on `origin`. The four-file clarification commit `18d07eb5` records the E2E reference limits,
-the cache-lifetime caveat, and the direct no-raster-registration assertion. The current candidate has
-not yet been pushed to either remote. This checkpoint also records that the exported text-cache clear
+absent on `origin`. The source-failure containment fix is in `0f42e474`; the later documentation
+commit `de29d8e` records that behavior and its validation. The feature branch remains unpushed to
+`origin` and `mirror` at this check. This checkpoint also records that the exported text-cache clear
 helper has test-only call sites in the current tree. Push the reviewed feature branch to the requested
 `origin` and update its existing `mirror` branch; do not push either `main` ref.
 
@@ -144,15 +144,36 @@ The docs-index test passed 10 tests through Vitest on this documentation checkpo
 unit/performance gates and two independent free-route reviews remain pending on the exact final
 checkpoint.
 
+### Independent review and current validation — 2026-11-27 22:08 UTC
+
+Three complete, exact-free Kilo reviews inspected the candidate at `de29d8e` (tree `e1638c3`):
+Nemotron 3 Ultra reviewed replay/failure handling; ERNIE 5.5 Flash reviewed text-source, export,
+runtime identity, and exact-pixel evidence; a focused ERNIE review adjudicated the replay freshness
+claims. Each response finished with `stop`, reported cost `$0`, and made no OpenRouter request. The
+text/export and focused replay reviews reported no actionable findings. Nemotron raised potential
+freshness and coverage defects; local source review and the focused review found its missing-test,
+stale-ref, and duplicate-implementation claims contradicted by existing coverage and the synchronous
+dispatcher. The real StoreProvider regressions are in `resetHistoryTo.durable.test.tsx` and
+`useLayer.text.test.tsx`. Timeline mutations advance cursor, length, branch revision, or document
+revision; the durable sidecar is produced from that timeline. Selection-only updates remain separate
+from durable inputs, and the post-await continuation does not rewrite them. Preview cleanup happens
+only after an accepted replay paint. The fence's entry comparison adds one linear scan; no measured
+performance regression was established, and the full pre-push performance gate is still pending.
+
+The committed source change remains `0f42e474` and no production code changed after it. On the current
+candidate, `npm run build` passed; `npm run lint:check` passed with the repository's existing warning
+count and no errors. The focused history/text suite passed 165 tests, `tsc` passed, the docs-index test
+passed 10 tests, and exact product E2E run `2026-11-27T21-39-55-805Z-13520` passed in Chrome and
+Chrome HiDPI. Full pre-push unit/performance gates remain to be run by the feature push.
+
 ### Next actions
 
-1. Obtain two independent read-only reviews through verified free Kilo routes; check every
-   actionable finding against the exact source and tests. No paid fallback is authorized.
-2. Fix supported findings, rerun relevant tests, and push the reviewed branch to `origin` and its
-   existing `mirror` ref so the full pre-push unit/performance gates run on the exact tree. Verify
-   both pushed refs; do not force-update or push `main`.
-3. Recheck current refs, PH-93 ownership, file holds, and the designated landing path. Land through
-   the pinned `main:landing` wrapper only after the exact candidate is reviewed and its gates pass.
+1. Push this reviewed branch to `origin` and its existing `mirror` ref so the full pre-push
+   unit/performance gates run on the exact tree. Verify both pushed refs; do not force-update or push
+   `main`.
+2. Recheck current refs, PH-93 ownership, file holds, and the designated landing path. Land through
+   the pinned `main:landing` wrapper only after the exact candidate's push gates pass.
+3. Record the resulting remote and local landing refs, then verify clean status and ancestry.
 4. Keep `ownership-unproven` closed. Durable navigation eligibility requires a separate proof and
    reviewed production change; this text-source slice does not change it.
 
