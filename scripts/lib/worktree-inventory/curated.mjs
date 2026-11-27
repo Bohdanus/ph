@@ -1060,6 +1060,13 @@ export const CURATED = {
     legacy: true,
     issues: [{ ref: 'ph-48', title: 'Exhaust OpenCode source on typed free-limit 429' }],
   },
+  'daily-salvage-hardening-20261117': {
+    summary:
+      'A Nov 17 salvage handoff whose only unique commit contains timestamped repository-state and landing guidance; preserve the branch for audit, not for landing.',
+    note: 'The owning Codex chat 01a1b828-1d74-7c72-ae2f-a3b20b696b87 completed on Nov 22 and explicitly kept this stale handoff out of landing. The Linux snapshot work has a separate review doc at docs/handoffs/linux-snapshot-ci-20261024-salvage-review.md; its task ref is absent. The free-model-pool-final-landing ref is absent, and both stateless GHS redaction branches are already ancestors of main. Revisit if an owner reopens this plan, equivalent or renamed work returns as an unmerged ref, or this branch gains substantive implementation. Keep refs/heads/task/daily-salvage-hardening-20261117 as audit evidence; remove only its clean worktree through the guarded disposer after the full root/descendant owner, board, and live-overlay checks find no active owner or writer.',
+    legacy: true,
+    issues: [{ ref: 'ph-117', title: 'Retire obsolete daily salvage plan' }],
+  },
 };
 
 /** Curated entry for a worktree name, or `undefined` when none is written. */
