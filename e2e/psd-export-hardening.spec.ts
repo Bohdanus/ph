@@ -15,6 +15,7 @@ import {
   fillSaveDialog,
   submitSaveDialogForDownload,
   exportFormats,
+  documentResolutionCanvasDataUrl,
   prepareExportDownloadDirectory,
   verifyExportContainer,
 } from './export/helpers';
@@ -106,9 +107,8 @@ async function exportPsd(
   filename: string,
   options: { expectDrawing?: boolean } = {}
 ): Promise<string> {
-  const sourceDataUrl = await getWorkspaceCanvas(page).evaluate((element) =>
-    (element as HTMLCanvasElement).toDataURL('image/png')
-  );
+  const documentSize = await readWorkspaceDocumentSize(page, 'exportPsd');
+  const sourceDataUrl = await getWorkspaceCanvas(page).evaluate(documentResolutionCanvasDataUrl, documentSize);
   const psdFormat = exportFormats.find((f) => f.extension === '.psd')!;
   await openSaveDialog(page);
   await fillSaveDialog(page, filename, psdFormat.label);
@@ -460,7 +460,7 @@ test.describe('PSD Export Hardening: Layer Properties Preservation', () => {
       // Select the layer first
       await layerRow(layerNames[i]).click();
       // Open layer properties
-      await page.locator('details > summary').click();
+      await page.getByTestId('layer-opacity-summary').click();
       const opacitySlider = page.getByRole('slider', { name: 'Layer opacity' });
       await expect(opacitySlider).toBeVisible({ timeout: 10000 });
       await opacitySlider.fill(String(Math.round(opacities[i] * 100)));
@@ -760,7 +760,7 @@ test.describe('PSD Export Hardening: Edge Cases', () => {
     const topLayer = layerNames[0];
 
     // Set opacity to 0
-    await page.locator('details > summary').click();
+    await page.getByTestId('layer-opacity-summary').click();
     const opacitySlider = page.getByRole('slider', { name: 'Layer opacity' });
     await opacitySlider.fill('0');
     await opacitySlider.press('Tab');
